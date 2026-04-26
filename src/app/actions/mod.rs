@@ -1,0 +1,9 @@
+include!("lifecycle.rs");
+include!("library.rs");
+include!("browse.rs");
+include!("install.rs");
+include!("media.rs");
+include!("tasks.rs");
+include!("tools.rs");
+include!("updates.rs");
+include!("app_update.rs");
