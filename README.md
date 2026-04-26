@@ -15,7 +15,7 @@ Hestia targets games supported by XXMI. If an XXMI-supported game is missing fro
 
 ## Features
 
-- Portable and installer builds: use whichever format you prefer.
+- Installer and portable builds: use whichever format you prefer.
 - Simplified local mod management.
 - Intuitive category management.
 - Manual mod installation.
@@ -37,8 +37,8 @@ Hestia targets games supported by XXMI. If an XXMI-supported game is missing fro
 ## Download
 
 Always-latest direct links:
-- Portable: <https://hestia.hnawc.com/binary/latest/hestia.exe>
 - Installer: <https://hestia.hnawc.com/binary/latest/hestia-setup-latest.exe>
+- Portable: <https://hestia.hnawc.com/binary/latest/hestia.exe>
 
 You can also download releases from the [GitHub Releases page](https://github.com/HenryNugraha/Hestia/releases).
 
