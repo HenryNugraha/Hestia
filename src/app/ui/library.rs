@@ -69,6 +69,19 @@ fn paint_modified_update_badge(ui: &mut Ui, button_rect: egui::Rect) {
     );
 }
 
+#[derive(Clone, Copy)]
+enum CategoryPickerTarget<'a> {
+    Single {
+        mod_id: &'a str,
+        current_category_id: Option<&'a str>,
+        uncategorized: bool,
+    },
+    Bulk {
+        common_category_id: Option<&'a str>,
+        all_uncategorized: bool,
+    },
+}
+
 impl HestiaApp {
     fn paint_category_popup_hover(ui: &mut Ui, response: &egui::Response) {
         if response.hovered() {
@@ -548,22 +561,18 @@ impl HestiaApp {
         self.save_state();
     }
 
-    fn render_mod_category_label(&mut self, ui: &mut Ui, selected: &ModEntry) {
-        let category_text = self.mod_category_label(selected);
-        let response = ui.add(
-            egui::Label::new(
-                RichText::new(category_text)
-                    .size(12.0)
-                    .color(Color32::from_rgb(176, 198, 218)),
-            )
-            .selectable(false)
-            .sense(Sense::click()),
-        );
-        response.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
-
-        let popup_id = ui.id().with(("mod_category_popup", &selected.id));
-        let was_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-        egui::Popup::menu(&response)
+    fn render_category_picker_popup(
+        &mut self,
+        ui: &mut Ui,
+        anchor: &egui::Response,
+        popup_id: egui::Id,
+        game_id: &str,
+        target: CategoryPickerTarget<'_>,
+    ) -> bool {
+        let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let was_popup_open = is_popup_open;
+        let mut category_assigned = false;
+        egui::Popup::menu(anchor)
             .id(popup_id)
             .width(212.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -572,15 +581,25 @@ impl HestiaApp {
                 const CATEGORY_ICON_WIDTH: f32 = 18.0;
                 const CATEGORY_TEXT_WIDTH: f32 = 148.0;
                 const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+
                 ui.set_min_width(CATEGORY_POPUP_WIDTH);
                 let mut close_popup = false;
                 let mut dragged_category_preview: Option<(String, egui::Rect)> = None;
                 let pointer_pos = ui.ctx().pointer_latest_pos();
+                let (common_category_id, all_uncategorized) = match target {
+                    CategoryPickerTarget::Single {
+                        current_category_id,
+                        uncategorized,
+                        ..
+                    } => (current_category_id, uncategorized),
+                    CategoryPickerTarget::Bulk {
+                        common_category_id,
+                        all_uncategorized,
+                    } => (common_category_id, all_uncategorized),
+                };
+
                 ui.horizontal(|ui| {
-                    let uncategorized_selected =
-                        selected.metadata.user.category_id.is_none()
-                            && selected.metadata.user.category.trim().is_empty();
-                    let check_text = if uncategorized_selected {
+                    let check_text = if all_uncategorized {
                         icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
                     } else {
                         RichText::new("")
@@ -598,84 +617,505 @@ impl HestiaApp {
                         Sense::click(),
                         self.dragging_category_id.is_none(),
                     )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
                     {
-                        self.assign_mod_category(&selected.id, None);
+                        match target {
+                            CategoryPickerTarget::Single { mod_id, .. } => {
+                                self.assign_mod_category(mod_id, None);
+                            }
+                            CategoryPickerTarget::Bulk { .. } => {
+                                self.assign_selected_mods_category(None);
+                            }
+                        }
+                        category_assigned = true;
                         close_popup = true;
                     }
                 });
 
-                let categories = self.categories_for_game(&selected.game_id);
+                let categories = self.categories_for_game(game_id);
                 let mut category_row_rects: Vec<egui::Rect> = Vec::new();
                 ui.scope(|ui| {
                     ui.style_mut().spacing.scroll.floating_allocated_width = 6.0;
-                egui::ScrollArea::vertical()
-                    .max_height(480.0)
-                    .show(ui, |ui| {
-                for category in categories.clone() {
-                    ui.horizontal(|ui| {
-                        if self.category_rename_target_id.as_deref() == Some(category.id.as_str()) {
-                            ui.add_sized([CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT], egui::Label::new(""));
-                            let input = ui.add(
-                                TextEdit::singleline(&mut self.category_rename_name)
-                                    .desired_width(CATEGORY_TEXT_WIDTH)
-                                    .margin(egui::Margin::same(4)),
+                    egui::ScrollArea::vertical()
+                        .max_height(480.0)
+                        .show(ui, |ui| {
+                            for category in categories.clone() {
+                                ui.horizontal(|ui| {
+                                    if self.category_rename_target_id.as_deref()
+                                        == Some(category.id.as_str())
+                                    {
+                                        ui.add_sized(
+                                            [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                            egui::Label::new(""),
+                                        );
+                                        let input = ui.add(
+                                            TextEdit::singleline(&mut self.category_rename_name)
+                                                .desired_width(CATEGORY_TEXT_WIDTH)
+                                                .margin(egui::Margin::same(4)),
+                                        );
+                                        input.request_focus();
+                                        let save_rename = input.has_focus()
+                                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                        let cancel_rename = input.has_focus()
+                                            && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                        if save_rename {
+                                            let draft = self.category_rename_name.clone();
+                                            self.rename_category(&category.id, &draft);
+                                        }
+                                        if cancel_rename {
+                                            self.category_rename_target_id = None;
+                                            self.category_rename_name.clear();
+                                        }
+                                        if ui
+                                            .add(
+                                                egui::Button::new(icon_rich(
+                                                    Icon::Check,
+                                                    13.0,
+                                                    Color32::from_rgb(110, 194, 132),
+                                                ))
+                                                .frame(false),
+                                            )
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            let draft = self.category_rename_name.clone();
+                                            self.rename_category(&category.id, &draft);
+                                        }
+                                    } else {
+                                        let check_text = if common_category_id
+                                            == Some(category.id.as_str())
+                                        {
+                                            icon_rich(
+                                                Icon::Check,
+                                                12.0,
+                                                Color32::from_rgb(110, 194, 132),
+                                            )
+                                        } else {
+                                            RichText::new("")
+                                        };
+                                        ui.add_sized(
+                                            [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                            egui::Label::new(check_text).selectable(false),
+                                        );
+                                        let row_response = Self::category_popup_text(
+                                            ui,
+                                            &category.name,
+                                            Some(self.category_member_count(game_id, &category.id)),
+                                            CATEGORY_TEXT_WIDTH,
+                                            CATEGORY_ROW_HEIGHT,
+                                            Sense::click_and_drag(),
+                                            self.dragging_category_id.is_none(),
+                                        );
+                                        if let Some(index) = categories
+                                            .iter()
+                                            .position(|item| item.id == category.id)
+                                        {
+                                            if category_row_rects.len() <= index {
+                                                category_row_rects.resize(index + 1, row_response.rect);
+                                            }
+                                            category_row_rects[index] = row_response.rect;
+                                        }
+                                        let this_index = categories
+                                            .iter()
+                                            .position(|item| item.id == category.id);
+                                        let insert_after = pointer_pos
+                                            .is_some_and(|pos| pos.y > row_response.rect.center().y);
+                                        let insertion_slot = this_index.map(|index| {
+                                            if insert_after {
+                                                index.saturating_add(1)
+                                            } else {
+                                                index
+                                            }
+                                        });
+                                        if self.dragging_category_id.is_some()
+                                            && self
+                                                .dragging_category_id
+                                                .as_ref()
+                                                .is_some_and(|dragging_id| dragging_id != &category.id)
+                                            && pointer_pos
+                                                .is_some_and(|pos| row_response.rect.contains(pos))
+                                        {
+                                            if let Some(slot_index) = insertion_slot {
+                                                self.dragging_category_target_index = Some(slot_index);
+                                                ui.ctx().request_repaint();
+                                            }
+                                        }
+                                        if row_response.drag_started() {
+                                            self.dragging_category_id = Some(category.id.clone());
+                                            self.dragging_category_target_index = this_index;
+                                        }
+                                        if row_response.drag_stopped()
+                                            && self
+                                                .dragging_category_id
+                                                .as_ref()
+                                                .is_some_and(|dragging_id| dragging_id == &category.id)
+                                        {
+                                            self.finish_category_drag();
+                                        }
+                                        if row_response
+                                            .clone()
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                            && !row_response.dragged()
+                                        {
+                                            match target {
+                                                CategoryPickerTarget::Single { mod_id, .. } => {
+                                                    self.assign_mod_category(
+                                                        mod_id,
+                                                        Some(category.id.clone()),
+                                                    );
+                                                }
+                                                CategoryPickerTarget::Bulk { .. } => {
+                                                    self.assign_selected_mods_category(Some(
+                                                        category.id.clone(),
+                                                    ));
+                                                }
+                                            }
+                                            category_assigned = true;
+                                            close_popup = true;
+                                        }
+                                        if self
+                                            .dragging_category_id
+                                            .as_ref()
+                                            .is_some_and(|dragging_id| dragging_id == &category.id)
+                                        {
+                                            dragged_category_preview =
+                                                Some((category.name.clone(), row_response.rect));
+                                        }
+                                        ui.menu_button("", |ui| {
+                                            if ui
+                                                .button(icon_text_sized(
+                                                    Icon::Pencil,
+                                                    "Rename",
+                                                    12.0,
+                                                    12.0,
+                                                ))
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                self.category_rename_target_id =
+                                                    Some(category.id.clone());
+                                                self.category_rename_name = category.name.clone();
+                                            }
+                                            if ui
+                                                .button(icon_text_sized(
+                                                    Icon::Trash2,
+                                                    "Delete",
+                                                    12.0,
+                                                    12.0,
+                                                ))
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                self.delete_category(&category.id);
+                                                ui.close();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    }
+                                });
+                            }
+                            self.update_category_drag_target(
+                                ui,
+                                pointer_pos,
+                                &category_row_rects,
                             );
-                            input.request_focus();
-                            let save_rename = input.has_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            let cancel_rename = input.has_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Escape));
-                            if save_rename {
-                                let draft = self.category_rename_name.clone();
-                                self.rename_category(&category.id, &draft);
-                            }
-                            if cancel_rename {
-                                self.category_rename_target_id = None;
-                                self.category_rename_name.clear();
-                            }
-                            if ui
-                                .add(egui::Button::new(icon_rich(Icon::Check, 13.0, Color32::from_rgb(110, 194, 132))).frame(false))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                let draft = self.category_rename_name.clone();
-                                self.rename_category(&category.id, &draft);
-                            }
-                        } else {
-                            let selected_category =
-                                selected.metadata.user.category_id.as_deref() == Some(category.id.as_str());
-                            let check_text = if selected_category {
+                            self.paint_category_drop_indicator(ui, &category_row_rects);
+                        });
+                });
+
+                ui.add_space(-2.0);
+                ui.separator();
+                ui.add_space(-2.0);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                        egui::Label::new(icon_rich(Icon::Plus, 12.0, Color32::from_gray(190)))
+                            .selectable(false),
+                    );
+                    if Self::category_popup_text(
+                        ui,
+                        "New Category",
+                        None,
+                        CATEGORY_TEXT_WIDTH,
+                        CATEGORY_ROW_HEIGHT,
+                        Sense::click(),
+                        self.dragging_category_id.is_none(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                    {
+                        self.create_category_for_game(game_id);
+                    }
+                });
+
+                self.paint_dragged_category_preview(ui, dragged_category_preview, popup_id);
+
+                if close_popup {
+                    ui.close();
+                }
+            });
+        let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        if was_popup_open && !is_popup_open {
+            self.finish_category_drag();
+            self.category_rename_target_id = None;
+            self.category_rename_name.clear();
+        } else if self.dragging_category_id.is_some()
+            && !ui.ctx().input(|input| input.pointer.primary_down())
+        {
+            self.finish_category_drag();
+        }
+        if self.dragging_category_id.is_some()
+            && ui.ctx().input(|input| input.pointer.primary_down())
+        {
+            ui.ctx()
+                .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
+        }
+        category_assigned
+    }
+
+    fn update_category_drag_target(
+        &mut self,
+        ui: &mut Ui,
+        pointer_pos: Option<egui::Pos2>,
+        category_row_rects: &[egui::Rect],
+    ) {
+        if self.dragging_category_id.is_none()
+            || !ui.input(|input| input.pointer.primary_down())
+            || category_row_rects.is_empty()
+        {
+            return;
+        }
+        let Some(pointer_pos) = pointer_pos else {
+            return;
+        };
+        let left = category_row_rects
+            .iter()
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        let right = category_row_rects
+            .iter()
+            .map(|rect| rect.right())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let top = category_row_rects[0].top();
+        let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
+        if pointer_pos.x >= left && pointer_pos.x <= right {
+            if pointer_pos.y <= top {
+                self.dragging_category_target_index = Some(0);
+                ui.ctx().request_repaint();
+            } else if pointer_pos.y >= bottom {
+                self.dragging_category_target_index = Some(category_row_rects.len());
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+
+    fn paint_category_drop_indicator(&self, ui: &mut Ui, category_row_rects: &[egui::Rect]) {
+        if self.dragging_category_id.is_none()
+            || !ui.input(|input| input.pointer.primary_down())
+            || category_row_rects.is_empty()
+        {
+            return;
+        }
+        let Some(target_index) = self.dragging_category_target_index else {
+            return;
+        };
+        let clamped_index = target_index.min(category_row_rects.len());
+        let line_y = if clamped_index == 0 {
+            category_row_rects[0].top() + 1.0
+        } else if clamped_index >= category_row_rects.len() {
+            category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
+        } else {
+            (category_row_rects[clamped_index - 1].bottom()
+                + category_row_rects[clamped_index].top())
+                * 0.5
+        };
+        let left = category_row_rects
+            .iter()
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        let right = category_row_rects
+            .iter()
+            .map(|rect| rect.right())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let dash = 4.0;
+        let gap = 3.0;
+        let mut x = left;
+        while x < right {
+            let x2 = (x + dash).min(right);
+            ui.painter().line_segment(
+                [egui::pos2(x, line_y), egui::pos2(x2, line_y)],
+                egui::Stroke::new(
+                    1.25,
+                    Color32::from_rgba_premultiplied(232, 153, 118, 170),
+                ),
+            );
+            x += dash + gap;
+        }
+    }
+
+    fn paint_dragged_category_preview(
+        &self,
+        ui: &mut Ui,
+        dragged_category_preview: Option<(String, egui::Rect)>,
+        popup_id: egui::Id,
+    ) {
+        let Some((category_name, source_rect)) = dragged_category_preview else {
+            return;
+        };
+        let Some(pointer_pos) = ui.ctx().pointer_latest_pos() else {
+            return;
+        };
+        let ghost_rect = egui::Rect::from_center_size(
+            pointer_pos + egui::vec2(6.0, 8.0),
+            egui::vec2(source_rect.width() + 18.0, source_rect.height()),
+        );
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            popup_id.with("dragging_category_ghost"),
+        ));
+        painter.rect(
+            ghost_rect,
+            egui::CornerRadius::same(6),
+            Color32::from_rgba_premultiplied(44, 47, 52, 220),
+            egui::Stroke::new(1.5, Color32::from_rgb(214, 104, 58)),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            ghost_rect.left_center() + egui::vec2(8.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            clamp_category_label(&category_name),
+            egui::FontId::new(12.0, FontFamily::Proportional),
+            ui.visuals().text_color(),
+        );
+    }
+
+    fn render_mod_category_label(&mut self, ui: &mut Ui, selected: &ModEntry) {
+        let category_text = self.mod_category_label(selected);
+        let response = ui.add(
+            egui::Label::new(
+                RichText::new(category_text)
+                    .size(12.0)
+                    .color(Color32::from_rgb(176, 198, 218)),
+            )
+            .selectable(false)
+            .sense(Sense::click()),
+        );
+        response.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        let popup_id = ui.id().with(("mod_category_popup", &selected.id));
+        self.render_category_picker_popup(
+            ui,
+            &response,
+            popup_id,
+            &selected.game_id,
+            CategoryPickerTarget::Single {
+                mod_id: &selected.id,
+                current_category_id: selected.metadata.user.category_id.as_deref(),
+                uncategorized: selected.metadata.user.category_id.is_none()
+                    && selected.metadata.user.category.trim().is_empty(),
+            },
+        );
+    }
+
+    fn render_mod_card_category_submenu(
+        &mut self,
+        ui: &mut Ui,
+        mod_id: &str,
+        game_id: &str,
+        current_category_id: Option<&str>,
+        category_label: &str,
+    ) {
+        let categories = self.categories_for_game(game_id);
+        if categories.is_empty() {
+            ui.menu_button(icon_text_sized(Icon::Tag, "Category", 12.0, 12.0), |ui| {
+                ui.set_min_width(188.0);
+                ui.label(
+                    RichText::new(
+                        "There is no category yet.\n\n1. Click a mod card to open its detail.\n2. Click \"Uncategorized\" below the mod's name.\n3. Click \"+ New Category\" and name it.",
+                    )
+                    .size(12.0)
+                    .color(Color32::from_gray(185)),
+                );
+            })
+            .response
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+            return;
+        }
+
+        ui.menu_button(icon_text_sized(Icon::Tag, "Category", 12.0, 12.0), |ui| {
+            const CATEGORY_ICON_WIDTH: f32 = 18.0;
+            const CATEGORY_TEXT_WIDTH: f32 = 168.0;
+            const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+            const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
+            const CATEGORY_SUBMENU_MAX_HEIGHT: f32 = 320.0;
+
+            ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
+            let pointer_pos = ui.ctx().pointer_latest_pos();
+            let uncategorized = current_category_id.is_none() && category_label == "Uncategorized";
+            let mut category_row_rects = Vec::new();
+            egui::ScrollArea::vertical()
+                .max_height(CATEGORY_SUBMENU_MAX_HEIGHT)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                            egui::Label::new(if uncategorized {
                                 icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
                             } else {
                                 RichText::new("")
-                            };
+                            })
+                            .selectable(false),
+                        );
+                        if Self::category_popup_text(
+                            ui,
+                            "(none)",
+                            None,
+                            CATEGORY_TEXT_WIDTH,
+                            CATEGORY_ROW_HEIGHT,
+                            Sense::click(),
+                            self.dragging_category_id.is_none(),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                        {
+                            self.assign_mod_category(mod_id, None);
+                            ui.close();
+                        }
+                    });
+                    for category in categories.clone() {
+                        let selected = current_category_id == Some(category.id.as_str());
+                        ui.horizontal(|ui| {
                             ui.add_sized(
                                 [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                egui::Label::new(check_text).selectable(false),
+                                egui::Label::new(if selected {
+                                    icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                                } else {
+                                    RichText::new("")
+                                })
+                                .selectable(false),
                             );
                             let row_response = Self::category_popup_text(
                                 ui,
                                 &category.name,
-                                Some(self.category_member_count(&selected.game_id, &category.id)),
+                                Some(self.category_member_count(game_id, &category.id)),
                                 CATEGORY_TEXT_WIDTH,
                                 CATEGORY_ROW_HEIGHT,
                                 Sense::click_and_drag(),
                                 self.dragging_category_id.is_none(),
                             );
-                            if let Some(index) = categories
-                                .iter()
-                                .position(|item| item.id == category.id)
+                            if let Some(index) =
+                                categories.iter().position(|item| item.id == category.id)
                             {
                                 if category_row_rects.len() <= index {
                                     category_row_rects.resize(index + 1, row_response.rect);
                                 }
                                 category_row_rects[index] = row_response.rect;
                             }
-                            let this_index = categories
-                                .iter()
-                                .position(|item| item.id == category.id);
+                            let this_index =
+                                categories.iter().position(|item| item.id == category.id);
                             let insert_after = pointer_pos
                                 .is_some_and(|pos| pos.y > row_response.rect.center().y);
                             let insertion_slot = this_index.map(|index| {
@@ -715,176 +1155,33 @@ impl HestiaApp {
                                 .clicked()
                                 && !row_response.dragged()
                             {
-                                self.assign_mod_category(&selected.id, Some(category.id.clone()));
-                                close_popup = true;
+                                self.assign_mod_category(mod_id, Some(category.id.clone()));
+                                ui.close();
                             }
                             if self
                                 .dragging_category_id
                                 .as_ref()
                                 .is_some_and(|dragging_id| dragging_id == &category.id)
                             {
-                                dragged_category_preview = Some((category.name.clone(), row_response.rect));
+                                self.paint_dragged_category_preview(
+                                    ui,
+                                    Some((category.name.clone(), row_response.rect)),
+                                    ui.id().with(("mod_card_category_submenu", mod_id)),
+                                );
                             }
-                            ui.menu_button("", |ui| {
-                                if ui
-                                    .button(icon_text_sized(Icon::Pencil, "Rename", 12.0, 12.0))
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
-                                    self.category_rename_target_id = Some(category.id.clone());
-                                    self.category_rename_name = category.name.clone();
-                                }
-                                if ui
-                                    .button(icon_text_sized(Icon::Trash2, "Delete", 12.0, 12.0))
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
-                                    self.delete_category(&category.id);
-                                    ui.close();
-                                }
-                            })
-                            .response
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        }
-                    });
-                }
-                if self.dragging_category_id.is_some()
-                    && ui.input(|input| input.pointer.primary_down())
-                    && !category_row_rects.is_empty()
-                    && let Some(pointer_pos) = pointer_pos
-                {
-                    let left = category_row_rects
-                        .iter()
-                        .map(|rect| rect.left())
-                        .fold(f32::INFINITY, f32::min);
-                    let right = category_row_rects
-                        .iter()
-                        .map(|rect| rect.right())
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    let top = category_row_rects[0].top();
-                    let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
-                    if pointer_pos.x >= left && pointer_pos.x <= right {
-                        if pointer_pos.y <= top {
-                            self.dragging_category_target_index = Some(0);
-                            ui.ctx().request_repaint();
-                        } else if pointer_pos.y >= bottom {
-                            self.dragging_category_target_index = Some(category_row_rects.len());
-                            ui.ctx().request_repaint();
-                        }
+                        });
                     }
-                }
-                if self.dragging_category_id.is_some()
-                    && ui.input(|input| input.pointer.primary_down())
-                    && !category_row_rects.is_empty()
-                    && let Some(target_index) = self.dragging_category_target_index
-                {
-                    let clamped_index = target_index.min(category_row_rects.len());
-                    let line_y = if clamped_index == 0 {
-                        category_row_rects[0].top() + 1.0
-                    } else if clamped_index >= category_row_rects.len() {
-                        category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
-                    } else {
-                        (category_row_rects[clamped_index - 1].bottom()
-                            + category_row_rects[clamped_index].top())
-                            * 0.5
-                    };
-                    let left = category_row_rects
-                        .iter()
-                        .map(|rect| rect.left())
-                        .fold(f32::INFINITY, f32::min);
-                    let right = category_row_rects
-                        .iter()
-                        .map(|rect| rect.right())
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    let dash = 4.0;
-                    let gap = 3.0;
-                    let mut x = left;
-                    while x < right {
-                        let x2 = (x + dash).min(right);
-                        ui.painter().line_segment(
-                            [egui::pos2(x, line_y), egui::pos2(x2, line_y)],
-                            egui::Stroke::new(
-                                1.25,
-                                Color32::from_rgba_premultiplied(232, 153, 118, 170),
-                            ),
-                        );
-                        x += dash + gap;
-                    }
-                }
-                });
-                });
-
-                ui.add_space(-2.0);
-                ui.separator();
-                ui.add_space(-2.0);
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                        egui::Label::new(icon_rich(Icon::Plus, 12.0, Color32::from_gray(190)))
-                            .selectable(false),
-                    );
-                    if Self::category_popup_text(
-                        ui,
-                        "New Category",
-                        None,
-                        CATEGORY_TEXT_WIDTH,
-                        CATEGORY_ROW_HEIGHT,
-                        Sense::click(),
-                        self.dragging_category_id.is_none(),
-                    )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+                    self.update_category_drag_target(ui, pointer_pos, &category_row_rects);
+                    self.paint_category_drop_indicator(ui, &category_row_rects);
+                    if self.dragging_category_id.is_some()
+                        && !ui.ctx().input(|input| input.pointer.primary_down())
                     {
-                        self.create_category_for_game(&selected.game_id);
+                        self.finish_category_drag();
                     }
                 });
-                if let Some((category_name, source_rect)) = dragged_category_preview {
-                    if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
-                        let ghost_rect = egui::Rect::from_center_size(
-                            pointer_pos + egui::vec2(6.0, 8.0),
-                            egui::vec2(source_rect.width() + 18.0, source_rect.height()),
-                        );
-                        let painter = ui.ctx().layer_painter(egui::LayerId::new(
-                            egui::Order::Tooltip,
-                            egui::Id::new("dragging_category_ghost"),
-                        ));
-                        painter.rect(
-                            ghost_rect,
-                            egui::CornerRadius::same(6),
-                            Color32::from_rgba_premultiplied(44, 47, 52, 220),
-                            egui::Stroke::new(1.5, Color32::from_rgb(214, 104, 58)),
-                            egui::StrokeKind::Inside,
-                        );
-                        painter.text(
-                            ghost_rect.left_center() + egui::vec2(8.0, 0.0),
-                            egui::Align2::LEFT_CENTER,
-                            clamp_category_label(&category_name),
-                            egui::FontId::new(12.0, FontFamily::Proportional),
-                            ui.visuals().text_color(),
-                        );
-                    }
-                }
-
-                if close_popup {
-                    ui.close();
-                }
-            });
-        let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-        if was_popup_open && !is_popup_open {
-            self.finish_category_drag();
-            self.category_rename_target_id = None;
-            self.category_rename_name.clear();
-        } else if self.dragging_category_id.is_some()
-            && !ui.ctx().input(|input| input.pointer.primary_down())
-        {
-            self.finish_category_drag();
-        }
-        if self.dragging_category_id.is_some()
-            && ui.ctx().input(|input| input.pointer.primary_down())
-        {
-            ui.ctx()
-                .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
-        }
+        })
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     fn render_workspace_view(&mut self, ui: &mut Ui) {
@@ -1615,339 +1912,46 @@ impl HestiaApp {
                                             }
                                             if id == "category" {
                                                 let popup_id = ui.id().with("batch_category_popup");
-                                                let was_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-                                                egui::Popup::menu(&response)
-                                                    .id(popup_id)
-                                                    .width(212.0)
-                                                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                                    .show(|ui| {
-                                                        const CATEGORY_ICON_WIDTH: f32 = 18.0;
-                                                        const CATEGORY_TEXT_WIDTH: f32 = 148.0;
-                                                        const CATEGORY_ROW_HEIGHT: f32 = 22.0;
-
-                                                        let selected_ids: Vec<String> = self.selected_mods.iter().cloned().collect();
-                                                        let selected_category_ids: Vec<Option<String>> = self
-                                                            .state
-                                                            .mods
+                                                let selected_ids: Vec<String> =
+                                                    self.selected_mods.iter().cloned().collect();
+                                                let selected_category_ids: Vec<Option<String>> = self
+                                                    .state
+                                                    .mods
+                                                    .iter()
+                                                    .filter(|mod_entry| {
+                                                        selected_ids
                                                             .iter()
-                                                            .filter(|mod_entry| selected_ids.iter().any(|id| id == &mod_entry.id))
-                                                            .map(|mod_entry| mod_entry.metadata.user.category_id.clone())
-                                                            .collect();
-                                                        let common_category_id = selected_category_ids
-                                                            .first()
-                                                            .filter(|first| selected_category_ids.iter().all(|category_id| category_id == *first))
-                                                            .cloned()
-                                                            .flatten();
-                                                        let all_uncategorized = !selected_category_ids.is_empty()
-                                                            && selected_category_ids.iter().all(Option::is_none);
-                                                        let mut dragged_category_preview: Option<(String, egui::Rect)> = None;
-                                                        let pointer_pos = ui.ctx().pointer_latest_pos();
-
-                                                        ui.horizontal(|ui| {
-                                                            let check_text = if all_uncategorized {
-                                                                icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
-                                                            } else {
-                                                                RichText::new("")
-                                                            };
-                                                            ui.add_sized(
-                                                                [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                                                egui::Label::new(check_text).selectable(false),
-                                                            );
-                                                            if Self::category_popup_text(
-                                                                ui,
-                                                                "(none)",
-                                                                None,
-                                                                CATEGORY_TEXT_WIDTH,
-                                                                CATEGORY_ROW_HEIGHT,
-                                                                Sense::click(),
-                                                                true,
-                                                            )
-                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                            .clicked()
-                                                            {
-                                                                self.assign_selected_mods_category(None);
-                                                                ui.close();
-                                                            }
-                                                        });
-
-                                                        let game_id = self
-                                                            .selected_game()
-                                                            .map(|game| game.definition.id.clone())
-                                                            .unwrap_or_default();
-                                                        let categories = self.categories_for_game(&game_id);
-                                                        let mut category_row_rects: Vec<egui::Rect> = Vec::new();
-                                                        ui.scope(|ui| {
-                                                            ui.style_mut().spacing.scroll.floating_allocated_width = 6.0;
-                                                        egui::ScrollArea::vertical()
-                                                            .max_height(480.0)
-                                                            .show(ui, |ui| {
-                                                        for category in categories.clone() {
-                                                            ui.horizontal(|ui| {
-                                                                if self.category_rename_target_id.as_deref() == Some(category.id.as_str()) {
-                                                                    ui.add_sized([CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT], egui::Label::new(""));
-                                                                    let input = ui.add(
-                                                                        TextEdit::singleline(&mut self.category_rename_name)
-                                                                            .desired_width(CATEGORY_TEXT_WIDTH)
-                                                                            .margin(egui::Margin::same(4)),
-                                                                    );
-                                                                    input.request_focus();
-                                                                    let save_rename = input.has_focus()
-                                                                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                                                    let cancel_rename = input.has_focus()
-                                                                        && ui.input(|i| i.key_pressed(egui::Key::Escape));
-                                                                    if save_rename {
-                                                                        let draft = self.category_rename_name.clone();
-                                                                        self.rename_category(&category.id, &draft);
-                                                                    }
-                                                                    if cancel_rename {
-                                                                        self.category_rename_target_id = None;
-                                                                        self.category_rename_name.clear();
-                                                                    }
-                                                                    if ui
-                                                                        .add(egui::Button::new(icon_rich(Icon::Check, 13.0, Color32::from_rgb(110, 194, 132))).frame(false))
-                                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                                        .clicked()
-                                                                    {
-                                                                        let draft = self.category_rename_name.clone();
-                                                                        self.rename_category(&category.id, &draft);
-                                                                    }
-                                                                } else {
-                                                                    let check_text = if common_category_id.as_deref() == Some(category.id.as_str()) {
-                                                                        icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
-                                                                    } else {
-                                                                        RichText::new("")
-                                                                    };
-                                                                    ui.add_sized(
-                                                                        [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                                                        egui::Label::new(check_text).selectable(false),
-                                                                    );
-                                                                    let row_response = Self::category_popup_text(
-                                                                        ui,
-                                                                        &category.name,
-                                                                        Some(self.category_member_count(&game_id, &category.id)),
-                                                                        CATEGORY_TEXT_WIDTH,
-                                                                        CATEGORY_ROW_HEIGHT,
-                                                                        Sense::click_and_drag(),
-                                                                        self.dragging_category_id.is_none(),
-                                                                    );
-                                                                    if let Some(index) = categories
-                                                                        .iter()
-                                                                        .position(|item| item.id == category.id)
-                                                                    {
-                                                                        if category_row_rects.len() <= index {
-                                                                            category_row_rects.resize(index + 1, row_response.rect);
-                                                                        }
-                                                                        category_row_rects[index] = row_response.rect;
-                                                                    }
-                                                                    let this_index = categories
-                                                                        .iter()
-                                                                        .position(|item| item.id == category.id);
-                                                                    let insert_after = pointer_pos
-                                                                        .is_some_and(|pos| pos.y > row_response.rect.center().y);
-                                                                    let insertion_slot = this_index.map(|index| {
-                                                                        if insert_after {
-                                                                            index.saturating_add(1)
-                                                                        } else {
-                                                                            index
-                                                                        }
-                                                                    });
-                                                                    if self.dragging_category_id.is_some()
-                                                                        && self
-                                                                            .dragging_category_id
-                                                                            .as_ref()
-                                                                            .is_some_and(|dragging_id| dragging_id != &category.id)
-                                                                        && pointer_pos.is_some_and(|pos| row_response.rect.contains(pos))
-                                                                    {
-                                                                        if let Some(slot_index) = insertion_slot {
-                                                                            self.dragging_category_target_index = Some(slot_index);
-                                                                            ui.ctx().request_repaint();
-                                                                        }
-                                                                    }
-                                                                    if row_response.drag_started() {
-                                                                        self.dragging_category_id = Some(category.id.clone());
-                                                                        self.dragging_category_target_index = this_index;
-                                                                    }
-                                                                    if row_response.drag_stopped()
-                                                                        && self
-                                                                            .dragging_category_id
-                                                                            .as_ref()
-                                                                            .is_some_and(|dragging_id| dragging_id == &category.id)
-                                                                    {
-                                                                        self.finish_category_drag();
-                                                                    }
-                                                                    if row_response
-                                                                        .clone()
-                                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                                        .clicked()
-                                                                        && !row_response.dragged()
-                                                                    {
-                                                                        self.assign_selected_mods_category(Some(category.id.clone()));
-                                                                        ui.close();
-                                                                    }
-                                                                    if self
-                                                                        .dragging_category_id
-                                                                        .as_ref()
-                                                                        .is_some_and(|dragging_id| dragging_id == &category.id)
-                                                                    {
-                                                                        dragged_category_preview = Some((category.name.clone(), row_response.rect));
-                                                                    }
-                                                                    ui.menu_button("", |ui| {
-                                                                        if ui
-                                                                            .button(icon_text_sized(Icon::Pencil, "Rename", 12.0, 12.0))
-                                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                                            .clicked()
-                                                                        {
-                                                                            self.category_rename_target_id = Some(category.id.clone());
-                                                                            self.category_rename_name = category.name.clone();
-                                                                        }
-                                                                        if ui
-                                                                            .button(icon_text_sized(Icon::Trash2, "Delete", 12.0, 12.0))
-                                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                                            .clicked()
-                                                                        {
-                                                                            self.delete_category(&category.id);
-                                                                            ui.close();
-                                                                        }
-                                                                    })
-                                                                    .response
-                                                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                                                }
-                                                            });
-                                                        }
-                                                        if self.dragging_category_id.is_some()
-                                                            && ui.input(|input| input.pointer.primary_down())
-                                                            && !category_row_rects.is_empty()
-                                                            && let Some(pointer_pos) = pointer_pos
-                                                        {
-                                                            let left = category_row_rects
-                                                                .iter()
-                                                                .map(|rect| rect.left())
-                                                                .fold(f32::INFINITY, f32::min);
-                                                            let right = category_row_rects
-                                                                .iter()
-                                                                .map(|rect| rect.right())
-                                                                .fold(f32::NEG_INFINITY, f32::max);
-                                                            let top = category_row_rects[0].top();
-                                                            let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
-                                                            if pointer_pos.x >= left && pointer_pos.x <= right {
-                                                                if pointer_pos.y <= top {
-                                                                    self.dragging_category_target_index = Some(0);
-                                                                    ui.ctx().request_repaint();
-                                                                } else if pointer_pos.y >= bottom {
-                                                                    self.dragging_category_target_index = Some(category_row_rects.len());
-                                                                    ui.ctx().request_repaint();
-                                                                }
-                                                            }
-                                                        }
-                                                        if self.dragging_category_id.is_some()
-                                                            && ui.input(|input| input.pointer.primary_down())
-                                                            && !category_row_rects.is_empty()
-                                                            && let Some(target_index) = self.dragging_category_target_index
-                                                        {
-                                                            let clamped_index = target_index.min(category_row_rects.len());
-                                                            let line_y = if clamped_index == 0 {
-                                                                category_row_rects[0].top() + 1.0
-                                                            } else if clamped_index >= category_row_rects.len() {
-                                                                category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
-                                                            } else {
-                                                                (category_row_rects[clamped_index - 1].bottom()
-                                                                    + category_row_rects[clamped_index].top())
-                                                                    * 0.5
-                                                            };
-                                                            let left = category_row_rects
-                                                                .iter()
-                                                                .map(|rect| rect.left())
-                                                                .fold(f32::INFINITY, f32::min);
-                                                            let right = category_row_rects
-                                                                .iter()
-                                                                .map(|rect| rect.right())
-                                                                .fold(f32::NEG_INFINITY, f32::max);
-                                                            let dash = 4.0;
-                                                            let gap = 3.0;
-                                                            let mut x = left;
-                                                            while x < right {
-                                                                let x2 = (x + dash).min(right);
-                                                                ui.painter().line_segment(
-                                                                    [egui::pos2(x, line_y), egui::pos2(x2, line_y)],
-                                                                    egui::Stroke::new(
-                                                                        1.25,
-                                                                        Color32::from_rgba_premultiplied(232, 153, 118, 170),
-                                                                    ),
-                                                                );
-                                                                x += dash + gap;
-                                                            }
-                                                        }
-                                                        });
-                                                        });
-
-                                                        ui.add_space(-2.0);
-                                                        ui.separator();
-                                                        ui.add_space(-2.0);
-                                                        ui.horizontal(|ui| {
-                                                            ui.add_sized(
-                                                                [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                                                egui::Label::new(icon_rich(Icon::Plus, 12.0, Color32::from_gray(190)))
-                                                                    .selectable(false),
-                                                            );
-                                                            if Self::category_popup_text(
-                                                                ui,
-                                                                "New Category",
-                                                                None,
-                                                                CATEGORY_TEXT_WIDTH,
-                                                                CATEGORY_ROW_HEIGHT,
-                                                                Sense::click(),
-                                                                true,
-                                                            )
-                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                            .clicked()
-                                                            {
-                                                                self.create_category_for_game(&game_id);
-                                                            }
-                                                        });
-                                                        if let Some((category_name, source_rect)) = dragged_category_preview {
-                                                            if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
-                                                                let ghost_rect = egui::Rect::from_center_size(
-                                                                    pointer_pos + egui::vec2(6.0, 8.0),
-                                                                    egui::vec2(source_rect.width() + 18.0, source_rect.height()),
-                                                                );
-                                                                let painter = ui.ctx().layer_painter(egui::LayerId::new(
-                                                                    egui::Order::Tooltip,
-                                                                    egui::Id::new("dragging_batch_category_ghost"),
-                                                                ));
-                                                                painter.rect(
-                                                                    ghost_rect,
-                                                                    egui::CornerRadius::same(6),
-                                                                    Color32::from_rgba_premultiplied(44, 47, 52, 220),
-                                                                    egui::Stroke::new(1.5, Color32::from_rgb(214, 104, 58)),
-                                                                    egui::StrokeKind::Inside,
-                                                                );
-                                                                painter.text(
-                                                                    ghost_rect.left_center() + egui::vec2(8.0, 0.0),
-                                                                    egui::Align2::LEFT_CENTER,
-                                                                    clamp_category_label(&category_name),
-                                                                    egui::FontId::new(12.0, FontFamily::Proportional),
-                                                                    ui.visuals().text_color(),
-                                                                );
-                                                            }
-                                                        }
-                                                    });
-                                                let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-                                                if was_popup_open && !is_popup_open {
-                                                    self.finish_category_drag();
-                                                    self.category_rename_target_id = None;
-                                                    self.category_rename_name.clear();
-                                                } else if self.dragging_category_id.is_some()
-                                                    && !ui.ctx().input(|input| input.pointer.primary_down())
-                                                {
-                                                    self.finish_category_drag();
-                                                }
-                                                if self.dragging_category_id.is_some()
-                                                    && ui.ctx().input(|input| input.pointer.primary_down())
-                                                {
-                                                    ui.ctx().output_mut(|output| {
-                                                        output.cursor_icon = egui::CursorIcon::Grabbing;
-                                                    });
-                                                }
+                                                            .any(|id| id == &mod_entry.id)
+                                                    })
+                                                    .map(|mod_entry| {
+                                                        mod_entry.metadata.user.category_id.clone()
+                                                    })
+                                                    .collect();
+                                                let common_category_id = selected_category_ids
+                                                    .first()
+                                                    .filter(|first| {
+                                                        selected_category_ids
+                                                            .iter()
+                                                            .all(|category_id| category_id == *first)
+                                                    })
+                                                    .cloned()
+                                                    .flatten();
+                                                let all_uncategorized = !selected_category_ids.is_empty()
+                                                    && selected_category_ids.iter().all(Option::is_none);
+                                                let game_id = self
+                                                    .selected_game()
+                                                    .map(|game| game.definition.id.clone())
+                                                    .unwrap_or_default();
+                                                self.render_category_picker_popup(
+                                                    ui,
+                                                    &response,
+                                                    popup_id,
+                                                    &game_id,
+                                                    CategoryPickerTarget::Bulk {
+                                                        common_category_id: common_category_id.as_deref(),
+                                                        all_uncategorized,
+                                                    },
+                                                );
                                                 continue;
                                             }
                                             if response.clicked() {
@@ -2136,10 +2140,12 @@ impl HestiaApp {
 
                         let library_group_mode = self.state.library_group_mode;
                         let uncategorized_first = self.state.library_uncategorized_first;
-                        let category_sections = self
+                        let selected_game_id = self
                             .selected_game()
-                            .map(|game| self.categories_for_game(&game.definition.id))
+                            .map(|game| game.definition.id.clone())
                             .unwrap_or_default();
+                        let category_sections = self
+                            .categories_for_game(&selected_game_id);
                         let selected_mods_snapshot = self.selected_mods.clone();
 
                         let mut render_cards = |ui: &mut Ui,
@@ -2176,7 +2182,7 @@ impl HestiaApp {
                                             update_state,
                                             linked,
                                             modified_update_available,
-                                            _category_id,
+                                            category_id,
                                             category_label,
                                         ) = card;
                                         let selected = self
@@ -2582,6 +2588,7 @@ impl HestiaApp {
                                         .layout(egui::Layout::top_down_justified(egui::Align::Min))
                                         .width(156.0)
                                         .gap(0.0)
+                                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                                         .frame(
                                             egui::Frame::menu(ui.style())
                                                 .fill({
@@ -2661,6 +2668,13 @@ impl HestiaApp {
                                                         self.disable_mod_by_id(mod_id);
                                                         ui.close();
                                                     }
+                                                    self.render_mod_card_category_submenu(
+                                                        ui,
+                                                        mod_id,
+                                                        &selected_game_id,
+                                                        category_id.as_deref(),
+                                                        category_label,
+                                                    );
                                                     if ui
                                                         .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2679,6 +2693,13 @@ impl HestiaApp {
                                                         self.enable_or_restore_mod_by_id(mod_id);
                                                         ui.close();
                                                     }
+                                                    self.render_mod_card_category_submenu(
+                                                        ui,
+                                                        mod_id,
+                                                        &selected_game_id,
+                                                        category_id.as_deref(),
+                                                        category_label,
+                                                    );
                                                     if ui
                                                         .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2689,6 +2710,13 @@ impl HestiaApp {
                                                     }
                                                 }
                                                 ModStatus::Archived => {
+                                                    self.render_mod_card_category_submenu(
+                                                        ui,
+                                                        mod_id,
+                                                        &selected_game_id,
+                                                        category_id.as_deref(),
+                                                        category_label,
+                                                    );
                                                     if ui
                                                         .button(icon_text_sized(Icon::ArchiveRestore, "Restore", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
