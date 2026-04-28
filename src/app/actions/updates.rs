@@ -542,77 +542,6 @@ impl HestiaApp {
         false
     }
 
-    fn should_skip_exact_fileset_prompt(&self, mod_entry: &ModEntry) -> bool {
-        Self::should_show_local_change_update_prefs(mod_entry)
-            && mod_entry
-                .source
-                .as_ref()
-                .is_some_and(|source| source.file_set.skip_prompt_for_exact_file_set)
-    }
-
-    fn tracked_file_names(file_set: &FileSetRecipe) -> Vec<String> {
-        if !file_set.selected_files_meta.is_empty() {
-            file_set
-                .selected_files_meta
-                .iter()
-                .map(|file| file.file_name.clone())
-                .collect()
-        } else {
-            file_set.selected_file_names.clone()
-        }
-    }
-
-    fn tracked_file_keys(file_set: &FileSetRecipe) -> HashSet<String> {
-        if !file_set.selected_files_meta.is_empty() {
-            file_set
-                .selected_files_meta
-                .iter()
-                .map(|file| format!("id:{}", file.file_id))
-                .collect()
-        } else if !file_set.selected_file_ids.is_empty() {
-            file_set
-                .selected_file_ids
-                .iter()
-                .map(|id| format!("id:{id}"))
-                .collect()
-        } else {
-            file_set
-                .selected_file_names
-                .iter()
-                .map(|name| format!("name:{name}"))
-                .collect()
-        }
-    }
-
-    fn should_show_tracked_files(&self, mod_entry: &ModEntry) -> bool {
-        let Some(source) = mod_entry.source.as_ref() else {
-            return false;
-        };
-        let tracked_names = Self::tracked_file_names(&source.file_set);
-        if tracked_names.len() > 1 {
-            return true;
-        }
-        let Some(link) = source.gamebanana.as_ref() else {
-            return false;
-        };
-        let tracked_keys = Self::tracked_file_keys(&source.file_set);
-        if tracked_keys.is_empty() {
-            return false;
-        }
-        self.state.mods.iter().any(|other| {
-            other.root_path != mod_entry.root_path
-                && other
-                    .source
-                    .as_ref()
-                    .and_then(|other_source| other_source.gamebanana.as_ref())
-                    .is_some_and(|other_link| other_link.mod_id == link.mod_id)
-                && other.source.as_ref().is_some_and(|other_source| {
-                    let other_keys = Self::tracked_file_keys(&other_source.file_set);
-                    !other_keys.is_empty() && !tracked_keys.is_disjoint(&other_keys)
-                })
-        })
-    }
-
     fn configured_existing_target_choice(&self) -> Option<ConflictChoice> {
         match self.state.import_resolution {
             ImportResolution::Ask => None,
@@ -757,6 +686,7 @@ impl HestiaApp {
     fn finalize_install_after_refresh(&mut self, _job_id: u64, payload: PendingInstallFinalize) {
         let PendingInstallFinalize {
             installed_paths,
+            installed_candidate_labels,
             gb_profile,
             rel_paths,
             pending_meta,
@@ -794,7 +724,26 @@ impl HestiaApp {
         }
 
         for id in &newly_installed_ids {
-            self.apply_sync_metadata(id, pending_meta.clone(), gb_profile.clone(), rel_paths.clone());
+            let candidate_labels = self
+                .state
+                .mods
+                .iter()
+                .find(|m| m.id == *id)
+                .map(|m| {
+                    installed_candidate_labels
+                        .iter()
+                        .filter(|(path, _)| path == &m.root_path)
+                        .map(|(_, label)| label.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            self.apply_sync_metadata(
+                id,
+                pending_meta.clone(),
+                gb_profile.clone(),
+                rel_paths.clone(),
+                candidate_labels,
+            );
         }
 
         if let Some((target_mod_id, rename_to)) = post_install_rename {
@@ -878,6 +827,7 @@ impl HestiaApp {
         pending_meta: Option<PendingBrowseInstallMeta>,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
         rel_paths: Vec<String>,
+        selected_candidate_labels: Vec<String>,
     ) {
         let Some(meta) = pending_meta else { return; };
 
@@ -907,7 +857,7 @@ impl HestiaApp {
                     .iter()
                     .map(tracked_file_meta_from_mod_file)
                     .collect(),
-                skip_prompt_for_exact_file_set: source.file_set.skip_prompt_for_exact_file_set,
+                selected_candidate_labels: selected_candidate_labels.clone(),
             };
             source.history.downloaded_at = Some(now);
             source.history.installed_at = Some(now);

@@ -92,9 +92,15 @@ fn spawn_install_workers(
                             .cloned()
                             .unwrap_or_else(|| "mod".to_string());
                         let result = handle
-                            .spawn_blocking(move || -> Result<(Vec<PathBuf>, Vec<String>)> {
+                            .spawn_blocking(
+                                move || -> Result<(
+                                    Vec<PathBuf>,
+                                    Vec<(PathBuf, String)>,
+                                    Vec<String>,
+                                )> {
                                 fs::create_dir_all(&target_root)?;
                                 let mut installed_paths = Vec::new();
+                                let mut installed_candidate_labels = Vec::new();
                                 let mut target_cleaned = HashSet::new();
 
                                 for (i, &idx) in candidate_indices.iter().enumerate() {
@@ -148,18 +154,22 @@ fn spawn_install_workers(
                                         .ok_or_else(|| anyhow!("Import cancelled"))?
                                     };
                                     if !installed_paths.contains(&installed_path) {
-                                        installed_paths.push(installed_path);
+                                        installed_paths.push(installed_path.clone());
                                     }
+                                    installed_candidate_labels
+                                        .push((installed_path, candidate.label.clone()));
                                 }
 
-                                Ok((installed_paths, Vec::new()))
-                            })
+                                Ok((installed_paths, installed_candidate_labels, Vec::new()))
+                            },
+                            )
                             .await;
                         match result {
-                            Ok(Ok((installed_paths, rel_paths))) => {
+                            Ok(Ok((installed_paths, installed_candidate_labels, rel_paths))) => {
                                 let _ = tx.send(InstallEvent::InstallDone {
                                     job_id,
                                     installed_paths,
+                                    installed_candidate_labels,
                                     gb_profile,
                                     rel_paths,
                                 });

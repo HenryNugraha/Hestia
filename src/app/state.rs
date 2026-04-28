@@ -241,6 +241,7 @@ struct PendingImport {
 #[derive(Clone)]
 struct PendingInstallFinalize {
     installed_paths: Vec<PathBuf>,
+    installed_candidate_labels: Vec<(PathBuf, String)>,
     gb_profile: Option<Box<gamebanana::ProfileResponse>>,
     rel_paths: Vec<String>,
     pending_meta: Option<PendingBrowseInstallMeta>,
@@ -672,6 +673,7 @@ enum InstallEvent {
     InstallDone {
         job_id: u64,
         installed_paths: Vec<PathBuf>,
+        installed_candidate_labels: Vec<(PathBuf, String)>,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
         rel_paths: Vec<String>,
     },

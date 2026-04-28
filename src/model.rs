@@ -442,7 +442,7 @@ pub struct FileSetRecipe {
     #[serde(default)]
     pub selected_files_meta: Vec<TrackedFileMeta>,
     #[serde(default)]
-    pub skip_prompt_for_exact_file_set: bool,
+    pub selected_candidate_labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

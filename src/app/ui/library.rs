@@ -3890,15 +3890,6 @@ impl HestiaApp {
                                     let mut unlink_requested = false;
                                     let mut open_in_browse_id: Option<u64> = None;
                                     let mut copy_gb_id: Option<u64> = None;
-                                    let tracked_file_names = selected
-                                        .source
-                                        .as_ref()
-                                        .map(|source| Self::tracked_file_names(&source.file_set))
-                                        .unwrap_or_default();
-                                    let show_tracked_files =
-                                        self.should_show_tracked_files(&selected)
-                                            && !tracked_file_names.is_empty();
-
                                     if let Some(mod_entry) = self.selected_mod_mut() {
                                         let input_id = ui.make_persistent_id(("gb_link_input", &mod_entry.id));
                                         let mut input_str = ui.data_mut(|d| d.get_temp::<String>(input_id).unwrap_or_default());
@@ -4004,13 +3995,6 @@ impl HestiaApp {
                                         if show_prefs {
                                             ui.add_space(8.0);
                                             static_label(ui, RichText::new("Update Preferences:").size(12.0).color(Color32::from_gray(170)));
-                                            ui.add_enabled_ui(is_linked, |ui| {
-                                                ui.add_space(-6.0);
-                                                changed |= ui.checkbox(
-                                                    &mut source.file_set.skip_prompt_for_exact_file_set,
-                                                    "Skip prompt for exact file-set",
-                                                ).changed();
-                                            });
                                             let mut ignore_current_update = selected
                                                 .source
                                                 .as_ref()
@@ -4064,16 +4048,6 @@ impl HestiaApp {
                                                     let _ = xxmi::save_mod_metadata(mod_entry);
                                                 }
                                                 self.save_state();
-                                            }
-                                        }
-
-                                        if show_tracked_files {
-                                            ui.add_space(8.0);
-                                            static_label(ui, RichText::new("Tracked Files:").size(12.0).color(Color32::from_gray(170)));
-                                            ui.add_space(4.0);
-                                            for name in &tracked_file_names {
-                                                ui.add_space(-12.0);
-                                                static_label(ui, RichText::new(format!("• {name}")).size(11.0).color(Color32::from_gray(160)));
                                             }
                                         }
 

@@ -30,6 +30,7 @@ impl HestiaApp {
                 InstallEvent::InstallDone {
                     job_id,
                     installed_paths,
+                    installed_candidate_labels,
                     gb_profile,
                     rel_paths,
                 } => {
@@ -58,6 +59,7 @@ impl HestiaApp {
                         job_id,
                         PendingInstallFinalize {
                             installed_paths,
+                            installed_candidate_labels,
                             gb_profile,
                             rel_paths,
                             pending_meta,

@@ -85,6 +85,74 @@ impl HestiaApp {
             })
             .unwrap_or_else(|| "Imported Mod".to_string());
 
+        if update_folder_name.is_some() {
+            let tracked_labels = pending_meta
+                .as_ref()
+                .and_then(|meta| meta.update_target_mod_id.as_ref())
+                .and_then(|target_id| self.state.mods.iter().find(|m| m.id == *target_id))
+                .and_then(|mod_entry| mod_entry.source.as_ref())
+                .map(|source| source.file_set.selected_candidate_labels.clone())
+                .unwrap_or_default();
+            if !tracked_labels.is_empty() {
+                let mut candidate_indices = Vec::new();
+                for tracked_label in &tracked_labels {
+                    if let Some(index) = inspection
+                        .candidates
+                        .iter()
+                        .position(|candidate| candidate.label == *tracked_label)
+                    {
+                        candidate_indices.push(index);
+                    } else {
+                        candidate_indices.clear();
+                        break;
+                    }
+                }
+                candidate_indices.sort();
+                candidate_indices.dedup();
+                if !candidate_indices.is_empty() && candidate_indices.len() == tracked_labels.len() {
+                    let Some(game) = self
+                        .state
+                        .games
+                        .iter()
+                        .find(|game| game.definition.id == inspection.game_id)
+                        .cloned()
+                    else {
+                        self.pending_imports.pop_front();
+                        return;
+                    };
+                    let target_root = game
+                        .mods_path(self.state.use_default_mods_path)
+                        .unwrap_or_default();
+                    let preferred = update_folder_name
+                        .clone()
+                        .unwrap_or_else(|| "Imported Mod".to_string());
+                    let preferred_names = vec![preferred.clone(); candidate_indices.len()];
+                    if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
+                        self.pending_imports.pop_front();
+                        self.commit_import(
+                            job_id,
+                            candidate_indices,
+                            choice,
+                            target_root,
+                            pending.gb_profile.clone(),
+                            preferred_names,
+                        );
+                    } else {
+                        self.pending_imports.pop_front();
+                        self.pending_conflicts.push_back(PendingConflict {
+                            job_id,
+                            candidate_indices,
+                            preferred_name: preferred.clone(),
+                            existing_target: target_root.join(&preferred),
+                            target_root,
+                            gb_profile: pending.gb_profile.clone(),
+                        });
+                    }
+                    return;
+                }
+            }
+        }
+
         let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
         let window = egui::Window::new("Missing .ini")
             .id(egui::Id::new(("import_review", job_id)))

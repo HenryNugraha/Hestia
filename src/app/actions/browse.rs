@@ -1156,9 +1156,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             if !newer_files.is_empty() {
                 let mut newer_selected = newer_files.clone();
                 newer_selected.sort_by_key(|file| std::cmp::Reverse(file.date_added));
-                if self.should_skip_exact_fileset_prompt(&existing_mod)
-                    || !Self::should_show_local_change_update_prefs(&existing_mod)
-                {
+                if !Self::should_show_local_change_update_prefs(&existing_mod) {
                     let selected_set = vec![newer_selected[0].clone()];
                     self.queue_browse_download(
                         pending.game_id,
@@ -1208,9 +1206,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 }
 
                 if !matches.is_empty() {
-                    if self.should_skip_exact_fileset_prompt(&existing_mod)
-                        || !Self::should_show_local_change_update_prefs(&existing_mod)
-                    {
+                    if !Self::should_show_local_change_update_prefs(&existing_mod) {
                         let selected_set = matches.clone();
                         for (i, file) in matches.into_iter().enumerate() {
                             let tid = if i == 0 { Some(pending.task_id) } else { None };
