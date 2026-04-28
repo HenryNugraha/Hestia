@@ -17,7 +17,7 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::model::{
     AfterInstallBehavior, AppState, BrowseSort, CacheSizeTier, DeleteBehavior, GameInstall,
     ImportResolution, LaunchBehavior, LibraryFolder, LibraryGroupMode, MetadataVisibility,
-    MOD_META_DIR, MOD_META_FILE, ModCategory, ModStatusTargets, OperationLogEntry,
+    MOD_META_DIR, MOD_META_FILE, ModCategory, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
     PortableModState, SearchSort, TaskEntry, StagedAppUpdate, TaskKind, TaskStatus, TasksLayout,
     TasksOrder, ToolEntry, UnsafeContentMode,
 };
@@ -111,6 +111,8 @@ struct AppPreferences {
     update_check_statuses: ModStatusTargets,
     #[serde(default)]
     auto_update_statuses: ModStatusTargets,
+    #[serde(default)]
+    modified_update_behavior: ModifiedUpdateBehavior,
     #[serde(default = "serde_default_true")]
     always_replace_on_update: bool,
     #[serde(default = "serde_default_true")]
@@ -160,6 +162,7 @@ impl From<&AppState> for AppPreferences {
             categories: state.categories.clone(),
             update_check_statuses: state.update_check_statuses,
             auto_update_statuses: state.auto_update_statuses,
+            modified_update_behavior: state.modified_update_behavior,
             always_replace_on_update: state.always_replace_on_update,
             automatically_check_for_update: state.automatically_check_for_update,
             staged_app_update: state.staged_app_update.clone(),
@@ -299,6 +302,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     initialize_tool_orders(&mut state, loaded_version);
     state.update_check_statuses = prefs.update_check_statuses;
     state.auto_update_statuses = prefs.auto_update_statuses;
+    state.modified_update_behavior = prefs.modified_update_behavior;
     state.always_replace_on_update = prefs.always_replace_on_update;
     state.automatically_check_for_update = prefs.automatically_check_for_update;
     state.staged_app_update = prefs.staged_app_update;

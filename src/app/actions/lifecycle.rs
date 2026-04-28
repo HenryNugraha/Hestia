@@ -750,7 +750,7 @@ impl HestiaApp {
         }
     }
 
-    fn launch_selected_game(&mut self, modded: bool) {
+    fn launch_selected_game(&mut self, ctx: &egui::Context, modded: bool) {
         let Some(game) = self.selected_game().cloned() else {
             self.report_error_message("game not selected", Some("Launch failed"));
             return;
@@ -793,6 +793,15 @@ impl HestiaApp {
             Ok(()) => {
                 let label = if modded { "Modded" } else { "Vanilla" };
                 self.set_message_ok(format!("Launched {} ({label})", game.definition.name));
+                match self.state.launch_behavior {
+                    LaunchBehavior::DoNothing => {}
+                    LaunchBehavior::Minimize => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+                    LaunchBehavior::Exit => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
             }
             Err(err) => self.report_error(err, Some("Launch failed")),
         }
@@ -883,6 +892,13 @@ impl HestiaApp {
                 if !self.show_up_to_date_mods && item.update_state == ModUpdateState::UpToDate {
                     return false;
                 }
+                let has_modified_update_available = Self::has_modified_update_available(item);
+                if has_modified_update_available
+                    && !self.show_update_available_mods
+                    && !self.show_modified_locally_mods
+                {
+                    return false;
+                }
                 if !self.show_update_available_mods
                     && item.update_state == ModUpdateState::UpdateAvailable
                 {
@@ -895,6 +911,7 @@ impl HestiaApp {
                 }
                 if !self.show_modified_locally_mods
                     && item.update_state == ModUpdateState::ModifiedLocally
+                    && !has_modified_update_available
                 {
                     return false;
                 }
@@ -1330,6 +1347,7 @@ impl HestiaApp {
         let game_id = self.selected_game().map(|g| g.definition.id.clone());
         match xxmi::refresh_state(&mut self.state, game_id.as_deref()) {
             Ok(()) => {
+                self.restore_imported_mod_categories(game_id.as_deref());
                 self.invalidate_stale_mod_textures(&old_ts);
                 self.backfill_missing_mod_images(game_id.as_deref());
                 self.sync_tools_for_selected_game();
@@ -1399,6 +1417,7 @@ impl HestiaApp {
 
         match xxmi::refresh_state(&mut self.state, game_id.as_deref()) {
             Ok(()) => {
+                self.restore_imported_mod_categories(game_id.as_deref());
                 let after = self.capture_reload_snapshots(game_id.as_deref());
                 let summary = self.build_reload_summary(&before, &after);
                 self.invalidate_stale_mod_textures(&old_ts);

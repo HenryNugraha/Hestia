@@ -22,6 +22,53 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn update_button_text(modified: bool) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.append(
+        "Update",
+        0.0,
+        TextFormat {
+            font_id: egui::FontId::proportional(15.0),
+            color: Color32::from_rgb(247, 222, 204),
+            ..Default::default()
+        },
+    );
+    if modified {
+        job.append(
+            "\n(Modified)",
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(9.0),
+                color: Color32::from_rgb(238, 196, 168),
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
+fn paint_modified_update_badge(ui: &mut Ui, button_rect: egui::Rect) {
+    let badge_size = Vec2::new(45.0, 14.0);
+    let badge_rect = egui::Rect::from_min_size(
+        button_rect.right_top() - egui::vec2(badge_size.x - 3.0, 3.0),
+        badge_size,
+    );
+    ui.painter().rect(
+        badge_rect,
+        egui::CornerRadius::same(4),
+        Color32::from_rgb(94, 57, 42),
+        egui::Stroke::new(1.0, Color32::from_rgb(180, 78, 35)),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Modified",
+        egui::FontId::proportional(8.0),
+        Color32::from_rgb(238, 196, 168),
+    );
+}
+
 impl HestiaApp {
     fn paint_category_popup_hover(ui: &mut Ui, response: &egui::Response) {
         if response.hovered() {
@@ -138,6 +185,123 @@ impl HestiaApp {
         }
     }
 
+    fn restore_imported_mod_categories(&mut self, target_game_id: Option<&str>) -> bool {
+        let mut changed = false;
+        for index in 0..self.state.mods.len() {
+            if target_game_id.is_some_and(|game_id| self.state.mods[index].game_id != game_id) {
+                continue;
+            }
+
+            let category_name = self.state.mods[index].metadata.user.category.trim().to_string();
+            if category_name.is_empty() {
+                continue;
+            }
+
+            let game_id = self.state.mods[index].game_id.clone();
+            let current_category_id = self.state.mods[index].metadata.user.category_id.clone();
+            let current_category_valid = current_category_id.as_ref().is_some_and(|category_id| {
+                self.state
+                    .categories
+                    .iter()
+                    .any(|category| category.id == *category_id && category.game_id == game_id)
+            });
+            if current_category_valid {
+                continue;
+            }
+
+            let category_id = if let Some(existing) = self
+                .state
+                .categories
+                .iter()
+                .find(|category| {
+                    category.game_id == game_id
+                        && category.name.eq_ignore_ascii_case(category_name.as_str())
+                })
+            {
+                existing.id.clone()
+            } else {
+                let id_available = current_category_id.as_ref().is_some_and(|category_id| {
+                    !self
+                        .state
+                        .categories
+                        .iter()
+                        .any(|category| category.id == *category_id)
+                });
+                let category_id = if id_available {
+                    current_category_id.unwrap_or_default()
+                } else {
+                    Uuid::new_v4().to_string()
+                };
+                let next_order = self
+                    .state
+                    .categories
+                    .iter()
+                    .filter(|category| category.game_id == game_id)
+                    .map(|category| category.order)
+                    .max()
+                    .map_or(0, |order| order.saturating_add(1));
+                self.state.categories.push(ModCategory {
+                    id: category_id.clone(),
+                    game_id: game_id.clone(),
+                    name: category_name.clone(),
+                    order: next_order,
+                });
+                changed = true;
+                category_id
+            };
+
+            let mod_entry = &mut self.state.mods[index];
+            if mod_entry.metadata.user.category_id.as_deref() != Some(category_id.as_str())
+                || mod_entry.metadata.user.category != category_name
+            {
+                mod_entry.metadata.user.category_id = Some(category_id);
+                mod_entry.metadata.user.category = category_name;
+                let _ = xxmi::save_mod_metadata(mod_entry);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn has_modified_update_available(mod_entry: &ModEntry) -> bool {
+        if !matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally) {
+            return false;
+        }
+        let Some(source) = mod_entry.source.as_ref() else {
+            return false;
+        };
+        if source.ignore_update_always {
+            return false;
+        }
+        let Some(profile) = source_profile_for_compare(source) else {
+            return false;
+        };
+        let local_sync_ts = selected_file_baseline_ts(&source.file_set)
+            .or(profile.date_updated.or(Some(profile.date_modified)));
+        if !matches!(
+            determine_file_set_update_state(&source.file_set, local_sync_ts, &profile),
+            ModUpdateState::UpdateAvailable
+        ) {
+            return false;
+        }
+        let current_signature = compute_update_signature(&source.file_set, &profile);
+        !source
+            .ignored_update_signature
+            .as_ref()
+            .is_some_and(|ignored| current_signature.as_ref() == Some(ignored))
+    }
+
+    fn mod_update_badge(mod_entry: &ModEntry) -> (&'static str, Color32) {
+        if Self::has_modified_update_available(mod_entry) {
+            (
+                "Modified & Update Available",
+                Color32::from_rgb(196, 166, 126),
+            )
+        } else {
+            mod_update_state_badge(mod_entry.update_state)
+        }
+    }
+
     fn move_category_order_to_slot(&mut self, category_id: &str, slot_index: usize) -> bool {
         let Some(game_id) = self
             .state
@@ -175,6 +339,20 @@ impl HestiaApp {
         self.compact_category_order_for_game(&game_id);
         self.save_state();
         true
+    }
+
+    fn finish_category_drag(&mut self) -> bool {
+        let moved = if let (Some(dragging_id), Some(target_index)) = (
+            self.dragging_category_id.clone(),
+            self.dragging_category_target_index,
+        ) {
+            self.move_category_order_to_slot(&dragging_id, target_index)
+        } else {
+            false
+        };
+        self.dragging_category_id = None;
+        self.dragging_category_target_index = None;
+        moved
     }
 
     fn assign_mod_category(&mut self, mod_id: &str, category_id: Option<String>) {
@@ -529,14 +707,7 @@ impl HestiaApp {
                                     .as_ref()
                                     .is_some_and(|dragging_id| dragging_id == &category.id)
                             {
-                                if let (Some(dragging_id), Some(target_index)) = (
-                                    self.dragging_category_id.clone(),
-                                    self.dragging_category_target_index,
-                                ) {
-                                    self.move_category_order_to_slot(&dragging_id, target_index);
-                                }
-                                self.dragging_category_id = None;
-                                self.dragging_category_target_index = None;
+                                self.finish_category_drag();
                             }
                             if row_response
                                 .clone()
@@ -580,14 +751,38 @@ impl HestiaApp {
                 if self.dragging_category_id.is_some()
                     && ui.input(|input| input.pointer.primary_down())
                     && !category_row_rects.is_empty()
+                    && let Some(pointer_pos) = pointer_pos
+                {
+                    let left = category_row_rects
+                        .iter()
+                        .map(|rect| rect.left())
+                        .fold(f32::INFINITY, f32::min);
+                    let right = category_row_rects
+                        .iter()
+                        .map(|rect| rect.right())
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let top = category_row_rects[0].top();
+                    let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
+                    if pointer_pos.x >= left && pointer_pos.x <= right {
+                        if pointer_pos.y <= top {
+                            self.dragging_category_target_index = Some(0);
+                            ui.ctx().request_repaint();
+                        } else if pointer_pos.y >= bottom {
+                            self.dragging_category_target_index = Some(category_row_rects.len());
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                }
+                if self.dragging_category_id.is_some()
+                    && ui.input(|input| input.pointer.primary_down())
+                    && !category_row_rects.is_empty()
                     && let Some(target_index) = self.dragging_category_target_index
                 {
                     let clamped_index = target_index.min(category_row_rects.len());
                     let line_y = if clamped_index == 0 {
-                        category_row_rects[0].top() - ui.spacing().item_spacing.y * 0.5
+                        category_row_rects[0].top() + 1.0
                     } else if clamped_index >= category_row_rects.len() {
-                        category_row_rects[category_row_rects.len() - 1].bottom()
-                            + ui.spacing().item_spacing.y * 0.5
+                        category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
                     } else {
                         (category_row_rects[clamped_index - 1].bottom()
                             + category_row_rects[clamped_index].top())
@@ -676,15 +871,13 @@ impl HestiaApp {
             });
         let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         if was_popup_open && !is_popup_open {
+            self.finish_category_drag();
             self.category_rename_target_id = None;
             self.category_rename_name.clear();
-            self.dragging_category_id = None;
-            self.dragging_category_target_index = None;
         } else if self.dragging_category_id.is_some()
             && !ui.ctx().input(|input| input.pointer.primary_down())
         {
-            self.dragging_category_id = None;
-            self.dragging_category_target_index = None;
+            self.finish_category_drag();
         }
         if self.dragging_category_id.is_some()
             && ui.ctx().input(|input| input.pointer.primary_down())
@@ -853,6 +1046,7 @@ impl HestiaApp {
                         .and_then(|s| s.gamebanana.as_ref())
                         .map(|g| g.mod_id > 0 || !g.url.trim().is_empty())
                         .unwrap_or(false),
+                    Self::has_modified_update_available(mod_entry),
                     mod_entry.metadata.user.category_id.clone(),
                     self.mod_category_label(mod_entry),
                 )
@@ -863,14 +1057,17 @@ impl HestiaApp {
         let mut has_disabled = false;
         let mut has_archived = false;
         let mut has_update_eligible = false;
-        for (mod_id, _, _, _, _, status, _, _, update_state, _, _, _) in &cards {
+        for (mod_id, _, _, _, _, status, _, _, update_state, _, modified_update_available, _, _) in &cards {
             if self.selected_mods.contains(mod_id) {
                 match status {
                     ModStatus::Active => has_active = true,
                     ModStatus::Disabled => has_disabled = true,
                     ModStatus::Archived => has_archived = true,
                 }
-                if matches!(update_state, ModUpdateState::UpdateAvailable) {
+                if matches!(update_state, ModUpdateState::UpdateAvailable)
+                    || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                        && *modified_update_available)
+                {
                     has_update_eligible = true;
                 }
             }
@@ -1576,14 +1773,7 @@ impl HestiaApp {
                                                                             .as_ref()
                                                                             .is_some_and(|dragging_id| dragging_id == &category.id)
                                                                     {
-                                                                        if let (Some(dragging_id), Some(target_index)) = (
-                                                                            self.dragging_category_id.clone(),
-                                                                            self.dragging_category_target_index,
-                                                                        ) {
-                                                                            self.move_category_order_to_slot(&dragging_id, target_index);
-                                                                        }
-                                                                        self.dragging_category_id = None;
-                                                                        self.dragging_category_target_index = None;
+                                                                        self.finish_category_drag();
                                                                     }
                                                                     if row_response
                                                                         .clone()
@@ -1627,14 +1817,38 @@ impl HestiaApp {
                                                         if self.dragging_category_id.is_some()
                                                             && ui.input(|input| input.pointer.primary_down())
                                                             && !category_row_rects.is_empty()
+                                                            && let Some(pointer_pos) = pointer_pos
+                                                        {
+                                                            let left = category_row_rects
+                                                                .iter()
+                                                                .map(|rect| rect.left())
+                                                                .fold(f32::INFINITY, f32::min);
+                                                            let right = category_row_rects
+                                                                .iter()
+                                                                .map(|rect| rect.right())
+                                                                .fold(f32::NEG_INFINITY, f32::max);
+                                                            let top = category_row_rects[0].top();
+                                                            let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
+                                                            if pointer_pos.x >= left && pointer_pos.x <= right {
+                                                                if pointer_pos.y <= top {
+                                                                    self.dragging_category_target_index = Some(0);
+                                                                    ui.ctx().request_repaint();
+                                                                } else if pointer_pos.y >= bottom {
+                                                                    self.dragging_category_target_index = Some(category_row_rects.len());
+                                                                    ui.ctx().request_repaint();
+                                                                }
+                                                            }
+                                                        }
+                                                        if self.dragging_category_id.is_some()
+                                                            && ui.input(|input| input.pointer.primary_down())
+                                                            && !category_row_rects.is_empty()
                                                             && let Some(target_index) = self.dragging_category_target_index
                                                         {
                                                             let clamped_index = target_index.min(category_row_rects.len());
                                                             let line_y = if clamped_index == 0 {
-                                                                category_row_rects[0].top() - ui.spacing().item_spacing.y * 0.5
+                                                                category_row_rects[0].top() + 1.0
                                                             } else if clamped_index >= category_row_rects.len() {
-                                                                category_row_rects[category_row_rects.len() - 1].bottom()
-                                                                    + ui.spacing().item_spacing.y * 0.5
+                                                                category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
                                                             } else {
                                                                 (category_row_rects[clamped_index - 1].bottom()
                                                                     + category_row_rects[clamped_index].top())
@@ -1719,15 +1933,13 @@ impl HestiaApp {
                                                     });
                                                 let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
                                                 if was_popup_open && !is_popup_open {
+                                                    self.finish_category_drag();
                                                     self.category_rename_target_id = None;
                                                     self.category_rename_name.clear();
-                                                    self.dragging_category_id = None;
-                                                    self.dragging_category_target_index = None;
                                                 } else if self.dragging_category_id.is_some()
                                                     && !ui.ctx().input(|input| input.pointer.primary_down())
                                                 {
-                                                    self.dragging_category_id = None;
-                                                    self.dragging_category_target_index = None;
+                                                    self.finish_category_drag();
                                                 }
                                                 if self.dragging_category_id.is_some()
                                                     && ui.ctx().input(|input| input.pointer.primary_down())
@@ -1943,6 +2155,7 @@ impl HestiaApp {
                                 bool,
                                 ModUpdateState,
                                 bool,
+                                bool,
                                 Option<String>,
                                 String,
                             ),
@@ -1962,6 +2175,7 @@ impl HestiaApp {
                                             unsafe_content,
                                             update_state,
                                             linked,
+                                            modified_update_available,
                                             _category_id,
                                             category_label,
                                         ) = card;
@@ -2241,20 +2455,24 @@ impl HestiaApp {
                                                                     ),
                                                                     |ui| {
                                                                         if *linked {
-                                                                            if matches!(update_state, ModUpdateState::UpdateAvailable) {
+                                                                            if matches!(update_state, ModUpdateState::UpdateAvailable)
+                                                                                || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                                                                                    && *modified_update_available)
+                                                                            {
                                                                                 ui.spacing_mut().button_padding.y = 4.0;
                                                                                 let resp = ui.add(
                                                                                     egui::Button::new(
-                                                                                        RichText::new("Update")
-                                                                                            .size(15.0)
-                                                                                            .color(Color32::from_rgb(247, 222, 204)),
+                                                                                        update_button_text(false),
                                                                                     )
                                                                                     .fill(Color32::from_rgb(180, 78, 35))
                                                                                     .corner_radius(egui::CornerRadius::same(3))
-                                                                                    .min_size(Vec2::new(56.0, 4.0)),
+                                                                                    .min_size(Vec2::new(64.0, 4.0)),
                                                                                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                                                                                 if resp.clicked() {
                                                                                     self.queue_update_apply(mod_id);
+                                                                                }
+                                                                                if *modified_update_available {
+                                                                                    paint_modified_update_badge(ui, resp.rect);
                                                                                 }
                                                                             } else {
                                                                                 let (txt, clr) = match update_state {
@@ -2407,7 +2625,9 @@ impl HestiaApp {
                                             ui.separator();
                                             ui.add_space(-2.0);
                                             if *linked
-                                                && matches!(update_state, ModUpdateState::UpdateAvailable)
+                                                && (matches!(update_state, ModUpdateState::UpdateAvailable)
+                                                    || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                                                        && *modified_update_available))
                                             {
                                                 if ui
                                                     .add(
@@ -2535,14 +2755,20 @@ impl HestiaApp {
                                 }
                             }
                             LibraryGroupMode::Category => {
-                                let has_categorized = cards.iter().any(|card| card.10.is_some());
+                                let has_categorized = cards.iter().any(|card| {
+                                    card.11.as_ref().is_some_and(|category_id| {
+                                        category_sections
+                                            .iter()
+                                            .any(|category| category.id == *category_id)
+                                    })
+                                });
                                 if !has_categorized {
                                     render_cards(ui, cards.iter().collect());
                                 } else {
                                     let category_color = Color32::from_rgb(176, 198, 218);
                                     let mut rendered_category_ids = Vec::new();
                                     let uncategorized_cards: Vec<_> =
-                                        cards.iter().filter(|card| card.10.is_none()).collect();
+                                        cards.iter().filter(|card| card.11.is_none()).collect();
                                     if uncategorized_first && !uncategorized_cards.is_empty() {
                                         let response = render_section_label(
                                             ui,
@@ -2565,7 +2791,7 @@ impl HestiaApp {
                                     for category in category_sections {
                                         let section_cards: Vec<_> = cards
                                             .iter()
-                                            .filter(|card| card.10.as_deref() == Some(category.id.as_str()))
+                                            .filter(|card| card.11.as_deref() == Some(category.id.as_str()))
                                             .collect();
                                         if section_cards.is_empty() {
                                             continue;
@@ -2593,7 +2819,7 @@ impl HestiaApp {
                                         let fallback_uncategorized_cards: Vec<_> = cards
                                             .iter()
                                             .filter(|card| {
-                                                card.10.as_ref().is_none_or(|category_id| {
+                                                card.11.as_ref().is_none_or(|category_id| {
                                                     !rendered_category_ids
                                                         .iter()
                                                         .any(|rendered_id| rendered_id == category_id)
@@ -2812,7 +3038,7 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
                         ui.add_space(-4.0);
-                        let (update_text, update_color) = mod_update_state_badge(selected.update_state);
+                        let (update_text, update_color) = Self::mod_update_badge(&selected);
                         static_label(ui, RichText::new(update_text).size(12.0).color(update_color));
                     }
                     ui.add_space(-4.0);
@@ -2823,13 +3049,22 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 ui.horizontal(|ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if matches!(selected.update_state, ModUpdateState::UpdateAvailable) {
-                            if ui.add(
-                                egui::Button::new(icon_text_sized(Icon::ClockPlus, "Update", 13.0, 13.0))
+                        let modified_update_available = Self::has_modified_update_available(&selected);
+                        if matches!(selected.update_state, ModUpdateState::UpdateAvailable)
+                            || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                                && modified_update_available)
+                        {
+                            let update_response = ui.add(
+                                egui::Button::new(update_button_text(false))
                                     .fill(Color32::from_rgb(180, 78, 35))
+                                    .min_size(Vec2::new(78.0, 0.0))
                                     .corner_radius(egui::CornerRadius::same(6)),
-                            ).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if update_response.clicked() {
                                 self.queue_update_apply(&selected.id);
+                            }
+                            if modified_update_available {
+                                paint_modified_update_badge(ui, update_response.rect);
                             }
                         }
                         let use_default_path = self.state.use_default_mods_path;
@@ -3211,7 +3446,7 @@ impl HestiaApp {
                                         .unwrap_or(false);
                                     if linked {
                                         let (update_text, update_color) =
-                                            mod_update_state_badge(selected.update_state);
+                                            Self::mod_update_badge(&selected);
                                         static_label(
                                             ui,
                                             RichText::new(format!("{update_text} ({age})"))
@@ -3654,6 +3889,7 @@ impl HestiaApp {
                                     let mut link_and_sync_id: Option<u64> = None;
                                     let mut unlink_requested = false;
                                     let mut open_in_browse_id: Option<u64> = None;
+                                    let mut copy_gb_id: Option<u64> = None;
                                     let tracked_file_names = selected
                                         .source
                                         .as_ref()
@@ -3672,7 +3908,22 @@ impl HestiaApp {
                                         let is_linked = gb_id > 0;
 
                                         if is_linked {
-                                            static_label(ui, RichText::new(format!("GameBanana ID: {gb_id}")).size(13.0).strong());
+                                            let gb_id_response = ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(format!("GameBanana ID: {gb_id}"))
+                                                        .size(13.0)
+                                                        .strong(),
+                                                )
+                                                .selectable(false)
+                                                .sense(Sense::click()),
+                                            );
+                                            if gb_id_response
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .on_hover_text("Copy GameBanana ID")
+                                                .clicked()
+                                            {
+                                                copy_gb_id = Some(gb_id);
+                                            }
                                             if let Some(ts) = source.history.updated_at {
                                                 ui.add_space(-8.0);
                                                 static_label(
@@ -3749,52 +4000,52 @@ impl HestiaApp {
                                             });
                                         }
 
-                                        let show_prefs = is_linked && Self::should_show_local_change_update_prefs(&selected);
-                                        let show_ignore_current_update = is_linked
-                                            && (
-                                                matches!(selected.update_state, ModUpdateState::UpdateAvailable)
-                                                || selected
-                                                    .source
-                                                    .as_ref()
-                                                    .and_then(|source| source.ignored_update_signature.as_ref())
-                                                    .is_some()
-                                            );
+                                        let show_prefs = is_linked;
                                         if show_prefs {
                                             ui.add_space(8.0);
                                             static_label(ui, RichText::new("Update Preferences:").size(12.0).color(Color32::from_gray(170)));
                                             ui.add_enabled_ui(is_linked, |ui| {
-                                                ui.add_space(-6.0);
-                                                changed |= ui.checkbox(&mut source.prefs.auto_update, "Auto-apply updates").changed();
-                                                ui.add_space(-6.0);
-                                                changed |= ui.checkbox(&mut source.prefs.auto_replace, "Auto-replace on update").changed();
                                                 ui.add_space(-6.0);
                                                 changed |= ui.checkbox(
                                                     &mut source.file_set.skip_prompt_for_exact_file_set,
                                                     "Skip prompt for exact file-set",
                                                 ).changed();
                                             });
-                                        }
-                                        if show_ignore_current_update {
-                                            if !show_prefs {
-                                                ui.add_space(8.0);
-                                                static_label(ui, RichText::new("Update Preferences:").size(12.0).color(Color32::from_gray(170)));
-                                            }
                                             let mut ignore_current_update = selected
                                                 .source
                                                 .as_ref()
                                                 .and_then(|source| source.ignored_update_signature.as_ref())
                                                 .is_some();
+                                            let mut ignore_update_always = source.ignore_update_always;
+                                            if ignore_current_update && ignore_update_always {
+                                                ignore_current_update = false;
+                                                source.ignored_update_signature = None;
+                                                changed = true;
+                                            }
                                             ui.add_space(-6.0);
-                                            let ignore_response = ui.checkbox(&mut ignore_current_update, "Ignore current update");
-                                            ignore_response.clone().on_hover_text(
-                                                "Only applies for the current mod version.\nOnce new version is available, will automatically uncheck and process the update normally."
+                                            let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
+                                            ignore_once_response.clone().on_hover_text(
+                                                "Once a newer version is available, will automatically uncheck and process the update normally."
                                             );
-                                            if ignore_response.changed() {
+                                            ui.add_space(-6.0);
+                                            let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
+                                            ignore_always_response.clone().on_hover_text(
+                                                "Indefinitely overrides this mod's status to \"Up to Date\" until unchecked."
+                                            );
+                                            if ignore_once_response.changed() || ignore_always_response.changed() {
                                                 let selected_id = selected.id.clone();
-                                                if ignore_current_update {
+                                                if ignore_update_always {
+                                                    source.ignore_update_always = true;
+                                                    source.ignored_update_signature = None;
+                                                    mod_entry.update_state = ModUpdateState::UpToDate;
+                                                    let cloned = mod_entry.clone();
+                                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                                    self.cancel_update_process_for_mod(&cloned);
+                                                } else if ignore_current_update {
                                                     if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
                                                         let current_signature = current_update_signature_for_mod(mod_entry);
                                                         if let Some(source) = mod_entry.source.as_mut() {
+                                                            source.ignore_update_always = false;
                                                             source.ignored_update_signature = current_signature;
                                                         }
                                                         mod_entry.update_state = ModUpdateState::UpToDate;
@@ -3804,6 +4055,7 @@ impl HestiaApp {
                                                     }
                                                 } else if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
                                                     if let Some(source) = mod_entry.source.as_mut() {
+                                                        source.ignore_update_always = false;
                                                         source.ignored_update_signature = None;
                                                     }
                                                     if let Some(raw_state) = compute_raw_update_state(mod_entry) {
@@ -3830,6 +4082,10 @@ impl HestiaApp {
 
                                     if let Some(id) = open_in_browse_id {
                                         self.open_linked_mod_in_browse(id);
+                                    }
+                                    if let Some(id) = copy_gb_id {
+                                        ui.ctx().copy_text(id.to_string());
+                                        self.set_message_ok("GameBanana ID copied");
                                     }
                                     if unlink_requested {
                                         if let Some(mod_entry) = self.selected_mod_mut() {

@@ -40,7 +40,7 @@ use crate::{
         UnsafeContentMode, CacheSizeTier, MetadataVisibility, ModSourceData, GameBananaLink,
         GameBananaSnapshot, GameBananaFileMeta, FileSetRecipe, TrackedFileMeta,
         IgnoredUpdateSignature, LibraryGroupMode, LibrarySort, ModCategory,
-        ModUpdateState, ModStatusTargets, StagedAppUpdate, MOD_META_DIR, BrowseSort, SearchSort,
+        ModUpdateState, ModStatusTargets, ModifiedUpdateBehavior, StagedAppUpdate, MOD_META_DIR, BrowseSort, SearchSort,
     },
     persistence::{self, PortablePaths},
 };

@@ -88,6 +88,8 @@ pub struct AppState {
     pub update_check_statuses: ModStatusTargets,
     #[serde(default)]
     pub auto_update_statuses: ModStatusTargets,
+    #[serde(default)]
+    pub modified_update_behavior: ModifiedUpdateBehavior,
     #[serde(default = "serde_default_true")]
     pub always_replace_on_update: bool,
     #[serde(default = "serde_default_true")]
@@ -141,6 +143,7 @@ impl Default for AppState {
             library_uncategorized_first: false,
             update_check_statuses: ModStatusTargets::default(),
             auto_update_statuses: ModStatusTargets::default(),
+            modified_update_behavior: ModifiedUpdateBehavior::default(),
             always_replace_on_update: true,
             automatically_check_for_update: true,
             staged_app_update: None,
@@ -181,6 +184,14 @@ impl Default for ModStatusTargets {
             archived: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ModifiedUpdateBehavior {
+    Yes,
+    #[default]
+    ShowButton,
+    HideButton,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,6 +386,8 @@ pub struct ModSourceData {
     pub prefs: UpdatePrefs,
     #[serde(default)]
     pub ignored_update_signature: Option<IgnoredUpdateSignature>,
+    #[serde(default)]
+    pub ignore_update_always: bool,
     pub history: InstallHistory,
     pub baseline_content_mtime: Option<DateTime<Utc>>,
     pub baseline_ini_hash: Option<String>,
@@ -448,10 +461,7 @@ pub struct IgnoredUpdateSignature {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UpdatePrefs {
-    pub auto_update: bool,
-    pub auto_replace: bool,
-}
+pub struct UpdatePrefs {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InstallHistory {

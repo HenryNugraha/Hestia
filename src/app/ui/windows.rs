@@ -1332,6 +1332,36 @@ impl HestiaApp {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
+                            static_label(ui, "Also update mods that have been modified:");
+                            ui.add_space(-4.0);
+                            let modified_update_behavior = self.state.modified_update_behavior;
+                            egui::ComboBox::from_id_salt("modified_update_behavior")
+                                .selected_text(match modified_update_behavior {
+                                    ModifiedUpdateBehavior::Yes => "Yes",
+                                    ModifiedUpdateBehavior::ShowButton => "No, but show Update button",
+                                    ModifiedUpdateBehavior::HideButton => "No, and hide Update button",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut self.state.modified_update_behavior,
+                                        ModifiedUpdateBehavior::Yes,
+                                        "Yes",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.state.modified_update_behavior,
+                                        ModifiedUpdateBehavior::ShowButton,
+                                        "No, but show Update button",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.state.modified_update_behavior,
+                                        ModifiedUpdateBehavior::HideButton,
+                                        "No, and hide Update button",
+                                    );
+                                });
+                            if self.state.modified_update_behavior != modified_update_behavior {
+                                should_save = true;
+                            }
+                            ui.add_space(8.0);
                             static_label(ui, "When installing an already exist mod:");
                             ui.add_space(-4.0);
                             let import_resolution = self.state.import_resolution;

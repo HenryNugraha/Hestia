@@ -104,6 +104,12 @@ fn apply_ignored_update_override(
     raw_state: ModUpdateState,
     profile: Option<&gamebanana::ProfileResponse>,
 ) -> ModUpdateState {
+    if source.ignore_update_always {
+        source.ignored_update_signature = None;
+        if matches!(raw_state, ModUpdateState::UpdateAvailable) {
+            return ModUpdateState::UpToDate;
+        }
+    }
     let current_signature = profile.and_then(|profile| compute_update_signature(&source.file_set, profile));
     match raw_state {
         ModUpdateState::UpdateAvailable => {
@@ -451,8 +457,12 @@ impl HestiaApp {
                     if should_sync_images {
                         sync_profile = profile;
                     }
+                    let modified_update_available = Self::has_modified_update_available(mod_entry);
+                    let auto_update_allowed = mod_entry.update_state == ModUpdateState::UpdateAvailable
+                        || (self.state.modified_update_behavior == ModifiedUpdateBehavior::Yes
+                            && modified_update_available);
                     let should_auto_apply = !fetch_failed
-                        && mod_entry.update_state == ModUpdateState::UpdateAvailable
+                        && auto_update_allowed
                         && Self::status_target_enabled(&mod_entry.status, self.state.auto_update_statuses)
                         && !active_update_tasks.contains(&(
                             format!(
@@ -465,15 +475,7 @@ impl HestiaApp {
                                     .unwrap_or(&mod_entry.folder_name)
                             ),
                             mod_entry.game_id.clone(),
-                        ))
-                        && if has_local_changes {
-                            mod_entry
-                                .source
-                                .as_ref()
-                                .is_some_and(|source| source.prefs.auto_update)
-                        } else {
-                            true
-                        };
+                        ));
                     if should_auto_apply {
                         auto_update_ids.push(mod_entry.id.clone());
                     }
@@ -528,15 +530,6 @@ impl HestiaApp {
         }
     }
 
-    fn update_target_mod(&self, job_id: u64) -> Option<&ModEntry> {
-        let target_id = self
-            .pending_browse_install_meta
-            .get(&job_id)?
-            .update_folder_name
-            .as_ref()?;
-        self.state.mods.iter().find(|mod_entry| mod_entry.folder_name == *target_id)
-    }
-
     fn should_show_local_change_update_prefs(mod_entry: &ModEntry) -> bool {
         matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally)
     }
@@ -545,14 +538,8 @@ impl HestiaApp {
         if self.state.always_replace_on_update {
             return true;
         }
-        self.update_target_mod(job_id)
-            .is_some_and(|mod_entry| {
-                Self::should_show_local_change_update_prefs(mod_entry)
-                    && mod_entry
-                        .source
-                        .as_ref()
-                        .is_some_and(|source| source.prefs.auto_replace)
-            })
+        let _ = job_id;
+        false
     }
 
     fn should_skip_exact_fileset_prompt(&self, mod_entry: &ModEntry) -> bool {
@@ -648,6 +635,7 @@ impl HestiaApp {
             match event {
                 StartupScanEvent::Ready(mods) => {
                     self.state.mods = mods;
+                    self.restore_imported_mod_categories(None);
                     self.sync_selection_after_refresh();
                     self.backfill_missing_mod_images(None);
                     self.sync_tools_for_selected_game();
@@ -711,6 +699,7 @@ impl HestiaApp {
                                 .cmp(&b.folder_name.to_lowercase())
                         })
                     });
+                    self.restore_imported_mod_categories(Some(&game_id));
                     if is_current {
                         self.invalidate_stale_mod_textures(&old_ts);
                         self.sync_selection_after_refresh();

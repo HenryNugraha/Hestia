@@ -106,57 +106,63 @@ impl HestiaApp {
                             let selected_game_ready = self.selected_game_is_installed_or_configured();
                             let play_modded_ready = self.selected_game_can_launch_modded();
                             let play_vanilla_ready = self.selected_game_can_launch_vanilla();
+                            let play_ready = play_modded_ready || play_vanilla_ready;
                             let tooltip = "Game is not installed or configured.";
-                            ui.add_enabled_ui(play_modded_ready, |ui| {
+                            ui.add_enabled_ui(play_ready, |ui| {
                                 let response = titlebar_action_button(
                                     ui,
                                     buttons[0].0,
                                     buttons[0].1,
                                     max_lines,
                                 );
-                                response.clone().on_hover_text("Launch the game with mods via XXMI");
-                                if !play_modded_ready {
+                                let launch_modded_by_default = play_modded_ready;
+                                response.clone().on_hover_text(if launch_modded_by_default {
+                                    "Launch the game with mods via XXMI"
+                                } else {
+                                    "Launch the game without mods"
+                                });
+                                if !play_ready {
                                     response
                                         .clone()
                                         .on_hover_text(tooltip)
                                         .on_hover_cursor(egui::CursorIcon::NotAllowed);
                                 }
-                                if play_modded_ready || play_vanilla_ready {
+                                if play_ready {
                                     response.context_menu(|ui| {
                                         if ui
                                             .add_enabled(
                                                 play_modded_ready,
-                                                egui::Button::new(icon_text_sized(
-                                                    Icon::Play,
-                                                    "Play (Modded)",
-                                                    14.0,
-                                                    13.0,
-                                                )),
+                                                    egui::Button::new(icon_text_sized(
+                                                        Icon::Play,
+                                                        "Play with mods",
+                                                        14.0,
+                                                        13.0,
+                                                    )),
                                             )
                                             .clicked()
                                         {
-                                            self.launch_selected_game(true);
+                                            self.launch_selected_game(ui.ctx(), true);
                                             ui.close();
                                         }
                                         if ui
                                             .add_enabled(
                                                 play_vanilla_ready,
-                                                egui::Button::new(icon_text_sized(
-                                                    Icon::Play,
-                                                    "Play (Vanilla)",
-                                                    14.0,
-                                                    13.0,
-                                                )),
+                                                    egui::Button::new(icon_text_sized(
+                                                        Icon::Play,
+                                                        "Play without mods",
+                                                        14.0,
+                                                        13.0,
+                                                    )),
                                             )
                                             .clicked()
                                         {
-                                            self.launch_selected_game(false);
+                                            self.launch_selected_game(ui.ctx(), false);
                                             ui.close();
                                         }
                                     });
                                 }
                                 if response.clicked() {
-                                    self.launch_selected_game(true);
+                                    self.launch_selected_game(ui.ctx(), launch_modded_by_default);
                                 }
                             });
                             ui.add_enabled_ui(selected_game_ready, |ui| {

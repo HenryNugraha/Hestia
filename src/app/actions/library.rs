@@ -269,7 +269,12 @@ impl HestiaApp {
 
     fn batch_update_selected(&mut self) {
         let update_ids: Vec<String> = self.state.mods.iter()
-            .filter(|m| self.selected_mods.contains(&m.id) && matches!(m.update_state, ModUpdateState::UpdateAvailable))
+            .filter(|m| {
+                self.selected_mods.contains(&m.id)
+                    && (matches!(m.update_state, ModUpdateState::UpdateAvailable)
+                        || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                            && Self::has_modified_update_available(m)))
+            })
             .map(|m| m.id.clone())
             .collect();
 
