@@ -490,7 +490,7 @@ impl HestiaApp {
         self.save_state();
     }
 
-    fn launch_tool(&mut self, tool_id: &str) {
+    fn launch_tool(&mut self, ctx: &egui::Context, tool_id: &str) {
         let Some(tool) = self.state.tools.iter().find(|tool| tool.id == tool_id).cloned() else {
             return;
         };
@@ -505,6 +505,7 @@ impl HestiaApp {
             Ok(_) => {
                 self.log_action("Tool Launched", &tool.label);
                 self.set_message_ok(format!("Launched tool: {}", tool.label));
+                Self::apply_launch_behavior(ctx, self.state.tool_launch_behavior);
             }
             Err(err) => self.report_error_message(
                 format!("failed to launch tool {}: {err}", tool.path.display()),

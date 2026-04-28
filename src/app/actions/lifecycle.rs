@@ -793,17 +793,21 @@ impl HestiaApp {
             Ok(()) => {
                 let label = if modded { "Modded" } else { "Vanilla" };
                 self.set_message_ok(format!("Launched {} ({label})", game.definition.name));
-                match self.state.launch_behavior {
-                    LaunchBehavior::DoNothing => {}
-                    LaunchBehavior::Minimize => {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                    }
-                    LaunchBehavior::Exit => {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                }
+                Self::apply_launch_behavior(ctx, self.state.launch_behavior);
             }
             Err(err) => self.report_error(err, Some("Launch failed")),
+        }
+    }
+
+    fn apply_launch_behavior(ctx: &egui::Context, behavior: LaunchBehavior) {
+        match behavior {
+            LaunchBehavior::DoNothing => {}
+            LaunchBehavior::Minimize => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            LaunchBehavior::Exit => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
     }
 

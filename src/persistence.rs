@@ -72,6 +72,8 @@ struct AppPreferences {
     #[serde(default)]
     launch_behavior: LaunchBehavior,
     #[serde(default)]
+    tool_launch_behavior: LaunchBehavior,
+    #[serde(default)]
     after_install_behavior: AfterInstallBehavior,
     #[serde(default)]
     unsafe_content_mode: UnsafeContentMode,
@@ -142,6 +144,7 @@ impl From<&AppState> for AppPreferences {
             hide_archived: state.hide_archived,
             metadata_visibility: state.metadata_visibility,
             launch_behavior: state.launch_behavior,
+            tool_launch_behavior: state.tool_launch_behavior,
             after_install_behavior: state.after_install_behavior,
             unsafe_content_mode: state.unsafe_content_mode,
             cache_size_tier: state.cache_size_tier,
@@ -281,6 +284,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.hide_archived = prefs.hide_archived;
     state.metadata_visibility = prefs.metadata_visibility;
     state.launch_behavior = prefs.launch_behavior;
+    state.tool_launch_behavior = prefs.tool_launch_behavior;
     state.after_install_behavior = prefs.after_install_behavior;
     state.unsafe_content_mode = prefs.unsafe_content_mode;
     state.cache_size_tier = prefs.cache_size_tier;

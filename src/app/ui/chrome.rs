@@ -446,7 +446,7 @@ impl HestiaApp {
                                                 self.dragging_titlebar_tool_target_index = None;
                                             }
                                             if response.clicked() && !response.dragged() {
-                                                self.launch_tool(&tool.id);
+                                                self.launch_tool(ui.ctx(), &tool.id);
                                             }
                                             if is_dragging_this {
                                                 dragged_titlebar_preview =
@@ -494,7 +494,7 @@ impl HestiaApp {
                                 self.save_state();
                             }
                             if let Some(tool_id) = pending_tool_launch {
-                                self.launch_tool(&tool_id);
+                                self.launch_tool(ui.ctx(), &tool_id);
                             }
                             if let Some(tool_id) = pending_tool_launch_options {
                                 self.open_tool_launch_options_prompt(&tool_id);

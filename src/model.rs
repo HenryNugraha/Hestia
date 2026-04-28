@@ -51,6 +51,8 @@ pub struct AppState {
     #[serde(default)]
     pub launch_behavior: LaunchBehavior,
     #[serde(default)]
+    pub tool_launch_behavior: LaunchBehavior,
+    #[serde(default)]
     pub after_install_behavior: AfterInstallBehavior,
     #[serde(default)]
     pub unsafe_content_mode: UnsafeContentMode,
@@ -124,6 +126,7 @@ impl Default for AppState {
             hide_archived: false,
             metadata_visibility: MetadataVisibility::default(),
             launch_behavior: LaunchBehavior::default(),
+            tool_launch_behavior: LaunchBehavior::default(),
             after_install_behavior: AfterInstallBehavior::default(),
             unsafe_content_mode: UnsafeContentMode::default(),
             cache_size_tier: CacheSizeTier::default(),

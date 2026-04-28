@@ -1184,6 +1184,88 @@ impl HestiaApp {
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
+    fn render_update_preference_checkboxes(&mut self, ui: &mut Ui, mod_id: &str) {
+        let Some(index) = self.state.mods.iter().position(|mod_entry| mod_entry.id == mod_id)
+        else {
+            return;
+        };
+        let is_linked = self.state.mods[index]
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_some_and(|gamebanana| gamebanana.mod_id > 0);
+        if !is_linked {
+            return;
+        }
+
+        let mut ignore_current_update = self.state.mods[index]
+            .source
+            .as_ref()
+            .and_then(|source| source.ignored_update_signature.as_ref())
+            .is_some();
+        let mut ignore_update_always = self.state.mods[index]
+            .source
+            .as_ref()
+            .is_some_and(|source| source.ignore_update_always);
+        let mut changed = false;
+        if ignore_current_update && ignore_update_always {
+            ignore_current_update = false;
+            if let Some(source) = self.state.mods[index].source.as_mut() {
+                source.ignored_update_signature = None;
+            }
+            changed = true;
+        }
+
+        let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
+        ignore_once_response.clone().on_hover_text(
+            "Once a newer version is available, will automatically uncheck and process the update normally.",
+        );
+        ui.add_space(-6.0);
+        let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
+        ignore_always_response.clone().on_hover_text(
+            "Indefinitely overrides this mod's status to \"Up to Date\" until unchecked.",
+        );
+
+        if ignore_once_response.changed() || ignore_always_response.changed() || changed {
+            let mut cancel_mod = None;
+            if ignore_update_always {
+                if let Some(mod_entry) = self.state.mods.get_mut(index) {
+                    if let Some(source) = mod_entry.source.as_mut() {
+                        source.ignore_update_always = true;
+                        source.ignored_update_signature = None;
+                    }
+                    mod_entry.update_state = ModUpdateState::UpToDate;
+                    cancel_mod = Some(mod_entry.clone());
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                }
+            } else if ignore_current_update {
+                let current_signature = current_update_signature_for_mod(&self.state.mods[index]);
+                if let Some(mod_entry) = self.state.mods.get_mut(index) {
+                    if let Some(source) = mod_entry.source.as_mut() {
+                        source.ignore_update_always = false;
+                        source.ignored_update_signature = current_signature;
+                    }
+                    mod_entry.update_state = ModUpdateState::UpToDate;
+                    cancel_mod = Some(mod_entry.clone());
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                }
+            } else if let Some(mod_entry) = self.state.mods.get_mut(index) {
+                if let Some(source) = mod_entry.source.as_mut() {
+                    source.ignore_update_always = false;
+                    source.ignored_update_signature = None;
+                }
+                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                    mod_entry.update_state = raw_state;
+                }
+                let _ = xxmi::save_mod_metadata(mod_entry);
+            }
+            if let Some(mod_entry) = cancel_mod {
+                self.cancel_update_process_for_mod(&mod_entry);
+            }
+            self.save_state();
+        }
+    }
+
     fn render_workspace_view(&mut self, ui: &mut Ui) {
         if self
             .has_enabled_games()
@@ -2734,6 +2816,12 @@ impl HestiaApp {
                                             {
                                                 self.delete_mod_by_id(mod_id);
                                                 ui.close();
+                                            }
+                                            if *linked {
+                                                ui.add_space(-2.0);
+                                                ui.separator();
+                                                ui.add_space(-6.0);
+                                                self.render_update_preference_checkboxes(ui, mod_id);
                                             }
                                         });
                                     }

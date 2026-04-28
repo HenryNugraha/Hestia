@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     ffi::OsStr,
     fs,
     hash::Hasher,
@@ -74,6 +75,8 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
         newly_scanned.extend(scan_archived_mods(game, state.use_default_mods_path)?);
     }
 
+    repair_duplicate_scanned_mod_ids(&mut newly_scanned, state, target_game_id);
+
     for discovered in &mut newly_scanned {
         // Hydrate from existing memory state to preserve non-portable flags (like update_state)
         // and ensure we don't overwrite portable flags with defaults if they aren't in the JSON yet.
@@ -98,6 +101,97 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
         })
     });
     Ok(())
+}
+
+fn repair_duplicate_scanned_mod_ids(
+    newly_scanned: &mut [ModEntry],
+    state: &AppState,
+    target_game_id: Option<&str>,
+) {
+    let mut indices_by_id: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, mod_entry) in newly_scanned.iter().enumerate() {
+        indices_by_id
+            .entry(mod_entry.id.clone())
+            .or_default()
+            .push(index);
+    }
+
+    let duplicate_groups: Vec<Vec<usize>> = indices_by_id
+        .into_values()
+        .filter(|indices| indices.len() > 1)
+        .collect();
+    let state_entry_will_remain = |existing: &ModEntry| {
+        target_game_id.is_some_and(|game_id| existing.game_id != game_id)
+    };
+    let id_collides_with_remaining_state = |id: &str| {
+        state
+            .mods
+            .iter()
+            .any(|existing| existing.id == id && state_entry_will_remain(existing))
+    };
+
+    if duplicate_groups.is_empty()
+        && !newly_scanned
+            .iter()
+            .any(|mod_entry| id_collides_with_remaining_state(&mod_entry.id))
+    {
+        return;
+    }
+
+    let mut used_ids: HashSet<String> =
+        state.mods.iter().map(|mod_entry| mod_entry.id.clone()).collect();
+    used_ids.extend(newly_scanned.iter().map(|mod_entry| mod_entry.id.clone()));
+    let mut assign_new_id = |mod_entry: &mut ModEntry| {
+        let new_id = loop {
+            let candidate = Uuid::new_v4().to_string();
+            if used_ids.insert(candidate.clone()) {
+                break candidate;
+            }
+        };
+        mod_entry.id = new_id;
+    };
+
+    for mut indices in duplicate_groups {
+        indices.sort_by(|left, right| {
+            newly_scanned[*left]
+                .root_path
+                .to_string_lossy()
+                .to_lowercase()
+                .cmp(
+                    &newly_scanned[*right]
+                        .root_path
+                        .to_string_lossy()
+                        .to_lowercase(),
+                )
+        });
+
+        let keep_index = indices
+            .iter()
+            .copied()
+            .find(|index| {
+                if id_collides_with_remaining_state(&newly_scanned[*index].id) {
+                    return false;
+                }
+                state.mods.iter().any(|existing| {
+                    existing.id == newly_scanned[*index].id
+                        && existing.root_path == newly_scanned[*index].root_path
+                })
+            })
+            .unwrap_or(indices[0]);
+
+        for index in indices {
+            if index == keep_index {
+                continue;
+            }
+            assign_new_id(&mut newly_scanned[index]);
+        }
+    }
+
+    for mod_entry in newly_scanned {
+        if id_collides_with_remaining_state(&mod_entry.id) {
+            assign_new_id(mod_entry);
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -631,11 +725,11 @@ fn derive_unsafe_content_from_portable(stored: &PortableModState) -> Option<bool
 
 fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
     let existing = state.mods.iter()
-        .find(|item| item.id == discovered.id)
-        .or_else(|| state.mods.iter().find(|item| item.root_path == discovered.root_path));
+        .find(|item| item.root_path == discovered.root_path)
+        .or_else(|| state.mods.iter().find(|item| item.id == discovered.id));
 
     if let Some(existing) = existing {
-        discovered.id = existing.id.clone(); // Preserve stable ID if matched by path
+        discovered.id = existing.id.clone();
         discovered.created_at = existing.created_at;
         let has_existing_fingerprint =
             existing.content_mtime.is_some() || existing.ini_hash.is_some();

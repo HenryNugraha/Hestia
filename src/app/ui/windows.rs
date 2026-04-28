@@ -948,7 +948,7 @@ impl HestiaApp {
             self.open_tool_location(&tool_id);
         }
         if let Some(tool_id) = pending_launch {
-            self.launch_tool(&tool_id);
+            self.launch_tool(ctx, &tool_id);
         }
         if let Some(tool_id) = pending_launch_options {
             self.open_tool_launch_options_prompt(&tool_id);
@@ -1175,8 +1175,24 @@ impl HestiaApp {
                                     ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
                                     ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
                                     ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
-                                });
+                            });
                             if self.state.launch_behavior != launch_behavior { should_save = true; }
+                            ui.add_space(8.0);
+                            static_label(ui, "When launching a tool:");
+                            ui.add_space(-4.0);
+                            let tool_launch_behavior = self.state.tool_launch_behavior;
+                            egui::ComboBox::from_id_salt("tool_launch_behavior")
+                                .selected_text(match tool_launch_behavior {
+                                    LaunchBehavior::DoNothing => "Do Nothing",
+                                    LaunchBehavior::Minimize => "Minimize Hestia",
+                                    LaunchBehavior::Exit => "Exit Hestia",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
+                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
+                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
+                                });
+                            if self.state.tool_launch_behavior != tool_launch_behavior { should_save = true; }
                             ui.add_space(8.0);
                             static_label(ui, "After installing a mod:");
                             ui.add_space(-4.0);
