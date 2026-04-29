@@ -150,6 +150,7 @@ impl HestiaApp {
             show_update_available_mods: true,
             show_missing_source_mods: true,
             show_modified_locally_mods: true,
+            show_ignoring_update_mods: true,
             current_view: ViewMode::Library,
             settings_open: false,
             mod_detail_open: false,
@@ -894,6 +895,15 @@ impl HestiaApp {
                     return false;
                 }
                 if !self.show_up_to_date_mods && item.update_state == ModUpdateState::UpToDate {
+                    return false;
+                }
+                if !self.show_ignoring_update_mods
+                    && matches!(
+                        item.update_state,
+                        ModUpdateState::IgnoringUpdateOnce
+                            | ModUpdateState::IgnoringUpdateAlways
+                    )
+                {
                     return false;
                 }
                 let has_modified_update_available = Self::has_modified_update_available(item);

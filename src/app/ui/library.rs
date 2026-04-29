@@ -332,6 +332,18 @@ impl HestiaApp {
     }
 
     fn mod_update_badge(mod_entry: &ModEntry) -> (&'static str, Color32) {
+        if mod_has_local_changes_for_update_check(mod_entry) {
+            if let Some(ignoring_label) = Self::ignored_update_short_label(mod_entry) {
+                return (
+                    match ignoring_label {
+                        "Ignoring Once" => "Modified & Ignoring Once",
+                        "Ignoring Always" => "Modified & Ignoring Always",
+                        _ => "Modified Locally",
+                    },
+                    Color32::from_rgb(179, 133, 133),
+                );
+            }
+        }
         if Self::has_modified_update_available(mod_entry) {
             (
                 "Modified & Update Available",
@@ -340,6 +352,58 @@ impl HestiaApp {
         } else {
             mod_update_state_badge(mod_entry.update_state)
         }
+    }
+
+    fn ignored_update_short_label(mod_entry: &ModEntry) -> Option<&'static str> {
+        let source = mod_entry.source.as_ref()?;
+        if source.ignore_update_always {
+            Some("Ignoring Always")
+        } else if source.ignored_update_signature.is_some()
+            || matches!(mod_entry.update_state, ModUpdateState::IgnoringUpdateOnce)
+        {
+            Some("Ignoring Once")
+        } else {
+            None
+        }
+    }
+
+    fn modified_ignoring_detail_job(mod_entry: &ModEntry, size: f32) -> Option<LayoutJob> {
+        let ignoring_label = Self::ignored_update_short_label(mod_entry)?;
+        if !mod_has_local_changes_for_update_check(mod_entry) {
+            return None;
+        }
+
+        let modified_color = Color32::from_rgb(179, 133, 133);
+        let ignoring_color = Color32::from_rgb(181, 153, 196);
+        let mut job = LayoutJob::default();
+        job.append(
+            "Modified",
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(size),
+                color: modified_color,
+                ..Default::default()
+            },
+        );
+        job.append(
+            " & ",
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(size),
+                color: ignoring_color,
+                ..Default::default()
+            },
+        );
+        job.append(
+            ignoring_label,
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(size),
+                color: ignoring_color,
+                ..Default::default()
+            },
+        );
+        Some(job)
     }
 
     fn move_category_order_to_slot(&mut self, category_id: &str, slot_index: usize) -> bool {
@@ -1250,7 +1314,7 @@ impl HestiaApp {
         ui.add_space(-6.0);
         let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
         ignore_always_response.clone().on_hover_text(
-            "Indefinitely overrides this mod's status to \"Up to Date\" until unchecked.",
+            "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked.",
         );
 
         if ignore_once_response.changed() || ignore_always_response.changed() || changed {
@@ -1261,18 +1325,28 @@ impl HestiaApp {
                         source.ignore_update_always = true;
                         source.ignored_update_signature = None;
                     }
-                    mod_entry.update_state = ModUpdateState::UpToDate;
+                    mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
                     cancel_mod = Some(mod_entry.clone());
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
             } else if ignore_current_update {
                 let current_signature = current_update_signature_for_mod(&self.state.mods[index]);
                 if let Some(mod_entry) = self.state.mods.get_mut(index) {
-                    if let Some(source) = mod_entry.source.as_mut() {
-                        source.ignore_update_always = false;
-                        source.ignored_update_signature = current_signature;
+                    if let Some(signature) = current_signature {
+                        if let Some(source) = mod_entry.source.as_mut() {
+                            source.ignore_update_always = false;
+                            source.ignored_update_signature = Some(signature);
+                        }
+                        mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                    } else {
+                        if let Some(source) = mod_entry.source.as_mut() {
+                            source.ignore_update_always = false;
+                            source.ignored_update_signature = None;
+                        }
+                        if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                            mod_entry.update_state = raw_state;
+                        }
                     }
-                    mod_entry.update_state = ModUpdateState::UpToDate;
                     cancel_mod = Some(mod_entry.clone());
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
@@ -1476,6 +1550,8 @@ impl HestiaApp {
                         .map(|g| g.mod_id > 0 || !g.url.trim().is_empty())
                         .unwrap_or(false),
                     Self::has_modified_update_available(mod_entry),
+                    mod_has_local_changes_for_update_check(mod_entry),
+                    Self::ignored_update_short_label(mod_entry),
                     mod_entry.metadata.user.category_id.clone(),
                     self.mod_category_label(mod_entry),
                 )
@@ -1486,7 +1562,24 @@ impl HestiaApp {
         let mut has_disabled = false;
         let mut has_archived = false;
         let mut has_update_eligible = false;
-        for (mod_id, _, _, _, _, status, _, _, update_state, _, modified_update_available, _, _) in &cards {
+        for (
+            mod_id,
+            _,
+            _,
+            _,
+            _,
+            status,
+            _,
+            _,
+            update_state,
+            _,
+            modified_update_available,
+            _,
+            _,
+            _,
+            _,
+        ) in &cards
+        {
             if self.selected_mods.contains(mod_id) {
                 match status {
                     ModStatus::Active => has_active = true,
@@ -1563,7 +1656,8 @@ impl HestiaApp {
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
                             || !self.show_missing_source_mods
-                            || !self.show_modified_locally_mods;
+                            || !self.show_modified_locally_mods
+                            || !self.show_ignoring_update_mods;
 
                         let icon_color = if expanded || !is_empty || visibility_filtered { 
                             Color32::from_rgb(214, 104, 58) // Accent color if active or filtered
@@ -1729,6 +1823,7 @@ impl HestiaApp {
                                         self.show_update_available_mods = true;
                                         self.show_missing_source_mods = true;
                                         self.show_modified_locally_mods = true;
+                                        self.show_ignoring_update_mods = true;
                                         self.selected_mods.clear();
                                     } else if hide_all {
                                         self.show_unlinked_mods = false;
@@ -1736,6 +1831,7 @@ impl HestiaApp {
                                         self.show_update_available_mods = false;
                                         self.show_missing_source_mods = false;
                                         self.show_modified_locally_mods = false;
+                                        self.show_ignoring_update_mods = false;
                                         self.selected_mods.clear();
                                     }
                                 });
@@ -1770,12 +1866,20 @@ impl HestiaApp {
                                     )
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
+                                let ignoring_update_changed = ui
+                                    .checkbox(
+                                        &mut self.show_ignoring_update_mods,
+                                        "Ignoring Update",
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .changed();
 
                                 if unlinked_changed
                                     || up_to_date_changed
                                     || update_available_changed
                                     || missing_source_changed
                                     || modified_locally_changed
+                                    || ignoring_update_changed
                                 {
                                     self.selected_mods.clear();
                                 }
@@ -2140,8 +2244,7 @@ impl HestiaApp {
                                     });
                                 }
                                 
-                                // ui.add_space(-10.0); // Row spacing (Buttons vs Counter)
-                                ui.add_space(4.0);
+                                ui.add_space(2.0);
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.add_space(6.0);
                                     let icon = icon_rich(Icon::CircleX, 11.0, Color32::from_gray(170));
@@ -2294,6 +2397,8 @@ impl HestiaApp {
                                 ModUpdateState,
                                 bool,
                                 bool,
+                                bool,
+                                Option<&'static str>,
                                 Option<String>,
                                 String,
                             ),
@@ -2314,6 +2419,8 @@ impl HestiaApp {
                                             update_state,
                                             linked,
                                             modified_update_available,
+                                            modified_locally,
+                                            ignoring_update_label,
                                             category_id,
                                             category_label,
                                         ) = card;
@@ -2613,22 +2720,60 @@ impl HestiaApp {
                                                                                     paint_modified_update_badge(ui, resp.rect);
                                                                                 }
                                                                             } else {
-                                                                                let (txt, clr) = match update_state {
-                                                                                    ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
-                                                                                    ModUpdateState::MissingSource => ("Missing", Color32::from_rgb(196, 166, 126)),
-                                                                                    ModUpdateState::ModifiedLocally => ("Modified", Color32::from_rgb(179, 133, 133)),
-                                                                                    _ => ("", Color32::TRANSPARENT),
-                                                                                };
-                                                                                if !txt.is_empty() {
-                                                                                    ui.add(
-                                                                                        egui::Label::new(
-                                                                                            RichText::new(txt)
-                                                                                                .size(11.0)
-                                                                                                .color(clr),
+                                                                                if *modified_locally {
+                                                                                    if let Some(ignoring_label) = ignoring_update_label {
+                                                                                        ui.vertical(|ui| {
+                                                                                            ui.spacing_mut().item_spacing.y = -3.0;
+                                                                                            ui.add(
+                                                                                                egui::Label::new(
+                                                                                                    RichText::new("Modified")
+                                                                                                        .size(11.0)
+                                                                                                        .color(Color32::from_rgb(179, 133, 133)),
+                                                                                                )
+                                                                                                .selectable(false),
+                                                                                            )
+                                                                                            .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                            ui.add(
+                                                                                                egui::Label::new(
+                                                                                                    RichText::new(*ignoring_label)
+                                                                                                        .size(11.0)
+                                                                                                        .color(Color32::from_rgb(181, 153, 196)),
+                                                                                                )
+                                                                                                .selectable(false),
+                                                                                            )
+                                                                                            .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                        });
+                                                                                    } else {
+                                                                                        ui.add(
+                                                                                            egui::Label::new(
+                                                                                                RichText::new("Modified")
+                                                                                                    .size(11.0)
+                                                                                                    .color(Color32::from_rgb(179, 133, 133)),
+                                                                                            )
+                                                                                            .selectable(false),
                                                                                         )
-                                                                                        .selectable(false),
-                                                                                    )
-                                                                                    .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                        .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                    }
+                                                                                } else {
+                                                                                    let (txt, clr) = match update_state {
+                                                                                        ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
+                                                                                        ModUpdateState::MissingSource => ("Missing", Color32::from_rgb(196, 166, 126)),
+                                                                                        ModUpdateState::ModifiedLocally => ("Modified", Color32::from_rgb(179, 133, 133)),
+                                                                                        ModUpdateState::IgnoringUpdateOnce => ("Ignoring Once", Color32::from_rgb(181, 153, 196)),
+                                                                                        ModUpdateState::IgnoringUpdateAlways => ("Ignoring Always", Color32::from_rgb(181, 153, 196)),
+                                                                                        _ => ("", Color32::TRANSPARENT),
+                                                                                    };
+                                                                                    if !txt.is_empty() {
+                                                                                        ui.add(
+                                                                                            egui::Label::new(
+                                                                                                RichText::new(txt)
+                                                                                                    .size(11.0)
+                                                                                                    .color(clr),
+                                                                                            )
+                                                                                            .selectable(false),
+                                                                                        )
+                                                                                        .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -2922,7 +3067,7 @@ impl HestiaApp {
                             }
                             LibraryGroupMode::Category => {
                                 let has_categorized = cards.iter().any(|card| {
-                                    card.11.as_ref().is_some_and(|category_id| {
+                                    card.13.as_ref().is_some_and(|category_id| {
                                         category_sections
                                             .iter()
                                             .any(|category| category.id == *category_id)
@@ -2934,7 +3079,7 @@ impl HestiaApp {
                                     let category_color = Color32::from_rgb(176, 198, 218);
                                     let mut rendered_category_ids = Vec::new();
                                     let uncategorized_cards: Vec<_> =
-                                        cards.iter().filter(|card| card.11.is_none()).collect();
+                                        cards.iter().filter(|card| card.13.is_none()).collect();
                                     if uncategorized_first && !uncategorized_cards.is_empty() {
                                         let response = render_section_label(
                                             ui,
@@ -2957,7 +3102,7 @@ impl HestiaApp {
                                     for category in category_sections {
                                         let section_cards: Vec<_> = cards
                                             .iter()
-                                            .filter(|card| card.11.as_deref() == Some(category.id.as_str()))
+                                            .filter(|card| card.13.as_deref() == Some(category.id.as_str()))
                                             .collect();
                                         if section_cards.is_empty() {
                                             continue;
@@ -2985,7 +3130,7 @@ impl HestiaApp {
                                         let fallback_uncategorized_cards: Vec<_> = cards
                                             .iter()
                                             .filter(|card| {
-                                                card.11.as_ref().is_none_or(|category_id| {
+                                                card.13.as_ref().is_none_or(|category_id| {
                                                     !rendered_category_ids
                                                         .iter()
                                                         .any(|rendered_id| rendered_id == category_id)
@@ -3215,8 +3360,13 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
                         ui.add_space(-4.0);
-                        let (update_text, update_color) = Self::mod_update_badge(&selected);
-                        static_label(ui, RichText::new(update_text).size(12.0).color(update_color));
+                        if let Some(job) = Self::modified_ignoring_detail_job(&selected, 12.0) {
+                            ui.add(egui::Label::new(job).selectable(false))
+                                .on_hover_cursor(egui::CursorIcon::Default);
+                        } else {
+                            let (update_text, update_color) = Self::mod_update_badge(&selected);
+                            static_label(ui, RichText::new(update_text).size(12.0).color(update_color));
+                        }
                     }
                     ui.add_space(-4.0);
                     static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
@@ -3622,14 +3772,30 @@ impl HestiaApp {
                                         .map(|g| g.mod_id > 0 || !g.url.trim().is_empty())
                                         .unwrap_or(false);
                                     if linked {
-                                        let (update_text, update_color) =
-                                            Self::mod_update_badge(&selected);
-                                        static_label(
-                                            ui,
-                                            RichText::new(format!("{update_text} ({age})"))
-                                                .size(11.5)
-                                                .color(update_color),
-                                        );
+                                        if let Some(mut job) =
+                                            Self::modified_ignoring_detail_job(&selected, 11.5)
+                                        {
+                                            job.append(
+                                                &format!(" ({age})"),
+                                                0.0,
+                                                TextFormat {
+                                                    font_id: egui::FontId::proportional(11.5),
+                                                    color: Color32::from_gray(145),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                            ui.add(egui::Label::new(job).selectable(false))
+                                                .on_hover_cursor(egui::CursorIcon::Default);
+                                        } else {
+                                            let (update_text, update_color) =
+                                                Self::mod_update_badge(&selected);
+                                            static_label(
+                                                ui,
+                                                RichText::new(format!("{update_text} ({age})"))
+                                                    .size(11.5)
+                                                    .color(update_color),
+                                            );
+                                        }
                                     } else {
                                         static_label(
                                             ui,
@@ -4294,25 +4460,35 @@ impl HestiaApp {
                                             ui.add_space(-6.0);
                                             let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
                                             ignore_always_response.clone().on_hover_text(
-                                                "Indefinitely overrides this mod's status to \"Up to Date\" until unchecked."
+                                                "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked."
                                             );
                                             if ignore_once_response.changed() || ignore_always_response.changed() {
                                                 let selected_id = selected.id.clone();
                                                 if ignore_update_always {
                                                     source.ignore_update_always = true;
                                                     source.ignored_update_signature = None;
-                                                    mod_entry.update_state = ModUpdateState::UpToDate;
+                                                    mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
                                                     let cloned = mod_entry.clone();
                                                     let _ = xxmi::save_mod_metadata(mod_entry);
                                                     self.cancel_update_process_for_mod(&cloned);
                                                 } else if ignore_current_update {
                                                     if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
                                                         let current_signature = current_update_signature_for_mod(mod_entry);
-                                                        if let Some(source) = mod_entry.source.as_mut() {
-                                                            source.ignore_update_always = false;
-                                                            source.ignored_update_signature = current_signature;
+                                                        if let Some(signature) = current_signature {
+                                                            if let Some(source) = mod_entry.source.as_mut() {
+                                                                source.ignore_update_always = false;
+                                                                source.ignored_update_signature = Some(signature);
+                                                            }
+                                                            mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                        } else {
+                                                            if let Some(source) = mod_entry.source.as_mut() {
+                                                                source.ignore_update_always = false;
+                                                                source.ignored_update_signature = None;
+                                                            }
+                                                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                mod_entry.update_state = raw_state;
+                                                            }
                                                         }
-                                                        mod_entry.update_state = ModUpdateState::UpToDate;
                                                         let cloned = mod_entry.clone();
                                                         let _ = xxmi::save_mod_metadata(mod_entry);
                                                         self.cancel_update_process_for_mod(&cloned);

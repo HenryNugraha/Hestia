@@ -99,6 +99,18 @@ fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
     }
 }
 
+fn mod_has_local_changes_for_update_check(mod_entry: &ModEntry) -> bool {
+    let Some(source) = mod_entry.source.as_ref() else {
+        return false;
+    };
+    if mod_entry.status == ModStatus::Disabled {
+        return false;
+    }
+    source.baseline_content_mtime.map(|t| t.timestamp())
+        != mod_entry.content_mtime.map(|t| t.timestamp())
+        || source.baseline_ini_hash != mod_entry.ini_hash
+}
+
 fn apply_ignored_update_override(
     source: &mut ModSourceData,
     raw_state: ModUpdateState,
@@ -106,9 +118,7 @@ fn apply_ignored_update_override(
 ) -> ModUpdateState {
     if source.ignore_update_always {
         source.ignored_update_signature = None;
-        if matches!(raw_state, ModUpdateState::UpdateAvailable) {
-            return ModUpdateState::UpToDate;
-        }
+        return ModUpdateState::IgnoringUpdateAlways;
     }
     let current_signature = profile.and_then(|profile| compute_update_signature(&source.file_set, profile));
     match raw_state {
@@ -118,11 +128,15 @@ fn apply_ignored_update_override(
                 current_signature.as_ref(),
             ) {
                 if ignored == current {
-                    return ModUpdateState::UpToDate;
+                    return ModUpdateState::IgnoringUpdateOnce;
                 }
             }
         }
-        ModUpdateState::UpToDate | ModUpdateState::Unlinked | ModUpdateState::MissingSource => {
+        ModUpdateState::UpToDate
+        | ModUpdateState::Unlinked
+        | ModUpdateState::MissingSource
+        | ModUpdateState::IgnoringUpdateOnce
+        | ModUpdateState::IgnoringUpdateAlways => {
             source.ignored_update_signature = None;
         }
         ModUpdateState::ModifiedLocally => {}
@@ -330,11 +344,14 @@ impl HestiaApp {
         }
         self.pending_update_check_game = None;
         let mut items = Vec::new();
-        for mod_entry in &self.state.mods {
+        let update_check_statuses = self.state.update_check_statuses;
+        let modified_update_behavior = self.state.modified_update_behavior;
+        let mut state_changed_without_fetch = false;
+        for mod_entry in &mut self.state.mods {
             if let Some(id) = target_game_id {
                 if mod_entry.game_id != id { continue; }
             }
-            if !Self::status_target_enabled(&mod_entry.status, self.state.update_check_statuses) {
+            if !Self::status_target_enabled(&mod_entry.status, update_check_statuses) {
                 continue;
             }
             let Some(source) = &mod_entry.source else {
@@ -343,6 +360,24 @@ impl HestiaApp {
             let Some(link) = &source.gamebanana else {
                 continue;
             };
+            if source.ignore_update_always {
+                if mod_entry.update_state != ModUpdateState::IgnoringUpdateAlways {
+                    mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                    state_changed_without_fetch = true;
+                }
+                continue;
+            }
+            if modified_update_behavior == ModifiedUpdateBehavior::HideButton
+                && mod_has_local_changes_for_update_check(mod_entry)
+            {
+                if mod_entry.update_state != ModUpdateState::ModifiedLocally {
+                    mod_entry.update_state = ModUpdateState::ModifiedLocally;
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                    state_changed_without_fetch = true;
+                }
+                continue;
+            }
             // Prefer the exact GameBanana file(s) this mod was installed from.
             // Fall back to the profile snapshot timestamp for older metadata.
             let local_sync_ts = selected_file_baseline_ts(&source.file_set)
@@ -356,6 +391,9 @@ impl HestiaApp {
                 local_sync_ts,
                 source.file_set.clone(),
             ));
+        }
+        if state_changed_without_fetch {
+            self.save_state();
         }
         self.dispatch_update_check_items(items);
     }

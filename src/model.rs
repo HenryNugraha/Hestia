@@ -363,6 +363,8 @@ pub enum ModUpdateState {
     UpdateAvailable,
     MissingSource,
     ModifiedLocally,
+    IgnoringUpdateOnce,
+    IgnoringUpdateAlways,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
