@@ -70,6 +70,8 @@ struct AppPreferences {
     #[serde(default)]
     pub metadata_visibility: MetadataVisibility,
     #[serde(default)]
+    scan_rabbitfx_requirement: bool,
+    #[serde(default)]
     launch_behavior: LaunchBehavior,
     #[serde(default)]
     tool_launch_behavior: LaunchBehavior,
@@ -143,6 +145,7 @@ impl From<&AppState> for AppPreferences {
             hide_disabled: state.hide_disabled,
             hide_archived: state.hide_archived,
             metadata_visibility: state.metadata_visibility,
+            scan_rabbitfx_requirement: state.scan_rabbitfx_requirement,
             launch_behavior: state.launch_behavior,
             tool_launch_behavior: state.tool_launch_behavior,
             after_install_behavior: state.after_install_behavior,
@@ -283,6 +286,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.hide_disabled = prefs.hide_disabled;
     state.hide_archived = prefs.hide_archived;
     state.metadata_visibility = prefs.metadata_visibility;
+    state.scan_rabbitfx_requirement = prefs.scan_rabbitfx_requirement;
     state.launch_behavior = prefs.launch_behavior;
     state.tool_launch_behavior = prefs.tool_launch_behavior;
     state.after_install_behavior = prefs.after_install_behavior;

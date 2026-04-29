@@ -42,7 +42,7 @@ use windows::{
 use crate::{
     model::{
         AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata, GameInstall, MOD_META_DIR,
-        ModEntry, ModMetadata, ModStatus, PortableModState,
+        ExtractedMetadataTextSource, ModEntry, ModMetadata, ModStatus, PortableModState,
     },
     persistence,
 };
@@ -71,8 +71,16 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
                 }
             }
         }
-        newly_scanned.extend(scan_live_mods(game, state.use_default_mods_path)?);
-        newly_scanned.extend(scan_archived_mods(game, state.use_default_mods_path)?);
+        newly_scanned.extend(scan_live_mods(
+            game,
+            state.use_default_mods_path,
+            state.scan_rabbitfx_requirement,
+        )?);
+        newly_scanned.extend(scan_archived_mods(
+            game,
+            state.use_default_mods_path,
+            state.scan_rabbitfx_requirement,
+        )?);
     }
 
     repair_duplicate_scanned_mod_ids(&mut newly_scanned, state, target_game_id);
@@ -587,7 +595,11 @@ fn quote_arg_windows(arg: &str) -> String {
     out
 }
 
-fn scan_live_mods(game: &GameInstall, use_default_path: bool) -> Result<Vec<ModEntry>> {
+fn scan_live_mods(
+    game: &GameInstall,
+    use_default_path: bool,
+    scan_rabbitfx_requirement: bool,
+) -> Result<Vec<ModEntry>> {
     let Some(root) = game.mods_path(use_default_path) else {
         return Ok(Vec::new());
     };
@@ -602,12 +614,16 @@ fn scan_live_mods(game: &GameInstall, use_default_path: bool) -> Result<Vec<ModE
         if !path.is_dir() {
             continue;
         }
-        mods.push(load_mod_entry(game, path, false)?);
+        mods.push(load_mod_entry(game, path, false, scan_rabbitfx_requirement)?);
     }
     Ok(mods)
 }
 
-fn scan_archived_mods(game: &GameInstall, use_default_path: bool) -> Result<Vec<ModEntry>> {
+fn scan_archived_mods(
+    game: &GameInstall,
+    use_default_path: bool,
+    scan_rabbitfx_requirement: bool,
+) -> Result<Vec<ModEntry>> {
     let root = archived_mods_root(game, use_default_path)?;
     if !root.exists() {
         return Ok(Vec::new());
@@ -620,7 +636,7 @@ fn scan_archived_mods(game: &GameInstall, use_default_path: bool) -> Result<Vec<
         if !path.is_dir() {
             continue;
         }
-        mods.push(load_mod_entry(game, path, true)?);
+        mods.push(load_mod_entry(game, path, true, scan_rabbitfx_requirement)?);
     }
     Ok(mods)
 }
@@ -639,6 +655,7 @@ fn load_mod_entry(
     game: &GameInstall,
     root_path: PathBuf,
     force_archived: bool,
+    scan_rabbitfx_requirement: bool,
 ) -> Result<ModEntry> {
     let folder_name = root_path
         .file_name()
@@ -647,7 +664,10 @@ fn load_mod_entry(
         .to_string();
 
     let portable = persistence::load_portable_mod_state(&root_path)?;
-    let extracted = extract_metadata(&root_path)?;
+    let selected_metadata_source = portable
+        .as_ref()
+        .and_then(|stored| stored.metadata.user.extracted_metadata_source_path.as_deref());
+    let extracted = extract_metadata(&root_path, selected_metadata_source, scan_rabbitfx_requirement)?;
     let metadata = match &portable {
         Some(stored) => ModMetadata {
             extracted,
@@ -836,12 +856,20 @@ fn is_ini_file(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("ini"))
 }
 
-fn extract_metadata(root: &Path) -> Result<ExtractedMetadata> {
+fn extract_metadata(
+    root: &Path,
+    selected_source_path: Option<&str>,
+    scan_rabbitfx_requirement: bool,
+) -> Result<ExtractedMetadata> {
     let mut description = None;
     let mut hotkeys = Vec::new();
     let mut executables = Vec::new();
     let mut readme_path = None;
-    let mut best_readme_priority = 0; // 0: none, 1: generic txt/md/json, 2: matches "readme" pattern
+    let mut requires_rabbitfx = false;
+    let mut best_text_priority = 0;
+    let mut best_text_index: Option<usize> = None;
+    let mut selected_text_index: Option<usize> = None;
+    let mut text_sources: Vec<ExtractedMetadataTextSource> = Vec::new();
 
     for entry in walkdir::WalkDir::new(root).max_depth(3) {
         let entry = entry?;
@@ -863,21 +891,41 @@ fn extract_metadata(root: &Path) -> Result<ExtractedMetadata> {
                     executables.push(relative.to_string_lossy().to_string());
                 }
             }
-            if ["txt", "md", "json"].contains(&extension.as_str()) {
+            if ["txt", "md"].contains(&extension.as_str()) {
                 let raw = fs::read_to_string(path).unwrap_or_default();
                 let trimmed = raw.trim();
 
-                let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or_default().to_lowercase();
-                let is_readme_pattern = file_name.contains("readme") || file_name.contains("read me") || file_name.contains("read_me");
-                let priority = if is_readme_pattern { 2 } else { 1 };
+                if scan_rabbitfx_requirement && text_mentions_rabbitfx_requirement(trimmed) {
+                    requires_rabbitfx = true;
+                }
 
-                // Update description if we found a "better" readme or haven't found any yet
-                if !trimmed.is_empty() && priority > best_readme_priority {
-                    description = Some(trimmed.to_string());
-                    if let Ok(relative) = path.strip_prefix(root) {
-                        readme_path = Some(relative.to_string_lossy().to_string());
+                let priority = text_metadata_priority(path);
+                let relative = path
+                    .strip_prefix(root)
+                    .map(|relative| relative.to_string_lossy().to_string())
+                    .ok();
+                if !trimmed.is_empty()
+                    && !is_noise_metadata_text(trimmed)
+                {
+                    if let Some(relative) = relative.clone() {
+                        let source_index = text_sources.len();
+                        text_sources.push(ExtractedMetadataTextSource {
+                            path: relative.clone(),
+                            label: path
+                                .file_name()
+                                .and_then(OsStr::to_str)
+                                .unwrap_or(relative.as_str())
+                                .to_string(),
+                            content: trimmed.to_string(),
+                        });
+                        if selected_source_path == Some(relative.as_str()) {
+                            selected_text_index = Some(source_index);
+                        }
+                        if priority > best_text_priority {
+                            best_text_priority = priority;
+                            best_text_index = Some(source_index);
+                        }
                     }
-                    best_readme_priority = priority;
                 }
 
                 // Always scan all text-like files for hotkeys
@@ -890,15 +938,73 @@ fn extract_metadata(root: &Path) -> Result<ExtractedMetadata> {
         }
     }
 
+    if let Some(source_index) = selected_text_index.or(best_text_index) {
+        if let Some(source) = text_sources.get(source_index) {
+            description = Some(source.content.clone());
+            readme_path = Some(source.path.clone());
+        }
+    }
+
     hotkeys.sort();
     hotkeys.dedup();
     executables.sort();
     executables.dedup();
+    text_sources.sort_by(|left, right| {
+        text_metadata_priority(Path::new(&right.path))
+            .cmp(&text_metadata_priority(Path::new(&left.path)))
+            .then_with(|| left.label.to_ascii_lowercase().cmp(&right.label.to_ascii_lowercase()))
+            .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+    });
 
     Ok(ExtractedMetadata {
         description,
         hotkeys,
         discovered_executables: executables,
         readme_path,
+        text_sources,
+        requires_rabbitfx,
     })
+}
+
+fn text_metadata_priority(path: &Path) -> u8 {
+    let file_name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if file_name.contains("readme")
+        || file_name.contains("read me")
+        || file_name.contains("read_me")
+    {
+        4
+    } else if file_name.contains("toggle") || file_name.contains("key") {
+        3
+    } else if file_name.contains("credit") {
+        2
+    } else {
+        1
+    }
+}
+
+fn is_noise_metadata_text(text: &str) -> bool {
+    let meaningful_chars = text.chars().filter(|ch| ch.is_alphanumeric()).count();
+    meaningful_chars < 8
+        && !text.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed.contains(':') || trimmed.contains('=') || trimmed.contains(" - ")
+        })
+}
+
+fn text_mentions_rabbitfx_requirement(text: &str) -> bool {
+    let normalized = text
+        .to_ascii_lowercase()
+        .replace('’', "'")
+        .replace('“', "\"")
+        .replace('”', "\"");
+    normalized.contains("rabbitfx is required")
+        || normalized.contains("requires rabbitfx")
+        || normalized.contains("rabbitfx required")
+        || normalized.contains("if you don't have rabbitfx installed")
+        || normalized.contains("if you dont have rabbitfx installed")
+        || normalized.contains("install rabbitfx")
 }

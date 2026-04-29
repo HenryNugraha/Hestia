@@ -22,6 +22,18 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn clamp_metadata_source_label(text: &str) -> String {
+    const MAX_CHARS: usize = 15;
+    const PREFIX_CHARS: usize = 12;
+    if text.chars().count() <= MAX_CHARS {
+        return text.to_string();
+    }
+    let mut clamped: String = text.chars().take(PREFIX_CHARS).collect();
+    clamped.truncate(clamped.trim_end().len());
+    clamped.push_str("...");
+    clamped
+}
+
 fn update_button_text(modified: bool) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.append(
@@ -67,6 +79,21 @@ fn paint_modified_update_badge(ui: &mut Ui, button_rect: egui::Rect) {
         egui::FontId::proportional(8.0),
         Color32::from_rgb(238, 196, 168),
     );
+}
+
+fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
+    egui::Frame::new()
+        .fill(Color32::from_rgba_premultiplied(72, 82, 94, 210))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(7, 3))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .size(11.0)
+                    .color(Color32::from_rgb(222, 228, 235)),
+            )
+        })
+        .inner
 }
 
 #[derive(Clone, Copy)]
@@ -1264,6 +1291,29 @@ impl HestiaApp {
             }
             self.save_state();
         }
+    }
+
+    fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
+        let Some(mod_entry) = self.state.mods.iter_mut().find(|mod_entry| mod_entry.id == mod_id)
+        else {
+            return;
+        };
+        let Some(source) = mod_entry
+            .metadata
+            .extracted
+            .text_sources
+            .iter()
+            .find(|source| source.path == source_path)
+            .cloned()
+        else {
+            return;
+        };
+
+        mod_entry.metadata.user.extracted_metadata_source_path = Some(source.path.clone());
+        mod_entry.metadata.extracted.description = Some(source.content);
+        mod_entry.metadata.extracted.readme_path = Some(source.path);
+        let _ = xxmi::save_mod_metadata(mod_entry);
+        self.save_state();
     }
 
     fn render_workspace_view(&mut self, ui: &mut Ui) {
@@ -3860,7 +3910,12 @@ impl HestiaApp {
                         }
                     }
                     ui.add_space(10.0);
-                    static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
+                    ui.horizontal(|ui| {
+                        static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
+                        if selected.metadata.extracted.requires_rabbitfx {
+                            metadata_info_badge(ui, "Requires RabbitFX");
+                        }
+                    });
                     let markdown = mod_primary_description_markdown(&selected, &self.portable);
                     let has_description = markdown != "No description";
                     self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
@@ -3883,13 +3938,111 @@ impl HestiaApp {
                             } else {
                                 ui.add_space(10.0);
                             }
-                            static_label(
-                                ui,
-                                bold("Metadata")
-                                    .size(14.0)
-                                    .underline()
-                                    .color(Color32::from_gray(195)),
-                            );
+                            ui.horizontal(|ui| {
+                                static_label(
+                                    ui,
+                                    bold("Metadata")
+                                        .size(14.0)
+                                        .underline()
+                                        .color(Color32::from_gray(195)),
+                                );
+                                let source_path = selected
+                                    .metadata
+                                    .extracted
+                                    .readme_path
+                                    .as_deref()
+                                    .filter(|path| !path.trim().is_empty());
+                                let source_name = source_path.map(|source| {
+                                    Path::new(source)
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or(source)
+                                });
+                                if let (Some(source), Some(source_name)) = (source_path, source_name) {
+                                    let has_source_choices =
+                                        selected.metadata.extracted.text_sources.len() > 1;
+                                    let clamped_source_name =
+                                        clamp_metadata_source_label(source_name);
+                                    let badge_text = if has_source_choices {
+                                        format!("{clamped_source_name} ▾")
+                                    } else {
+                                        clamped_source_name
+                                    };
+                                    let mut source_response =
+                                        metadata_info_badge(ui, &badge_text).on_hover_text(source);
+                                    if has_source_choices {
+                                        source_response = source_response
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
+                                        egui::Popup::menu(&source_response)
+                                            .id(popup_id)
+                                            .width(120.0)
+                                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                            .show(|ui| {
+                                                ui.set_min_width(120.0);
+                                                ui.spacing_mut().item_spacing.y = 3.0;
+                                                egui::Frame::new()
+                                                    .inner_margin(egui::Margin::same(6))
+                                                    .show(ui, |ui| {
+                                                        for source in selected.metadata.extracted.text_sources.clone() {
+                                                            let selected_source =
+                                                                selected.metadata.extracted.readme_path.as_deref()
+                                                                    == Some(source.path.as_str());
+                                                            let label = if source.label.trim().is_empty() {
+                                                                source.path.as_str()
+                                                            } else {
+                                                                source.label.as_str()
+                                                            };
+                                                            let label = clamp_metadata_source_label(label);
+                                                            let (row_rect, response) = ui.allocate_exact_size(
+                                                                Vec2::new(ui.available_width(), 24.0),
+                                                                Sense::click(),
+                                                            );
+                                                            let response = response
+                                                                .on_hover_text(source.path.as_str())
+                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                            let fill = if selected_source {
+                                                                ui.visuals().selection.bg_fill
+                                                            } else if response.hovered() {
+                                                                ui.visuals().widgets.hovered.bg_fill
+                                                            } else {
+                                                                Color32::TRANSPARENT
+                                                            };
+                                                            if fill != Color32::TRANSPARENT {
+                                                                ui.painter().rect_filled(
+                                                                    row_rect,
+                                                                    egui::CornerRadius::same(4),
+                                                                    fill,
+                                                                );
+                                                            }
+                                                            let text_color = if selected_source {
+                                                                ui.visuals().selection.stroke.color
+                                                            } else {
+                                                                ui.visuals().text_color()
+                                                            };
+                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
+                                                            ui.painter().with_clip_rect(text_rect).text(
+                                                                text_rect.left_center(),
+                                                                egui::Align2::LEFT_CENTER,
+                                                                label.as_str(),
+                                                                egui::FontId::proportional(12.0),
+                                                                text_color,
+                                                            );
+                                                            if response.clicked() {
+                                                                self.select_extracted_metadata_source(
+                                                                    &selected.id,
+                                                                    &source.path,
+                                                                );
+                                                                ui.close();
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                    } else {
+                                        source_response.on_hover_cursor(egui::CursorIcon::Default);
+                                    }
+                                }
+                            });
                             // Use a simple label to preserve the literal formatting (newlines) 
                             // of the extracted text file (e.g. README.txt).
                             ui.add(egui::Label::new(

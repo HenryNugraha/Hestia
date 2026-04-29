@@ -49,6 +49,8 @@ pub struct AppState {
     #[serde(default)]
     pub metadata_visibility: MetadataVisibility,
     #[serde(default)]
+    pub scan_rabbitfx_requirement: bool,
+    #[serde(default)]
     pub launch_behavior: LaunchBehavior,
     #[serde(default)]
     pub tool_launch_behavior: LaunchBehavior,
@@ -125,6 +127,7 @@ impl Default for AppState {
             hide_disabled: false,
             hide_archived: false,
             metadata_visibility: MetadataVisibility::default(),
+            scan_rabbitfx_requirement: false,
             launch_behavior: LaunchBehavior::default(),
             tool_launch_behavior: LaunchBehavior::default(),
             after_install_behavior: AfterInstallBehavior::default(),
@@ -256,6 +259,17 @@ pub struct ExtractedMetadata {
     pub hotkeys: Vec<String>,
     pub discovered_executables: Vec<String>,
     pub readme_path: Option<String>,
+    #[serde(default)]
+    pub text_sources: Vec<ExtractedMetadataTextSource>,
+    #[serde(default)]
+    pub requires_rabbitfx: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExtractedMetadataTextSource {
+    pub path: String,
+    pub label: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -267,6 +281,8 @@ pub struct UserMetadata {
     pub folder_path: String,
     pub cover_image: Option<String>,
     pub screenshots: Vec<String>,
+    #[serde(default)]
+    pub extracted_metadata_source_path: Option<String>,
     #[serde(default)]
     pub category: String,
     #[serde(default)]
