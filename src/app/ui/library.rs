@@ -2985,6 +2985,17 @@ impl HestiaApp {
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {
         // Use the available rect and extend it to fill the pane
         let pane_rect = ui.available_rect_before_wrap();
+        if ui.ctx().input(|input| input.viewport().minimized.unwrap_or(false)) {
+            return;
+        }
+        let pane_rect_usable =
+            pane_rect.width().is_finite()
+                && pane_rect.height().is_finite()
+                && pane_rect.width() >= 320.0
+                && pane_rect.height() >= 240.0;
+        if !pane_rect_usable {
+            return;
+        }
         self.last_right_pane_rect = Some(pane_rect);
         let mut full_rect = pane_rect;
         full_rect.max.x += COVER_RIGHT_EXTEND;
