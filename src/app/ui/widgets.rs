@@ -645,17 +645,22 @@ fn game_grid_card(
     game_id: &str,
     label: &str,
     selected: bool,
+    dragging: bool,
 ) -> egui::Response {
     let desired_size = Vec2::new(272.0, 344.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
-    let fill = if selected {
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
+    let fill = if dragging {
+        Color32::from_rgba_premultiplied(31, 33, 37, 110)
+    } else if selected {
         Color32::from_rgba_premultiplied(66, 70, 76, 242)
     } else if response.hovered() {
         Color32::from_rgba_premultiplied(44, 47, 52, 242)
     } else {
         Color32::from_rgba_premultiplied(31, 33, 37, 242)
     };
-    let stroke = if selected {
+    let stroke = if dragging {
+        Color32::from_rgb(214, 104, 58)
+    } else if selected {
         Color32::from_rgb(140, 146, 154)
     } else {
         Color32::from_rgb(69, 74, 81)
@@ -683,7 +688,13 @@ fn game_grid_card(
         Sense::hover(),
     );
     child.add_space(4.0);
-    child.label(RichText::new(label).size(20.0).strong());
+    child
+        .add(
+            egui::Label::new(RichText::new(label).size(20.0).strong())
+                .selectable(false)
+                .truncate(),
+        )
+        .on_hover_cursor(egui::CursorIcon::Default);
 
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

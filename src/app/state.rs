@@ -117,6 +117,8 @@ pub struct HestiaApp {
     dragging_window_tool_target_index: Option<usize>,
     dragging_titlebar_tool_id: Option<String>,
     dragging_titlebar_tool_target_index: Option<usize>,
+    dragging_game_id: Option<String>,
+    dragging_game_target_index: Option<usize>,
     tasks_window_nonce: u64,
     tasks_force_default_pos: bool,
     tasks_tab: TasksTab,

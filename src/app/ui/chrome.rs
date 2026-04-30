@@ -731,7 +731,20 @@ impl HestiaApp {
         egui::Popup::menu(&response)
             .id(ui.id().with("game_selector_popup"))
             .width(860.0)
+            .frame({
+                let mut frame = egui::Frame::menu(ui.style());
+                let fill = ui.style().visuals.window_fill();
+                frame.fill = Color32::from_rgba_premultiplied(
+                    fill.r(),
+                    fill.g(),
+                    fill.b(),
+                    ((fill.a() as f32) * 0.90).round() as u8,
+                );
+                frame
+            })
             .show(|ui| {
+                let mut save_after_drag = false;
+                let mut dragged_game_preview: Option<(String, String, egui::Rect)> = None;
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
@@ -755,20 +768,134 @@ impl HestiaApp {
                                         let selected = self.selected_game().is_some_and(|current| {
                                             current.definition.id == game.definition.id
                                         });
+                                        let is_dragging_this = self
+                                            .dragging_game_id
+                                            .as_deref()
+                                            .is_some_and(|dragging_id| {
+                                                dragging_id == game.definition.id
+                                            });
                                         let response = game_grid_card(
                                             ui,
                                             &self.game_icon_textures,
                                             &game.definition.id,
                                             &game.definition.name,
                                             selected,
+                                            is_dragging_this,
                                         );
-                                        if response.clicked() {
+                                        if response.drag_started() {
+                                            self.dragging_game_id = Some(game.definition.id.clone());
+                                            self.dragging_game_target_index = self
+                                                .state
+                                                .games
+                                                .iter()
+                                                .position(|item| item.definition.id == game.definition.id);
+                                        }
+                                        let pointer_over_card = ui
+                                            .ctx()
+                                            .pointer_latest_pos()
+                                            .is_some_and(|pos| response.rect.contains(pos));
+                                        let insert_before = ui
+                                            .ctx()
+                                            .pointer_latest_pos()
+                                            .is_some_and(|pos| pos.x < response.rect.center().x);
+                                        let this_index = self
+                                            .state
+                                            .games
+                                            .iter()
+                                            .position(|item| item.definition.id == game.definition.id);
+                                        let insertion_slot = this_index.map(|index| {
+                                            if insert_before {
+                                                index
+                                            } else {
+                                                index.saturating_add(1)
+                                            }
+                                        });
+                                        if self.dragging_game_id.is_some()
+                                            && self
+                                                .dragging_game_id
+                                                .as_deref()
+                                                .is_some_and(|dragging_id| {
+                                                    dragging_id != game.definition.id
+                                                })
+                                        {
+                                            if let (Some(index), Some(target_index)) =
+                                                (this_index, self.dragging_game_target_index)
+                                            {
+                                                let line_x = if target_index == index {
+                                                    Some(response.rect.left() - 9.0)
+                                                } else if target_index == index.saturating_add(1) {
+                                                    Some(response.rect.right() + 9.0)
+                                                } else {
+                                                    None
+                                                };
+                                                if let Some(line_x) = line_x {
+                                                    let dash = 8.0;
+                                                    let gap = 6.0;
+                                                    let mut y = response.rect.top() + 8.0;
+                                                    let bottom = response.rect.bottom() - 8.0;
+                                                    while y < bottom {
+                                                        let y2 = (y + dash).min(bottom);
+                                                        ui.painter().line_segment(
+                                                            [
+                                                                egui::pos2(line_x, y),
+                                                                egui::pos2(line_x, y2),
+                                                            ],
+                                                            egui::Stroke::new(
+                                                                2.0,
+                                                                Color32::from_rgb(214, 104, 58),
+                                                            ),
+                                                        );
+                                                        y += dash + gap;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if self.dragging_game_id.is_some()
+                                            && ui.input(|input| input.pointer.primary_down())
+                                            && self
+                                                .dragging_game_id
+                                                .as_deref()
+                                                .is_some_and(|dragging_id| {
+                                                    dragging_id != game.definition.id
+                                                })
+                                            && pointer_over_card
+                                        {
+                                            if let Some(slot_index) = insertion_slot {
+                                                self.dragging_game_target_index = Some(slot_index);
+                                                ui.ctx().request_repaint();
+                                            }
+                                        }
+                                        if response.drag_stopped()
+                                            && self
+                                                .dragging_game_id
+                                                .as_deref()
+                                                .is_some_and(|dragging_id| dragging_id == game.definition.id)
+                                        {
+                                            if let (Some(dragging_id), Some(target_index)) = (
+                                                self.dragging_game_id.clone(),
+                                                self.dragging_game_target_index,
+                                            ) {
+                                                if self.move_game_order_to_slot(&dragging_id, target_index) {
+                                                    save_after_drag = true;
+                                                }
+                                            }
+                                            self.dragging_game_id = None;
+                                            self.dragging_game_target_index = None;
+                                        }
+                                        if response.clicked() && !response.dragged() {
                                             if let Some(index) = self.state.games.iter().position(|item| {
                                                 item.definition.id == game.definition.id
                                             }) {
                                                 self.set_selected_game(index, ui.ctx());
                                             }
                                             ui.close();
+                                        }
+                                        if is_dragging_this {
+                                            dragged_game_preview = Some((
+                                                game.definition.id.clone(),
+                                                game.definition.name.clone(),
+                                                response.rect,
+                                            ));
                                         }
                                     }
                                 });
@@ -778,6 +905,65 @@ impl HestiaApp {
                     ui.add_space(16.0);
                 });
                 ui.add_space(12.0);
+                if save_after_drag {
+                    self.save_state();
+                }
+                if let Some((game_id, label, source_rect)) = dragged_game_preview {
+                    if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+                        let ghost_rect = egui::Rect::from_center_size(
+                            pointer_pos + egui::vec2(8.0, 10.0),
+                            source_rect.size(),
+                        );
+                        egui::Area::new(egui::Id::new("dragging_game_ghost"))
+                            .order(egui::Order::Tooltip)
+                            .fixed_pos(ghost_rect.min)
+                            .interactable(false)
+                            .show(ui.ctx(), |ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    source_rect.size(),
+                                    Sense::hover(),
+                                );
+                                ui.painter().rect(
+                                    rect.shrink(1.0),
+                                    egui::CornerRadius::same(16),
+                                    Color32::from_rgba_premultiplied(31, 33, 37, 205),
+                                    egui::Stroke::new(
+                                        1.0,
+                                        Color32::from_rgb(214, 104, 58),
+                                    ),
+                                    egui::StrokeKind::Inside,
+                                );
+                                let mut child = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .max_rect(rect.shrink2(Vec2::new(8.0, 8.0)))
+                                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                                );
+                                let _ = paint_game_icon(
+                                    &mut child,
+                                    &self.game_icon_textures,
+                                    &game_id,
+                                    GAME_SWITCHER_GRID_ICON_SIZE,
+                                    Color32::WHITE,
+                                    Sense::hover(),
+                                );
+                                child.add_space(4.0);
+                                child.add(
+                                    egui::Label::new(
+                                        RichText::new(label).size(20.0).strong(),
+                                    )
+                                    .selectable(false)
+                                    .truncate(),
+                                );
+                            });
+                    }
+                }
+                if self.dragging_game_id.is_some()
+                    && ui.input(|input| input.pointer.primary_down())
+                {
+                    ui.ctx().output_mut(|output| {
+                        output.cursor_icon = egui::CursorIcon::Grabbing;
+                    });
+                }
             });
     }
 

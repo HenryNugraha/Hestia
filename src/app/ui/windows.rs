@@ -1649,7 +1649,7 @@ impl HestiaApp {
                                             }
                                         });
                                         let browse_width = 28.0;
-                                        let input_width = 220.0;
+                                        let input_width = 200.0;
                                         let warn_color = Color32::from_rgb(124, 45, 58);
                                         let err_stroke = egui::Stroke::new(1.0, warn_color);
                                         ui.scope(|ui| {
@@ -1685,7 +1685,10 @@ impl HestiaApp {
                                                     }
                                                 });
                                                 ui.horizontal(|ui| {
-                                                    let input_id = ui.make_persistent_id(format!("vanilla_path_{index}"));
+                                                    let input_id = ui.make_persistent_id(format!(
+                                                        "vanilla_path_{}",
+                                                        game.definition.id
+                                                    ));
                                                     let current_vanilla_value = game
                                                         .vanilla_exe_path_override
                                                         .as_ref()
@@ -1788,7 +1791,10 @@ impl HestiaApp {
                                                     }
                                                 });
                                                 ui.horizontal(|ui| {
-                                                    let input_id = ui.make_persistent_id(format!("mods_path_{index}"));
+                                                    let input_id = ui.make_persistent_id(format!(
+                                                        "mods_path_{}",
+                                                        game.definition.id
+                                                    ));
                                                     let current_path_value = game
                                                         .mods_path_override
                                                         .clone()
@@ -1983,6 +1989,8 @@ impl HestiaApp {
                             let now = ui.input(|i| i.time);
                             let label = self.app_update_button_label(now);
                             let enabled = self.app_update_button_enabled(now);
+                            ui.horizontal(|ui|{
+                                ui.add_space(-2.0);
                                 let response = ui.add_enabled(
                                     enabled,
                                     egui::Button::new(icon_text_sized(
@@ -1999,13 +2007,14 @@ impl HestiaApp {
                                     ))
                                     .corner_radius(egui::CornerRadius::same(3)),
                                 );
-                            if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                if self.app_update_verified_path.is_some() {
-                                    self.restart_to_update();
-                                } else {
-                                    self.request_app_update_check(now);
+                                if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    if self.app_update_verified_path.is_some() {
+                                        self.restart_to_update();
+                                    } else {
+                                        self.request_app_update_check(now);
+                                    }
                                 }
-                            }
+                            });
                             ui.add_space(-6.0);
                                 if ui
                                     .checkbox(

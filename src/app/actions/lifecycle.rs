@@ -180,6 +180,8 @@ impl HestiaApp {
             dragging_window_tool_target_index: None,
             dragging_titlebar_tool_id: None,
             dragging_titlebar_tool_target_index: None,
+            dragging_game_id: None,
+            dragging_game_target_index: None,
             tasks_window_nonce,
             tasks_force_default_pos,
             tasks_tab: TasksTab::Installs,
@@ -1640,6 +1642,40 @@ impl HestiaApp {
             );
             self.queue_update_check_for_linked_mods(Some(&game_id));
         }
+    }
+
+    fn move_game_order_to_slot(&mut self, game_id: &str, slot_index: usize) -> bool {
+        let Some(from_index) = self
+            .state
+            .games
+            .iter()
+            .position(|game| game.definition.id == game_id)
+        else {
+            return false;
+        };
+        let selected_game_id = self.selected_game().map(|game| game.definition.id.clone());
+        let slot_index = slot_index.min(self.state.games.len());
+        let adjusted_index = if slot_index > from_index {
+            slot_index.saturating_sub(1)
+        } else {
+            slot_index
+        };
+        if from_index == adjusted_index {
+            return false;
+        }
+        let game = self.state.games.remove(from_index);
+        self.state.games.insert(adjusted_index, game);
+        if let Some(selected_game_id) = selected_game_id {
+            if let Some(index) = self
+                .state
+                .games
+                .iter()
+                .position(|game| game.definition.id == selected_game_id)
+            {
+                self.selected_game = index;
+            }
+        }
+        true
     }
 
     fn next_background_job_id(&mut self) -> u64 {
