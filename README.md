@@ -107,111 +107,119 @@ cargo test
 
 ## FAQ
 
-### Is Hestia official?
+### ※ Is Hestia official?
 
 No. Hestia is an independent project. It is not affiliated with Kuro Games, GRYPHLINE, HoYoverse, miHoYo, Cognosphere, GameBanana, or the XXMI projects.
 
-### Does Hestia include mods?
+### ※ Does Hestia include mods?
 
 No. Hestia does not bundle mods.
 
 Hestia can browse, download, and install mods from GameBanana when the files are publicly available and supported by the app. You are responsible for the mods you choose to install and for following the rules of the games, mod authors, and hosting platforms involved.
 
-### Does Hestia support Linux or macOS?
-
-No. Hestia is currently Windows-only because that is where I use these games and tools.
-
-If you want to help with Linux or macOS support, feel free to open an issue with details.
-
-### Do I need XXMI?
+### ※ Do I need XXMI?
 
 Yes. Hestia is designed for XXMI-based mod setups. Without XXMI, Hestia has no supported mod environment to manage.
 
-### Where are settings saved?
+### ※ Where are settings saved?
 
 If the folder containing `hestia.exe` is writable, Hestia stores app state beside the executable.
+If the folder is not writable, Hestia stores app state in `%APPDATA%\Hestia`
+Runtime cache and temporary files are stored under `%TEMP%\Hestia`
 
-If the folder is not writable, Hestia stores app state in:
-
-```text
-%APPDATA%\Hestia
-```
-
-Runtime cache and temporary files are stored under:
-
-```text
-%TEMP%\Hestia
-```
-
-### Is it safe to use?
+### ※ Is it safe to use?
 
 Modding always carries some risk. Hestia does not remove or add the normal risks that come with using XXMI or third-party mods. Hestia itself does not interact directly with the games. It manages files, metadata, downloads, and related tools around your XXMI setup.
 
+For transparency, Hestia does keep local records of your activity and downloads, visible through the Tasks and Log windows. But they remain entirely on your PC and never leave it unless you yourself choose to share them. Hestia does not include any telemetry, tracking, or external data collection of any kind.
 
-### Can I assign categories to mods?
+### ※ Can I assign categories to mods?
 
 Yes. Click a mod, then click `Uncategorized` in the mod detail window.
 
 You can also select multiple mods and use the `Category` button to assign them in bulk. First-time users may need to click `+ New Category` to create a category. Categories can be dragged to rearrange their order.
 
-### What are Tools?
+### ※ What are Tools?
 
 Tools are external programs you may want to run for a game or mod setup. In many cases, this means a mod fixer after a game version update. Don't worry if you never used any, they are mostly optional.
 
-### What are Tasks?
+### ※ What are Tasks?
 
 Tasks are the app's download and install tracker. Use the Tasks panel to see active, completed, or failed mod downloads and installs.
 
-### When does Hestia check my mods for updates?
+### ※ When does Hestia check my mods for updates?
 
 Hestia checks updates for the currently selected game when the app launches. Changing the selected game also triggers a check. You can click Reload to manually scan and check again.
 
-### Where do Browse mods come from?
+### ※ Where do Browse mods come from?
 
 The Browse view uses GameBanana.
 
-### Do I need to have a GameBanana account?
+### ※ Do I need to have a GameBanana account?
 
 No. GameBanana support is an add-on inside Hestia. You can use Hestia only for local mod management, or use the Browse view to explore GameBanana mods without needing to know the website first. Though, browsing GameBanana directly and support the creators is highly encouraged.
 
-### Why are some mods hidden because of NSFW content?
+### ※ Why are some mods hidden because of NSFW content?
 
 Hestia can hide or censor content marked as NSFW. You can adjust this in:
+`Settings → Advanced → Content Restriction`
 
-```text
-Settings > Advanced > Content Restriction
-```
-
-### A mod in Browse looks outdated compared with the website. What should I do?
+### ※ A mod in Browse looks outdated compared with the website. What should I do?
 
 Click Reload. This re-fetches the current Browse data and refreshes the app's browsing cache.
 
-### I do not want Hestia to auto-update my mods.
+### ※ I do not want Hestia to auto-update my mods.
 
 Adjust auto-update behavior in:
+`Settings → General → Operational`
 
-```text
-Settings > General > Operational
-```
+### ※ Why are my mods blank without thumbnail, images or description?
 
-### I manually modified my mods. Will Hestia overwrite them?
+Your mods are most likely in an `unlinked` state.
 
-By default, no. Hestia detects and tries to avoid overwriting locally modified mods.
+### ※ What is unlinked mod?
 
-### I do not want one mod to update to the currently available version.
+It is when the mod is not associated to any GameBanana mod. Think of it as being offline.
 
-Click the mod, open the mod detail window, scroll down past the description, click the double downward arrows in the bottom-right, then enable `Ignore current update`.
+Hestia cannot check for an updates on `unlinked` mods.
 
-This only ignores the currently detected update. If a newer version is detected later, the ignore state is cleared.
+This normally happens when you install a mod outside of Hestia's `Browse` page.
 
-### A mod has multiple files and Hestia installs the wrong one when updating.
+### ※ How do I link my mods?
+
+If the mod is on GameBanana, the easiest way is to reinstall them via Hestia's `Browse` page.
+
+You can also manually link it by assigning a GameBanana ID to your installed mods. Click on the mod to open its detail, scroll down past the description, click the double downward arrows in the bottom-right. Under `Source` section, enter the mod's GameBanana URL (example: https://gamebanana.com/mods/652062) or its GameBanana ID (example: 652062) into the input field, then click `Sync Mod` and it will immediately fetch the mod's images and description.
+
+Once the mod is linked, Hestia can check for its update automatically.
+
+### ※ I manually modified my mods. Will Hestia overwrite them?
+
+By default, no. Hestia detects and tries to avoid overwriting locally modified mods. 
+
+You can adjust this behavior in:
+`Settings → General → Operational`
+
+### ※ I do not want a certain mods updated.
+
+Click the mod, open the mod detail window, scroll down past the description, click the double downward arrows in the bottom-right, then enable either `Ignore update once` or `Ignore update always` whichever suit your need.
+
+`Ignore update once` only ignores the currently detected update. If a newer version is detected, the ignore state is cleared and it will update normally.
+
+### ※ A mod has multiple files and Hestia installs the wrong one when updating.
 
 Some multi-file mods need special handling that cannot be guessed reliably. Open an issue with the mod link and details so the case can be reviewed.
 
-### Can I filter the mod list by status?
+### ※ Can I filter the mod list by status?
 
 Yes. Right-click the filter icon to filter by mod status.
 
-### Can I build my own version?
+### ※ Can I build my own version?
 
 Yes. Build instructions are above. Forks are welcome, and issues or questions are fine if you need help getting started.
+
+### ※ Does Hestia support Linux or macOS?
+
+No. Hestia is currently Windows-only because that is where I use these games and tools.
+
+If you want to help with Linux or macOS support, feel free to open an issue with details.

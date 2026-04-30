@@ -753,9 +753,17 @@ fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
         discovered.created_at = existing.created_at;
         let has_existing_fingerprint =
             existing.content_mtime.is_some() || existing.ini_hash.is_some();
+        let same_mtime = existing.content_mtime.map(|t| t.timestamp())
+            == discovered.content_mtime.map(|t| t.timestamp());
+        let legacy_disabled_hash = legacy_disabled_ini_hash(&discovered.root_path)
+            .ok()
+            .flatten();
+        let legacy_disabled_hash_match = same_mtime
+            && existing.ini_hash.as_deref() == legacy_disabled_hash.as_deref()
+            && discovered.ini_hash.as_deref() != legacy_disabled_hash.as_deref();
         let fingerprint_changed = has_existing_fingerprint
-            && (existing.content_mtime.map(|t| t.timestamp()) != discovered.content_mtime.map(|t| t.timestamp())
-                || existing.ini_hash != discovered.ini_hash);
+            && !legacy_disabled_hash_match
+            && (!same_mtime || existing.ini_hash != discovered.ini_hash);
         if fingerprint_changed {
             discovered.updated_at = Utc::now();
         } else {
@@ -766,6 +774,7 @@ fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
             existing.metadata.prompt_for_missing_metadata;
         discovered.source = existing.source.clone();
         discovered.update_state = existing.update_state;
+        migrate_legacy_disabled_baseline(discovered);
     }
 }
 
@@ -812,17 +821,30 @@ fn substantive_entries(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option<String>)> {
+    let disabled_root = root.join(DISABLED_CONTAINER);
+    let content_root = if disabled_root.exists() && substantive_entries(root)?.is_empty() {
+        disabled_root.as_path()
+    } else {
+        root
+    };
     let mut max_mtime: Option<SystemTime> = None;
     let mut hasher = Xxh3::new();
     let mut found_ini = false;
 
-    for entry in walkdir::WalkDir::new(root) {
+    for entry in walkdir::WalkDir::new(content_root) {
         let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
         }
         let path = entry.path();
         if path.components().any(|part| part.as_os_str() == MOD_META_DIR) {
+            continue;
+        }
+        if content_root == root
+            && path
+                .components()
+                .any(|part| part.as_os_str() == DISABLED_CONTAINER)
+        {
             continue;
         }
         let metadata = entry.metadata()?;
@@ -834,7 +856,7 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
         }
         if is_ini_file(path) {
             found_ini = true;
-            let rel = path.strip_prefix(root).unwrap_or(path);
+            let rel = path.strip_prefix(content_root).unwrap_or(path);
             hasher.update(rel.to_string_lossy().as_bytes());
             let bytes = fs::read(path)?;
             hasher.update(&bytes);
@@ -848,6 +870,58 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
         None
     };
     Ok((mtime, hash))
+}
+
+fn legacy_disabled_ini_hash(root: &Path) -> Result<Option<String>> {
+    let disabled_root = root.join(DISABLED_CONTAINER);
+    if !disabled_root.exists() || !substantive_entries(root)?.is_empty() {
+        return Ok(None);
+    }
+
+    let mut hasher = Xxh3::new();
+    let mut found_ini = false;
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.components().any(|part| part.as_os_str() == MOD_META_DIR) {
+            continue;
+        }
+        if is_ini_file(path) {
+            found_ini = true;
+            let rel = path.strip_prefix(root).unwrap_or(path);
+            hasher.update(rel.to_string_lossy().as_bytes());
+            let bytes = fs::read(path)?;
+            hasher.update(&bytes);
+        }
+    }
+
+    Ok(found_ini.then(|| format!("{:016x}", hasher.finish())))
+}
+
+fn migrate_legacy_disabled_baseline(mod_entry: &mut ModEntry) {
+    let Some(source) = mod_entry.source.as_mut() else {
+        return;
+    };
+    let Some(baseline_hash) = source.baseline_ini_hash.as_deref() else {
+        return;
+    };
+    if mod_entry.ini_hash.as_deref() == Some(baseline_hash) {
+        return;
+    }
+    if source.baseline_content_mtime.map(|time| time.timestamp())
+        != mod_entry.content_mtime.map(|time| time.timestamp())
+    {
+        return;
+    }
+    let Ok(Some(legacy_hash)) = legacy_disabled_ini_hash(&mod_entry.root_path) else {
+        return;
+    };
+    if baseline_hash == legacy_hash {
+        source.baseline_ini_hash = mod_entry.ini_hash.clone();
+    }
 }
 
 fn is_ini_file(path: &Path) -> bool {

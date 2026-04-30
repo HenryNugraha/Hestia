@@ -1971,17 +1971,18 @@ impl HestiaApp {
                         ui.add_space(24.0);
                     }
                     SettingsTab::About => {
+                        static_label(ui, bold(APP_NAME).underline().size(16.0));
                         ui.indent("setting_about_app", |ui| {
-                            static_label(ui, RichText::new(APP_NAME).size(18.0).strong());
-                            ui.add_space(-4.0);
-                            static_label(ui, format!("by {APP_AUTHORS}"));
-                            ui.add_space(-4.0);
-                            static_label(ui, format!("Version: {APP_VERSION}"));
                             ui.add_space(-2.0);
-                            ui.horizontal(|ui| {
-                                let now = ui.input(|i| i.time);
-                                let label = self.app_update_button_label(now);
-                                let enabled = self.app_update_button_enabled(now);
+                            static_label(ui, format!("by {APP_AUTHORS}"));
+                            ui.add_space(-8.0);
+                            ui.hyperlink("https://github.com/HenryNugraha/Hestia");
+                            ui.add_space(2.0);
+                            static_label(ui, format!("Version: {APP_VERSION}"));
+                            ui.add_space(-6.0);
+                            let now = ui.input(|i| i.time);
+                            let label = self.app_update_button_label(now);
+                            let enabled = self.app_update_button_enabled(now);
                                 let response = ui.add_enabled(
                                     enabled,
                                     egui::Button::new(icon_text_sized(
@@ -1990,20 +1991,22 @@ impl HestiaApp {
                                         } else if label == "Restart to Update" {
                                             Icon::RotateCw
                                         } else {
-                                            Icon::RefreshCw
-                                        },
-                                        label,
+                                        Icon::RefreshCw
+                                    },
+                                    label,
                                         11.5,
                                         11.5,
-                                    )),
+                                    ))
+                                    .corner_radius(egui::CornerRadius::same(3)),
                                 );
-                                if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    if self.app_update_verified_path.is_some() {
-                                        self.restart_to_update();
-                                    } else {
-                                        self.request_app_update_check(now);
-                                    }
+                            if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                if self.app_update_verified_path.is_some() {
+                                    self.restart_to_update();
+                                } else {
+                                    self.request_app_update_check(now);
                                 }
+                            }
+                            ui.add_space(-6.0);
                                 if ui
                                     .checkbox(
                                         &mut self.state.automatically_check_for_update,
@@ -2013,7 +2016,6 @@ impl HestiaApp {
                                 {
                                     should_save = true;
                                 }
-                            });
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);

@@ -1602,7 +1602,7 @@ impl HestiaApp {
             .corner_radius(egui::CornerRadius::same(0))
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                let header_response = ui.horizontal(|ui| {
                     ui.set_height(41.0); // Lock height strictly to prevent expansion and jitter
                     let is_empty = self.mods_search_query.trim().is_empty();
                     let expanded = self.mods_search_expanded;
@@ -2308,6 +2308,14 @@ impl HestiaApp {
                         }
                     });
                 });
+                if ui.ctx().input(|i| {
+                    i.pointer.secondary_clicked()
+                        && i.pointer
+                            .hover_pos()
+                            .is_some_and(|pos| header_response.response.rect.contains(pos))
+                }) {
+                    suppress_mod_card_context_menu = true;
+                }
             });
 
         ui.add_space(8.0);
@@ -4422,7 +4430,7 @@ impl HestiaApp {
                                                 let input_w = ((ui.available_width() - 84.0) / 2.0) * 1.2;
                                                 ui.add(
                                                     TextEdit::singleline(&mut input_str)
-                                                        .hint_text(RichText::new("Paste GameBanana URL or ID").color(Color32::from_gray(120)))
+                                                        .hint_text(RichText::new("URL or ID").color(Color32::from_gray(120)))
                                                         .desired_width(input_w)
                                                         .margin(egui::Margin::same(6))
                                                 );

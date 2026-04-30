@@ -84,12 +84,9 @@ fn source_profile_for_compare(source: &ModSourceData) -> Option<gamebanana::Prof
 fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
     let source = mod_entry.source.as_ref()?;
     let profile = source_profile_for_compare(source)?;
-    let has_local_changes = if mod_entry.status == ModStatus::Disabled {
-        false
-    } else {
-        source.baseline_content_mtime.map(|t| t.timestamp()) != mod_entry.content_mtime.map(|t| t.timestamp())
-            || source.baseline_ini_hash != mod_entry.ini_hash
-    };
+    let has_local_changes = source.baseline_content_mtime.map(|t| t.timestamp())
+        != mod_entry.content_mtime.map(|t| t.timestamp())
+        || source.baseline_ini_hash != mod_entry.ini_hash;
     if has_local_changes {
         Some(ModUpdateState::ModifiedLocally)
     } else {
@@ -103,9 +100,6 @@ fn mod_has_local_changes_for_update_check(mod_entry: &ModEntry) -> bool {
     let Some(source) = mod_entry.source.as_ref() else {
         return false;
     };
-    if mod_entry.status == ModStatus::Disabled {
-        return false;
-    }
     source.baseline_content_mtime.map(|t| t.timestamp())
         != mod_entry.content_mtime.map(|t| t.timestamp())
         || source.baseline_ini_hash != mod_entry.ini_hash
@@ -441,9 +435,6 @@ impl HestiaApp {
                         .source
                         .as_ref()
                         .is_some_and(|source| {
-                            if mod_entry.status == ModStatus::Disabled {
-                                return false;
-                            }
                             source.baseline_content_mtime.map(|t| t.timestamp()) != mod_entry.content_mtime.map(|t| t.timestamp())
                                 || source.baseline_ini_hash != mod_entry.ini_hash
                         });

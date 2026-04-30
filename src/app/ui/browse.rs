@@ -620,11 +620,23 @@ impl HestiaApp {
                         .filter(|name| !name.trim().is_empty())
                         .unwrap_or_else(|| format!("Mod {mod_id}"));
                     ui.heading(title);
-                    ui.label(
-                        RichText::new(format!("ID: {}", mod_id))
-                            .size(12.0)
-                            .color(Color32::from_gray(158)),
+                    let id_response = ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("ID: {}", mod_id))
+                                .size(12.0)
+                                .color(Color32::from_gray(158)),
+                        )
+                        .selectable(false)
+                        .sense(Sense::click()),
                     );
+                    id_response
+                        .clone()
+                        .on_hover_text("Copy GameBanana ID")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if id_response.clicked() {
+                        ui.ctx().copy_text(mod_id.to_string());
+                        self.set_message_ok("GameBanana ID copied");
+                    }
                 });
                 if let Some(detail) = self.browse_state.details.get(&mod_id).cloned() {
                     let browse_game_id = card
