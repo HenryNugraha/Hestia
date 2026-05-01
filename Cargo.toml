@@ -1,6 +1,6 @@
 [package]
 name = "hestia"
-version = "1.1.0"
+version = "1.1.1"
 authors = ["Henry Nugraha"]
 edition = "2024"
 
@@ -8,6 +8,7 @@ edition = "2024"
 exclude = [
     "TO.DO",
     "README.md",
+    "CHANGELOG.md",
     "installer.iss",
     "manifest.json"
 ]

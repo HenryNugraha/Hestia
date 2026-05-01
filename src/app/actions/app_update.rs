@@ -1,7 +1,8 @@
-use sha2::{Digest, Sha256};
 use anyhow::Context;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use sha2::{Digest, Sha256};
+use std::io::Write as _;
 
 impl HestiaApp {
     fn request_app_update_check(&mut self, now: f64) {
@@ -66,6 +67,12 @@ impl HestiaApp {
                     verified_path,
                 } => {
                     self.app_update_manifest = Some(manifest.clone());
+                    if let Err(message) = ensure_app_update_target_writable() {
+                        self.app_update_verified_path = None;
+                        self.app_update_button_state = AppUpdateButtonState::ManualRequired;
+                        self.report_error_message(message, Some("Manual update required"));
+                        continue;
+                    }
                     self.app_update_button_state = AppUpdateButtonState::UpdateAvailable;
                     if let Some(path) = verified_path {
                         self.stage_verified_app_update(&manifest, path.clone());
@@ -124,6 +131,13 @@ impl HestiaApp {
     fn queue_app_update_download(&mut self, manifest: AppUpdateManifest) {
         if self.app_update_download_active() {
             self.app_update_button_state = AppUpdateButtonState::UpdateAvailable;
+            return;
+        }
+        if let Err(message) = ensure_app_update_target_writable() {
+            self.app_update_manifest = Some(manifest);
+            self.app_update_verified_path = None;
+            self.app_update_button_state = AppUpdateButtonState::ManualRequired;
+            self.report_error_message(message, Some("Manual update required"));
             return;
         }
         let destination = app_update_exe_path(&manifest.version);
@@ -254,6 +268,7 @@ impl HestiaApp {
             AppUpdateButtonState::Check | AppUpdateButtonState::Checking => "Check for Update",
             AppUpdateButtonState::UpToDate => "Up to Date",
             AppUpdateButtonState::Failed => "Failed to Check",
+            AppUpdateButtonState::ManualRequired => "Manual Update Required",
             AppUpdateButtonState::UpdateAvailable => "Update Available",
         }
     }
@@ -281,6 +296,11 @@ impl HestiaApp {
             );
             return;
         }
+        if let Err(message) = ensure_app_update_target_writable() {
+            self.app_update_button_state = AppUpdateButtonState::ManualRequired;
+            self.report_error_message(message, Some("Manual update required"));
+            return;
+        }
         match self_replace::self_replace(&path) {
             Ok(()) => {
                 clear_staged_app_update_folder(&path);
@@ -294,8 +314,19 @@ impl HestiaApp {
                 std::process::exit(0);
             }
             Err(err) => self.report_error_message(
-                format!("failed to apply app update: {err:#}"),
-                Some("Could not apply update"),
+                if err.kind() == std::io::ErrorKind::PermissionDenied {
+                    match build_manual_app_update_message() {
+                        Ok(message) => message,
+                        Err(context) => format!("failed to apply app update: {err:#}\n{context}"),
+                    }
+                } else {
+                    format!("failed to apply app update: {err:#}")
+                },
+                Some(if err.kind() == std::io::ErrorKind::PermissionDenied {
+                    "Manual update required"
+                } else {
+                    "Could not apply update"
+                }),
             ),
         }
     }
@@ -349,6 +380,13 @@ pub(crate) fn apply_staged_app_update_before_gui(
         return Ok(false);
     }
 
+    if ensure_app_update_target_writable().is_err() {
+        clear_staged_app_update_folder(&staged.path);
+        state.staged_app_update = None;
+        persistence::save_app_state(portable, state)?;
+        return Ok(false);
+    }
+
     match self_replace::self_replace(&staged.path) {
         Ok(()) => {
             clear_staged_app_update_folder(&staged.path);
@@ -368,6 +406,64 @@ pub(crate) fn apply_staged_app_update_before_gui(
             Err(err).context("failed to apply staged app update")
         }
     }
+}
+
+fn ensure_app_update_target_writable() -> Result<(), String> {
+    if app_update_target_is_writable()? {
+        Ok(())
+    } else {
+        Err(build_manual_app_update_message().unwrap_or_else(|err| err))
+    }
+}
+
+fn app_update_target_is_writable() -> Result<bool, String> {
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable path: {err}"))?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| format!("current executable has no parent folder: {}", exe.display()))?;
+    let exe_stem = exe
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("hestia");
+    Ok(app_update_dir_allows_replacement(install_dir, exe_stem))
+}
+
+fn build_manual_app_update_message() -> Result<String, String> {
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable path: {err}"))?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| format!("current executable has no parent folder: {}", exe.display()))?;
+    Ok(format!(
+        "Hestia is installed in a folder this process cannot update:\n{}\nRun the installer manually to move Hestia to %LOCALAPPDATA%\\Programs\\Hestia, or update this install from an elevated process.",
+        install_dir.display()
+    ))
+}
+
+fn app_update_dir_allows_replacement(root: &Path, exe_stem: &str) -> bool {
+    let unique = format!(
+        "{}.{}",
+        std::process::id(),
+        Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let test_path = root.join(format!(".{exe_stem}.{unique}.update_write_test"));
+    let renamed_path = root.join(format!(".{exe_stem}.{unique}.update_rename_test"));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&test_path)?;
+        file.write_all(b"test")?;
+        file.flush()?;
+        drop(file);
+        fs::rename(&test_path, &renamed_path)?;
+        fs::rename(&renamed_path, &test_path)?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(&test_path);
+    let _ = fs::remove_file(&renamed_path);
+    result.is_ok()
 }
 
 async fn fetch_app_update_manifest(

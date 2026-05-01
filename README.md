@@ -1,5 +1,7 @@
 # Hestia
 
+<img src="https://raw.githubusercontent.com/HenryNugraha/Hestia/main/src/asset/icon.png" width="128">
+
 Hestia is a mod manager for games supported by XXMI. I started building it because with the little patience I have, navigating through existing mod managers was not something I could enjoy. The project is built with a heavy focus on user experience to achieve simpler setup, intuitive interface, and fewer manual steps.
 
 ## Supported Games

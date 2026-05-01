@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1] - 2026-05-01
+
+### Added
+
+- Added app-update checks so Hestia detects protected install folders before attempting self-update.
+
+### Changed
+
+- Changed the installer to install per-user under `%LOCALAPPDATA%\Programs\Hestia` by default.
+- Improved app state loader so when existing data detected, Hestia will attempt to load them first instead of creating new app state files.
+
 ## [1.1.0] - 2026-05-01
 
 ### Added

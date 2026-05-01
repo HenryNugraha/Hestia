@@ -68,6 +68,7 @@ enum AppUpdateButtonState {
     Checking,
     UpToDate,
     Failed,
+    ManualRequired,
     UpdateAvailable,
 }
 

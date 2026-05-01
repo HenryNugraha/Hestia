@@ -185,11 +185,10 @@ impl PortablePaths {
             .map(Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok())
             .context("failed to resolve portable root")?;
-        let state_archive = resolve_state_archive_path(&exe, &root)?;
-        let history_db = resolve_history_db_path(&exe, &root)?;
+        let paths = resolve_persistent_data_paths(&exe, &root)?;
         Ok(Self {
-            state_archive,
-            history_db,
+            state_archive: paths.state_archive,
+            history_db: paths.history_db,
         })
     }
 
@@ -209,38 +208,64 @@ impl PortablePaths {
     }
 }
 
-fn resolve_state_archive_path(exe: &Path, root: &Path) -> Result<PathBuf> {
-    resolve_persistent_data_path(
+struct PersistentDataPaths {
+    state_archive: PathBuf,
+    history_db: PathBuf,
+}
+
+fn resolve_persistent_data_paths(exe: &Path, root: &Path) -> Result<PersistentDataPaths> {
+    let fallback_dir = appdata_fallback_dir()?;
+    Ok(resolve_persistent_data_paths_with_fallback_dir(
         exe,
         root,
-        |exe_stem| format!("{exe_stem}.toml"),
-        "hestia.toml",
-    )
+        &fallback_dir,
+    ))
 }
 
-fn resolve_history_db_path(exe: &Path, root: &Path) -> Result<PathBuf> {
-    resolve_persistent_data_path(exe, root, |_| "hestia.dat".to_string(), "hestia.dat")
-}
-
-fn resolve_persistent_data_path(
+fn resolve_persistent_data_paths_with_fallback_dir(
     exe: &Path,
     root: &Path,
-    portable_name: impl FnOnce(&str) -> String,
-    fallback_name: &str,
-) -> Result<PathBuf> {
+    fallback_dir: &Path,
+) -> PersistentDataPaths {
     let exe_stem = exe
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("hestia");
-    let portable_candidate = root.join(portable_name(exe_stem));
+    let portable_state = root.join(format!("{exe_stem}.toml"));
+    let portable_history = root.join("hestia.dat");
+    let fallback_state = fallback_dir.join("hestia.toml");
+    let fallback_history = fallback_dir.join("hestia.dat");
 
-    if dir_is_writable(root, exe_stem) {
-        return Ok(portable_candidate);
+    if portable_state.exists() || portable_history.exists() {
+        return PersistentDataPaths {
+            state_archive: portable_state,
+            history_db: portable_history,
+        };
     }
 
+    if fallback_state.exists() || fallback_history.exists() {
+        return PersistentDataPaths {
+            state_archive: fallback_state,
+            history_db: fallback_history,
+        };
+    }
+
+    if dir_is_writable(root, exe_stem) {
+        return PersistentDataPaths {
+            state_archive: portable_state,
+            history_db: portable_history,
+        };
+    }
+
+    PersistentDataPaths {
+        state_archive: fallback_state,
+        history_db: fallback_history,
+    }
+}
+
+fn appdata_fallback_dir() -> Result<PathBuf> {
     let appdata = std::env::var("APPDATA").context("APPDATA is not set")?;
-    let fallback_dir = PathBuf::from(appdata).join("Hestia");
-    Ok(fallback_dir.join(fallback_name))
+    Ok(PathBuf::from(appdata).join("Hestia"))
 }
 
 pub fn runtime_temp_root() -> PathBuf {
@@ -967,4 +992,68 @@ pub fn save_portable_mod_state(mod_root: &Path, state: &PortableModState) -> Res
     fs::create_dir_all(&dir)?;
     let raw = serde_json::to_string_pretty(state)?;
     write_atomic_text(&dir.join(MOD_META_FILE), &raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistent_paths_prefer_existing_fallback_before_new_portable_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(fallback_dir.join("hestia.toml"), "state").unwrap();
+        fs::write(fallback_dir.join("hestia.dat"), "history").unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
+        assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_keep_existing_portable_files_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(install_dir.join("hestia.toml"), "portable state").unwrap();
+        fs::write(fallback_dir.join("hestia.toml"), "fallback state").unwrap();
+        fs::write(fallback_dir.join("hestia.dat"), "fallback history").unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_create_portable_files_when_no_existing_state_and_writable() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
 }
