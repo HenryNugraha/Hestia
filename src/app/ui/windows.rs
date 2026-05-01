@@ -1590,9 +1590,10 @@ impl HestiaApp {
                     ui.label(bold("Game").underline().size(16.0))
                     .on_hover_cursor(egui::CursorIcon::Default);
                     let mut selected_game_was_disabled = false;
-                    let mut enabled_game_turned_on = false;
+                    let mut enabled_game_ids = Vec::new();
                     for (index, game) in self.state.games.iter_mut().enumerate() {
                         ui.group(|ui| {
+                                ui.set_min_width(360.0);
                                 ui.horizontal_top(|ui| {
                                     let tint = if game.enabled {
                                         Color32::WHITE
@@ -1613,7 +1614,7 @@ impl HestiaApp {
                                         game.enabled = !game.enabled;
                                         should_save = true;
                                         if !before && game.enabled {
-                                            enabled_game_turned_on = true;
+                                            enabled_game_ids.push(game.definition.id.clone());
                                         }
                                         if before && !game.enabled && index == self.selected_game {
                                             selected_game_was_disabled = true;
@@ -1641,7 +1642,7 @@ impl HestiaApp {
                                             if toggle_switch(ui, &mut game.enabled).on_hover_cursor(egui::CursorIcon::PointingHand).changed() {
                                                 should_save = true;
                                                 if !before && game.enabled {
-                                                    enabled_game_turned_on = true;
+                                                    enabled_game_ids.push(game.definition.id.clone());
                                                 }
                                                 if before && !game.enabled && index == self.selected_game {
                                                     selected_game_was_disabled = true;
@@ -1685,9 +1686,9 @@ impl HestiaApp {
                                                     }
                                                 });
                                                 ui.horizontal(|ui| {
-                                                    let input_id = ui.make_persistent_id(format!(
-                                                        "vanilla_path_{}",
-                                                        game.definition.id
+                                                    let input_id = egui::Id::new((
+                                                        "settings_vanilla_path",
+                                                        game.definition.id.as_str(),
                                                     ));
                                                     let current_vanilla_value = game
                                                         .vanilla_exe_path_override
@@ -1768,9 +1769,7 @@ impl HestiaApp {
 
                                             if game.enabled && !self.state.use_default_mods_path {
                                                 let mods_invalid = game
-                                                    .mods_path_override
-                                                    .clone()
-                                                    .or_else(|| game.mods_path(self.state.use_default_mods_path))
+                                                    .mods_path(self.state.use_default_mods_path)
                                                     .map(|path| !path.is_dir())
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
@@ -1791,14 +1790,12 @@ impl HestiaApp {
                                                     }
                                                 });
                                                 ui.horizontal(|ui| {
-                                                    let input_id = ui.make_persistent_id(format!(
-                                                        "mods_path_{}",
-                                                        game.definition.id
+                                                    let input_id = egui::Id::new((
+                                                        "settings_mods_path",
+                                                        game.definition.id.as_str(),
                                                     ));
                                                     let current_path_value = game
-                                                        .mods_path_override
-                                                        .clone()
-                                                        .or_else(|| game.mods_path(self.state.use_default_mods_path))
+                                                        .mods_path(self.state.use_default_mods_path)
                                                         .map(|path| path.to_string_lossy().to_string())
                                                         .unwrap_or_default();
                                                     let mut path_value = ui
@@ -1877,8 +1874,18 @@ impl HestiaApp {
                     if selected_game_was_disabled {
                         self.ensure_selected_game_enabled(ctx);
                     }
-                    if enabled_game_turned_on {
-                        self.refresh();
+                    for game_id in enabled_game_ids {
+                        if self.auto_detect_enabled_game_paths(&game_id) {
+                            ui.data_mut(|data| {
+                                data.remove::<String>(
+                                    egui::Id::new(("settings_vanilla_path", game_id.as_str())),
+                                );
+                                data.remove::<String>(
+                                    egui::Id::new(("settings_mods_path", game_id.as_str())),
+                                );
+                            });
+                        }
+                        self.queue_game_refresh(game_id);
                     }
                     }
                     SettingsTab::Advanced => {

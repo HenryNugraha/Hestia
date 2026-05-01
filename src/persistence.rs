@@ -16,9 +16,9 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::model::{
     AfterInstallBehavior, AppState, BrowseSort, CacheSizeTier, DeleteBehavior, GameInstall,
-    ImportResolution, LaunchBehavior, LibraryFolder, LibraryGroupMode, MetadataVisibility,
-    MOD_META_DIR, MOD_META_FILE, ModCategory, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
-    PortableModState, SearchSort, TaskEntry, StagedAppUpdate, TaskKind, TaskStatus, TasksLayout,
+    ImportResolution, LaunchBehavior, LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE,
+    MetadataVisibility, ModCategory, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
+    PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus, TasksLayout,
     TasksOrder, ToolEntry, UnsafeContentMode,
 };
 
@@ -210,7 +210,12 @@ impl PortablePaths {
 }
 
 fn resolve_state_archive_path(exe: &Path, root: &Path) -> Result<PathBuf> {
-    resolve_persistent_data_path(exe, root, |exe_stem| format!("{exe_stem}.toml"), "hestia.toml")
+    resolve_persistent_data_path(
+        exe,
+        root,
+        |exe_stem| format!("{exe_stem}.toml"),
+        "hestia.toml",
+    )
 }
 
 fn resolve_history_db_path(exe: &Path, root: &Path) -> Result<PathBuf> {
@@ -340,7 +345,11 @@ fn initialize_tool_orders(state: &mut AppState, loaded_version: u32) {
                     (Some(left), Some(right)) => left
                         .auto_detected
                         .cmp(&right.auto_detected)
-                        .then_with(|| left.label.to_ascii_lowercase().cmp(&right.label.to_ascii_lowercase()))
+                        .then_with(|| {
+                            left.label
+                                .to_ascii_lowercase()
+                                .cmp(&right.label.to_ascii_lowercase())
+                        })
                         .then_with(|| left.created_at.cmp(&right.created_at)),
                     _ => a.cmp(b),
                 }
@@ -379,7 +388,11 @@ fn assign_tool_window_order(state: &mut AppState, game_id: &str, ids: &[String])
         .enumerate()
         .map(|(index, id)| (id.as_str(), index as i32))
         .collect();
-    for tool in state.tools.iter_mut().filter(|tool| tool.game_id == game_id) {
+    for tool in state
+        .tools
+        .iter_mut()
+        .filter(|tool| tool.game_id == game_id)
+    {
         tool.window_order = order_map
             .get(tool.id.as_str())
             .copied()
@@ -393,7 +406,11 @@ fn assign_tool_titlebar_order(state: &mut AppState, game_id: &str, ids: &[String
         .enumerate()
         .map(|(index, id)| (id.as_str(), index as i32))
         .collect();
-    for tool in state.tools.iter_mut().filter(|tool| tool.game_id == game_id) {
+    for tool in state
+        .tools
+        .iter_mut()
+        .filter(|tool| tool.game_id == game_id)
+    {
         if tool.show_in_titlebar {
             tool.titlebar_order = order_map.get(tool.id.as_str()).copied();
         } else {
@@ -417,7 +434,11 @@ fn compact_tool_window_order(state: &mut AppState, game_id: &str) {
                 .window_order
                 .cmp(&right.window_order)
                 .then_with(|| left.created_at.cmp(&right.created_at))
-                .then_with(|| left.label.to_ascii_lowercase().cmp(&right.label.to_ascii_lowercase())),
+                .then_with(|| {
+                    left.label
+                        .to_ascii_lowercase()
+                        .cmp(&right.label.to_ascii_lowercase())
+                }),
             _ => a.cmp(b),
         }
     });
@@ -499,7 +520,10 @@ pub fn replace_task(paths: &PortablePaths, task: &TaskEntry) -> Result<()> {
 
 pub fn remove_task(paths: &PortablePaths, task_id: u64) -> Result<()> {
     let conn = open_history_db(paths)?;
-    conn.execute("DELETE FROM task_history WHERE id = ?1", params![task_id as i64])?;
+    conn.execute(
+        "DELETE FROM task_history WHERE id = ?1",
+        params![task_id as i64],
+    )?;
     Ok(())
 }
 
@@ -585,8 +609,7 @@ fn reset_history_store(paths: &PortablePaths) -> Result<()> {
 
 fn remove_if_exists(path: &Path) -> Result<()> {
     if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("failed to remove {}", path.display()))?;
+        fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()))?;
     }
     Ok(())
 }
@@ -765,7 +788,8 @@ pub fn cache_get(_paths: &PortablePaths, cache_key: &str) -> Result<Option<Vec<u
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = fs::read(&path).with_context(|| format!("failed to read cache {}", path.display()))?;
+    let bytes =
+        fs::read(&path).with_context(|| format!("failed to read cache {}", path.display()))?;
     let now = FileTime::from_system_time(SystemTime::now());
     let _ = set_file_mtime(&path, now);
     Ok(Some(bytes))

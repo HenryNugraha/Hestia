@@ -7,9 +7,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tempfile::TempDir;
 use walkdir::WalkDir;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use crate::model::{ConflictChoice, ImportCandidate, ImportInspection, ImportSource};
 use crate::persistence;
@@ -79,7 +82,8 @@ pub fn inspect_source_cancelable(
                 .context("failed to create temp dir for archive inspection")?;
             extract_archive_cancelable(&path, temp_dir.path(), cancel)?;
             check_cancel(cancel)?;
-            let inspection = inspect_directory_cancelable(game_id, &source, temp_dir.path(), cancel)?;
+            let inspection =
+                inspect_directory_cancelable(game_id, &source, temp_dir.path(), cancel)?;
             Ok(PreparedImport {
                 _temp_dir: Some(temp_dir),
                 inspection,
@@ -324,11 +328,7 @@ fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip_cancelable(
-    archive: &Path,
-    destination: &Path,
-    cancel: &CancelFlag,
-) -> Result<()> {
+fn extract_zip_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
     let file = fs::File::open(archive)?;
     let mut archive = zip::ZipArchive::new(file)?;
     for index in 0..archive.len() {
@@ -356,11 +356,7 @@ fn extract_7z(archive: &Path, destination: &Path) -> Result<()> {
     sevenz_rust::decompress_file(archive, destination).context("failed to extract .7z archive")
 }
 
-fn extract_7z_cancelable(
-    archive: &Path,
-    destination: &Path,
-    cancel: &CancelFlag,
-) -> Result<()> {
+fn extract_7z_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
     check_cancel(cancel)?;
     sevenz_rust::decompress_file(archive, destination).context("failed to extract .7z archive")?;
     check_cancel(cancel)?;
@@ -397,15 +393,13 @@ fn extract_rar_with_unrar(
     Ok(())
 }
 
-fn extract_rar_cancelable(
-    archive: &Path,
-    destination: &Path,
-    cancel: &CancelFlag,
-) -> Result<()> {
+fn extract_rar_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
     check_cancel(cancel)?;
     match extract_rar_with_unrar(archive, destination, Some(cancel)) {
         Ok(()) => Ok(()),
-        Err(unrar_err) => extract_rar_with_7z_fallback(archive, destination, Some(cancel), unrar_err),
+        Err(unrar_err) => {
+            extract_rar_with_7z_fallback(archive, destination, Some(cancel), unrar_err)
+        }
     }
 }
 
@@ -454,11 +448,7 @@ fn extract_rar_with_7z_fallback(
             output.status
         );
     }
-    bail!(
-        "{:#}\n7-Zip fallback failed: {}",
-        unrar_error,
-        stderr
-    );
+    bail!("{:#}\n7-Zip fallback failed: {}", unrar_error, stderr);
 }
 
 fn resolve_7z_executable() -> Option<PathBuf> {

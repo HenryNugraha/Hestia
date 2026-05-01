@@ -2,8 +2,8 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -11,36 +11,38 @@ use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Local, Utc};
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{
-    self, Color32, FontData, FontDefinitions, FontFamily, RichText, ScrollArea, Sense,
-    TextEdit, TextFormat, Ui, Vec2,
+    self, Color32, FontData, FontDefinitions, FontFamily, RichText, ScrollArea, Sense, TextEdit,
+    TextFormat, Ui, Vec2,
 };
-use fast_image_resize as fir;
-use lucide_icons::{Icon, LUCIDE_FONT_BYTES};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use fast_image_resize as fir;
+use futures_util::StreamExt;
+use lucide_icons::{Icon, LUCIDE_FONT_BYTES};
+use once_cell::sync::Lazy;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use regex::Regex;
-use rfd::FileDialog;
-use uuid::Uuid;
-use walkdir::WalkDir;
-use once_cell::sync::Lazy;
-use xxhash_rust::xxh3::xxh3_64;
-use tokio::sync::{Semaphore, mpsc as tokio_mpsc};
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
-use futures_util::StreamExt;
+use rfd::FileDialog;
+use tokio::sync::{Semaphore, mpsc as tokio_mpsc};
+use uuid::Uuid;
+use walkdir::WalkDir;
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
-    integrations::{gamebanana, xxmi},
     importing::{self, PreparedImport},
+    integrations::{gamebanana, xxmi},
     model::{
-        default_modded_exe_candidates, default_vanilla_exe_candidates, AppState, ConflictChoice,
-        GameInstall, ImportSource, ModEntry, ModStatus, OperationLogEntry, LaunchBehavior,
-        ImportResolution, DeleteBehavior, ImportInspection, TasksLayout, TasksOrder,
-        TaskEntry, TaskKind, TaskStatus, ToolEntry, AfterInstallBehavior,
-        UnsafeContentMode, CacheSizeTier, MetadataVisibility, ModSourceData, GameBananaLink,
-        GameBananaSnapshot, GameBananaFileMeta, FileSetRecipe, TrackedFileMeta,
-        IgnoredUpdateSignature, LibraryGroupMode, LibrarySort, ModCategory,
-        ModUpdateState, ModStatusTargets, ModifiedUpdateBehavior, StagedAppUpdate, MOD_META_DIR, BrowseSort, SearchSort,
+        AfterInstallBehavior, AppState, BrowseSort, CacheSizeTier, ConflictChoice, DeleteBehavior,
+        FileSetRecipe, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot, GameInstall,
+        IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource, LaunchBehavior,
+        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory, ModEntry,
+        ModSourceData, ModStatus, ModStatusTargets, ModUpdateState, ModifiedUpdateBehavior,
+        OperationLogEntry, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus,
+        TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode,
+        default_modded_exe_candidates, default_mods_path, default_vanilla_exe_candidates,
+        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        shortcut_modded_exe_candidates,
     },
     persistence::{self, PortablePaths},
 };
@@ -119,4 +121,3 @@ impl eframe::App for HestiaApp {
         Color32::from_rgb(24, 26, 29).to_normalized_gamma_f32()
     }
 }
-

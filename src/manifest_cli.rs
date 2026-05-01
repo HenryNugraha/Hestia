@@ -105,7 +105,8 @@ fn run_manifest_command(
 
 impl ManifestCliOptions {
     fn defaults() -> anyhow::Result<Self> {
-        let current_exe = env::current_exe().context("failed to resolve current executable path")?;
+        let current_exe =
+            env::current_exe().context("failed to resolve current executable path")?;
         Ok(Self {
             no_prompt: false,
             app: env!("CARGO_PKG_NAME").to_string(),
@@ -131,16 +132,16 @@ fn parse_manifest_args(
             "--app" => options.app = next_arg_string(&mut args, "--app")?,
             "--file" => options.file = PathBuf::from(next_arg_string(&mut args, "--file")?),
             "--version" => options.version = next_arg_string(&mut args, "--version")?,
-            "--output" => {
-                options.out = PathBuf::from(next_arg_string(&mut args, "--output")?)
-            }
+            "--output" => options.out = PathBuf::from(next_arg_string(&mut args, "--output")?),
             "--url" => options.url = next_arg_string(&mut args, "--url")?,
             "--download" => {
                 if !custom_downloads {
                     options.downloads.clear();
                     custom_downloads = true;
                 }
-                options.downloads.push(next_arg_string(&mut args, "--download")?);
+                options
+                    .downloads
+                    .push(next_arg_string(&mut args, "--download")?);
             }
             _ => bail!("unknown manifest option: {flag}"),
         }
@@ -179,18 +180,16 @@ fn run_interactive_manifest_menu(options: &mut ManifestCliOptions) -> anyhow::Re
             }
             "5" => options.url = prompt_text_value("URL", &options.url)?,
             "6" => run_downloads_menu(&mut options.downloads)?,
-            "0" => {
-                match generate_manifest(options, false) {
-                    Ok(()) => {
-                        pause_to_close()?;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        eprintln!("Error: {err:#}");
-                        pause_to_continue()?;
-                    }
+            "0" => match generate_manifest(options, false) {
+                Ok(()) => {
+                    pause_to_close()?;
+                    return Ok(());
                 }
-            }
+                Err(err) => {
+                    eprintln!("Error: {err:#}");
+                    pause_to_continue()?;
+                }
+            },
             _ => {
                 println!("Invalid selection.");
                 println!();
@@ -356,7 +355,10 @@ fn sign_manifest_payload(payload: &ManifestPayload) -> anyhow::Result<String> {
 fn print_manifest_public_key() -> anyhow::Result<()> {
     let passphrase = prompt_signing_passphrase(true)?;
     let signing_key = signing_key_from_passphrase(&passphrase)?;
-    println!("public_key = {}", BASE64.encode(signing_key.verifying_key().to_bytes()));
+    println!(
+        "public_key = {}",
+        BASE64.encode(signing_key.verifying_key().to_bytes())
+    );
     Ok(())
 }
 
@@ -365,8 +367,8 @@ fn verify_manifest_file(args: Vec<OsString>) -> anyhow::Result<()> {
         .first()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_OUTPUT_NAME));
-    let raw = fs::read(&path)
-        .with_context(|| format!("failed to read manifest {}", path.display()))?;
+    let raw =
+        fs::read(&path).with_context(|| format!("failed to read manifest {}", path.display()))?;
     let document: ManifestDocument =
         serde_json::from_slice(&raw).context("failed to parse manifest")?;
     verify_manifest_document_signature(&document)?;
@@ -408,8 +410,8 @@ fn verify_manifest_document_signature(document: &ManifestDocument) -> anyhow::Re
     let signature_bytes = BASE64
         .decode(document.signature.trim())
         .context("invalid update manifest signature encoding")?;
-    let signature = Signature::from_slice(&signature_bytes)
-        .context("invalid update manifest signature")?;
+    let signature =
+        Signature::from_slice(&signature_bytes).context("invalid update manifest signature")?;
     let payload = ManifestPayload {
         app: document.app.clone(),
         version: document.version.clone(),
@@ -489,7 +491,8 @@ fn file_size(path: &Path) -> anyhow::Result<u64> {
 }
 
 fn sha256_file(path: &Path) -> anyhow::Result<String> {
-    let mut file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut file =
+        File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 8192];
     loop {
@@ -541,7 +544,9 @@ fn pause_with_message(message: &str) -> anyhow::Result<()> {
 fn clear_screen() -> anyhow::Result<()> {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("cmd").args(["/C", "cls"]).status();
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "cls"])
+            .status();
     }
     #[cfg(not(windows))]
     {

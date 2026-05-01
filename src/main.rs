@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod integrations;
 mod importing;
+mod integrations;
 mod manifest_cli;
 mod model;
 mod persistence;
@@ -19,7 +19,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 // Generate via terminal with:
 // >hestia.exe --public-key
-pub(crate) const UPDATE_MANIFEST_PUBLIC_KEY_BASE64: &str = "TIoMuHl5kBva4HJ9NbagA3vOR1L5jJFokESKJGPGah0=";
+pub(crate) const UPDATE_MANIFEST_PUBLIC_KEY_BASE64: &str =
+    "TIoMuHl5kBva4HJ9NbagA3vOR1L5jJFokESKJGPGah0=";
 
 // Generate via terminal with:
 // >hestia.exe --manifest
@@ -56,21 +57,22 @@ fn main() -> anyhow::Result<()> {
     if _single_instance_guard.is_none() && !after_update_launch {
         return Ok(());
     }
-    persistence::load_history(&portable, &mut state)
-        .context("failed to load persisted history")?;
+    if app::HestiaApp::auto_detect_game_paths(&mut state) {
+        persistence::save_app_state(&portable, &state)
+            .context("failed to save auto-detected game paths")?;
+    }
+    persistence::load_history(&portable, &mut state).context("failed to load persisted history")?;
     let selected_mods_root = state
         .last_selected_game_id
         .as_ref()
         .and_then(|id| state.games.iter().find(|g| g.definition.id == *id))
         .and_then(|g| g.mods_path(state.use_default_mods_path));
-    let _ = persistence::cleanup_orphan_tmp_files(
-        selected_mods_root.as_deref(),
-        &HashSet::new(),
-    );
+    let _ = persistence::cleanup_orphan_tmp_files(selected_mods_root.as_deref(), &HashSet::new());
     let icon_bytes = include_bytes!("asset/icon.png");
-    let icon = icon_data::from_png_bytes(icon_bytes)
-        .context("failed to load app icon from icon.png")?;
-    let runtime_services = app::RuntimeServices::new().context("failed to create runtime services")?;
+    let icon =
+        icon_data::from_png_bytes(icon_bytes).context("failed to load app icon from icon.png")?;
+    let runtime_services =
+        app::RuntimeServices::new().context("failed to create runtime services")?;
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1540.0, 960.0])
         .with_min_inner_size([1180.0, 760.0])

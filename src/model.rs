@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -223,9 +223,7 @@ impl GameInstall {
         if use_default {
             default_mods_path(&self.definition.xxmi_code)
         } else {
-            self.mods_path_override
-                .clone()
-                .or_else(|| default_mods_path(&self.definition.xxmi_code))
+            self.mods_path_override.clone()
         }
     }
 
@@ -734,44 +732,96 @@ pub fn default_mods_path(xxmi_code: &str) -> Option<PathBuf> {
 
 pub fn default_modded_exe_candidates(_game_id: &str) -> Vec<PathBuf> {
     let roots = common_roots();
-    let rels = [
+    build_candidates(&roots, xxmi_launcher_rels())
+}
+
+pub fn registry_modded_exe_candidates() -> Vec<PathBuf> {
+    let roots = registry_game_install_roots("xxmi-launcher");
+    build_candidates(&roots, xxmi_launcher_rels())
+}
+
+pub fn shortcut_modded_exe_candidates() -> Vec<PathBuf> {
+    xxmi_shortcut_paths()
+        .into_iter()
+        .filter_map(|path| resolve_shortcut_target(&path))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn xxmi_launcher_rels() -> &'static [&'static str] {
+    &[
+        "Resources\\Bin\\XXMI Launcher.exe",
+        "Resources\\Bin\\XXMI-Launcher.exe",
+        "XXMI Launcher.exe",
+        "XXMI-Launcher.exe",
         "XXMI Launcher\\Resources\\Bin\\XXMI Launcher.exe",
         "XXMI Launcher\\Resources\\Bin\\XXMI-Launcher.exe",
         "XXMI Launcher\\XXMI Launcher.exe",
         "XXMI Launcher\\XXMI-Launcher.exe",
-    ];
-    build_candidates(&roots, &rels)
+    ]
 }
 
 pub fn default_vanilla_exe_candidates(game_id: &str) -> Vec<PathBuf> {
     let roots = common_roots();
-    let rels: &[&str] = match game_id {
+    build_candidates(&roots, vanilla_exe_rels(game_id))
+}
+
+pub fn registry_vanilla_exe_candidates(game_id: &str) -> Vec<PathBuf> {
+    let roots = registry_game_install_roots(game_id);
+    build_candidates(&roots, vanilla_exe_rels(game_id))
+}
+
+fn vanilla_exe_rels(game_id: &str) -> &'static [&'static str] {
+    match game_id {
         "wuwa" => &[
             "Steam\\steamapps\\common\\Wuthering Waves\\Wuthering Waves.exe",
+            "Wuthering Waves.exe",
             "Wuthering Waves\\Wuthering Waves.exe",
+            "Wuthering Waves Game\\WutheringWaves.exe",
+            "Wuthering Waves Game\\Wuthering Waves.exe",
             "Wuthering Waves\\Wuthering Waves Game\\WutheringWaves.exe",
             "Wuthering Waves\\Wuthering Waves Game\\Wuthering Waves.exe",
+            "Client\\Binaries\\Win64\\WutheringWaves.exe",
             "Wuthering Waves\\Client\\Binaries\\Win64\\WutheringWaves.exe",
         ],
         "zzz" => &[
+            "ZenlessZoneZero.exe",
+            "Zenless Zone Zero Game\\ZenlessZoneZero.exe",
+            "ZenlessZoneZero Game\\ZenlessZoneZero.exe",
             "HoYoPlay\\games\\Zenless Zone Zero\\Zenless Zone Zero Game\\ZenlessZoneZero.exe",
+            "HoYoPlay\\games\\Zenless Zone Zero\\ZenlessZoneZero Game\\ZenlessZoneZero.exe",
             "Zenless Zone Zero\\Zenless Zone Zero Game\\ZenlessZoneZero.exe",
+            "Zenless Zone Zero\\ZenlessZoneZero Game\\ZenlessZoneZero.exe",
             "Zenless Zone Zero\\ZenlessZoneZero.exe",
+            "ZenlessZoneZero\\ZenlessZoneZero Game\\ZenlessZoneZero.exe",
             "ZenlessZoneZero\\ZenlessZoneZero.exe",
         ],
         "endfield" => &[
+            "Endfield.exe",
+            "EndField Game\\Endfield.exe",
+            "Arknights Endfield Game\\Endfield.exe",
             "GRYPHLINK\\games\\EndField Game\\Endfield.exe",
             "Arknights Endfield\\Arknights Endfield Game\\Endfield.exe",
             "Arknights Endfield\\ArknightsEndfield.exe",
         ],
         "starrail" => &[
+            "StarRail.exe",
+            "Games\\StarRail.exe",
+            "Star Rail Games\\StarRail.exe",
             "HoYoPlay\\games\\Honkai Star Rail\\Games\\StarRail.exe",
+            "HoYoPlay\\games\\Honkai Star Rail\\Star Rail Games\\StarRail.exe",
             "Honkai Star Rail\\Games\\StarRail.exe",
+            "Honkai Star Rail\\Star Rail Games\\StarRail.exe",
             "Honkai Star Rail\\StarRail.exe",
             "Star Rail\\Games\\StarRail.exe",
+            "Star Rail\\Star Rail Games\\StarRail.exe",
             "Star Rail\\StarRail.exe",
         ],
         "genshin" => &[
+            "GenshinImpact.exe",
+            "YuanShen.exe",
+            "Genshin Impact Game\\GenshinImpact.exe",
+            "Genshin Impact Game\\YuanShen.exe",
             "Genshin Impact\\Genshin Impact Game\\GenshinImpact.exe",
             "Genshin Impact\\Genshin Impact Game\\YuanShen.exe",
             "HoYoPlay\\games\\Genshin Impact\\Genshin Impact Game\\GenshinImpact.exe",
@@ -780,27 +830,472 @@ pub fn default_vanilla_exe_candidates(game_id: &str) -> Vec<PathBuf> {
             "miHoYo\\Genshin Impact\\Genshin Impact Game\\GenshinImpact.exe",
         ],
         "honkai-impact" => &[
+            "BH3.exe",
+            "HonkaiImpact3.exe",
+            "Games\\BH3.exe",
+            "Games\\HonkaiImpact3.exe",
+            "Honkai Impact 3rd game\\BH3.exe",
+            "Honkai Impact 3rd game\\HonkaiImpact3.exe",
             "HoYoPlay\\games\\Honkai Impact 3rd\\Games\\BH3.exe",
+            "HoYoPlay\\games\\Honkai Impact 3rd\\Honkai Impact 3rd game\\BH3.exe",
             "Honkai Impact 3rd\\Games\\BH3.exe",
+            "Honkai Impact 3rd\\Honkai Impact 3rd game\\BH3.exe",
             "Honkai Impact 3rd\\BH3.exe",
             "Honkai Impact 3rd\\Games\\HonkaiImpact3.exe",
+            "Honkai Impact 3rd\\Honkai Impact 3rd game\\HonkaiImpact3.exe",
             "Honkai Impact 3rd\\HonkaiImpact3.exe",
         ],
         _ => &[],
-    };
-    build_candidates(&roots, rels)
+    }
 }
 
 fn common_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    for key in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "APPDATA"] {
+    for key in [
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "LOCALAPPDATA",
+        "APPDATA",
+    ] {
         if let Some(value) = env::var_os(key) {
             roots.push(PathBuf::from(value));
         }
     }
+    roots.extend(steam_library_common_roots());
+    roots.extend(epic_install_roots());
     roots.push(PathBuf::from("C:\\Games"));
     roots.push(PathBuf::from("D:\\Games"));
+    roots.sort();
+    roots.dedup();
     roots
+}
+
+fn steam_library_common_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for steam_root in steam_install_roots() {
+        let library_file = steam_root.join("steamapps").join("libraryfolders.vdf");
+        let Ok(raw) = fs::read_to_string(&library_file) else {
+            continue;
+        };
+        for library_root in parse_steam_library_roots(&raw) {
+            let common = library_root.join("steamapps").join("common");
+            if common.is_dir() {
+                roots.push(common);
+            }
+        }
+    }
+    roots
+}
+
+fn steam_install_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for key in ["PROGRAMFILES(X86)", "PROGRAMFILES"] {
+        if let Some(value) = env::var_os(key) {
+            roots.push(PathBuf::from(value).join("Steam"));
+        }
+    }
+    roots
+}
+
+fn parse_steam_library_roots(raw: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("\"path\"") {
+            continue;
+        }
+        let value = trimmed.trim_start_matches("\"path\"").trim_start();
+        let Some(value) = value.strip_prefix('"') else {
+            continue;
+        };
+        let Some(end) = value.find('"') else {
+            continue;
+        };
+        let root = PathBuf::from(value[..end].replace("\\\\", "\\"));
+        if root.is_dir() {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+fn epic_install_roots() -> Vec<PathBuf> {
+    let program_data = env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
+    let mut roots = Vec::new();
+
+    let manifest_dir = program_data
+        .join("Epic")
+        .join("EpicGamesLauncher")
+        .join("Data")
+        .join("Manifests");
+    if let Ok(entries) = fs::read_dir(manifest_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("item") {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(path) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            if let Some(install_location) = value
+                .get("InstallLocation")
+                .and_then(|value| value.as_str())
+            {
+                push_install_root(&mut roots, PathBuf::from(install_location));
+            }
+        }
+    }
+
+    let launcher_installed = program_data
+        .join("Epic")
+        .join("UnrealEngineLauncher")
+        .join("LauncherInstalled.dat");
+    if let Ok(raw) = fs::read_to_string(launcher_installed) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(installs) = value
+                .get("InstallationList")
+                .and_then(|value| value.as_array())
+            {
+                for install in installs {
+                    if let Some(install_location) = install
+                        .get("InstallLocation")
+                        .and_then(|value| value.as_str())
+                    {
+                        push_install_root(&mut roots, PathBuf::from(install_location));
+                    }
+                }
+            }
+        }
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn push_install_root(roots: &mut Vec<PathBuf>, root: PathBuf) {
+    if !root.is_dir() {
+        return;
+    }
+    if let Some(parent) = root.parent().filter(|parent| parent.is_dir()) {
+        roots.push(parent.to_path_buf());
+    }
+    roots.push(root);
+}
+
+fn xxmi_shortcut_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(appdata) = env::var_os("APPDATA") {
+        let appdata = PathBuf::from(appdata);
+        paths.push(appdata.join("XXMI Launcher").join("XXMI Launcher.lnk"));
+        paths.push(
+            appdata
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("XXMI Launcher.lnk"),
+        );
+        paths.push(
+            appdata
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("XXMI Launcher")
+                .join("XXMI Launcher.lnk"),
+        );
+    }
+    if let Some(programdata) = env::var_os("PROGRAMDATA") {
+        paths.push(
+            PathBuf::from(programdata)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("XXMI Launcher.lnk"),
+        );
+    }
+    if let Some(profile) = env::var_os("USERPROFILE") {
+        paths.push(
+            PathBuf::from(profile)
+                .join("Desktop")
+                .join("XXMI Launcher.lnk"),
+        );
+    }
+    paths.push(PathBuf::from(
+        "C:\\Users\\Public\\Desktop\\XXMI Launcher.lnk",
+    ));
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[cfg(windows)]
+fn resolve_shortcut_target(path: &PathBuf) -> Option<PathBuf> {
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize, IPersistFile, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, SLGP_UNCPRIORITY, ShellLink};
+    use windows::core::{Interface, PCWSTR};
+
+    struct ComApartment(bool);
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe {
+                    CoUninitialize();
+                }
+            }
+        }
+    }
+
+    fn wide_null(value: &PathBuf) -> Vec<u16> {
+        value
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    #[cfg(windows)]
+    use std::os::windows::ffi::OsStrExt;
+
+    if !path.is_file() {
+        return None;
+    }
+
+    let com_initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().is_ok() };
+    let _apartment = ComApartment(com_initialized);
+    let shell_link: IShellLinkW =
+        unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()? };
+    let persist_file: IPersistFile = shell_link.cast().ok()?;
+    let shortcut_path = wide_null(path);
+    unsafe {
+        persist_file
+            .Load(PCWSTR(shortcut_path.as_ptr()), STGM_READ)
+            .ok()?;
+    }
+
+    let mut target = [0u16; 32768];
+    let mut find_data = WIN32_FIND_DATAW::default();
+    unsafe {
+        shell_link
+            .GetPath(&mut target, &mut find_data, SLGP_UNCPRIORITY.0 as u32)
+            .ok()?;
+    }
+    let end = target
+        .iter()
+        .position(|ch| *ch == 0)
+        .unwrap_or(target.len());
+    if end == 0 {
+        return None;
+    }
+    Some(PathBuf::from(String::from_utf16_lossy(&target[..end])))
+}
+
+#[cfg(not(windows))]
+fn resolve_shortcut_target(_path: &PathBuf) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(windows)]
+fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
+    use windows::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
+        REG_EXPAND_SZ, REG_SAM_FLAGS, REG_SZ, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW,
+        RegQueryValueExW,
+    };
+    use windows::core::{PCWSTR, PWSTR};
+
+    fn wide_null(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn registry_string_value(key: HKEY, name: &str) -> Option<String> {
+        let name = wide_null(name);
+        let mut value_type = Default::default();
+        let mut byte_len = 0u32;
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                PCWSTR(name.as_ptr()),
+                None,
+                Some(&mut value_type),
+                None,
+                Some(&mut byte_len),
+            )
+        };
+        if status != ERROR_SUCCESS || byte_len == 0 {
+            return None;
+        }
+        if value_type != REG_SZ && value_type != REG_EXPAND_SZ {
+            return None;
+        }
+
+        let mut bytes = vec![0u8; byte_len as usize];
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                PCWSTR(name.as_ptr()),
+                None,
+                Some(&mut value_type),
+                Some(bytes.as_mut_ptr()),
+                Some(&mut byte_len),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+
+        bytes.truncate(byte_len as usize);
+        let chars: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .take_while(|ch| *ch != 0)
+            .collect();
+        let value = String::from_utf16_lossy(&chars);
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    fn display_icon_root(value: &str) -> Option<PathBuf> {
+        let value = value.trim();
+        let executable = if let Some(rest) = value.strip_prefix('"') {
+            let end = rest.find('"')?;
+            &rest[..end]
+        } else {
+            value.split(',').next().unwrap_or(value).trim()
+        };
+        let path = PathBuf::from(executable);
+        path.parent()
+            .filter(|parent| parent.is_dir())
+            .map(|parent| parent.to_path_buf())
+    }
+
+    fn display_name_matches(display_name: &str, needles: &[&str]) -> bool {
+        let display_name = display_name.to_ascii_lowercase();
+        needles.iter().any(|needle| display_name.contains(needle))
+    }
+
+    fn collect_from_uninstall_key(
+        roots: &mut Vec<PathBuf>,
+        hive: HKEY,
+        view: REG_SAM_FLAGS,
+        needles: &[&str],
+    ) {
+        let uninstall_key = wide_null("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
+        let mut key = HKEY::default();
+        let status = unsafe {
+            RegOpenKeyExW(
+                hive,
+                PCWSTR(uninstall_key.as_ptr()),
+                Some(0),
+                KEY_READ | view,
+                &mut key,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return;
+        }
+
+        let mut index = 0u32;
+        loop {
+            let mut name = [0u16; 256];
+            let mut name_len = name.len() as u32;
+            let status = unsafe {
+                RegEnumKeyExW(
+                    key,
+                    index,
+                    Some(PWSTR(name.as_mut_ptr())),
+                    &mut name_len,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            };
+            if status == ERROR_NO_MORE_ITEMS {
+                break;
+            }
+            index += 1;
+            if status != ERROR_SUCCESS {
+                continue;
+            }
+
+            let mut subkey = HKEY::default();
+            let status = unsafe {
+                RegOpenKeyExW(
+                    key,
+                    PCWSTR(name.as_ptr()),
+                    Some(0),
+                    KEY_READ | view,
+                    &mut subkey,
+                )
+            };
+            if status != ERROR_SUCCESS {
+                continue;
+            }
+
+            let display_name = registry_string_value(subkey, "DisplayName");
+            if display_name
+                .as_deref()
+                .is_some_and(|name| display_name_matches(name, needles))
+            {
+                if let Some(install_location) = registry_string_value(subkey, "InstallLocation") {
+                    push_install_root(roots, PathBuf::from(install_location));
+                }
+                if let Some(display_icon) = registry_string_value(subkey, "DisplayIcon") {
+                    if let Some(root) = display_icon_root(&display_icon) {
+                        push_install_root(roots, root);
+                    }
+                }
+            }
+            unsafe {
+                let _ = RegCloseKey(subkey);
+            }
+        }
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+    }
+
+    let needles: &[&str] = match game_id {
+        "wuwa" => &["wuthering waves"],
+        "zzz" => &["zenless zone zero", "zenlesszonezero"],
+        "endfield" => &["arknights endfield", "arknights: endfield", "endfield"],
+        "starrail" => &["honkai: star rail", "honkai star rail", "star rail"],
+        "genshin" => &["genshin impact"],
+        "honkai-impact" => &["honkai impact 3rd", "honkai impact"],
+        "xxmi-launcher" => &["xxmi launcher"],
+        _ => &[],
+    };
+    if needles.is_empty() {
+        return Vec::new();
+    }
+
+    let mut roots = Vec::new();
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
+            collect_from_uninstall_key(&mut roots, hive, view, needles);
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+#[cfg(not(windows))]
+fn registry_game_install_roots(_game_id: &str) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 fn build_candidates(roots: &[PathBuf], rels: &[&str]) -> Vec<PathBuf> {

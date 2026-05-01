@@ -10,9 +10,9 @@ use std::{
 };
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x00000008;
 #[cfg(windows)]
@@ -27,22 +27,21 @@ use xxhash_rust::xxh3::Xxh3;
 
 #[cfg(windows)]
 use windows::{
-    core::PCWSTR,
-    Win32::{
-        UI::{
-            Shell::{
-                FO_DELETE, FOF_ALLOWUNDO, FOF_NOERRORUI, FOF_NOCONFIRMATION, FOF_SILENT,
-                SHFILEOPSTRUCTW, SHFileOperationW, ShellExecuteW,
-            },
-            WindowsAndMessaging::SW_SHOWNORMAL,
+    Win32::UI::{
+        Shell::{
+            FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+            SHFILEOPSTRUCTW, SHFileOperationW, ShellExecuteW,
         },
+        WindowsAndMessaging::SW_SHOWNORMAL,
     },
+    core::PCWSTR,
 };
 
 use crate::{
     model::{
-        AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata, GameInstall, MOD_META_DIR,
-        ExtractedMetadataTextSource, ModEntry, ModMetadata, ModStatus, PortableModState,
+        AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata,
+        ExtractedMetadataTextSource, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus,
+        PortableModState,
     },
     persistence,
 };
@@ -52,7 +51,12 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
 
     // Determine which games to scan
     let games_to_scan: Vec<GameInstall> = match target_game_id {
-        Some(id) => state.games.iter().filter(|g| g.definition.id == id).cloned().collect(),
+        Some(id) => state
+            .games
+            .iter()
+            .filter(|g| g.definition.id == id)
+            .cloned()
+            .collect(),
         None => state.games.iter().filter(|g| g.enabled).cloned().collect(),
     };
 
@@ -60,14 +64,20 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
         // Auto-create mods directory if both executables exist but folder is missing
         if let Some(mods_path) = game.mods_path(state.use_default_mods_path) {
             if !mods_path.exists() {
-                let vanilla_exists = game.vanilla_exe_path().as_ref().is_some_and(|p| p.is_file());
-                let modded_exists = state.modded_launcher_path_override.as_ref()
+                let vanilla_exists = game
+                    .vanilla_exe_path()
+                    .as_ref()
+                    .is_some_and(|p| p.is_file());
+                let modded_exists = state
+                    .modded_launcher_path_override
+                    .as_ref()
                     .or(game.modded_exe_path_override.as_ref())
                     .is_some_and(|p| p.is_file());
 
                 if vanilla_exists && modded_exists {
-                    fs::create_dir_all(&mods_path)
-                        .with_context(|| format!("failed to create mod directory: {}", mods_path.display()))?;
+                    fs::create_dir_all(&mods_path).with_context(|| {
+                        format!("failed to create mod directory: {}", mods_path.display())
+                    })?;
                 }
             }
         }
@@ -128,9 +138,8 @@ fn repair_duplicate_scanned_mod_ids(
         .into_values()
         .filter(|indices| indices.len() > 1)
         .collect();
-    let state_entry_will_remain = |existing: &ModEntry| {
-        target_game_id.is_some_and(|game_id| existing.game_id != game_id)
-    };
+    let state_entry_will_remain =
+        |existing: &ModEntry| target_game_id.is_some_and(|game_id| existing.game_id != game_id);
     let id_collides_with_remaining_state = |id: &str| {
         state
             .mods
@@ -146,8 +155,11 @@ fn repair_duplicate_scanned_mod_ids(
         return;
     }
 
-    let mut used_ids: HashSet<String> =
-        state.mods.iter().map(|mod_entry| mod_entry.id.clone()).collect();
+    let mut used_ids: HashSet<String> = state
+        .mods
+        .iter()
+        .map(|mod_entry| mod_entry.id.clone())
+        .collect();
     used_ids.extend(newly_scanned.iter().map(|mod_entry| mod_entry.id.clone()));
     let mut assign_new_id = |mod_entry: &mut ModEntry| {
         let new_id = loop {
@@ -276,7 +288,11 @@ pub fn archive_mod(
     Ok(destination)
 }
 
-pub fn restore_mod(mod_entry: &mut ModEntry, game: &GameInstall, use_default_path: bool) -> Result<PathBuf> {
+pub fn restore_mod(
+    mod_entry: &mut ModEntry,
+    game: &GameInstall,
+    use_default_path: bool,
+) -> Result<PathBuf> {
     if mod_entry.status != ModStatus::Archived {
         bail!("only archived mods can be restored");
     }
@@ -332,13 +348,14 @@ pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
             }
         }
 
-        return Err(shell_err
-            .unwrap_or_else(|| anyhow!("unknown native recycle-bin failure")))
-        .context(
-            trash_err
-                .map(|err| format!("failed to send mod to recycle bin after fallback: {err:#}"))
-                .unwrap_or_else(|| "failed to send mod to recycle bin after fallback".to_string()),
-        );
+        return Err(shell_err.unwrap_or_else(|| anyhow!("unknown native recycle-bin failure")))
+            .context(
+                trash_err
+                    .map(|err| format!("failed to send mod to recycle bin after fallback: {err:#}"))
+                    .unwrap_or_else(|| {
+                        "failed to send mod to recycle bin after fallback".to_string()
+                    }),
+            );
     }
 
     #[cfg(not(windows))]
@@ -399,8 +416,7 @@ pub fn launch_path_with_raw_args(path: &Path, raw_args: &str) -> Result<()> {
     let args = if raw_args.trim().is_empty() {
         Vec::new()
     } else {
-        shlex::split(raw_args)
-            .ok_or_else(|| anyhow!("invalid launch options: unmatched quotes"))?
+        shlex::split(raw_args).ok_or_else(|| anyhow!("invalid launch options: unmatched quotes"))?
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
@@ -470,7 +486,10 @@ fn launch_executable_with_args(
 
 pub fn launch_xxmi_launcher(launcher_exe: &Path, xxmi_code: &str) -> Result<()> {
     if !launcher_exe.is_file() {
-        bail!("XXMI launcher executable not found: {}", launcher_exe.display());
+        bail!(
+            "XXMI launcher executable not found: {}",
+            launcher_exe.display()
+        );
     }
 
     let args = ["--nogui", "--xxmi", xxmi_code];
@@ -478,12 +497,20 @@ pub fn launch_xxmi_launcher(launcher_exe: &Path, xxmi_code: &str) -> Result<()> 
 }
 
 #[cfg(windows)]
-fn shell_execute_open(exe: &Path, args: &[&str], working_dir: Option<&Path>) -> Result<(), ShellExecuteError> {
+fn shell_execute_open(
+    exe: &Path,
+    args: &[&str],
+    working_dir: Option<&Path>,
+) -> Result<(), ShellExecuteError> {
     shell_execute("open", exe, args, working_dir)
 }
 
 #[cfg(windows)]
-fn shell_execute_runas(exe: &Path, args: &[&str], working_dir: Option<&Path>) -> Result<(), ShellExecuteError> {
+fn shell_execute_runas(
+    exe: &Path,
+    args: &[&str],
+    working_dir: Option<&Path>,
+) -> Result<(), ShellExecuteError> {
     shell_execute("runas", exe, args, working_dir)
 }
 
@@ -614,7 +641,12 @@ fn scan_live_mods(
         if !path.is_dir() {
             continue;
         }
-        mods.push(load_mod_entry(game, path, false, scan_rabbitfx_requirement)?);
+        mods.push(load_mod_entry(
+            game,
+            path,
+            false,
+            scan_rabbitfx_requirement,
+        )?);
     }
     Ok(mods)
 }
@@ -624,6 +656,9 @@ fn scan_archived_mods(
     use_default_path: bool,
     scan_rabbitfx_requirement: bool,
 ) -> Result<Vec<ModEntry>> {
+    if game.mods_path(use_default_path).is_none() {
+        return Ok(Vec::new());
+    }
     let root = archived_mods_root(game, use_default_path)?;
     if !root.exists() {
         return Ok(Vec::new());
@@ -664,10 +699,18 @@ fn load_mod_entry(
         .to_string();
 
     let portable = persistence::load_portable_mod_state(&root_path)?;
-    let selected_metadata_source = portable
-        .as_ref()
-        .and_then(|stored| stored.metadata.user.extracted_metadata_source_path.as_deref());
-    let extracted = extract_metadata(&root_path, selected_metadata_source, scan_rabbitfx_requirement)?;
+    let selected_metadata_source = portable.as_ref().and_then(|stored| {
+        stored
+            .metadata
+            .user
+            .extracted_metadata_source_path
+            .as_deref()
+    });
+    let extracted = extract_metadata(
+        &root_path,
+        selected_metadata_source,
+        scan_rabbitfx_requirement,
+    )?;
     let metadata = match &portable {
         Some(stored) => ModMetadata {
             extracted,
@@ -744,7 +787,9 @@ fn derive_unsafe_content_from_portable(stored: &PortableModState) -> Option<bool
 }
 
 fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
-    let existing = state.mods.iter()
+    let existing = state
+        .mods
+        .iter()
         .find(|item| item.root_path == discovered.root_path)
         .or_else(|| state.mods.iter().find(|item| item.id == discovered.id));
 
@@ -837,7 +882,10 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
             continue;
         }
         let path = entry.path();
-        if path.components().any(|part| part.as_os_str() == MOD_META_DIR) {
+        if path
+            .components()
+            .any(|part| part.as_os_str() == MOD_META_DIR)
+        {
             continue;
         }
         if content_root == root
@@ -886,7 +934,10 @@ fn legacy_disabled_ini_hash(root: &Path) -> Result<Option<String>> {
             continue;
         }
         let path = entry.path();
-        if path.components().any(|part| part.as_os_str() == MOD_META_DIR) {
+        if path
+            .components()
+            .any(|part| part.as_os_str() == MOD_META_DIR)
+        {
             continue;
         }
         if is_ini_file(path) {
@@ -978,9 +1029,7 @@ fn extract_metadata(
                     .strip_prefix(root)
                     .map(|relative| relative.to_string_lossy().to_string())
                     .ok();
-                if !trimmed.is_empty()
-                    && !is_noise_metadata_text(trimmed)
-                {
+                if !trimmed.is_empty() && !is_noise_metadata_text(trimmed) {
                     if let Some(relative) = relative.clone() {
                         let source_index = text_sources.len();
                         text_sources.push(ExtractedMetadataTextSource {
@@ -1026,8 +1075,16 @@ fn extract_metadata(
     text_sources.sort_by(|left, right| {
         text_metadata_priority(Path::new(&right.path))
             .cmp(&text_metadata_priority(Path::new(&left.path)))
-            .then_with(|| left.label.to_ascii_lowercase().cmp(&right.label.to_ascii_lowercase()))
-            .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+            .then_with(|| {
+                left.label
+                    .to_ascii_lowercase()
+                    .cmp(&right.label.to_ascii_lowercase())
+            })
+            .then_with(|| {
+                left.path
+                    .to_ascii_lowercase()
+                    .cmp(&right.path.to_ascii_lowercase())
+            })
     });
 
     Ok(ExtractedMetadata {

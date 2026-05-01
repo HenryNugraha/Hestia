@@ -11,8 +11,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 pub const BROWSE_PAGE_SIZE: usize = 30;
 pub const SEARCH_PAGE_SIZE: usize = 30;
-pub const USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApiEnvelope<T> {
@@ -309,7 +308,11 @@ pub fn game_id_for_hestia(game_id: &str) -> Option<u64> {
     }
 }
 
-pub fn fetch_browse_page(game_id: u64, page: usize, sort: crate::model::BrowseSort) -> Result<ApiEnvelope<BrowseRecord>> {
+pub fn fetch_browse_page(
+    game_id: u64,
+    page: usize,
+    sort: crate::model::BrowseSort,
+) -> Result<ApiEnvelope<BrowseRecord>> {
     let client = client()?;
     let url = "https://gamebanana.com/apiv11/Mod/Index";
     let mut queries = vec![
@@ -360,7 +363,12 @@ pub async fn fetch_browse_page_async(
         .context("failed to parse GameBanana browse page")
 }
 
-pub fn fetch_search_page(game_id: u64, query: &str, page: usize, sort: crate::model::SearchSort) -> Result<ApiEnvelope<BrowseRecord>> {
+pub fn fetch_search_page(
+    game_id: u64,
+    query: &str,
+    page: usize,
+    sort: crate::model::SearchSort,
+) -> Result<ApiEnvelope<BrowseRecord>> {
     let client = client()?;
     let url = "https://gamebanana.com/apiv11/Util/Search/Results";
     let order = match sort {
@@ -374,7 +382,10 @@ pub fn fetch_search_page(game_id: u64, query: &str, page: usize, sort: crate::mo
             ("_sOrder", order.to_string()),
             ("_idGameRow", game_id.to_string()),
             ("_sSearchString", query.to_string()),
-            ("_csvFields", "name,description,article,attribs,studio,owner,credits".to_string()),
+            (
+                "_csvFields",
+                "name,description,article,attribs,studio,owner,credits".to_string(),
+            ),
             ("_nPerpage", SEARCH_PAGE_SIZE.to_string()),
             ("_nPage", page.to_string()),
         ])
@@ -405,7 +416,10 @@ pub async fn fetch_search_page_async(
             ("_sOrder", order.to_string()),
             ("_idGameRow", game_id.to_string()),
             ("_sSearchString", query.to_string()),
-            ("_csvFields", "name,description,article,attribs,studio,owner,credits".to_string()),
+            (
+                "_csvFields",
+                "name,description,article,attribs,studio,owner,credits".to_string(),
+            ),
             ("_nPerpage", SEARCH_PAGE_SIZE.to_string()),
             ("_nPage", page.to_string()),
         ])
@@ -458,10 +472,7 @@ pub async fn fetch_updates_async(
     let url = format!("https://gamebanana.com/apiv11/Mod/{mod_id}/Updates");
     let response = client
         .get(url)
-        .query(&[
-            ("_nPage", "1".to_string()),
-            ("_nPerpage", "50".to_string()),
-        ])
+        .query(&[("_nPage", "1".to_string()), ("_nPerpage", "50".to_string())])
         .send()
         .await
         .context("failed to fetch GameBanana mod updates")?;
@@ -482,11 +493,7 @@ pub fn thumbnail_url(image: &PreviewImage) -> Option<String> {
 }
 
 pub fn full_image_url(image: &PreviewImage) -> String {
-    format!(
-        "{}/{}",
-        image.base_url.trim_end_matches('/'),
-        image.file
-    )
+    format!("{}/{}", image.base_url.trim_end_matches('/'), image.file)
 }
 
 pub fn browser_url(mod_id: u64) -> String {
@@ -500,7 +507,10 @@ pub fn all_authors(profile: &ProfileResponse) -> Vec<String> {
     }
     for credit in &profile.credits {
         if let Some(user) = &credit.user {
-            if !authors.iter().any(|name| name.eq_ignore_ascii_case(&user.name)) {
+            if !authors
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&user.name))
+            {
                 authors.push(user.name.clone());
             }
         }
@@ -529,11 +539,7 @@ fn client() -> Result<&'static Client> {
         .ok_or_else(|| anyhow!("failed to initialize shared gamebanana client"))
 }
 
-pub fn browse_page_cache_key(
-    game_id: &str,
-    page: usize,
-    sort: crate::model::BrowseSort,
-) -> String {
+pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::BrowseSort) -> String {
     let mut tags = HashMap::new();
     tags.insert("kind", "browse".to_string());
     tags.insert("game", game_id.to_string());

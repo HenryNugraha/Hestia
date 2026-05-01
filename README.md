@@ -65,20 +65,35 @@ If a game is not detected, follow the steps shown in-app.
 ## Screenshots
 
 ![Supported games](docs/screenshots/01_supported_games.webp)
+&nbsp; ⤷ Game switcher menu.
+<p>&nbsp;</p>
 
 ![Organized mod details](docs/screenshots/02_organized_details.webp)
+&nbsp; ⤷ Main app with mod detail window open.
+<p>&nbsp;</p>
 
 ![Category management](docs/screenshots/03_category_management.webp)
+&nbsp; ⤷ Mod category management.
+<p>&nbsp;</p>
 
 ![GameBanana browse](docs/screenshots/04_gamebanana_browse.webp)
+&nbsp; ⤷ Browsing mods from GameBanana.
+<p>&nbsp;</p>
 
 ![Downloader and installer](docs/screenshots/05_downloader_installer.webp)
+&nbsp; ⤷ Built-in task monitor to track downloads and installs.
+<p>&nbsp;</p>
 
 ![Update detection](docs/screenshots/06_detects_update.webp)
+&nbsp; ⤷ Check mods for an update.
+<p>&nbsp;</p>
 
 ![Activity log](docs/screenshots/07_activity_log.webp)
+&nbsp; ⤷ Terminal-like console log window.
+<p>&nbsp;</p>
 
 ![External tools](docs/screenshots/08_external_tools.webp)
+&nbsp; ⤷ Listing external programs and pin them to the top.
 
 ## Building From Source
 

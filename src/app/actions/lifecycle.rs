@@ -68,33 +68,9 @@ impl HestiaApp {
         let mod_cover_textures = HashMap::new();
         let mod_full_textures = HashMap::new();
         state.mods.clear();
+        Self::auto_detect_game_paths(&mut state);
         let (startup_scan_tx, startup_scan_rx) =
             tokio_mpsc::unbounded_channel::<StartupScanEvent>();
-        let scan_runtime = runtime_services.handle();
-        let mut startup_scan_state = state.clone();
-        runtime_services.spawn(async move {
-            let result = scan_runtime
-                .spawn_blocking(move || -> Result<Vec<ModEntry>> {
-                    xxmi::refresh_state(&mut startup_scan_state, None)?;
-                    Ok(startup_scan_state.mods)
-                })
-                .await;
-            match result {
-                Ok(Ok(mods)) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Ready(mods));
-                }
-                Ok(Err(err)) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
-                        "Initial refresh failed: {err:#}"
-                    )));
-                }
-                Err(err) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
-                        "Initial refresh join failed: {err}"
-                    )));
-                }
-            }
-        });
         state.tasks.retain(|task| task.status.is_terminal());
         state.show_log = false;
         state.show_tasks = false;
@@ -292,8 +268,32 @@ impl HestiaApp {
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
         app.set_selected_game(selected_game, &cc.egui_ctx);
-        app.auto_detect_game_paths();
         app.ensure_selected_game_enabled(&cc.egui_ctx);
+        let scan_runtime = app.runtime_services.handle();
+        let mut startup_scan_state = app.state.clone();
+        app.runtime_services.spawn(async move {
+            let result = scan_runtime
+                .spawn_blocking(move || -> Result<Vec<ModEntry>> {
+                    xxmi::refresh_state(&mut startup_scan_state, None)?;
+                    Ok(startup_scan_state.mods)
+                })
+                .await;
+            match result {
+                Ok(Ok(mods)) => {
+                    let _ = startup_scan_tx.send(StartupScanEvent::Ready(mods));
+                }
+                Ok(Err(err)) => {
+                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
+                        "Initial refresh failed: {err:#}"
+                    )));
+                }
+                Err(err) => {
+                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
+                        "Initial refresh join failed: {err}"
+                    )));
+                }
+            }
+        });
         app
     }
 
@@ -659,7 +659,61 @@ impl HestiaApp {
         }
     }
 
-    fn auto_detect_game_paths(&mut self) {
+    pub fn auto_detect_game_paths(state: &mut AppState) -> bool {
+        let xxmi_config = load_xxmi_config();
+        let xxmi_launcher_candidates = xxmi_config
+            .as_ref()
+            .map(|(config_path, _)| xxmi_launcher_exe_candidates(config_path))
+            .unwrap_or_default();
+
+        let mut changed = false;
+        let global_modded_needs = match state.modded_launcher_path_override.as_ref() {
+            Some(path) => !path.is_file(),
+            None => true,
+        };
+        if global_modded_needs {
+            let registry_candidates = registry_modded_exe_candidates();
+            let shortcut_candidates = shortcut_modded_exe_candidates();
+            let fallback_candidates = default_modded_exe_candidates("");
+            if let Some(path) = pick_most_recent_existing(&xxmi_launcher_candidates)
+                .or_else(|| pick_most_recent_existing(&registry_candidates))
+                .or_else(|| pick_most_recent_existing(&shortcut_candidates))
+                .or_else(|| pick_most_recent_existing(&fallback_candidates))
+            {
+                state.modded_launcher_path_override = Some(path);
+                changed = true;
+            }
+        }
+
+        let use_default_mods_path = state.use_default_mods_path;
+        for game in &mut state.games {
+            changed |= Self::auto_detect_single_game_paths(
+                game,
+                xxmi_config.as_ref(),
+                &xxmi_launcher_candidates,
+                use_default_mods_path,
+            );
+
+            if !state.auto_game_enable_done {
+                let vanilla_found = game
+                    .vanilla_exe_path_override
+                    .as_ref()
+                    .is_some_and(|path| path.is_file());
+                if game.enabled != vanilla_found {
+                    game.enabled = vanilla_found;
+                    changed = true;
+                }
+            }
+        }
+
+        if !state.auto_game_enable_done {
+            state.auto_game_enable_done = true;
+            changed = true;
+        }
+        changed
+    }
+
+    fn auto_detect_enabled_game_paths(&mut self, game_id: &str) -> bool {
         let xxmi_config = load_xxmi_config();
         let xxmi_launcher_candidates = xxmi_config
             .as_ref()
@@ -672,65 +726,100 @@ impl HestiaApp {
             None => true,
         };
         if global_modded_needs {
-            if let Some(path) = pick_most_recent_existing(&xxmi_launcher_candidates) {
+            let registry_candidates = registry_modded_exe_candidates();
+            let shortcut_candidates = shortcut_modded_exe_candidates();
+            let fallback_candidates = default_modded_exe_candidates("");
+            if let Some(path) = pick_most_recent_existing(&xxmi_launcher_candidates)
+                .or_else(|| pick_most_recent_existing(&registry_candidates))
+                .or_else(|| pick_most_recent_existing(&shortcut_candidates))
+                .or_else(|| pick_most_recent_existing(&fallback_candidates))
+            {
                 self.state.modded_launcher_path_override = Some(path);
                 changed = true;
             }
         }
 
-        for game in &mut self.state.games {
-            let modded_needs = match game.modded_exe_path_override.as_ref() {
-                Some(path) => !path.is_file(),
-                None => true,
-            };
-            if modded_needs {
-                let mut candidates = xxmi_launcher_candidates.clone();
-                candidates.extend(default_modded_exe_candidates(&game.definition.id));
-                if let Some(path) = pick_most_recent_existing(&candidates) {
-                    game.modded_exe_path_override = Some(path);
-                    changed = true;
-                }
-            }
-
-            let vanilla_needs = match game.vanilla_exe_path_override.as_ref() {
-                Some(path) => !path.is_file(),
-                None => true,
-            };
-            if vanilla_needs {
-                let candidates_from_config = xxmi_config
-                    .as_ref()
-                    .map(|(_, config)| {
-                        xxmi_game_exe_candidates(config, &game.definition.xxmi_code)
-                    })
-                    .unwrap_or_default();
-                let fallback_candidates = default_vanilla_exe_candidates(&game.definition.id);
-                let path = pick_most_recent_existing(&candidates_from_config)
-                    .or_else(|| pick_most_recent_existing(&fallback_candidates));
-                if let Some(path) = path {
-                    game.vanilla_exe_path_override = Some(path);
-                    changed = true;
-                }
-            }
-
-            if !self.state.auto_game_enable_done {
-                let vanilla_found = game
-                    .vanilla_exe_path_override
-                    .as_ref()
-                    .is_some_and(|path| path.is_file());
-                if game.enabled != vanilla_found {
-                    game.enabled = vanilla_found;
-                    changed = true;
-                }
-            }
+        if let Some(game) = self
+            .state
+            .games
+            .iter_mut()
+            .find(|game| game.definition.id == game_id)
+        {
+            changed |= Self::auto_detect_single_game_paths(
+                game,
+                xxmi_config.as_ref(),
+                &xxmi_launcher_candidates,
+                self.state.use_default_mods_path,
+            );
         }
 
-        if !self.state.auto_game_enable_done {
-            self.state.auto_game_enable_done = true;
-            changed = true;
-        }
         if changed {
             self.save_state();
         }
+        changed
+    }
+
+    fn auto_detect_single_game_paths(
+        game: &mut GameInstall,
+        xxmi_config: Option<&(PathBuf, serde_json::Value)>,
+        xxmi_launcher_candidates: &[PathBuf],
+        use_default_mods_path: bool,
+    ) -> bool {
+        let mut changed = false;
+
+        if !use_default_mods_path {
+            let mods_needs = match game.mods_path_override.as_ref() {
+                Some(path) => !path.is_dir(),
+                None => true,
+            };
+            if mods_needs {
+                if let Some(path) =
+                    default_mods_path(&game.definition.xxmi_code).filter(|path| path.is_dir())
+                {
+                    game.mods_path_override = Some(path);
+                    changed = true;
+                }
+            }
+        }
+
+        let modded_needs = match game.modded_exe_path_override.as_ref() {
+            Some(path) => !path.is_file(),
+            None => true,
+        };
+        if modded_needs {
+            let registry_candidates = registry_modded_exe_candidates();
+            let shortcut_candidates = shortcut_modded_exe_candidates();
+            let fallback_candidates = default_modded_exe_candidates(&game.definition.id);
+            if let Some(path) = pick_most_recent_existing(xxmi_launcher_candidates)
+                .or_else(|| pick_most_recent_existing(&registry_candidates))
+                .or_else(|| pick_most_recent_existing(&shortcut_candidates))
+                .or_else(|| pick_most_recent_existing(&fallback_candidates))
+            {
+                game.modded_exe_path_override = Some(path);
+                changed = true;
+            }
+        }
+
+        let vanilla_needs = match game.vanilla_exe_path_override.as_ref() {
+            Some(path) => !path.is_file(),
+            None => true,
+        };
+        if vanilla_needs {
+            let candidates_from_config = xxmi_config
+                .map(|(_, config)| xxmi_game_exe_candidates(config, &game.definition.xxmi_code))
+                .unwrap_or_default();
+            let fallback_candidates = default_vanilla_exe_candidates(&game.definition.id);
+            let registry_candidates = registry_vanilla_exe_candidates(&game.definition.id);
+            let path = pick_most_recent_existing(&candidates_from_config)
+                .or_else(|| pick_most_recent_existing(&registry_candidates))
+                .or_else(|| pick_most_recent_existing(&fallback_candidates));
+            if let Some(path) = path {
+                game.vanilla_exe_path_override = Some(path);
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     fn ensure_selected_game_enabled(&mut self, ctx: &egui::Context) {
