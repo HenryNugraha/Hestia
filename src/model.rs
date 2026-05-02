@@ -359,6 +359,7 @@ pub enum ModUpdateState {
     Unlinked,
     UpToDate,
     UpdateAvailable,
+    CheckSkipped,
     MissingSource,
     ModifiedLocally,
     IgnoringUpdateOnce,

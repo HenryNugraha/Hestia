@@ -354,6 +354,23 @@ impl HestiaApp {
         }
     }
 
+    fn mod_update_badge_tooltip(mod_entry: &ModEntry) -> &'static str {
+        if mod_has_local_changes_for_update_check(mod_entry) {
+            if let Some(ignoring_label) = Self::ignored_update_short_label(mod_entry) {
+                return match ignoring_label {
+                    "Ignoring Once" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
+                    "Ignoring Always" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                    _ => mod_update_state_tooltip(ModUpdateState::ModifiedLocally),
+                };
+            }
+        }
+        if Self::has_modified_update_available(mod_entry) {
+            mod_update_state_tooltip(ModUpdateState::UpdateAvailable)
+        } else {
+            mod_update_state_tooltip(mod_entry.update_state)
+        }
+    }
+
     fn ignored_update_short_label(mod_entry: &ModEntry) -> Option<&'static str> {
         let source = mod_entry.source.as_ref()?;
         if source.ignore_update_always {
@@ -1655,6 +1672,7 @@ impl HestiaApp {
                             || !self.show_unlinked_mods
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
+                            || !self.show_check_skipped_mods
                             || !self.show_missing_source_mods
                             || !self.show_modified_locally_mods
                             || !self.show_ignoring_update_mods;
@@ -1821,6 +1839,7 @@ impl HestiaApp {
                                         self.show_unlinked_mods = true;
                                         self.show_up_to_date_mods = true;
                                         self.show_update_available_mods = true;
+                                        self.show_check_skipped_mods = true;
                                         self.show_missing_source_mods = true;
                                         self.show_modified_locally_mods = true;
                                         self.show_ignoring_update_mods = true;
@@ -1829,6 +1848,7 @@ impl HestiaApp {
                                         self.show_unlinked_mods = false;
                                         self.show_up_to_date_mods = false;
                                         self.show_update_available_mods = false;
+                                        self.show_check_skipped_mods = false;
                                         self.show_missing_source_mods = false;
                                         self.show_modified_locally_mods = false;
                                         self.show_ignoring_update_mods = false;
@@ -1839,10 +1859,12 @@ impl HestiaApp {
 
                                 let unlinked_changed = ui
                                     .checkbox(&mut self.show_unlinked_mods, "Unlinked")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::Unlinked))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let up_to_date_changed = ui
                                     .checkbox(&mut self.show_up_to_date_mods, "Up to Date")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpToDate))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let update_available_changed = ui
@@ -1850,6 +1872,12 @@ impl HestiaApp {
                                         &mut self.show_update_available_mods,
                                         "Update Available",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpdateAvailable))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .changed();
+                                let check_skipped_changed = ui
+                                    .checkbox(&mut self.show_check_skipped_mods, "Check Skipped")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::CheckSkipped))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let missing_source_changed = ui
@@ -1857,6 +1885,7 @@ impl HestiaApp {
                                         &mut self.show_missing_source_mods,
                                         "Missing Source",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::MissingSource))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let modified_locally_changed = ui
@@ -1864,6 +1893,7 @@ impl HestiaApp {
                                         &mut self.show_modified_locally_mods,
                                         "Modified Locally",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let ignoring_update_changed = ui
@@ -1871,12 +1901,16 @@ impl HestiaApp {
                                         &mut self.show_ignoring_update_mods,
                                         "Ignoring Update",
                                     )
+                                    .on_hover_text(
+                                        "Shows mods that are ignoring the current update or ignoring updates until turned off.",
+                                    )
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
 
                                 if unlinked_changed
                                     || up_to_date_changed
                                     || update_available_changed
+                                    || check_skipped_changed
                                     || missing_source_changed
                                     || modified_locally_changed
                                     || ignoring_update_changed
@@ -2720,7 +2754,9 @@ impl HestiaApp {
                                                                                     .fill(Color32::from_rgb(180, 78, 35))
                                                                                     .corner_radius(egui::CornerRadius::same(3))
                                                                                     .min_size(Vec2::new(64.0, 4.0)),
-                                                                                ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                                                )
+                                                                                .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpdateAvailable))
+                                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                                                 if resp.clicked() {
                                                                                     self.queue_update_apply(mod_id);
                                                                                 }
@@ -2740,6 +2776,7 @@ impl HestiaApp {
                                                                                                 )
                                                                                                 .selectable(false),
                                                                                             )
+                                                                                            .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                                                                             .on_hover_cursor(egui::CursorIcon::Default);
                                                                                             ui.add(
                                                                                                 egui::Label::new(
@@ -2749,6 +2786,11 @@ impl HestiaApp {
                                                                                                 )
                                                                                                 .selectable(false),
                                                                                             )
+                                                                                            .on_hover_text(match *ignoring_label {
+                                                                                                "Ignoring Once" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
+                                                                                                "Ignoring Always" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                                                                                                _ => mod_update_state_tooltip(ModUpdateState::ModifiedLocally),
+                                                                                            })
                                                                                             .on_hover_cursor(egui::CursorIcon::Default);
                                                                                         });
                                                                                     } else {
@@ -2760,6 +2802,7 @@ impl HestiaApp {
                                                                                             )
                                                                                             .selectable(false),
                                                                                         )
+                                                                                        .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                                                     }
                                                                                 } else {
@@ -2767,6 +2810,7 @@ impl HestiaApp {
                                                                                         ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
                                                                                         ModUpdateState::MissingSource => ("Missing", Color32::from_rgb(196, 166, 126)),
                                                                                         ModUpdateState::ModifiedLocally => ("Modified", Color32::from_rgb(179, 133, 133)),
+                                                                                        ModUpdateState::CheckSkipped => ("Skipped", Color32::from_rgb(142, 153, 168)),
                                                                                         ModUpdateState::IgnoringUpdateOnce => ("Ignoring Once", Color32::from_rgb(181, 153, 196)),
                                                                                         ModUpdateState::IgnoringUpdateAlways => ("Ignoring Always", Color32::from_rgb(181, 153, 196)),
                                                                                         _ => ("", Color32::TRANSPARENT),
@@ -2780,6 +2824,7 @@ impl HestiaApp {
                                                                                             )
                                                                                             .selectable(false),
                                                                                         )
+                                                                                        .on_hover_text(mod_update_state_tooltip(*update_state))
                                                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                                                     }
                                                                                 }
@@ -3370,10 +3415,12 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         if let Some(job) = Self::modified_ignoring_detail_job(&selected, 12.0) {
                             ui.add(egui::Label::new(job).selectable(false))
+                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
                                 .on_hover_cursor(egui::CursorIcon::Default);
                         } else {
                             let (update_text, update_color) = Self::mod_update_badge(&selected);
-                            static_label(ui, RichText::new(update_text).size(12.0).color(update_color));
+                            static_label(ui, RichText::new(update_text).size(12.0).color(update_color))
+                                .on_hover_text(Self::mod_update_badge_tooltip(&selected));
                         }
                     }
                     ui.add_space(-4.0);
@@ -3793,6 +3840,7 @@ impl HestiaApp {
                                                 },
                                             );
                                             ui.add(egui::Label::new(job).selectable(false))
+                                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
                                                 .on_hover_cursor(egui::CursorIcon::Default);
                                         } else {
                                             let (update_text, update_color) =
@@ -3802,7 +3850,8 @@ impl HestiaApp {
                                                 RichText::new(format!("{update_text} ({age})"))
                                                     .size(11.5)
                                                     .color(update_color),
-                                            );
+                                            )
+                                            .on_hover_text(Self::mod_update_badge_tooltip(&selected));
                                         }
                                     } else {
                                         static_label(

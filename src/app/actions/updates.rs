@@ -128,6 +128,7 @@ fn apply_ignored_update_override(
         }
         ModUpdateState::UpToDate
         | ModUpdateState::Unlinked
+        | ModUpdateState::CheckSkipped
         | ModUpdateState::MissingSource
         | ModUpdateState::IgnoringUpdateOnce
         | ModUpdateState::IgnoringUpdateAlways => {
@@ -345,7 +346,20 @@ impl HestiaApp {
             if let Some(id) = target_game_id {
                 if mod_entry.game_id != id { continue; }
             }
+            if mod_entry
+                .source
+                .as_ref()
+                .and_then(|source| source.gamebanana.as_ref())
+                .is_none()
+            {
+                continue;
+            }
             if !Self::status_target_enabled(&mod_entry.status, update_check_statuses) {
+                if mod_entry.update_state != ModUpdateState::CheckSkipped {
+                    mod_entry.update_state = ModUpdateState::CheckSkipped;
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                    state_changed_without_fetch = true;
+                }
                 continue;
             }
             let Some(source) = &mod_entry.source else {

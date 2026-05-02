@@ -1085,6 +1085,7 @@ impl HestiaApp {
             return;
         }
         let mut should_save = false;
+        let mut update_check_targets_changed = false;
         let game_ids: Vec<String> = self
             .state
             .games
@@ -1331,6 +1332,7 @@ impl HestiaApp {
                                 || self.state.update_check_statuses.archived != update_check_statuses.archived
                             {
                                 should_save = true;
+                                update_check_targets_changed = true;
                             }
                             ui.add_space(8.0);
                             static_label(ui, "Automatically update mods:");
@@ -1523,9 +1525,8 @@ impl HestiaApp {
                                 let resp = ui.add(
                                     TextEdit::singleline(&mut launcher_value)
                                         .id(input_id)
-                                        .cursor_at_end(true)
-                                        .horizontal_align(egui::Align::RIGHT)
-                                        .desired_width(input_width)
+                                        .cursor_at_end(false)
+                                        .desired_width(input_width),
                                 );
                                 ui.data_mut(|d| d.insert_temp(input_id, launcher_value.clone()));
                                 if invalid {
@@ -1703,8 +1704,7 @@ impl HestiaApp {
                                                     let resp = ui.add(
                                                         TextEdit::singleline(&mut vanilla_value)
                                                             .id(input_id)
-                                                            .horizontal_align(egui::Align::RIGHT)
-                                                            .cursor_at_end(true)
+                                                            .cursor_at_end(false)
                                                             .desired_width(input_width),
                                                     );
                                                     ui.data_mut(|d| d.insert_temp(input_id, vanilla_value.clone()));
@@ -1806,8 +1806,7 @@ impl HestiaApp {
                                                     let resp = ui.add(
                                                         TextEdit::singleline(&mut path_value)
                                                             .id(input_id)
-                                                            .horizontal_align(egui::Align::RIGHT)
-                                                            .cursor_at_end(true)
+                                                            .cursor_at_end(false)
                                                             .desired_width(input_width),
                                                     );
                                                     ui.data_mut(|d| d.insert_temp(input_id, path_value.clone()));
@@ -2050,6 +2049,10 @@ impl HestiaApp {
         self.settings_open = settings_open;
         if should_save {
             self.save_state();
+        }
+        if update_check_targets_changed {
+            let game_id = self.selected_game().map(|game| game.definition.id.clone());
+            self.queue_update_check_for_linked_mods(game_id.as_deref());
         }
     }
 

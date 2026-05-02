@@ -124,6 +124,7 @@ impl HestiaApp {
             show_unlinked_mods: true,
             show_up_to_date_mods: true,
             show_update_available_mods: true,
+            show_check_skipped_mods: true,
             show_missing_source_mods: true,
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
@@ -1006,6 +1007,11 @@ impl HestiaApp {
                 }
                 if !self.show_update_available_mods
                     && item.update_state == ModUpdateState::UpdateAvailable
+                {
+                    return false;
+                }
+                if !self.show_check_skipped_mods
+                    && item.update_state == ModUpdateState::CheckSkipped
                 {
                     return false;
                 }

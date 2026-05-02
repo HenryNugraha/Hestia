@@ -86,6 +86,7 @@ pub struct HestiaApp {
     show_unlinked_mods: bool,
     show_up_to_date_mods: bool,
     show_update_available_mods: bool,
+    show_check_skipped_mods: bool,
     show_missing_source_mods: bool,
     show_modified_locally_mods: bool,
     show_ignoring_update_mods: bool,
