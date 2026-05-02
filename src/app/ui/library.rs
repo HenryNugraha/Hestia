@@ -81,6 +81,81 @@ fn paint_modified_update_badge(ui: &mut Ui, button_rect: egui::Rect) {
     );
 }
 
+fn paint_selected_mod_count_badge(ui: &mut Ui, count: usize) {
+    let text = format!("{count} selected");
+    let badge_size = Vec2::new((text.len() as f32 * 5.2 + 14.0).max(66.0), 16.0);
+    let content_rect = ui.max_rect();
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            content_rect.right() + 16.0 - badge_size.x,
+            content_rect.top() - 18.0,
+        ),
+        badge_size,
+    );
+    let painter = ui.ctx().layer_painter(ui.layer_id());
+    painter.rect(
+        badge_rect,
+        egui::CornerRadius::same(4),
+        Color32::from_rgba_premultiplied(64, 64, 64, 215),
+        egui::Stroke::new(1.0, Color32::from_rgb(86, 86, 86)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(9.0),
+        Color32::from_rgb(205, 210, 217),
+    );
+}
+
+fn render_selected_mod_summary(ui: &mut Ui, titles: &[String], count: usize) {
+    const MAX_MOD_NAME_CHARS: usize = 23;
+    const CLAMPED_MOD_NAME_CHARS: usize = 20;
+
+    if count == 0 {
+        return;
+    }
+    paint_selected_mod_count_badge(ui, count);
+    let mut rows: Vec<String> = titles.iter().take(count.min(3)).cloned().collect();
+    if count > 3 {
+        rows.truncate(2);
+        rows.push(format!("…and {} more", count.saturating_sub(rows.len())));
+    }
+
+    for row in rows {
+        let label = if row.starts_with('…') {
+            format!(" {row}")
+        } else {
+            let display_row = if row.chars().count() > MAX_MOD_NAME_CHARS {
+                let mut clamped = row
+                    .chars()
+                    .take(CLAMPED_MOD_NAME_CHARS)
+                    .collect::<String>();
+                clamped.truncate(clamped.trim_end().len());
+                format!("{clamped}...")
+            } else {
+                row.clone()
+            };
+            format!("‣ {display_row}")
+        };
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 17.0), Sense::hover());
+        ui.painter().with_clip_rect(rect).text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            Color32::from_rgb(205, 210, 217),
+        );
+        response
+            .on_hover_text(row)
+            .on_hover_cursor(egui::CursorIcon::Default);
+        ui.add_space(-10.0);
+    }
+    ui.add_space(6.0);
+}
+
 fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
     egui::Frame::new()
         .fill(Color32::from_rgba_premultiplied(72, 82, 94, 210))
@@ -1292,6 +1367,109 @@ impl HestiaApp {
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
+    fn render_selected_mods_category_submenu(&mut self, ui: &mut Ui, game_id: &str) {
+        let selected_category_ids: Vec<Option<String>> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| self.selected_mods.contains(&mod_entry.id))
+            .map(|mod_entry| mod_entry.metadata.user.category_id.clone())
+            .collect();
+        let common_category_id = selected_category_ids
+            .first()
+            .filter(|first| {
+                selected_category_ids
+                    .iter()
+                    .all(|category_id| category_id == *first)
+            })
+            .cloned()
+            .flatten();
+        let all_uncategorized = !selected_category_ids.is_empty()
+            && selected_category_ids.iter().all(Option::is_none);
+        let categories = self.categories_for_game(game_id);
+
+        ui.menu_button(icon_text_sized(Icon::Tag, "Category", 12.0, 12.0), |ui| {
+            const CATEGORY_ICON_WIDTH: f32 = 18.0;
+            const CATEGORY_TEXT_WIDTH: f32 = 168.0;
+            const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+            const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
+
+            ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                    egui::Label::new(if all_uncategorized {
+                        icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                    } else {
+                        RichText::new("")
+                    })
+                    .selectable(false),
+                );
+                if Self::category_popup_text(
+                    ui,
+                    "(none)",
+                    None,
+                    CATEGORY_TEXT_WIDTH,
+                    CATEGORY_ROW_HEIGHT,
+                    Sense::click(),
+                    true,
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                {
+                    self.assign_selected_mods_category(None);
+                    ui.close();
+                }
+            });
+
+            if categories.is_empty() {
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("There is no category yet.")
+                        .size(12.0)
+                        .color(Color32::from_gray(185)),
+                );
+                return;
+            }
+
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for category in categories {
+                        let selected = common_category_id.as_deref() == Some(category.id.as_str());
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                egui::Label::new(if selected {
+                                    icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                                } else {
+                                    RichText::new("")
+                                })
+                                .selectable(false),
+                            );
+                            if Self::category_popup_text(
+                                ui,
+                                &category.name,
+                                Some(self.category_member_count(game_id, &category.id)),
+                                CATEGORY_TEXT_WIDTH,
+                                CATEGORY_ROW_HEIGHT,
+                                Sense::click(),
+                                true,
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                            {
+                                self.assign_selected_mods_category(Some(category.id.clone()));
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+        })
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+
     fn render_update_preference_checkboxes(&mut self, ui: &mut Ui, mod_id: &str) {
         let Some(index) = self.state.mods.iter().position(|mod_entry| mod_entry.id == mod_id)
         else {
@@ -1572,6 +1750,18 @@ impl HestiaApp {
                     mod_entry.metadata.user.category_id.clone(),
                     self.mod_category_label(mod_entry),
                 )
+            })
+            .collect();
+
+        let selected_context_titles: Vec<String> = cards
+            .iter()
+            .filter(|card| self.selected_mods.contains(&card.0))
+            .map(|card| {
+                card.2
+                    .as_deref()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(&card.1)
+                    .to_string()
             })
             .collect();
 
@@ -2908,6 +3098,151 @@ impl HestiaApp {
                                                         card_frame.response.rect.contains(pos)
                                                     })
                                         });
+                                        let open_batch_context_menu = open_context_menu
+                                            && self.selected_mods.len() >= 2
+                                            && self.selected_mods.contains(mod_id);
+                                        let open_single_context_menu =
+                                            open_context_menu && !open_batch_context_menu;
+                                        let batch_popup_id = ui
+                                            .id()
+                                            .with(("selected_mods_context_menu_popup", mod_id));
+                                        egui::Popup::new(
+                                            batch_popup_id,
+                                            ui.ctx().clone(),
+                                            egui::PopupAnchor::PointerFixed,
+                                            card_frame.response.layer_id,
+                                        )
+                                        .kind(egui::PopupKind::Menu)
+                                        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                                        .width(156.0)
+                                        .gap(0.0)
+                                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                        .frame(
+                                            egui::Frame::menu(ui.style())
+                                                .fill({
+                                                    let fill = ui.style().visuals.window_fill();
+                                                    Color32::from_rgba_premultiplied(
+                                                        fill.r(),
+                                                        fill.g(),
+                                                        fill.b(),
+                                                        ((fill.a() as f32) * 0.9).round() as u8,
+                                                    )
+                                                })
+                                                .inner_margin(egui::Margin::same(12)),
+                                        )
+                                        .open_memory(open_batch_context_menu.then_some(
+                                            egui::SetOpenCommand::Bool(true),
+                                        ))
+                                        .show(|ui| {
+                                            ui.set_min_width(156.0);
+                                            let radius = egui::CornerRadius::same(3);
+                                            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.open.corner_radius = radius;
+
+                                            render_selected_mod_summary(
+                                                ui,
+                                                &selected_context_titles,
+                                                self.selected_mods.len(),
+                                            );
+                                            ui.add_space(-2.0);
+                                            ui.separator();
+                                            ui.add_space(-2.0);
+
+                                            if has_update_eligible
+                                                && ui
+                                                    .add(
+                                                        egui::Button::new(icon_text_sized(
+                                                            Icon::ClockPlus,
+                                                            "Update",
+                                                            13.0,
+                                                            13.0,
+                                                        ))
+                                                        .fill(Color32::from_rgb(180, 78, 35))
+                                                        .stroke(egui::Stroke::new(
+                                                            1.0,
+                                                            Color32::from_rgb(180, 78, 35),
+                                                        ))
+                                                        .corner_radius(radius),
+                                                    )
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_update_selected();
+                                                ui.close();
+                                            }
+                                            if has_disabled && has_archived {
+                                                if ui
+                                                    .button(icon_text_sized(
+                                                        Icon::Check,
+                                                        "Enable / Restore",
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    self.batch_enable_selected();
+                                                    ui.close();
+                                                }
+                                            } else if has_disabled {
+                                                if ui
+                                                    .button(icon_text_sized(Icon::Check, "Enable", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    self.batch_enable_selected();
+                                                    ui.close();
+                                                }
+                                            } else if has_archived
+                                                && ui
+                                                    .button(icon_text_sized(
+                                                        Icon::ArchiveRestore,
+                                                        "Restore",
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_enable_selected();
+                                                ui.close();
+                                            }
+                                            if has_active
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Ban, "Disable", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_disable_selected();
+                                                ui.close();
+                                            }
+                                            if has_active || has_disabled || has_archived {
+                                                self.render_selected_mods_category_submenu(
+                                                    ui,
+                                                    &selected_game_id,
+                                                );
+                                            }
+                                            if (has_active || has_disabled)
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_archive_selected();
+                                                ui.close();
+                                            }
+                                            if (has_active || has_disabled || has_archived)
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Trash2, "Delete", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_delete_selected();
+                                                ui.close();
+                                            }
+                                        });
                                         egui::Popup::new(
                                             popup_id,
                                             ui.ctx().clone(),
@@ -2932,7 +3267,7 @@ impl HestiaApp {
                                                 })
                                                 .inner_margin(egui::Margin::same(12)),
                                         )
-                                        .open_memory(open_context_menu.then_some(
+                                        .open_memory(open_single_context_menu.then_some(
                                             egui::SetOpenCommand::Bool(true),
                                         ))
                                         .show(|ui| {
