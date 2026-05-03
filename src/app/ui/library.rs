@@ -4834,19 +4834,28 @@ impl HestiaApp {
                             }
                         }
                     }
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
-                        if selected.metadata.extracted.requires_rabbitfx {
-                            metadata_info_badge(ui, "Requires RabbitFX");
-                        }
-                    });
                     let markdown = mod_primary_description_markdown(&selected, &self.portable);
                     let has_description = markdown != "No description";
-                    self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
-                    let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
-                    self.prewarm_markdown_images(&markdown);
-                    self.render_markdown_with_inline_images(ui, &markdown);
+                    let extracted_markdown = mod_extracted_description_markdown(&selected);
+                    let metadata_as_description = matches!(
+                        self.state.metadata_visibility,
+                        MetadataVisibility::OnlyIfNoDescription
+                    ) && !has_description
+                        && extracted_markdown.is_some();
+
+                    if !metadata_as_description {
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
+                            if selected.metadata.extracted.requires_rabbitfx {
+                                metadata_info_badge(ui, "Requires RabbitFX");
+                            }
+                        });
+                        self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
+                        let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
+                        self.prewarm_markdown_images(&markdown);
+                        self.render_markdown_with_inline_images(ui, &markdown);
+                    }
                     
                     let show_metadata = match self.state.metadata_visibility {
                         MetadataVisibility::Never => false,
@@ -4855,7 +4864,7 @@ impl HestiaApp {
                     };
 
                     if show_metadata {
-                        if let Some(extracted) = mod_extracted_description_markdown(&selected) {
+                        if let Some(extracted) = extracted_markdown {
                             if has_description {
                                 ui.add_space(16.0);
                                 ui.separator();
@@ -4866,11 +4875,20 @@ impl HestiaApp {
                             ui.horizontal(|ui| {
                                 static_label(
                                     ui,
-                                    bold("Metadata")
+                                    bold(if metadata_as_description {
+                                        "Description"
+                                    } else {
+                                        "Metadata"
+                                    })
                                         .size(14.0)
                                         .underline()
                                         .color(Color32::from_gray(195)),
                                 );
+                                if metadata_as_description
+                                    && selected.metadata.extracted.requires_rabbitfx
+                                {
+                                    metadata_info_badge(ui, "Requires RabbitFX");
+                                }
                                 let source_path = selected
                                     .metadata
                                     .extracted

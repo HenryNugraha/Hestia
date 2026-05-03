@@ -1230,10 +1230,17 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
-    fn poll_windows_ctrl_v_edge(&mut self) -> bool {
+    fn poll_windows_ctrl_v_edge(&mut self, ctx: &egui::Context) -> bool {
         let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
         let v_down = unsafe { GetAsyncKeyState(i32::from(VK_V.0)) } < 0;
         let down = ctrl_down && v_down;
+        let window_focused = ctx.input(|input| {
+            input.focused && input.viewport().focused.unwrap_or(input.focused)
+        });
+        if !window_focused {
+            self.clipboard_image_paste_held = down;
+            return false;
+        }
         let pressed = down && !self.clipboard_image_paste_held;
         self.clipboard_image_paste_held = down;
         pressed
@@ -1298,7 +1305,7 @@ impl HestiaApp {
                 && self.selected_unlinked_mod_context().is_some()
                 && (ctx.input_mut(|input| {
                     input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::V))
-                }) || self.poll_windows_ctrl_v_edge())
+                }) || self.poll_windows_ctrl_v_edge(ctx))
             {
                 match self.enqueue_clipboard_image_to_selected_unlinked_mod() {
                     Ok(()) => self.set_message_ok("Adding clipboard image..."),
