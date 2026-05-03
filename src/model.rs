@@ -478,6 +478,14 @@ pub struct TrackedFileMeta {
 pub struct IgnoredUpdateSignature {
     #[serde(default)]
     pub files: Vec<TrackedFileMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_update_ts: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub prearmed_next_update: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

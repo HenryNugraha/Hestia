@@ -16,7 +16,11 @@ fn candidate_signature(candidates: Vec<TrackedFileMeta>) -> Option<IgnoredUpdate
     if candidates.is_empty() {
         None
     } else {
-        Some(IgnoredUpdateSignature { files: candidates })
+        Some(IgnoredUpdateSignature {
+            files: candidates,
+            profile_update_ts: None,
+            prearmed_next_update: false,
+        })
     }
 }
 
@@ -70,7 +74,129 @@ fn compute_update_signature(
     if !file_set.selected_files_meta.is_empty() {
         return tracked_update_signature(&file_set.selected_files_meta, &all_remote_files).1;
     }
+    if !file_set.selected_file_ids.is_empty() {
+        let selected_ids: HashSet<u64> = file_set.selected_file_ids.iter().copied().collect();
+        let tracked_files: Vec<_> = all_remote_files
+            .iter()
+            .copied()
+            .filter(|file| selected_ids.contains(&file.id))
+            .map(tracked_file_meta_from_mod_file)
+            .collect();
+        if tracked_files.len() == selected_ids.len() {
+            return tracked_update_signature(&tracked_files, &all_remote_files).1;
+        }
+    }
+    if !file_set.selected_file_names.is_empty() {
+        let selected_names: HashSet<&str> = file_set
+            .selected_file_names
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let tracked_files: Vec<_> = all_remote_files
+            .iter()
+            .copied()
+            .filter(|file| selected_names.contains(file.file_name.as_str()))
+            .map(tracked_file_meta_from_mod_file)
+            .collect();
+        if tracked_files.len() == selected_names.len() {
+            return tracked_update_signature(&tracked_files, &all_remote_files).1;
+        }
+    }
     None
+}
+
+fn profile_update_signature(
+    profile: &gamebanana::ProfileResponse,
+) -> Option<IgnoredUpdateSignature> {
+    profile
+        .date_updated
+        .or(Some(profile.date_modified))
+        .filter(|update_ts| *update_ts > 0)
+        .map(|update_ts| IgnoredUpdateSignature {
+            files: Vec::new(),
+            profile_update_ts: Some(update_ts),
+            prearmed_next_update: false,
+        })
+}
+
+fn prearm_next_update_signature(
+    mut signature: IgnoredUpdateSignature,
+) -> IgnoredUpdateSignature {
+    signature.prearmed_next_update = true;
+    signature
+}
+
+fn current_remote_signature(
+    file_set: &FileSetRecipe,
+    profile: &gamebanana::ProfileResponse,
+) -> Option<IgnoredUpdateSignature> {
+    let all_remote_files: Vec<&gamebanana::ModFile> = profile
+        .files
+        .iter()
+        .chain(profile.archived_files.iter())
+        .filter(|file| file.download_url.is_some())
+        .collect();
+    if !file_set.selected_files_meta.is_empty() {
+        let tracked_files: Vec<_> = file_set
+            .selected_files_meta
+            .iter()
+            .filter_map(|tracked| {
+                all_remote_files
+                    .iter()
+                    .copied()
+                    .find(|file| {
+                        file.id == tracked.file_id
+                            || (file.file_name == tracked.file_name
+                                && file.date_added == tracked.date_added)
+                    })
+                    .map(tracked_file_meta_from_mod_file)
+            })
+            .collect();
+        if tracked_files.len() == file_set.selected_files_meta.len() {
+            return candidate_signature(tracked_files).map(prearm_next_update_signature);
+        }
+    }
+    if !file_set.selected_file_ids.is_empty() {
+        let selected_ids: HashSet<u64> = file_set.selected_file_ids.iter().copied().collect();
+        let tracked_files: Vec<_> = all_remote_files
+            .iter()
+            .copied()
+            .filter(|file| selected_ids.contains(&file.id))
+            .map(tracked_file_meta_from_mod_file)
+            .collect();
+        if tracked_files.len() == selected_ids.len() {
+            return candidate_signature(tracked_files).map(prearm_next_update_signature);
+        }
+    }
+    if !file_set.selected_file_names.is_empty() {
+        let selected_names: HashSet<&str> = file_set
+            .selected_file_names
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let tracked_files: Vec<_> = all_remote_files
+            .iter()
+            .copied()
+            .filter(|file| selected_names.contains(file.file_name.as_str()))
+            .map(tracked_file_meta_from_mod_file)
+            .collect();
+        if tracked_files.len() == selected_names.len() {
+            return candidate_signature(tracked_files).map(prearm_next_update_signature);
+        }
+    }
+    profile_update_signature(profile).map(prearm_next_update_signature)
+}
+
+fn current_update_signature_for_state(
+    file_set: &FileSetRecipe,
+    profile: &gamebanana::ProfileResponse,
+    raw_state: ModUpdateState,
+) -> Option<IgnoredUpdateSignature> {
+    compute_update_signature(file_set, profile).or_else(|| {
+        matches!(raw_state, ModUpdateState::UpdateAvailable)
+            .then(|| profile_update_signature(profile))
+            .flatten()
+    })
 }
 
 fn source_profile_for_compare(source: &ModSourceData) -> Option<gamebanana::ProfileResponse> {
@@ -114,21 +240,42 @@ fn apply_ignored_update_override(
         source.ignored_update_signature = None;
         return ModUpdateState::IgnoringUpdateAlways;
     }
-    let current_signature = profile.and_then(|profile| compute_update_signature(&source.file_set, profile));
+    let current_signature =
+        profile.and_then(|profile| current_update_signature_for_state(&source.file_set, profile, raw_state));
     match raw_state {
         ModUpdateState::UpdateAvailable => {
-            if let (Some(ignored), Some(current)) = (
-                source.ignored_update_signature.as_ref(),
-                current_signature.as_ref(),
-            ) {
-                if ignored == current {
+            if let Some(current) = current_signature.as_ref() {
+                if source
+                    .ignored_update_signature
+                    .as_ref()
+                    .is_some_and(|ignored| ignored.prearmed_next_update)
+                {
+                    let mut ignored = current.clone();
+                    ignored.prearmed_next_update = false;
+                    source.ignored_update_signature = Some(ignored);
+                    return ModUpdateState::IgnoringUpdateOnce;
+                }
+                if source
+                    .ignored_update_signature
+                    .as_ref()
+                    .is_some_and(|ignored| ignored == current)
+                {
                     return ModUpdateState::IgnoringUpdateOnce;
                 }
             }
         }
         ModUpdateState::UpToDate
-        | ModUpdateState::Unlinked
         | ModUpdateState::CheckSkipped
+        => {
+            if !source
+                .ignored_update_signature
+                .as_ref()
+                .is_some_and(|ignored| ignored.prearmed_next_update)
+            {
+                source.ignored_update_signature = None;
+            }
+        }
+        ModUpdateState::Unlinked
         | ModUpdateState::MissingSource
         | ModUpdateState::IgnoringUpdateOnce
         | ModUpdateState::IgnoringUpdateAlways => {
@@ -137,10 +284,26 @@ fn apply_ignored_update_override(
         ModUpdateState::ModifiedLocally => {}
     }
 
+    if matches!(raw_state, ModUpdateState::ModifiedLocally) {
+        if let Some(current) = current_signature.as_ref() {
+            if source
+                .ignored_update_signature
+                .as_ref()
+                .is_some_and(|ignored| ignored.prearmed_next_update)
+            {
+                let mut ignored = current.clone();
+                ignored.prearmed_next_update = false;
+                source.ignored_update_signature = Some(ignored);
+            }
+        }
+    }
+
     if source
         .ignored_update_signature
         .as_ref()
-        .is_some_and(|ignored| current_signature.as_ref() != Some(ignored))
+        .is_some_and(|ignored| {
+            !ignored.prearmed_next_update && current_signature.as_ref() != Some(ignored)
+        })
     {
         source.ignored_update_signature = None;
     }
@@ -148,10 +311,19 @@ fn apply_ignored_update_override(
     raw_state
 }
 
-fn current_update_signature_for_mod(mod_entry: &ModEntry) -> Option<IgnoredUpdateSignature> {
+fn ignore_once_signature_for_mod(mod_entry: &ModEntry) -> Option<IgnoredUpdateSignature> {
     let source = mod_entry.source.as_ref()?;
     let profile = source_profile_for_compare(source)?;
-    compute_update_signature(&source.file_set, &profile)
+    let raw_state = if matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally) {
+            let local_sync_ts = selected_file_baseline_ts(&source.file_set)
+                .or_else(|| source.snapshot.as_ref().and_then(|snapshot| snapshot.update_ts))
+                .or_else(|| mod_entry.content_mtime.map(|t| t.timestamp()));
+        determine_file_set_update_state(&source.file_set, local_sync_ts, &profile)
+    } else {
+        mod_entry.update_state
+    };
+    current_update_signature_for_state(&source.file_set, &profile, raw_state)
+        .or_else(|| current_remote_signature(&source.file_set, &profile))
 }
 
 fn determine_file_set_update_state(
@@ -1075,4 +1247,175 @@ impl HestiaApp {
         }
     }
 
+}
+
+#[cfg(test)]
+mod update_signature_tests {
+    use super::*;
+
+    fn mod_file(id: u64, file_name: &str, date_added: i64) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id,
+            file_name: file_name.to_string(),
+            file_size: 1,
+            date_added,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: Some(format!("https://example.com/{file_name}")),
+            is_archived: false,
+        }
+    }
+
+    fn profile(files: Vec<gamebanana::ModFile>, update_ts: i64) -> gamebanana::ProfileResponse {
+        gamebanana::ProfileResponse {
+            id: 1,
+            date_modified: update_ts,
+            date_updated: Some(update_ts),
+            files,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn update_signature_uses_legacy_selected_file_ids() {
+        let profile = profile(vec![mod_file(10, "old.zip", 100), mod_file(20, "new.zip", 200)], 200);
+        let file_set = FileSetRecipe {
+            selected_file_ids: vec![10],
+            ..Default::default()
+        };
+
+        let signature = compute_update_signature(&file_set, &profile).unwrap();
+
+        assert!(!signature.prearmed_next_update);
+        assert_eq!(signature.profile_update_ts, None);
+        assert_eq!(signature.files.len(), 1);
+        assert_eq!(signature.files[0].file_id, 20);
+    }
+
+    #[test]
+    fn update_signature_falls_back_to_profile_timestamp_for_update_available() {
+        let profile = profile(Vec::new(), 200);
+        let signature =
+            current_update_signature_for_state(&FileSetRecipe::default(), &profile, ModUpdateState::UpdateAvailable)
+                .unwrap();
+
+        assert!(signature.files.is_empty());
+        assert_eq!(signature.profile_update_ts, Some(200));
+        assert!(!signature.prearmed_next_update);
+    }
+
+    #[test]
+    fn update_signature_does_not_use_profile_timestamp_without_current_update() {
+        let profile = profile(Vec::new(), 200);
+
+        assert!(
+            current_update_signature_for_state(&FileSetRecipe::default(), &profile, ModUpdateState::UpToDate)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn prearmed_ignore_once_persists_while_up_to_date() {
+        let current = mod_file(10, "current.zip", 100);
+        let profile = profile(vec![current.clone()], 100);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&current)],
+            ..Default::default()
+        };
+        let mut source = ModSourceData {
+            file_set: file_set.clone(),
+            ignored_update_signature: current_remote_signature(&file_set, &profile),
+            ..Default::default()
+        };
+
+        let state = apply_ignored_update_override(&mut source, ModUpdateState::UpToDate, Some(&profile));
+
+        assert_eq!(state, ModUpdateState::UpToDate);
+        assert!(
+            source
+                .ignored_update_signature
+                .as_ref()
+                .is_some_and(|signature| signature.prearmed_next_update)
+        );
+    }
+
+    #[test]
+    fn prearmed_ignore_once_converts_to_next_update_signature() {
+        let current = mod_file(10, "current.zip", 100);
+        let update = mod_file(20, "update.zip", 200);
+        let current_profile = profile(vec![current.clone()], 100);
+        let update_profile = profile(vec![current.clone(), update], 200);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&current)],
+            ..Default::default()
+        };
+        let mut source = ModSourceData {
+            file_set: file_set.clone(),
+            ignored_update_signature: current_remote_signature(&file_set, &current_profile),
+            ..Default::default()
+        };
+
+        let state =
+            apply_ignored_update_override(&mut source, ModUpdateState::UpdateAvailable, Some(&update_profile));
+
+        let signature = source.ignored_update_signature.as_ref().unwrap();
+        assert_eq!(state, ModUpdateState::IgnoringUpdateOnce);
+        assert!(!signature.prearmed_next_update);
+        assert_eq!(signature.files.len(), 1);
+        assert_eq!(signature.files[0].file_id, 20);
+    }
+
+    #[test]
+    fn prearmed_ignore_once_converts_for_modified_local_update() {
+        let current = mod_file(10, "current.zip", 100);
+        let update = mod_file(20, "update.zip", 200);
+        let current_profile = profile(vec![current.clone()], 100);
+        let update_profile = profile(vec![current.clone(), update], 200);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&current)],
+            ..Default::default()
+        };
+        let mut source = ModSourceData {
+            file_set: file_set.clone(),
+            ignored_update_signature: current_remote_signature(&file_set, &current_profile),
+            ..Default::default()
+        };
+
+        let state =
+            apply_ignored_update_override(&mut source, ModUpdateState::ModifiedLocally, Some(&update_profile));
+
+        let signature = source.ignored_update_signature.as_ref().unwrap();
+        assert_eq!(state, ModUpdateState::ModifiedLocally);
+        assert!(!signature.prearmed_next_update);
+        assert_eq!(signature.files.len(), 1);
+        assert_eq!(signature.files[0].file_id, 20);
+    }
+
+    #[test]
+    fn normal_ignore_once_clears_on_subsequent_update() {
+        let installed = mod_file(10, "installed.zip", 100);
+        let ignored = mod_file(20, "ignored.zip", 200);
+        let newer = mod_file(30, "newer.zip", 300);
+        let update_profile = profile(vec![installed.clone(), ignored.clone(), newer], 300);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&installed)],
+            ..Default::default()
+        };
+        let mut source = ModSourceData {
+            file_set,
+            ignored_update_signature: Some(IgnoredUpdateSignature {
+                files: vec![tracked_file_meta_from_mod_file(&ignored)],
+                profile_update_ts: None,
+                prearmed_next_update: false,
+            }),
+            ..Default::default()
+        };
+
+        let state =
+            apply_ignored_update_override(&mut source, ModUpdateState::UpdateAvailable, Some(&update_profile));
+
+        assert_eq!(state, ModUpdateState::UpdateAvailable);
+        assert!(source.ignored_update_signature.is_none());
+    }
 }

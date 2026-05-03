@@ -399,11 +399,19 @@ impl HestiaApp {
         ) {
             return false;
         }
-        let current_signature = compute_update_signature(&source.file_set, &profile);
+        let current_signature = current_update_signature_for_state(
+            &source.file_set,
+            &profile,
+            ModUpdateState::UpdateAvailable,
+        );
         !source
             .ignored_update_signature
             .as_ref()
-            .is_some_and(|ignored| current_signature.as_ref() == Some(ignored))
+            .is_some_and(|ignored| {
+                current_signature
+                    .as_ref()
+                    .is_some_and(|current| ignored.prearmed_next_update || ignored == current)
+            })
     }
 
     fn mod_update_badge(mod_entry: &ModEntry) -> (&'static str, Color32) {
@@ -450,7 +458,10 @@ impl HestiaApp {
         let source = mod_entry.source.as_ref()?;
         if source.ignore_update_always {
             Some("Ignoring Always")
-        } else if source.ignored_update_signature.is_some()
+        } else if source
+            .ignored_update_signature
+            .as_ref()
+            .is_some_and(|signature| !signature.prearmed_next_update)
             || matches!(mod_entry.update_state, ModUpdateState::IgnoringUpdateOnce)
         {
             Some("Ignoring Once")
@@ -1501,11 +1512,18 @@ impl HestiaApp {
             }
             changed = true;
         }
+        let can_use_ignore_once =
+            ignore_current_update || ignore_once_signature_for_mod(&self.state.mods[index]).is_some();
 
-        let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
-        ignore_once_response.clone().on_hover_text(
-            "Once a newer version is available, will automatically uncheck and process the update normally.",
+        let ignore_once_response = ui.add_enabled(
+            can_use_ignore_once,
+            egui::Checkbox::new(&mut ignore_current_update, "Ignore update once"),
         );
+        ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
+            "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+        } else {
+            "Sync this mod with GameBanana before using ignore once."
+        });
         ui.add_space(-6.0);
         let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
         ignore_always_response.clone().on_hover_text(
@@ -1525,14 +1543,21 @@ impl HestiaApp {
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
             } else if ignore_current_update {
-                let current_signature = current_update_signature_for_mod(&self.state.mods[index]);
+                let current_signature = ignore_once_signature_for_mod(&self.state.mods[index]);
                 if let Some(mod_entry) = self.state.mods.get_mut(index) {
                     if let Some(signature) = current_signature {
+                        let prearmed_next_update = signature.prearmed_next_update;
                         if let Some(source) = mod_entry.source.as_mut() {
                             source.ignore_update_always = false;
                             source.ignored_update_signature = Some(signature);
                         }
-                        mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                        if prearmed_next_update {
+                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                mod_entry.update_state = raw_state;
+                            }
+                        } else {
+                            mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                        }
                     } else {
                         if let Some(source) = mod_entry.source.as_mut() {
                             source.ignore_update_always = false;
@@ -1560,6 +1585,182 @@ impl HestiaApp {
             }
             self.save_state();
         }
+    }
+
+    fn mod_supports_update_preferences(mod_entry: &ModEntry) -> bool {
+        mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_some_and(|gamebanana| gamebanana.mod_id > 0)
+    }
+
+    fn selected_update_preference_mod_ids(&self) -> Vec<String> {
+        self.state
+            .mods
+            .iter()
+            .filter(|mod_entry| self.selected_mods.contains(&mod_entry.id))
+            .filter(|mod_entry| Self::mod_supports_update_preferences(mod_entry))
+            .map(|mod_entry| mod_entry.id.clone())
+            .collect()
+    }
+
+    fn apply_selected_update_preferences(
+        &mut self,
+        mod_ids: &[String],
+        ignore_current_update: bool,
+        ignore_update_always: bool,
+    ) {
+        let mut cancel_mods = Vec::new();
+        let mut touched = false;
+
+        for mod_id in mod_ids {
+            let current_signature = if ignore_current_update && !ignore_update_always {
+                self.state
+                    .mods
+                    .iter()
+                    .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+                    .and_then(ignore_once_signature_for_mod)
+            } else {
+                None
+            };
+
+            let Some(mod_entry) = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+            else {
+                continue;
+            };
+            if !Self::mod_supports_update_preferences(mod_entry) {
+                continue;
+            }
+
+            if ignore_update_always {
+                if let Some(source) = mod_entry.source.as_mut() {
+                    source.ignore_update_always = true;
+                    source.ignored_update_signature = None;
+                }
+                mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
+                cancel_mods.push(mod_entry.clone());
+            } else if ignore_current_update {
+                if let Some(signature) = current_signature {
+                    let prearmed_next_update = signature.prearmed_next_update;
+                    if let Some(source) = mod_entry.source.as_mut() {
+                        source.ignore_update_always = false;
+                        source.ignored_update_signature = Some(signature);
+                    }
+                    if prearmed_next_update {
+                        if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                            mod_entry.update_state = raw_state;
+                        }
+                    } else {
+                        mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                    }
+                } else {
+                    continue;
+                }
+                cancel_mods.push(mod_entry.clone());
+            } else {
+                if let Some(source) = mod_entry.source.as_mut() {
+                    source.ignore_update_always = false;
+                    source.ignored_update_signature = None;
+                }
+                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                    mod_entry.update_state = raw_state;
+                }
+            }
+
+            touched = true;
+            let _ = xxmi::save_mod_metadata(mod_entry);
+        }
+
+        for mod_entry in cancel_mods {
+            self.cancel_update_process_for_mod(&mod_entry);
+        }
+        if touched {
+            self.save_state();
+        }
+    }
+
+    fn render_selected_update_preference_checkboxes(
+        &mut self,
+        ui: &mut Ui,
+        mod_ids: Vec<String>,
+    ) -> bool {
+        if mod_ids.is_empty() {
+            return false;
+        }
+
+        let mut any_ignore_current_update = false;
+        let mut all_ignore_current_update = true;
+        let mut any_ignore_update_always = false;
+        let mut all_ignore_update_always = true;
+        let mut any_can_use_ignore_once = false;
+
+        for mod_id in &mod_ids {
+            let Some(mod_entry) = self
+                .state
+                .mods
+                .iter()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+            else {
+                continue;
+            };
+            let ignore_update_always = mod_entry
+                .source
+                .as_ref()
+                .is_some_and(|source| source.ignore_update_always);
+            let ignore_current_update = mod_entry
+                .source
+                .as_ref()
+                .is_some_and(|source| source.ignored_update_signature.is_some())
+                && !ignore_update_always;
+            let can_use_ignore_once =
+                ignore_current_update || ignore_once_signature_for_mod(mod_entry).is_some();
+
+            any_ignore_current_update |= ignore_current_update;
+            all_ignore_current_update &= ignore_current_update;
+            any_ignore_update_always |= ignore_update_always;
+            all_ignore_update_always &= ignore_update_always;
+            any_can_use_ignore_once |= can_use_ignore_once;
+        }
+
+        let mut ignore_current_update = all_ignore_current_update;
+        let mut ignore_update_always = all_ignore_update_always;
+        let ignore_current_update_mixed =
+            any_ignore_current_update && !all_ignore_current_update;
+        let ignore_update_always_mixed = any_ignore_update_always && !all_ignore_update_always;
+
+        let ignore_once_response = ui.add_enabled(
+            any_can_use_ignore_once,
+            egui::Checkbox::new(&mut ignore_current_update, "Ignore update once")
+                .indeterminate(ignore_current_update_mixed),
+        );
+        ignore_once_response.clone().on_hover_text(if any_can_use_ignore_once {
+            "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+        } else {
+            "Sync at least one selected mod with GameBanana before using ignore once."
+        });
+        ui.add_space(-6.0);
+        let ignore_always_response = ui.add(
+            egui::Checkbox::new(&mut ignore_update_always, "Ignore update always")
+                .indeterminate(ignore_update_always_mixed),
+        );
+        ignore_always_response.clone().on_hover_text(
+            "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked.",
+        );
+
+        if ignore_once_response.changed() || ignore_always_response.changed() {
+            self.apply_selected_update_preferences(
+                &mod_ids,
+                ignore_current_update,
+                ignore_update_always,
+            );
+        }
+
+        true
     }
 
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
@@ -3242,6 +3443,17 @@ impl HestiaApp {
                                                 self.batch_delete_selected();
                                                 ui.close();
                                             }
+                                            let selected_update_preference_mod_ids =
+                                                self.selected_update_preference_mod_ids();
+                                            if !selected_update_preference_mod_ids.is_empty() {
+                                                ui.add_space(-2.0);
+                                                ui.separator();
+                                                ui.add_space(-6.0);
+                                                self.render_selected_update_preference_checkboxes(
+                                                    ui,
+                                                    selected_update_preference_mod_ids,
+                                                );
+                                            }
                                         });
                                         egui::Popup::new(
                                             popup_id,
@@ -4844,11 +5056,18 @@ impl HestiaApp {
                                                 source.ignored_update_signature = None;
                                                 changed = true;
                                             }
+                                            let can_use_ignore_once = ignore_current_update
+                                                || ignore_once_signature_for_mod(&selected).is_some();
                                             ui.add_space(-6.0);
-                                            let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
-                                            ignore_once_response.clone().on_hover_text(
-                                                "Once a newer version is available, will automatically uncheck and process the update normally."
+                                            let ignore_once_response = ui.add_enabled(
+                                                can_use_ignore_once,
+                                                egui::Checkbox::new(&mut ignore_current_update, "Ignore update once"),
                                             );
+                                            ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
+                                                "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+                                            } else {
+                                                "Sync this mod with GameBanana before using ignore once."
+                                            });
                                             ui.add_space(-6.0);
                                             let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
                                             ignore_always_response.clone().on_hover_text(
@@ -4865,13 +5084,20 @@ impl HestiaApp {
                                                     self.cancel_update_process_for_mod(&cloned);
                                                 } else if ignore_current_update {
                                                     if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                        let current_signature = current_update_signature_for_mod(mod_entry);
+                                                        let current_signature = ignore_once_signature_for_mod(mod_entry);
                                                         if let Some(signature) = current_signature {
+                                                            let prearmed_next_update = signature.prearmed_next_update;
                                                             if let Some(source) = mod_entry.source.as_mut() {
                                                                 source.ignore_update_always = false;
                                                                 source.ignored_update_signature = Some(signature);
                                                             }
-                                                            mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                            if prearmed_next_update {
+                                                                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                    mod_entry.update_state = raw_state;
+                                                                }
+                                                            } else {
+                                                                mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                            }
                                                         } else {
                                                             if let Some(source) = mod_entry.source.as_mut() {
                                                                 source.ignore_update_always = false;

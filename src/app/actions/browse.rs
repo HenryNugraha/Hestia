@@ -441,31 +441,13 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
 
     fn is_browse_mod_installed(&self, card: &BrowseCard) -> bool {
         let game_id = &card.game_id;
-        if self.state.mods.iter().any(|m| {
-            m.game_id == *game_id
-                && m
-                    .source
-                    .as_ref()
-                    .and_then(|s| s.gamebanana.as_ref())
-                    .is_some_and(|link| link.mod_id == card.id)
-        }) {
-            return true;
-        }
-        let normalized_card_name = normalize_lookup(&card.name);
         self.state.mods.iter().any(|m| {
             m.game_id == *game_id
                 && m
                     .source
                     .as_ref()
                     .and_then(|s| s.gamebanana.as_ref())
-                    .is_none()
-                && normalize_lookup(
-                    m.metadata
-                        .user
-                        .title
-                        .as_deref()
-                        .unwrap_or(&m.folder_name),
-                ) == normalized_card_name
+                    .is_some_and(|link| link.mod_id == card.id)
         })
     }
 
