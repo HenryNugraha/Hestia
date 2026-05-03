@@ -102,6 +102,7 @@ pub struct HestiaApp {
     mod_detail_editing: bool,
     mod_detail_edit_target_id: Option<String>,
     mod_detail_edit_name: String,
+    clipboard_image_paste_held: bool,
     category_rename_target_id: Option<String>,
     category_rename_name: String,
     dragging_category_id: Option<String>,
@@ -151,6 +152,9 @@ pub struct HestiaApp {
     icon_result_rx: WorkerRx<IconResult>,
     mod_image_request_tx: WorkerTx<LocalModImageRequest>,
     mod_image_result_rx: WorkerRx<LocalModImageResult>,
+    manual_image_event_tx: WorkerTx<ManualImageEvent>,
+    manual_image_event_rx: WorkerRx<ManualImageEvent>,
+    manual_image_imports_pending: usize,
     pending_mod_image_requests: HashSet<String>,
     pending_mod_image_queue: Vec<LocalModImageRequest>,
     pending_icon_requests: HashSet<String>,
@@ -739,6 +743,18 @@ struct LocalModImageResult {
     done: bool,
     thumb_generated: bool,
     thumb_meta: Option<CardThumbMeta>,
+}
+
+enum ManualImageEvent {
+    Added {
+        mod_id: String,
+        folder_name: String,
+        rel_paths: Vec<String>,
+    },
+    Failed {
+        folder_name: String,
+        error: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

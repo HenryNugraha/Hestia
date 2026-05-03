@@ -499,10 +499,19 @@ impl HestiaApp {
                 ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("dnd_layer")));
             let screen_rect = ctx.viewport_rect();
             painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(24, 26, 29, 220));
+            let drop_text = if let Some((_, mod_name)) = self.selected_unlinked_mod_context() {
+                let mut display_name: String = mod_name.chars().take(60).collect();
+                if display_name.chars().count() < mod_name.chars().count() {
+                    display_name.push_str("...");
+                }
+                format!("Drop mods to install them\n\nor\n\ndrop images to add into:\n{display_name}")
+            } else {
+                "Drop to install".to_string()
+            };
             painter.text(
                 screen_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "Drop to install",
+                drop_text,
                 egui::FontId::proportional(48.0),
                 Color32::WHITE,
             );
@@ -512,6 +521,7 @@ impl HestiaApp {
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped_files.is_empty() {
             let mut batch_sources = Vec::new();
+            let mut image_paths = Vec::new();
             let mut seen_paths = HashSet::new();
             let mut queued_count = 0;
             for file in dropped_files {
@@ -525,6 +535,10 @@ impl HestiaApp {
                 if path.is_dir() {
                     batch_sources.push(ImportSource::Folder(path));
                     queued_count += 1;
+                    continue;
+                }
+                if Self::is_static_image_path(&path) {
+                    image_paths.push(path);
                     continue;
                 }
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
@@ -562,6 +576,21 @@ impl HestiaApp {
                         &path.file_name()
                             .and_then(|name| name.to_str())
                             .unwrap_or("file"),
+                    );
+                }
+            }
+
+            if !image_paths.is_empty() {
+                if let Some((mod_id, _)) = self.selected_unlinked_mod_context() {
+                    let image_count = image_paths.len();
+                    match self.enqueue_add_images_to_unlinked_mod(&mod_id, image_paths) {
+                        Ok(()) => self.set_message_ok(format!("Adding {} image(s)", image_count)),
+                        Err(err) => self.report_error(err, Some("Could not add images")),
+                    }
+                } else {
+                    self.report_warn(
+                        "image files were dropped without an open unlinked mod detail",
+                        Some("Open an unlinked mod detail first"),
                     );
                 }
             }

@@ -4436,14 +4436,30 @@ impl HestiaApp {
                         .map(|s| s.preview_urls.clone())
                         .unwrap_or_default();
                     let show_source_urls = screenshot_paths.is_empty() && !snapshot_urls.is_empty();
-                    if !screenshot_paths.is_empty() || show_source_urls {
+                    let can_manage_manual_images = !linked;
+                    if can_manage_manual_images || !screenshot_paths.is_empty() || show_source_urls {
                         ui.add_space(10.0);
                         ui.style_mut().spacing.scroll.floating = false;
                         let scroll_id = ui.make_persistent_id(format!("my_mod_preview_{}", selected.id));
                         let anim_id = scroll_id.with("anim");
+                        let mut pending_add_paths: Option<Vec<PathBuf>> = None;
+                        let mut pending_delete_rel: Option<String> = None;
+                        let rail_width = {
+                            let available = ui.available_width();
+                            if available.is_finite() {
+                                available.clamp(1.0, 4096.0)
+                            } else {
+                                BROWSE_DETAIL_SIZE.x.clamp(1.0, 4096.0)
+                            }
+                        };
                         let mut scroll_area = ScrollArea::horizontal()
                             .id_salt(scroll_id)
-                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
+                            .max_width(rail_width)
+                            .min_scrolled_width(rail_width)
+                            .auto_shrink([false, true])
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                            );
 
                         if let Some((start_time, start_val, target_val)) =
                             ui.data(|d| d.get_temp::<(f64, f32, f32)>(anim_id))
@@ -4469,14 +4485,16 @@ impl HestiaApp {
                                 let mut overlay_images: Vec<MyModOverlayImage> = Vec::new();
                                 if !screenshot_paths.is_empty() {
                                     for (idx, rel) in screenshot_paths.iter().enumerate() {
-                                        let texture_key = format!("my-mod-shot-{}-{}", selected.id, idx);
+                                        let texture_key =
+                                            Self::my_mod_screenshot_texture_key(&selected.id, rel);
                                         let target_height = 220.0;
                                         let width = self.mod_cover_textures.get(&texture_key)
                                             .map(|t| {
                                                 let sz = t.size_vec2();
                                                 if sz.y > 0.0 { target_height * (sz.x / sz.y) } else { 390.0 }
                                             })
-                                            .unwrap_or(390.0);
+                                            .unwrap_or(390.0)
+                                            .clamp(1.0, rail_width);
                                         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, target_height), Sense::click());
                                         
                                         let clip = ui.clip_rect();
@@ -4523,7 +4541,40 @@ impl HestiaApp {
                                         } else {
                                             ui.painter().rect_filled(rect, 4.0, Color32::from_white_alpha(12));
                                         }
-                                        if response.clicked() {
+                                        let mut delete_clicked = false;
+                                        if can_manage_manual_images {
+                                            let button_rect = egui::Rect::from_min_size(
+                                                egui::pos2(rect.max.x - 30.0, rect.min.y + 6.0),
+                                                Vec2::splat(24.0),
+                                            );
+                                            let delete_response = ui.interact(
+                                                button_rect,
+                                                ui.id().with(("delete_manual_image", &selected.id, idx)),
+                                                Sense::click(),
+                                            );
+                                            let alpha = if delete_response.hovered() { 235 } else { 190 };
+                                            ui.painter().circle_filled(
+                                                button_rect.center(),
+                                                11.0,
+                                                Color32::from_rgba_unmultiplied(130, 28, 28, alpha),
+                                            );
+                                            ui.painter().text(
+                                                button_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                icon_char(Icon::X),
+                                                egui::FontId::new(14.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                                Color32::WHITE,
+                                            );
+                                            if delete_response
+                                                .on_hover_text("Remove image")
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                pending_delete_rel = Some(rel.clone());
+                                                delete_clicked = true;
+                                            }
+                                        }
+                                        if !delete_clicked && response.clicked() {
                                             self.queue_overlay_full_texture(&texture_key);
                                             self.browse_state.screenshot_overlay =
                                                 Some(BrowseOverlayImage { texture_key: texture_key.clone() });
@@ -4560,7 +4611,7 @@ impl HestiaApp {
                                         let key =
                                             Self::browse_thumb_texture_key(url, ThumbnailProfile::Rail);
                                         let full_key = hash64_hex(url.as_bytes());
-                                        let (rect, response) = ui.allocate_exact_size(Vec2::new(390.0, 220.0), Sense::click());
+                                        let (rect, response) = ui.allocate_exact_size(Vec2::new(390.0_f32.min(rail_width), 220.0), Sense::click());
 
                                         let clip = ui.clip_rect();
                                         let is_visible = rect.intersects(clip);
@@ -4598,6 +4649,97 @@ impl HestiaApp {
                                         });
                                         rects.push(rect);
                                     }
+                                }
+                                if can_manage_manual_images {
+                                    let import_pending = self.manual_image_imports_pending > 0;
+                                    let tile_size = Vec2::splat(220.0);
+                                    let (rect, response) = ui.allocate_exact_size(tile_size, Sense::click());
+                                    let hovered = response.hovered();
+                                    let fill = if hovered {
+                                        Color32::from_rgba_unmultiplied(54, 58, 64, 210)
+                                    } else {
+                                        Color32::from_rgba_unmultiplied(40, 43, 48, 190)
+                                    };
+                                    let stroke = egui::Stroke::new(
+                                        1.0,
+                                        if hovered {
+                                            Color32::from_rgb(130, 145, 160)
+                                        } else {
+                                            Color32::from_rgb(78, 84, 92)
+                                        },
+                                    );
+                                    ui.painter().rect(
+                                        rect,
+                                        egui::CornerRadius::same(4),
+                                        fill,
+                                        stroke,
+                                        egui::StrokeKind::Outside,
+                                    );
+                                    if import_pending {
+                                        let spinner_rect = egui::Rect::from_center_size(
+                                            egui::pos2(rect.center().x, rect.min.y + 48.0),
+                                            Vec2::splat(32.0),
+                                        );
+                                        ui.put(spinner_rect, egui::Spinner::new().size(30.0));
+                                        ui.ctx().request_repaint();
+                                    } else {
+                                        ui.painter().text(
+                                            egui::pos2(rect.center().x, rect.min.y + 48.0),
+                                            egui::Align2::CENTER_CENTER,
+                                            icon_char(Icon::Plus),
+                                            egui::FontId::new(32.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                            Color32::from_gray(210),
+                                        );
+                                    }
+                                    for (line_idx, line) in
+                                        ["Click here to", "manually add images."].iter().enumerate()
+                                    {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                rect.center().x,
+                                                rect.min.y + 84.0 + line_idx as f32 * 18.0,
+                                            ),
+                                            egui::Align2::CENTER_CENTER,
+                                            *line,
+                                            egui::FontId::proportional(14.0),
+                                            Color32::from_gray(225),
+                                        );
+                                    }
+                                    for (line_idx, line) in [
+                                        "You can drop the images here too,",
+                                        "or paste from clipboard (CTRL + V).",
+                                    ]
+                                    .iter()
+                                    .enumerate()
+                                    {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                rect.center().x,
+                                                rect.min.y + 132.0 + line_idx as f32 * 16.0,
+                                            ),
+                                            egui::Align2::CENTER_CENTER,
+                                            *line,
+                                            egui::FontId::proportional(12.0),
+                                            Color32::from_gray(165),
+                                        );
+                                    }
+                                    if response
+                                        .on_hover_text(if import_pending {
+                                            "Adding images..."
+                                        } else {
+                                            "Add images"
+                                        })
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        pending_add_paths = FileDialog::new()
+                                            .add_filter(
+                                                "Images",
+                                                &["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp"],
+                                            )
+                                            .pick_files();
+                                    }
+                                    rects.push(rect);
                                 }
                                 self.my_mod_overlay_images = overlay_images;
                                 rects
@@ -4676,6 +4818,19 @@ impl HestiaApp {
                                         ui.ctx().request_repaint();
                                     }
                                 }
+                            }
+                        }
+                        if let Some(paths) = pending_add_paths.take() {
+                            let count = paths.len();
+                            match self.enqueue_add_images_to_unlinked_mod(&selected.id, paths) {
+                                Ok(()) => self.set_message_ok(format!("Adding {} image(s)", count)),
+                                Err(err) => self.report_error(err, Some("Could not add images")),
+                            }
+                        }
+                        if let Some(rel) = pending_delete_rel.take() {
+                            match self.delete_unlinked_mod_image(&selected.id, &rel) {
+                                Ok(()) => self.set_message_ok("Image removed"),
+                                Err(err) => self.report_error(err, Some("Could not remove image")),
                             }
                         }
                     }

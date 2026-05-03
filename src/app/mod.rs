@@ -50,6 +50,7 @@ use crate::{
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
 use windows::core::PCWSTR;
 
 include!("constants.rs");
@@ -66,6 +67,7 @@ impl eframe::App for HestiaApp {
         install_resize_handles(ctx);
         self.consume_icon_results(ctx);
         self.consume_mod_image_results();
+        self.consume_manual_image_events();
         self.consume_gif_preview_events(ctx);
         self.consume_gif_animation_events(ctx);
         self.update_gif_animations(ctx);

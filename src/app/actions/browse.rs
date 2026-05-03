@@ -386,11 +386,15 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         if let Some(mod_id) = self.selected_mod_id.clone() {
             if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id) {
                 let prefix = format!("my-mod-shot-{}-", mod_entry.id);
-                if let Some(suffix) = texture_key.strip_prefix(&prefix) {
-                    if let Ok(index) = suffix.parse::<usize>() {
-                        if let Some(rel) = mod_entry.metadata.user.screenshots.get(index) {
-                            local_load = Some((texture_key.to_string(), mod_entry.root_path.join(rel)));
-                        }
+                if texture_key.starts_with(&prefix) {
+                    if let Some(rel) = mod_entry
+                        .metadata
+                        .user
+                        .screenshots
+                        .iter()
+                        .find(|rel| Self::my_mod_screenshot_texture_key(&mod_entry.id, rel) == texture_key)
+                    {
+                        local_load = Some((texture_key.to_string(), mod_entry.root_path.join(rel)));
                     }
                 }
             }
@@ -742,13 +746,30 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 let prefix = format!("my-mod-shot-{mod_id}-");
                 if overlay.texture_key.starts_with(&prefix) {
                     if let Some(mod_entry) = self.state.mods.iter().find(|m| &m.id == mod_id) {
-                        if let Some(suffix) = overlay.texture_key.strip_prefix(&prefix) {
-                            if let Ok(idx) = suffix.parse::<usize>() {
-                                if idx + 1 < mod_entry.metadata.user.screenshots.len() {
-                                    allowed_keys.insert(format!("{prefix}{}", idx + 1));
+                        if let Some(idx) = mod_entry
+                            .metadata
+                            .user
+                            .screenshots
+                            .iter()
+                            .position(|rel| {
+                                Self::my_mod_screenshot_texture_key(&mod_entry.id, rel)
+                                    == overlay.texture_key
+                            })
+                        {
+                            if idx + 1 < mod_entry.metadata.user.screenshots.len() {
+                                if let Some(rel) = mod_entry.metadata.user.screenshots.get(idx + 1) {
+                                    allowed_keys.insert(Self::my_mod_screenshot_texture_key(
+                                        &mod_entry.id,
+                                        rel,
+                                    ));
                                 }
-                                if idx > 0 {
-                                    allowed_keys.insert(format!("{prefix}{}", idx - 1));
+                            }
+                            if idx > 0 {
+                                if let Some(rel) = mod_entry.metadata.user.screenshots.get(idx - 1) {
+                                    allowed_keys.insert(Self::my_mod_screenshot_texture_key(
+                                        &mod_entry.id,
+                                        rel,
+                                    ));
                                 }
                             }
                         }

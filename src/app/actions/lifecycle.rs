@@ -13,6 +13,8 @@ impl HestiaApp {
         let image_generation = Arc::new(AtomicU64::new(0));
         let (mod_image_request_tx, mod_image_request_rx) = tokio_mpsc::unbounded_channel::<LocalModImageRequest>();
         let (mod_image_result_tx, mod_image_result_rx) = tokio_mpsc::unbounded_channel::<LocalModImageResult>();
+        let (manual_image_event_tx, manual_image_event_rx) =
+            tokio_mpsc::unbounded_channel::<ManualImageEvent>();
         let cache_limit_bytes = Arc::new(AtomicU64::new(state.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
             &runtime_services,
@@ -140,6 +142,7 @@ impl HestiaApp {
             mod_detail_editing: false,
             mod_detail_edit_target_id: None,
             mod_detail_edit_name: String::new(),
+            clipboard_image_paste_held: false,
             category_rename_target_id: None,
             category_rename_name: String::new(),
             dragging_category_id: None,
@@ -192,6 +195,9 @@ impl HestiaApp {
             icon_result_rx,
             mod_image_request_tx,
             mod_image_result_rx,
+            manual_image_event_tx,
+            manual_image_event_rx,
+            manual_image_imports_pending: 0,
             pending_mod_image_requests: HashSet::new(),
             pending_mod_image_queue: Vec::new(),
             pending_icon_requests: HashSet::new(),
@@ -1224,6 +1230,15 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
+    fn poll_windows_ctrl_v_edge(&mut self) -> bool {
+        let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+        let v_down = unsafe { GetAsyncKeyState(i32::from(VK_V.0)) } < 0;
+        let down = ctrl_down && v_down;
+        let pressed = down && !self.clipboard_image_paste_held;
+        self.clipboard_image_paste_held = down;
+        pressed
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let ctrl = egui::Modifiers::CTRL;
         let ctrl_shift = egui::Modifiers {
@@ -1278,6 +1293,17 @@ impl HestiaApp {
                 && self.selected_mod().is_some()
             {
                 self.start_selected_mod_rename();
+            }
+            if !text_input_active
+                && self.selected_unlinked_mod_context().is_some()
+                && (ctx.input_mut(|input| {
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::V))
+                }) || self.poll_windows_ctrl_v_edge())
+            {
+                match self.enqueue_clipboard_image_to_selected_unlinked_mod() {
+                    Ok(()) => self.set_message_ok("Adding clipboard image..."),
+                    Err(err) => self.report_error(err, Some("Could not paste image")),
+                }
             }
         }
 

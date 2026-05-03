@@ -30,9 +30,12 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
 ];
 
 fn main() -> anyhow::Result<()> {
-    let _ = fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
+    let log_filter = EnvFilter::from_default_env().add_directive(
+        "egui_winit::clipboard=off"
+            .parse()
+            .expect("valid log filter"),
+    );
+    let _ = fmt().with_env_filter(log_filter).try_init();
 
     if manifest_cli::try_run()? {
         return Ok(());
