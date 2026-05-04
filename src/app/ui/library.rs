@@ -3849,6 +3849,7 @@ impl HestiaApp {
             || (show_mod_detail && self.mod_detail_open)
             || (!show_mod_detail && self.browse_detail_open)
             || self.state.show_log
+            || self.state.show_whats_new
             || self.state.show_tools
             || self.state.show_tasks
             || self.tool_launch_options_prompt.is_some()

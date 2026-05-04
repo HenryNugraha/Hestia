@@ -1,4 +1,52 @@
 impl HestiaApp {
+    fn render_whats_new_window(&mut self, ctx: &egui::Context) {
+        if !self.state.show_whats_new {
+            return;
+        }
+        let mut whats_new_open = self.state.show_whats_new;
+        let force_default_pos = self.whats_new_force_default_pos;
+        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let mut window = egui::Window::new("What's New")
+            .id(egui::Id::new(("whats_new_window", self.whats_new_window_nonce)))
+            .open(&mut whats_new_open)
+            .title_bar(true)
+            .resizable(false)
+            .collapsible(true)
+            .frame(window_frame);
+
+        if let Some(rect) = self.last_right_pane_rect {
+            let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
+            let window_offset = egui::vec2(4.0, 4.0);
+            let window_size = egui::vec2(460.0, 220.0);
+            window = window
+                .movable(true)
+                .fixed_size(window_size)
+                .constrain_to(inset_rect);
+            if force_default_pos {
+                let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);
+                window = window.fixed_pos(top_right - egui::vec2(window_size.x, 0.0) - window_offset);
+            }
+        } else {
+            window = window.default_width(460.0).default_height(220.0);
+        }
+
+        window.show(ctx, |ui| {
+            static_label(ui, bold(format!("Hestia {APP_VERSION}")).underline().size(16.0));
+            ui.add_space(6.0);
+            for highlight in WHATS_NEW_HIGHLIGHTS {
+                ui.horizontal_top(|ui| {
+                    static_label(ui, "•");
+                    static_label(ui, *highlight);
+                });
+            }
+        });
+
+        if force_default_pos {
+            self.whats_new_force_default_pos = false;
+        }
+        self.state.show_whats_new = whats_new_open;
+    }
+
     fn render_log_panel(&mut self, ctx: &egui::Context) {
         if !self.state.show_log {
             return;
@@ -1990,7 +2038,23 @@ impl HestiaApp {
                             ui.add_space(-8.0);
                             ui.hyperlink("https://github.com/HenryNugraha/Hestia");
                             ui.add_space(2.0);
-                            static_label(ui, format!("Version: {APP_VERSION}"));
+                            ui.horizontal(|ui| {
+                                static_label(ui, "Version:");
+                                ui.add_space(-6.0);
+                                let version_response = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(APP_VERSION)
+                                                .color(Color32::from_rgb(210, 189, 156)),
+                                        )
+                                        .selectable(false)
+                                        .sense(Sense::click()),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if version_response.clicked() {
+                                    self.toggle_whats_new_window();
+                                }
+                            });
                             ui.add_space(-6.0);
                             let now = ui.input(|i| i.time);
                             let label = self.app_update_button_label(now);

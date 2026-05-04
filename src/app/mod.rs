@@ -30,6 +30,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
+    WHATS_NEW_HIGHLIGHTS,
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{
@@ -111,6 +112,7 @@ impl eframe::App for HestiaApp {
         self.render_tasks_window(ctx);
         self.render_tools_window(ctx);
         self.render_tool_launch_options_prompt(ctx);
+        self.render_whats_new_window(ctx);
         self.render_log_panel(ctx);
         paint_window_frame(ctx);
 

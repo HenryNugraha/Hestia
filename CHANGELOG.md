@@ -6,6 +6,7 @@
 - Added a new mod state "Check Skipped" for linked mods that are not checked for update.
 - Added descriptive tooltips when hovering over mod states.
 - Added support to manually add images for unlinked mods.
+- Added a "What's New" window that shows after an update to show highlighted changelogs.
 
 ### Changed
 - Improved accuracy in detecting whether the mods in BROWSE is installed.

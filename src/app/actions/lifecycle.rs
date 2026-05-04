@@ -77,9 +77,12 @@ impl HestiaApp {
         state.show_log = false;
         state.show_tasks = false;
         state.show_tools = false;
+        let show_whats_new = state.show_whats_new;
         let log_scroll_to_bottom = state.show_log;
         let log_window_nonce = if state.show_log { 1 } else { 0 };
         let log_force_default_pos = state.show_log;
+        let whats_new_window_nonce = if show_whats_new { 1 } else { 0 };
+        let whats_new_force_default_pos = show_whats_new;
         let tools_window_nonce = if state.show_tools { 1 } else { 0 };
         let tools_force_default_pos = state.show_tools;
         let tasks_window_nonce = if state.show_tasks { 1 } else { 0 };
@@ -150,6 +153,8 @@ impl HestiaApp {
             toasts: Vec::new(),
             pending_imports: VecDeque::new(),
             pending_conflicts: VecDeque::new(),
+            whats_new_window_nonce,
+            whats_new_force_default_pos,
             log_scroll_to_bottom,
             log_window_nonce,
             log_force_default_pos,
@@ -1174,6 +1179,14 @@ impl HestiaApp {
             self.log_force_default_pos = true;
         }
         self.save_state();
+    }
+
+    fn toggle_whats_new_window(&mut self) {
+        self.state.show_whats_new = !self.state.show_whats_new;
+        if self.state.show_whats_new {
+            self.whats_new_window_nonce = self.whats_new_window_nonce.wrapping_add(1);
+            self.whats_new_force_default_pos = true;
+        }
     }
 
     fn toggle_primary_view(&mut self) {

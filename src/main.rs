@@ -29,6 +29,22 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+    "In eleifend orci quis dolor luctus mollis.",
+    "Nam quis leo quis nulla auctor ornare in nec mi.",
+    "Etiam id lectus vehicula, facilisis quam vitae, dictum sem.",
+    "Nullam nec sapien at quam lacinia congue vitae eget ipsum.",
+    "Etiam et lectus nec metus porta tempor malesuada ac nunc.",
+    "Cras id urna id enim sagittis sollicitudin.",
+    "Donec semper ex in mi varius ornare.",
+    "Fusce non mi in diam cursus tincidunt nec eu libero.",
+    "Nullam id tortor at odio ullamcorper pretium at et ex.",
+    "Etiam non diam volutpat, luctus magna a, suscipit nunc.",
+    "Praesent consequat lacus in ultricies accumsan.",
+    "Quisque ac sapien ut sapien condimentum ornare.",
+];
+
 fn main() -> anyhow::Result<()> {
     let log_filter = EnvFilter::from_default_env().add_directive(
         "egui_winit::clipboard=off"
@@ -59,6 +75,10 @@ fn main() -> anyhow::Result<()> {
     };
     if _single_instance_guard.is_none() && !after_update_launch {
         return Ok(());
+    }
+    if state.show_whats_new {
+        persistence::save_app_state(&portable, &state)
+            .context("failed to save current app version")?;
     }
     if app::HestiaApp::auto_detect_game_paths(&mut state) {
         persistence::save_app_state(&portable, &state)

@@ -110,6 +110,8 @@ pub struct HestiaApp {
     toasts: Vec<ToastEntry>,
     pending_imports: VecDeque<PendingImport>,
     pending_conflicts: VecDeque<PendingConflict>,
+    whats_new_window_nonce: u64,
+    whats_new_force_default_pos: bool,
     log_scroll_to_bottom: bool,
     log_window_nonce: u64,
     log_force_default_pos: bool,
