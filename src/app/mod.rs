@@ -30,7 +30,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
-    WHATS_NEW_HIGHLIGHTS,
+    WHATS_NEW_DATE, WHATS_NEW_HIGHLIGHTS,
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{

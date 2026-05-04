@@ -31,7 +31,14 @@ impl HestiaApp {
         }
 
         window.show(ctx, |ui| {
-            static_label(ui, bold(format!("Hestia {APP_VERSION}")).underline().size(16.0));
+            ui.horizontal(|ui| {
+                static_label(ui, bold(format!("Hestia {APP_VERSION}")).underline().size(16.0));
+                ui.add_space(-4.0);
+                ui.vertical(|ui| {
+                    ui.add_space(5.0);
+                    static_label(ui, RichText::new(format!("{}", WHATS_NEW_DATE)).italics().size(11.0).small());
+                });
+            });
             ui.add_space(6.0);
             for highlight in WHATS_NEW_HIGHLIGHTS {
                 ui.horizontal_top(|ui| {

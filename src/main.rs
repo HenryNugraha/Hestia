@@ -29,20 +29,11 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
+pub(crate) const WHATS_NEW_DATE: &str = "4 May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
-    "In eleifend orci quis dolor luctus mollis.",
-    "Nam quis leo quis nulla auctor ornare in nec mi.",
-    "Etiam id lectus vehicula, facilisis quam vitae, dictum sem.",
-    "Nullam nec sapien at quam lacinia congue vitae eget ipsum.",
-    "Etiam et lectus nec metus porta tempor malesuada ac nunc.",
-    "Cras id urna id enim sagittis sollicitudin.",
-    "Donec semper ex in mi varius ornare.",
-    "Fusce non mi in diam cursus tincidunt nec eu libero.",
-    "Nullam id tortor at odio ullamcorper pretium at et ex.",
-    "Etiam non diam volutpat, luctus magna a, suscipit nunc.",
-    "Praesent consequat lacus in ultricies accumsan.",
-    "Quisque ac sapien ut sapien condimentum ornare.",
+    "Support manual image adding for externally sourced mods",
+    "Reworked download process with better reliability and resume support",
+    "Shows \"What's New\" after an update to highlights changelogs",
 ];
 
 fn main() -> anyhow::Result<()> {
