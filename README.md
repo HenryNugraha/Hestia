@@ -1,4 +1,4 @@
-# Hestia
+# Hestia <a href="https://github.com/HenryNugraha/Hestia/blob/main/CHANGELOG.md"><img src="https://img.shields.io/github/v/tag/HenryNugraha/Hestia?style=flat-square&label=Version&color=%23237648"></a> <a href="https://github.com/HenryNugraha/Hestia/releases/latest"><img src="https://img.shields.io/github/downloads/HenryNugraha/Hestia/total?style=flat-square&label=Downloads&color=%230f5dab"></a>
 
 <img src="https://raw.githubusercontent.com/HenryNugraha/Hestia/main/src/asset/icon.png" width="128">
 
