@@ -42,6 +42,8 @@ fn serde_default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppPreferences {
     version: u32,
+    #[serde(default)]
+    app_version: Option<String>,
     games: Vec<GameInstall>,
     #[serde(default)]
     library_folders: Vec<LibraryFolder>,
@@ -131,6 +133,7 @@ impl From<&AppState> for AppPreferences {
     fn from(state: &AppState) -> Self {
         Self {
             version: 7,
+            app_version: Some(state.app_version.clone()),
             games: state.games.clone(),
             library_folders: state.library_folders.clone(),
             show_log: state.show_log,
@@ -309,13 +312,18 @@ pub fn runtime_temp_extract_dir() -> PathBuf {
 pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let mut state = AppState::default();
     if !paths.state_archive.exists() {
+        state.show_whats_new = true;
         return Ok(state);
     }
     let raw = fs::read_to_string(&paths.state_archive).context("failed to read hestia.toml")?;
     let prefs: AppPreferences = toml::from_str(&raw).context("failed to parse hestia.toml")?;
 
     let loaded_version = prefs.version;
+    let previous_app_version = prefs.app_version.clone();
     state.version = prefs.version.max(7);
+    state.show_whats_new =
+        should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
+    state.app_version = env!("CARGO_PKG_VERSION").to_string();
     state.games = prefs.games;
     state.library_folders = prefs.library_folders;
     state.show_log = prefs.show_log;
@@ -360,6 +368,19 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.staged_app_update = prefs.staged_app_update;
     state.tool_blacklist = prefs.tool_blacklist;
     Ok(state)
+}
+
+fn should_show_whats_new(previous_app_version: Option<&str>, current_app_version: &str) -> bool {
+    let Some(previous_app_version) = previous_app_version else {
+        return true;
+    };
+    let Ok(previous) = semver::Version::parse(previous_app_version.trim()) else {
+        return true;
+    };
+    let Ok(current) = semver::Version::parse(current_app_version) else {
+        return false;
+    };
+    previous < current
 }
 
 fn initialize_tool_orders(state: &mut AppState, loaded_version: u32) {
@@ -1011,6 +1032,21 @@ pub fn save_portable_mod_state(mod_root: &Path, state: &PortableModState) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whats_new_opens_for_missing_invalid_and_older_app_versions() {
+        assert!(should_show_whats_new(None, "1.2.3"));
+        assert!(should_show_whats_new(Some("not-semver"), "1.2.3"));
+        assert!(should_show_whats_new(Some("1.2.2"), "1.2.3"));
+        assert!(should_show_whats_new(Some("1.2.3-alpha.1"), "1.2.3"));
+        assert!(should_show_whats_new(Some("1.2.3-string.4"), "1.2.4"));
+    }
+
+    #[test]
+    fn whats_new_stays_closed_for_same_or_newer_app_versions() {
+        assert!(!should_show_whats_new(Some("1.2.3"), "1.2.3"));
+        assert!(!should_show_whats_new(Some("1.2.4"), "1.2.3"));
+    }
 
     #[test]
     fn persistent_paths_prefer_existing_fallback_before_new_portable_files() {

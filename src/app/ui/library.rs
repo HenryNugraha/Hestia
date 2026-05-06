@@ -81,6 +81,81 @@ fn paint_modified_update_badge(ui: &mut Ui, button_rect: egui::Rect) {
     );
 }
 
+fn paint_selected_mod_count_badge(ui: &mut Ui, count: usize) {
+    let text = format!("{count} selected");
+    let badge_size = Vec2::new((text.len() as f32 * 5.2 + 14.0).max(66.0), 16.0);
+    let content_rect = ui.max_rect();
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            content_rect.right() + 16.0 - badge_size.x,
+            content_rect.top() - 18.0,
+        ),
+        badge_size,
+    );
+    let painter = ui.ctx().layer_painter(ui.layer_id());
+    painter.rect(
+        badge_rect,
+        egui::CornerRadius::same(4),
+        Color32::from_rgba_premultiplied(64, 64, 64, 215),
+        egui::Stroke::new(1.0, Color32::from_rgb(86, 86, 86)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(9.0),
+        Color32::from_rgb(205, 210, 217),
+    );
+}
+
+fn render_selected_mod_summary(ui: &mut Ui, titles: &[String], count: usize) {
+    const MAX_MOD_NAME_CHARS: usize = 23;
+    const CLAMPED_MOD_NAME_CHARS: usize = 20;
+
+    if count == 0 {
+        return;
+    }
+    paint_selected_mod_count_badge(ui, count);
+    let mut rows: Vec<String> = titles.iter().take(count.min(3)).cloned().collect();
+    if count > 3 {
+        rows.truncate(2);
+        rows.push(format!("…and {} more", count.saturating_sub(rows.len())));
+    }
+
+    for row in rows {
+        let label = if row.starts_with('…') {
+            format!(" {row}")
+        } else {
+            let display_row = if row.chars().count() > MAX_MOD_NAME_CHARS {
+                let mut clamped = row
+                    .chars()
+                    .take(CLAMPED_MOD_NAME_CHARS)
+                    .collect::<String>();
+                clamped.truncate(clamped.trim_end().len());
+                format!("{clamped}...")
+            } else {
+                row.clone()
+            };
+            format!("‣ {display_row}")
+        };
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 17.0), Sense::hover());
+        ui.painter().with_clip_rect(rect).text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            Color32::from_rgb(205, 210, 217),
+        );
+        response
+            .on_hover_text(row)
+            .on_hover_cursor(egui::CursorIcon::Default);
+        ui.add_space(-10.0);
+    }
+    ui.add_space(6.0);
+}
+
 fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
     egui::Frame::new()
         .fill(Color32::from_rgba_premultiplied(72, 82, 94, 210))
@@ -324,11 +399,19 @@ impl HestiaApp {
         ) {
             return false;
         }
-        let current_signature = compute_update_signature(&source.file_set, &profile);
+        let current_signature = current_update_signature_for_state(
+            &source.file_set,
+            &profile,
+            ModUpdateState::UpdateAvailable,
+        );
         !source
             .ignored_update_signature
             .as_ref()
-            .is_some_and(|ignored| current_signature.as_ref() == Some(ignored))
+            .is_some_and(|ignored| {
+                current_signature
+                    .as_ref()
+                    .is_some_and(|current| ignored.prearmed_next_update || ignored == current)
+            })
     }
 
     fn mod_update_badge(mod_entry: &ModEntry) -> (&'static str, Color32) {
@@ -354,11 +437,31 @@ impl HestiaApp {
         }
     }
 
+    fn mod_update_badge_tooltip(mod_entry: &ModEntry) -> &'static str {
+        if mod_has_local_changes_for_update_check(mod_entry) {
+            if let Some(ignoring_label) = Self::ignored_update_short_label(mod_entry) {
+                return match ignoring_label {
+                    "Ignoring Once" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
+                    "Ignoring Always" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                    _ => mod_update_state_tooltip(ModUpdateState::ModifiedLocally),
+                };
+            }
+        }
+        if Self::has_modified_update_available(mod_entry) {
+            mod_update_state_tooltip(ModUpdateState::UpdateAvailable)
+        } else {
+            mod_update_state_tooltip(mod_entry.update_state)
+        }
+    }
+
     fn ignored_update_short_label(mod_entry: &ModEntry) -> Option<&'static str> {
         let source = mod_entry.source.as_ref()?;
         if source.ignore_update_always {
             Some("Ignoring Always")
-        } else if source.ignored_update_signature.is_some()
+        } else if source
+            .ignored_update_signature
+            .as_ref()
+            .is_some_and(|signature| !signature.prearmed_next_update)
             || matches!(mod_entry.update_state, ModUpdateState::IgnoringUpdateOnce)
         {
             Some("Ignoring Once")
@@ -1275,6 +1378,109 @@ impl HestiaApp {
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
+    fn render_selected_mods_category_submenu(&mut self, ui: &mut Ui, game_id: &str) {
+        let selected_category_ids: Vec<Option<String>> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| self.selected_mods.contains(&mod_entry.id))
+            .map(|mod_entry| mod_entry.metadata.user.category_id.clone())
+            .collect();
+        let common_category_id = selected_category_ids
+            .first()
+            .filter(|first| {
+                selected_category_ids
+                    .iter()
+                    .all(|category_id| category_id == *first)
+            })
+            .cloned()
+            .flatten();
+        let all_uncategorized = !selected_category_ids.is_empty()
+            && selected_category_ids.iter().all(Option::is_none);
+        let categories = self.categories_for_game(game_id);
+
+        ui.menu_button(icon_text_sized(Icon::Tag, "Category", 12.0, 12.0), |ui| {
+            const CATEGORY_ICON_WIDTH: f32 = 18.0;
+            const CATEGORY_TEXT_WIDTH: f32 = 168.0;
+            const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+            const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
+
+            ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                    egui::Label::new(if all_uncategorized {
+                        icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                    } else {
+                        RichText::new("")
+                    })
+                    .selectable(false),
+                );
+                if Self::category_popup_text(
+                    ui,
+                    "(none)",
+                    None,
+                    CATEGORY_TEXT_WIDTH,
+                    CATEGORY_ROW_HEIGHT,
+                    Sense::click(),
+                    true,
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                {
+                    self.assign_selected_mods_category(None);
+                    ui.close();
+                }
+            });
+
+            if categories.is_empty() {
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new("There is no category yet.")
+                        .size(12.0)
+                        .color(Color32::from_gray(185)),
+                );
+                return;
+            }
+
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for category in categories {
+                        let selected = common_category_id.as_deref() == Some(category.id.as_str());
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                egui::Label::new(if selected {
+                                    icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                                } else {
+                                    RichText::new("")
+                                })
+                                .selectable(false),
+                            );
+                            if Self::category_popup_text(
+                                ui,
+                                &category.name,
+                                Some(self.category_member_count(game_id, &category.id)),
+                                CATEGORY_TEXT_WIDTH,
+                                CATEGORY_ROW_HEIGHT,
+                                Sense::click(),
+                                true,
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                            {
+                                self.assign_selected_mods_category(Some(category.id.clone()));
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+        })
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+
     fn render_update_preference_checkboxes(&mut self, ui: &mut Ui, mod_id: &str) {
         let Some(index) = self.state.mods.iter().position(|mod_entry| mod_entry.id == mod_id)
         else {
@@ -1306,11 +1512,18 @@ impl HestiaApp {
             }
             changed = true;
         }
+        let can_use_ignore_once =
+            ignore_current_update || ignore_once_signature_for_mod(&self.state.mods[index]).is_some();
 
-        let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
-        ignore_once_response.clone().on_hover_text(
-            "Once a newer version is available, will automatically uncheck and process the update normally.",
+        let ignore_once_response = ui.add_enabled(
+            can_use_ignore_once,
+            egui::Checkbox::new(&mut ignore_current_update, "Ignore update once"),
         );
+        ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
+            "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+        } else {
+            "Sync this mod with GameBanana before using ignore once."
+        });
         ui.add_space(-6.0);
         let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
         ignore_always_response.clone().on_hover_text(
@@ -1330,14 +1543,21 @@ impl HestiaApp {
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
             } else if ignore_current_update {
-                let current_signature = current_update_signature_for_mod(&self.state.mods[index]);
+                let current_signature = ignore_once_signature_for_mod(&self.state.mods[index]);
                 if let Some(mod_entry) = self.state.mods.get_mut(index) {
                     if let Some(signature) = current_signature {
+                        let prearmed_next_update = signature.prearmed_next_update;
                         if let Some(source) = mod_entry.source.as_mut() {
                             source.ignore_update_always = false;
                             source.ignored_update_signature = Some(signature);
                         }
-                        mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                        if prearmed_next_update {
+                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                mod_entry.update_state = raw_state;
+                            }
+                        } else {
+                            mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                        }
                     } else {
                         if let Some(source) = mod_entry.source.as_mut() {
                             source.ignore_update_always = false;
@@ -1365,6 +1585,182 @@ impl HestiaApp {
             }
             self.save_state();
         }
+    }
+
+    fn mod_supports_update_preferences(mod_entry: &ModEntry) -> bool {
+        mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_some_and(|gamebanana| gamebanana.mod_id > 0)
+    }
+
+    fn selected_update_preference_mod_ids(&self) -> Vec<String> {
+        self.state
+            .mods
+            .iter()
+            .filter(|mod_entry| self.selected_mods.contains(&mod_entry.id))
+            .filter(|mod_entry| Self::mod_supports_update_preferences(mod_entry))
+            .map(|mod_entry| mod_entry.id.clone())
+            .collect()
+    }
+
+    fn apply_selected_update_preferences(
+        &mut self,
+        mod_ids: &[String],
+        ignore_current_update: bool,
+        ignore_update_always: bool,
+    ) {
+        let mut cancel_mods = Vec::new();
+        let mut touched = false;
+
+        for mod_id in mod_ids {
+            let current_signature = if ignore_current_update && !ignore_update_always {
+                self.state
+                    .mods
+                    .iter()
+                    .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+                    .and_then(ignore_once_signature_for_mod)
+            } else {
+                None
+            };
+
+            let Some(mod_entry) = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+            else {
+                continue;
+            };
+            if !Self::mod_supports_update_preferences(mod_entry) {
+                continue;
+            }
+
+            if ignore_update_always {
+                if let Some(source) = mod_entry.source.as_mut() {
+                    source.ignore_update_always = true;
+                    source.ignored_update_signature = None;
+                }
+                mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
+                cancel_mods.push(mod_entry.clone());
+            } else if ignore_current_update {
+                if let Some(signature) = current_signature {
+                    let prearmed_next_update = signature.prearmed_next_update;
+                    if let Some(source) = mod_entry.source.as_mut() {
+                        source.ignore_update_always = false;
+                        source.ignored_update_signature = Some(signature);
+                    }
+                    if prearmed_next_update {
+                        if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                            mod_entry.update_state = raw_state;
+                        }
+                    } else {
+                        mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                    }
+                } else {
+                    continue;
+                }
+                cancel_mods.push(mod_entry.clone());
+            } else {
+                if let Some(source) = mod_entry.source.as_mut() {
+                    source.ignore_update_always = false;
+                    source.ignored_update_signature = None;
+                }
+                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                    mod_entry.update_state = raw_state;
+                }
+            }
+
+            touched = true;
+            let _ = xxmi::save_mod_metadata(mod_entry);
+        }
+
+        for mod_entry in cancel_mods {
+            self.cancel_update_process_for_mod(&mod_entry);
+        }
+        if touched {
+            self.save_state();
+        }
+    }
+
+    fn render_selected_update_preference_checkboxes(
+        &mut self,
+        ui: &mut Ui,
+        mod_ids: Vec<String>,
+    ) -> bool {
+        if mod_ids.is_empty() {
+            return false;
+        }
+
+        let mut any_ignore_current_update = false;
+        let mut all_ignore_current_update = true;
+        let mut any_ignore_update_always = false;
+        let mut all_ignore_update_always = true;
+        let mut any_can_use_ignore_once = false;
+
+        for mod_id in &mod_ids {
+            let Some(mod_entry) = self
+                .state
+                .mods
+                .iter()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+            else {
+                continue;
+            };
+            let ignore_update_always = mod_entry
+                .source
+                .as_ref()
+                .is_some_and(|source| source.ignore_update_always);
+            let ignore_current_update = mod_entry
+                .source
+                .as_ref()
+                .is_some_and(|source| source.ignored_update_signature.is_some())
+                && !ignore_update_always;
+            let can_use_ignore_once =
+                ignore_current_update || ignore_once_signature_for_mod(mod_entry).is_some();
+
+            any_ignore_current_update |= ignore_current_update;
+            all_ignore_current_update &= ignore_current_update;
+            any_ignore_update_always |= ignore_update_always;
+            all_ignore_update_always &= ignore_update_always;
+            any_can_use_ignore_once |= can_use_ignore_once;
+        }
+
+        let mut ignore_current_update = all_ignore_current_update;
+        let mut ignore_update_always = all_ignore_update_always;
+        let ignore_current_update_mixed =
+            any_ignore_current_update && !all_ignore_current_update;
+        let ignore_update_always_mixed = any_ignore_update_always && !all_ignore_update_always;
+
+        let ignore_once_response = ui.add_enabled(
+            any_can_use_ignore_once,
+            egui::Checkbox::new(&mut ignore_current_update, "Ignore update once")
+                .indeterminate(ignore_current_update_mixed),
+        );
+        ignore_once_response.clone().on_hover_text(if any_can_use_ignore_once {
+            "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+        } else {
+            "Sync at least one selected mod with GameBanana before using ignore once."
+        });
+        ui.add_space(-6.0);
+        let ignore_always_response = ui.add(
+            egui::Checkbox::new(&mut ignore_update_always, "Ignore update always")
+                .indeterminate(ignore_update_always_mixed),
+        );
+        ignore_always_response.clone().on_hover_text(
+            "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked.",
+        );
+
+        if ignore_once_response.changed() || ignore_always_response.changed() {
+            self.apply_selected_update_preferences(
+                &mod_ids,
+                ignore_current_update,
+                ignore_update_always,
+            );
+        }
+
+        true
     }
 
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
@@ -1558,6 +1954,18 @@ impl HestiaApp {
             })
             .collect();
 
+        let selected_context_titles: Vec<String> = cards
+            .iter()
+            .filter(|card| self.selected_mods.contains(&card.0))
+            .map(|card| {
+                card.2
+                    .as_deref()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(&card.1)
+                    .to_string()
+            })
+            .collect();
+
         let mut has_active = false;
         let mut has_disabled = false;
         let mut has_archived = false;
@@ -1655,6 +2063,7 @@ impl HestiaApp {
                             || !self.show_unlinked_mods
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
+                            || !self.show_check_skipped_mods
                             || !self.show_missing_source_mods
                             || !self.show_modified_locally_mods
                             || !self.show_ignoring_update_mods;
@@ -1821,6 +2230,7 @@ impl HestiaApp {
                                         self.show_unlinked_mods = true;
                                         self.show_up_to_date_mods = true;
                                         self.show_update_available_mods = true;
+                                        self.show_check_skipped_mods = true;
                                         self.show_missing_source_mods = true;
                                         self.show_modified_locally_mods = true;
                                         self.show_ignoring_update_mods = true;
@@ -1829,6 +2239,7 @@ impl HestiaApp {
                                         self.show_unlinked_mods = false;
                                         self.show_up_to_date_mods = false;
                                         self.show_update_available_mods = false;
+                                        self.show_check_skipped_mods = false;
                                         self.show_missing_source_mods = false;
                                         self.show_modified_locally_mods = false;
                                         self.show_ignoring_update_mods = false;
@@ -1839,10 +2250,12 @@ impl HestiaApp {
 
                                 let unlinked_changed = ui
                                     .checkbox(&mut self.show_unlinked_mods, "Unlinked")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::Unlinked))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let up_to_date_changed = ui
                                     .checkbox(&mut self.show_up_to_date_mods, "Up to Date")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpToDate))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let update_available_changed = ui
@@ -1850,6 +2263,12 @@ impl HestiaApp {
                                         &mut self.show_update_available_mods,
                                         "Update Available",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpdateAvailable))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .changed();
+                                let check_skipped_changed = ui
+                                    .checkbox(&mut self.show_check_skipped_mods, "Check Skipped")
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::CheckSkipped))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let missing_source_changed = ui
@@ -1857,6 +2276,7 @@ impl HestiaApp {
                                         &mut self.show_missing_source_mods,
                                         "Missing Source",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::MissingSource))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let modified_locally_changed = ui
@@ -1864,6 +2284,7 @@ impl HestiaApp {
                                         &mut self.show_modified_locally_mods,
                                         "Modified Locally",
                                     )
+                                    .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let ignoring_update_changed = ui
@@ -1871,12 +2292,16 @@ impl HestiaApp {
                                         &mut self.show_ignoring_update_mods,
                                         "Ignoring Update",
                                     )
+                                    .on_hover_text(
+                                        "Shows mods that are ignoring the current update or ignoring updates until turned off.",
+                                    )
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
 
                                 if unlinked_changed
                                     || up_to_date_changed
                                     || update_available_changed
+                                    || check_skipped_changed
                                     || missing_source_changed
                                     || modified_locally_changed
                                     || ignoring_update_changed
@@ -2720,7 +3145,9 @@ impl HestiaApp {
                                                                                     .fill(Color32::from_rgb(180, 78, 35))
                                                                                     .corner_radius(egui::CornerRadius::same(3))
                                                                                     .min_size(Vec2::new(64.0, 4.0)),
-                                                                                ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                                                )
+                                                                                .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpdateAvailable))
+                                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                                                 if resp.clicked() {
                                                                                     self.queue_update_apply(mod_id);
                                                                                 }
@@ -2740,6 +3167,7 @@ impl HestiaApp {
                                                                                                 )
                                                                                                 .selectable(false),
                                                                                             )
+                                                                                            .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                                                                             .on_hover_cursor(egui::CursorIcon::Default);
                                                                                             ui.add(
                                                                                                 egui::Label::new(
@@ -2749,6 +3177,11 @@ impl HestiaApp {
                                                                                                 )
                                                                                                 .selectable(false),
                                                                                             )
+                                                                                            .on_hover_text(match *ignoring_label {
+                                                                                                "Ignoring Once" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
+                                                                                                "Ignoring Always" => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                                                                                                _ => mod_update_state_tooltip(ModUpdateState::ModifiedLocally),
+                                                                                            })
                                                                                             .on_hover_cursor(egui::CursorIcon::Default);
                                                                                         });
                                                                                     } else {
@@ -2760,6 +3193,7 @@ impl HestiaApp {
                                                                                             )
                                                                                             .selectable(false),
                                                                                         )
+                                                                                        .on_hover_text(mod_update_state_tooltip(ModUpdateState::ModifiedLocally))
                                                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                                                     }
                                                                                 } else {
@@ -2767,6 +3201,7 @@ impl HestiaApp {
                                                                                         ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
                                                                                         ModUpdateState::MissingSource => ("Missing", Color32::from_rgb(196, 166, 126)),
                                                                                         ModUpdateState::ModifiedLocally => ("Modified", Color32::from_rgb(179, 133, 133)),
+                                                                                        ModUpdateState::CheckSkipped => ("Skipped", Color32::from_rgb(142, 153, 168)),
                                                                                         ModUpdateState::IgnoringUpdateOnce => ("Ignoring Once", Color32::from_rgb(181, 153, 196)),
                                                                                         ModUpdateState::IgnoringUpdateAlways => ("Ignoring Always", Color32::from_rgb(181, 153, 196)),
                                                                                         _ => ("", Color32::TRANSPARENT),
@@ -2780,6 +3215,7 @@ impl HestiaApp {
                                                                                             )
                                                                                             .selectable(false),
                                                                                         )
+                                                                                        .on_hover_text(mod_update_state_tooltip(*update_state))
                                                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                                                     }
                                                                                 }
@@ -2863,6 +3299,162 @@ impl HestiaApp {
                                                         card_frame.response.rect.contains(pos)
                                                     })
                                         });
+                                        let open_batch_context_menu = open_context_menu
+                                            && self.selected_mods.len() >= 2
+                                            && self.selected_mods.contains(mod_id);
+                                        let open_single_context_menu =
+                                            open_context_menu && !open_batch_context_menu;
+                                        let batch_popup_id = ui
+                                            .id()
+                                            .with(("selected_mods_context_menu_popup", mod_id));
+                                        egui::Popup::new(
+                                            batch_popup_id,
+                                            ui.ctx().clone(),
+                                            egui::PopupAnchor::PointerFixed,
+                                            card_frame.response.layer_id,
+                                        )
+                                        .kind(egui::PopupKind::Menu)
+                                        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                                        .width(156.0)
+                                        .gap(0.0)
+                                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                        .frame(
+                                            egui::Frame::menu(ui.style())
+                                                .fill({
+                                                    let fill = ui.style().visuals.window_fill();
+                                                    Color32::from_rgba_premultiplied(
+                                                        fill.r(),
+                                                        fill.g(),
+                                                        fill.b(),
+                                                        ((fill.a() as f32) * 0.9).round() as u8,
+                                                    )
+                                                })
+                                                .inner_margin(egui::Margin::same(12)),
+                                        )
+                                        .open_memory(open_batch_context_menu.then_some(
+                                            egui::SetOpenCommand::Bool(true),
+                                        ))
+                                        .show(|ui| {
+                                            ui.set_min_width(156.0);
+                                            let radius = egui::CornerRadius::same(3);
+                                            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.open.corner_radius = radius;
+
+                                            render_selected_mod_summary(
+                                                ui,
+                                                &selected_context_titles,
+                                                self.selected_mods.len(),
+                                            );
+                                            ui.add_space(-2.0);
+                                            ui.separator();
+                                            ui.add_space(-2.0);
+
+                                            if has_update_eligible
+                                                && ui
+                                                    .add(
+                                                        egui::Button::new(icon_text_sized(
+                                                            Icon::ClockPlus,
+                                                            "Update",
+                                                            13.0,
+                                                            13.0,
+                                                        ))
+                                                        .fill(Color32::from_rgb(180, 78, 35))
+                                                        .stroke(egui::Stroke::new(
+                                                            1.0,
+                                                            Color32::from_rgb(180, 78, 35),
+                                                        ))
+                                                        .corner_radius(radius),
+                                                    )
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_update_selected();
+                                                ui.close();
+                                            }
+                                            if has_disabled && has_archived {
+                                                if ui
+                                                    .button(icon_text_sized(
+                                                        Icon::Check,
+                                                        "Enable / Restore",
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    self.batch_enable_selected();
+                                                    ui.close();
+                                                }
+                                            } else if has_disabled {
+                                                if ui
+                                                    .button(icon_text_sized(Icon::Check, "Enable", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    self.batch_enable_selected();
+                                                    ui.close();
+                                                }
+                                            } else if has_archived
+                                                && ui
+                                                    .button(icon_text_sized(
+                                                        Icon::ArchiveRestore,
+                                                        "Restore",
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_enable_selected();
+                                                ui.close();
+                                            }
+                                            if has_active
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Ban, "Disable", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_disable_selected();
+                                                ui.close();
+                                            }
+                                            if has_active || has_disabled || has_archived {
+                                                self.render_selected_mods_category_submenu(
+                                                    ui,
+                                                    &selected_game_id,
+                                                );
+                                            }
+                                            if (has_active || has_disabled)
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_archive_selected();
+                                                ui.close();
+                                            }
+                                            if (has_active || has_disabled || has_archived)
+                                                && ui
+                                                    .button(icon_text_sized(Icon::Trash2, "Delete", 12.0, 12.0))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                self.batch_delete_selected();
+                                                ui.close();
+                                            }
+                                            let selected_update_preference_mod_ids =
+                                                self.selected_update_preference_mod_ids();
+                                            if !selected_update_preference_mod_ids.is_empty() {
+                                                ui.add_space(-2.0);
+                                                ui.separator();
+                                                ui.add_space(-6.0);
+                                                self.render_selected_update_preference_checkboxes(
+                                                    ui,
+                                                    selected_update_preference_mod_ids,
+                                                );
+                                            }
+                                        });
                                         egui::Popup::new(
                                             popup_id,
                                             ui.ctx().clone(),
@@ -2887,7 +3479,7 @@ impl HestiaApp {
                                                 })
                                                 .inner_margin(egui::Margin::same(12)),
                                         )
-                                        .open_memory(open_context_menu.then_some(
+                                        .open_memory(open_single_context_menu.then_some(
                                             egui::SetOpenCommand::Bool(true),
                                         ))
                                         .show(|ui| {
@@ -3257,6 +3849,7 @@ impl HestiaApp {
             || (show_mod_detail && self.mod_detail_open)
             || (!show_mod_detail && self.browse_detail_open)
             || self.state.show_log
+            || self.state.show_whats_new
             || self.state.show_tools
             || self.state.show_tasks
             || self.tool_launch_options_prompt.is_some()
@@ -3370,10 +3963,12 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         if let Some(job) = Self::modified_ignoring_detail_job(&selected, 12.0) {
                             ui.add(egui::Label::new(job).selectable(false))
+                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
                                 .on_hover_cursor(egui::CursorIcon::Default);
                         } else {
                             let (update_text, update_color) = Self::mod_update_badge(&selected);
-                            static_label(ui, RichText::new(update_text).size(12.0).color(update_color));
+                            static_label(ui, RichText::new(update_text).size(12.0).color(update_color))
+                                .on_hover_text(Self::mod_update_badge_tooltip(&selected));
                         }
                     }
                     ui.add_space(-4.0);
@@ -3793,6 +4388,7 @@ impl HestiaApp {
                                                 },
                                             );
                                             ui.add(egui::Label::new(job).selectable(false))
+                                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
                                                 .on_hover_cursor(egui::CursorIcon::Default);
                                         } else {
                                             let (update_text, update_color) =
@@ -3802,7 +4398,8 @@ impl HestiaApp {
                                                 RichText::new(format!("{update_text} ({age})"))
                                                     .size(11.5)
                                                     .color(update_color),
-                                            );
+                                            )
+                                            .on_hover_text(Self::mod_update_badge_tooltip(&selected));
                                         }
                                     } else {
                                         static_label(
@@ -3840,14 +4437,30 @@ impl HestiaApp {
                         .map(|s| s.preview_urls.clone())
                         .unwrap_or_default();
                     let show_source_urls = screenshot_paths.is_empty() && !snapshot_urls.is_empty();
-                    if !screenshot_paths.is_empty() || show_source_urls {
+                    let can_manage_manual_images = !linked;
+                    if can_manage_manual_images || !screenshot_paths.is_empty() || show_source_urls {
                         ui.add_space(10.0);
                         ui.style_mut().spacing.scroll.floating = false;
                         let scroll_id = ui.make_persistent_id(format!("my_mod_preview_{}", selected.id));
                         let anim_id = scroll_id.with("anim");
+                        let mut pending_add_paths: Option<Vec<PathBuf>> = None;
+                        let mut pending_delete_rel: Option<String> = None;
+                        let rail_width = {
+                            let available = ui.available_width();
+                            if available.is_finite() {
+                                available.clamp(1.0, 4096.0)
+                            } else {
+                                BROWSE_DETAIL_SIZE.x.clamp(1.0, 4096.0)
+                            }
+                        };
                         let mut scroll_area = ScrollArea::horizontal()
                             .id_salt(scroll_id)
-                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
+                            .max_width(rail_width)
+                            .min_scrolled_width(rail_width)
+                            .auto_shrink([false, true])
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                            );
 
                         if let Some((start_time, start_val, target_val)) =
                             ui.data(|d| d.get_temp::<(f64, f32, f32)>(anim_id))
@@ -3873,14 +4486,16 @@ impl HestiaApp {
                                 let mut overlay_images: Vec<MyModOverlayImage> = Vec::new();
                                 if !screenshot_paths.is_empty() {
                                     for (idx, rel) in screenshot_paths.iter().enumerate() {
-                                        let texture_key = format!("my-mod-shot-{}-{}", selected.id, idx);
+                                        let texture_key =
+                                            Self::my_mod_screenshot_texture_key(&selected.id, rel);
                                         let target_height = 220.0;
                                         let width = self.mod_cover_textures.get(&texture_key)
                                             .map(|t| {
                                                 let sz = t.size_vec2();
                                                 if sz.y > 0.0 { target_height * (sz.x / sz.y) } else { 390.0 }
                                             })
-                                            .unwrap_or(390.0);
+                                            .unwrap_or(390.0)
+                                            .clamp(1.0, rail_width);
                                         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, target_height), Sense::click());
                                         
                                         let clip = ui.clip_rect();
@@ -3927,7 +4542,40 @@ impl HestiaApp {
                                         } else {
                                             ui.painter().rect_filled(rect, 4.0, Color32::from_white_alpha(12));
                                         }
-                                        if response.clicked() {
+                                        let mut delete_clicked = false;
+                                        if can_manage_manual_images {
+                                            let button_rect = egui::Rect::from_min_size(
+                                                egui::pos2(rect.max.x - 30.0, rect.min.y + 6.0),
+                                                Vec2::splat(24.0),
+                                            );
+                                            let delete_response = ui.interact(
+                                                button_rect,
+                                                ui.id().with(("delete_manual_image", &selected.id, idx)),
+                                                Sense::click(),
+                                            );
+                                            let alpha = if delete_response.hovered() { 235 } else { 190 };
+                                            ui.painter().circle_filled(
+                                                button_rect.center(),
+                                                11.0,
+                                                Color32::from_rgba_unmultiplied(130, 28, 28, alpha),
+                                            );
+                                            ui.painter().text(
+                                                button_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                icon_char(Icon::X),
+                                                egui::FontId::new(14.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                                Color32::WHITE,
+                                            );
+                                            if delete_response
+                                                .on_hover_text("Remove image")
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                pending_delete_rel = Some(rel.clone());
+                                                delete_clicked = true;
+                                            }
+                                        }
+                                        if !delete_clicked && response.clicked() {
                                             self.queue_overlay_full_texture(&texture_key);
                                             self.browse_state.screenshot_overlay =
                                                 Some(BrowseOverlayImage { texture_key: texture_key.clone() });
@@ -3964,7 +4612,7 @@ impl HestiaApp {
                                         let key =
                                             Self::browse_thumb_texture_key(url, ThumbnailProfile::Rail);
                                         let full_key = hash64_hex(url.as_bytes());
-                                        let (rect, response) = ui.allocate_exact_size(Vec2::new(390.0, 220.0), Sense::click());
+                                        let (rect, response) = ui.allocate_exact_size(Vec2::new(390.0_f32.min(rail_width), 220.0), Sense::click());
 
                                         let clip = ui.clip_rect();
                                         let is_visible = rect.intersects(clip);
@@ -4002,6 +4650,97 @@ impl HestiaApp {
                                         });
                                         rects.push(rect);
                                     }
+                                }
+                                if can_manage_manual_images {
+                                    let import_pending = self.manual_image_imports_pending > 0;
+                                    let tile_size = Vec2::splat(220.0);
+                                    let (rect, response) = ui.allocate_exact_size(tile_size, Sense::click());
+                                    let hovered = response.hovered();
+                                    let fill = if hovered {
+                                        Color32::from_rgba_unmultiplied(54, 58, 64, 210)
+                                    } else {
+                                        Color32::from_rgba_unmultiplied(40, 43, 48, 190)
+                                    };
+                                    let stroke = egui::Stroke::new(
+                                        1.0,
+                                        if hovered {
+                                            Color32::from_rgb(130, 145, 160)
+                                        } else {
+                                            Color32::from_rgb(78, 84, 92)
+                                        },
+                                    );
+                                    ui.painter().rect(
+                                        rect,
+                                        egui::CornerRadius::same(4),
+                                        fill,
+                                        stroke,
+                                        egui::StrokeKind::Outside,
+                                    );
+                                    if import_pending {
+                                        let spinner_rect = egui::Rect::from_center_size(
+                                            egui::pos2(rect.center().x, rect.min.y + 48.0),
+                                            Vec2::splat(32.0),
+                                        );
+                                        ui.put(spinner_rect, egui::Spinner::new().size(30.0));
+                                        ui.ctx().request_repaint();
+                                    } else {
+                                        ui.painter().text(
+                                            egui::pos2(rect.center().x, rect.min.y + 48.0),
+                                            egui::Align2::CENTER_CENTER,
+                                            icon_char(Icon::Plus),
+                                            egui::FontId::new(32.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                            Color32::from_gray(210),
+                                        );
+                                    }
+                                    for (line_idx, line) in
+                                        ["Click here to", "manually add images."].iter().enumerate()
+                                    {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                rect.center().x,
+                                                rect.min.y + 84.0 + line_idx as f32 * 18.0,
+                                            ),
+                                            egui::Align2::CENTER_CENTER,
+                                            *line,
+                                            egui::FontId::proportional(14.0),
+                                            Color32::from_gray(225),
+                                        );
+                                    }
+                                    for (line_idx, line) in [
+                                        "You can drop the images here too,",
+                                        "or paste from clipboard (CTRL + V).",
+                                    ]
+                                    .iter()
+                                    .enumerate()
+                                    {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                rect.center().x,
+                                                rect.min.y + 132.0 + line_idx as f32 * 16.0,
+                                            ),
+                                            egui::Align2::CENTER_CENTER,
+                                            *line,
+                                            egui::FontId::proportional(12.0),
+                                            Color32::from_gray(165),
+                                        );
+                                    }
+                                    if response
+                                        .on_hover_text(if import_pending {
+                                            "Adding images..."
+                                        } else {
+                                            "Add images"
+                                        })
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        pending_add_paths = FileDialog::new()
+                                            .add_filter(
+                                                "Images",
+                                                &["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp"],
+                                            )
+                                            .pick_files();
+                                    }
+                                    rects.push(rect);
                                 }
                                 self.my_mod_overlay_images = overlay_images;
                                 rects
@@ -4082,20 +4821,42 @@ impl HestiaApp {
                                 }
                             }
                         }
-                    }
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
-                        if selected.metadata.extracted.requires_rabbitfx {
-                            metadata_info_badge(ui, "Requires RabbitFX");
+                        if let Some(paths) = pending_add_paths.take() {
+                            let count = paths.len();
+                            match self.enqueue_add_images_to_unlinked_mod(&selected.id, paths) {
+                                Ok(()) => self.set_message_ok(format!("Adding {} image(s)", count)),
+                                Err(err) => self.report_error(err, Some("Could not add images")),
+                            }
                         }
-                    });
+                        if let Some(rel) = pending_delete_rel.take() {
+                            match self.delete_unlinked_mod_image(&selected.id, &rel) {
+                                Ok(()) => self.set_message_ok("Image removed"),
+                                Err(err) => self.report_error(err, Some("Could not remove image")),
+                            }
+                        }
+                    }
                     let markdown = mod_primary_description_markdown(&selected, &self.portable);
                     let has_description = markdown != "No description";
-                    self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
-                    let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
-                    self.prewarm_markdown_images(&markdown);
-                    self.render_markdown_with_inline_images(ui, &markdown);
+                    let extracted_markdown = mod_extracted_description_markdown(&selected);
+                    let metadata_as_description = matches!(
+                        self.state.metadata_visibility,
+                        MetadataVisibility::OnlyIfNoDescription
+                    ) && !has_description
+                        && extracted_markdown.is_some();
+
+                    if !metadata_as_description {
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            static_label(ui, bold("Description").size(14.0).underline().color(Color32::from_gray(195)));
+                            if selected.metadata.extracted.requires_rabbitfx {
+                                metadata_info_badge(ui, "Requires RabbitFX");
+                            }
+                        });
+                        self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
+                        let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
+                        self.prewarm_markdown_images(&markdown);
+                        self.render_markdown_with_inline_images(ui, &markdown);
+                    }
                     
                     let show_metadata = match self.state.metadata_visibility {
                         MetadataVisibility::Never => false,
@@ -4104,7 +4865,7 @@ impl HestiaApp {
                     };
 
                     if show_metadata {
-                        if let Some(extracted) = mod_extracted_description_markdown(&selected) {
+                        if let Some(extracted) = extracted_markdown {
                             if has_description {
                                 ui.add_space(16.0);
                                 ui.separator();
@@ -4115,11 +4876,20 @@ impl HestiaApp {
                             ui.horizontal(|ui| {
                                 static_label(
                                     ui,
-                                    bold("Metadata")
+                                    bold(if metadata_as_description {
+                                        "Description"
+                                    } else {
+                                        "Metadata"
+                                    })
                                         .size(14.0)
                                         .underline()
                                         .color(Color32::from_gray(195)),
                                 );
+                                if metadata_as_description
+                                    && selected.metadata.extracted.requires_rabbitfx
+                                {
+                                    metadata_info_badge(ui, "Requires RabbitFX");
+                                }
                                 let source_path = selected
                                     .metadata
                                     .extracted
@@ -4460,11 +5230,18 @@ impl HestiaApp {
                                                 source.ignored_update_signature = None;
                                                 changed = true;
                                             }
+                                            let can_use_ignore_once = ignore_current_update
+                                                || ignore_once_signature_for_mod(&selected).is_some();
                                             ui.add_space(-6.0);
-                                            let ignore_once_response = ui.checkbox(&mut ignore_current_update, "Ignore update once");
-                                            ignore_once_response.clone().on_hover_text(
-                                                "Once a newer version is available, will automatically uncheck and process the update normally."
+                                            let ignore_once_response = ui.add_enabled(
+                                                can_use_ignore_once,
+                                                egui::Checkbox::new(&mut ignore_current_update, "Ignore update once"),
                                             );
+                                            ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
+                                                "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected."
+                                            } else {
+                                                "Sync this mod with GameBanana before using ignore once."
+                                            });
                                             ui.add_space(-6.0);
                                             let ignore_always_response = ui.checkbox(&mut ignore_update_always, "Ignore update always");
                                             ignore_always_response.clone().on_hover_text(
@@ -4481,13 +5258,20 @@ impl HestiaApp {
                                                     self.cancel_update_process_for_mod(&cloned);
                                                 } else if ignore_current_update {
                                                     if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                        let current_signature = current_update_signature_for_mod(mod_entry);
+                                                        let current_signature = ignore_once_signature_for_mod(mod_entry);
                                                         if let Some(signature) = current_signature {
+                                                            let prearmed_next_update = signature.prearmed_next_update;
                                                             if let Some(source) = mod_entry.source.as_mut() {
                                                                 source.ignore_update_always = false;
                                                                 source.ignored_update_signature = Some(signature);
                                                             }
-                                                            mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                            if prearmed_next_update {
+                                                                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                    mod_entry.update_state = raw_state;
+                                                                }
+                                                            } else {
+                                                                mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                            }
                                                         } else {
                                                             if let Some(source) = mod_entry.source.as_mut() {
                                                                 source.ignore_update_always = false;

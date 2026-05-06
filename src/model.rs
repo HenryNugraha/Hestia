@@ -14,6 +14,8 @@ fn serde_default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub version: u32,
+    #[serde(default)]
+    pub app_version: String,
     pub games: Vec<GameInstall>,
     pub library_folders: Vec<LibraryFolder>,
     #[serde(default)]
@@ -30,6 +32,8 @@ pub struct AppState {
     pub show_tasks: bool,
     #[serde(default)]
     pub show_tools: bool,
+    #[serde(default)]
+    pub show_whats_new: bool,
     #[serde(default)]
     pub tasks_layout: TasksLayout,
     #[serde(default)]
@@ -108,6 +112,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             version: 7,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
             games: seeded_games(),
             library_folders: Vec::new(),
             mods: Vec::new(),
@@ -118,6 +123,7 @@ impl Default for AppState {
             show_log: false,
             show_tasks: false,
             show_tools: false,
+            show_whats_new: false,
             tasks_layout: TasksLayout::SingleList,
             tasks_order: TasksOrder::OldestFirst,
             last_selected_game_id: None,
@@ -359,6 +365,7 @@ pub enum ModUpdateState {
     Unlinked,
     UpToDate,
     UpdateAvailable,
+    CheckSkipped,
     MissingSource,
     ModifiedLocally,
     IgnoringUpdateOnce,
@@ -477,6 +484,14 @@ pub struct TrackedFileMeta {
 pub struct IgnoredUpdateSignature {
     #[serde(default)]
     pub files: Vec<TrackedFileMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_update_ts: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub prearmed_next_update: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

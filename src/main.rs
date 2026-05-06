@@ -29,10 +29,20 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
+pub(crate) const WHATS_NEW_DATE: &str = "4 May 2026";
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
+    "Support manual image adding for externally sourced mods",
+    "Reworked download process with better reliability and resume support",
+    "Shows \"What's New\" after an update to highlights changelogs",
+];
+
 fn main() -> anyhow::Result<()> {
-    let _ = fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
+    let log_filter = EnvFilter::from_default_env().add_directive(
+        "egui_winit::clipboard=off"
+            .parse()
+            .expect("valid log filter"),
+    );
+    let _ = fmt().with_env_filter(log_filter).try_init();
 
     if manifest_cli::try_run()? {
         return Ok(());
@@ -56,6 +66,10 @@ fn main() -> anyhow::Result<()> {
     };
     if _single_instance_guard.is_none() && !after_update_launch {
         return Ok(());
+    }
+    if state.show_whats_new {
+        persistence::save_app_state(&portable, &state)
+            .context("failed to save current app version")?;
     }
     if app::HestiaApp::auto_detect_game_paths(&mut state) {
         persistence::save_app_state(&portable, &state)

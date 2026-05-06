@@ -1,4 +1,370 @@
 impl HestiaApp {
+    fn is_static_image_path(path: &Path) -> bool {
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "jpg" | "jpeg" | "png" | "webp" | "tif" | "tiff" | "bmp"
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_jpeg_path(path: &Path) -> bool {
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
+            .unwrap_or(false)
+    }
+
+    fn is_unlinked_mod_entry(mod_entry: &ModEntry) -> bool {
+        mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_none()
+    }
+
+    fn selected_unlinked_mod_context(&self) -> Option<(String, String)> {
+        if self.current_view != ViewMode::Library || !self.mod_detail_open {
+            return None;
+        }
+        let selected = self.selected_mod()?;
+        if !Self::is_unlinked_mod_entry(selected) {
+            return None;
+        }
+        Some((
+            selected.id.clone(),
+            selected
+                .metadata
+                .user
+                .title
+                .clone()
+                .unwrap_or_else(|| selected.folder_name.clone()),
+        ))
+    }
+
+    fn sync_mod_cover_to_first_screenshot(mod_entry: &mut ModEntry) {
+        mod_entry.metadata.user.cover_image = mod_entry.metadata.user.screenshots.first().cloned();
+    }
+
+    fn my_mod_screenshot_texture_key(mod_id: &str, rel_path: &str) -> String {
+        format!("my-mod-shot-{mod_id}-{}", hash64_hex(rel_path.as_bytes()))
+    }
+
+    fn clear_mod_card_texture(&mut self, mod_id: &str) {
+        self.remove_tracked_texture(TextureKind::ModThumb, mod_id);
+        self.remove_tracked_texture(TextureKind::ModFull, mod_id);
+        self.pending_mod_image_requests.remove(mod_id);
+        self.pending_mod_image_queue
+            .retain(|req| req.texture_key != mod_id);
+        self.pending_texture_uploads.retain(|item| match item {
+            PendingTextureUpload::ModThumb { texture_key, .. }
+            | PendingTextureUpload::ModFull { texture_key, .. } => texture_key != mod_id,
+            _ => true,
+        });
+    }
+
+    fn clear_mod_screenshot_texture(&mut self, mod_id: &str, rel_path: &str) {
+        let texture_key = Self::my_mod_screenshot_texture_key(mod_id, rel_path);
+        self.remove_tracked_texture(TextureKind::ModThumb, &texture_key);
+        self.remove_tracked_texture(TextureKind::ModFull, &texture_key);
+        self.pending_mod_image_requests.remove(&texture_key);
+        self.pending_mod_image_queue
+            .retain(|req| req.texture_key != texture_key);
+        self.pending_texture_uploads.retain(|item| match item {
+            PendingTextureUpload::ModThumb { texture_key: key, .. }
+            | PendingTextureUpload::ModFull { texture_key: key, .. } => key != &texture_key,
+            _ => true,
+        });
+        self.my_mod_overlay_images
+            .retain(|item| item.texture_key != texture_key);
+        if self
+            .browse_state
+            .screenshot_overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.texture_key == texture_key)
+        {
+            self.browse_state.screenshot_overlay = None;
+        }
+    }
+
+    fn encode_dynamic_image_as_jpeg(image: image::DynamicImage, quality: u8) -> Result<Vec<u8>> {
+        let rgb = image.to_rgb8();
+        let mut out = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+        encoder.encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )?;
+        Ok(out)
+    }
+
+    fn save_manual_mod_image_from_path(mod_root: &Path, source_path: &Path) -> Result<String> {
+        if !Self::is_static_image_path(source_path) {
+            bail!("unsupported image file: {}", source_path.display());
+        }
+
+        let bytes = fs::read(source_path)
+            .map_err(|err| anyhow!("failed to read image {}: {err}", source_path.display()))?;
+        let reader = image::ImageReader::new(std::io::Cursor::new(bytes.as_slice()))
+            .with_guessed_format()
+            .map_err(|err| anyhow!("failed to detect image format: {err}"))?;
+        let is_jpeg = matches!(reader.format(), Some(image::ImageFormat::Jpeg));
+        let decoded = reader
+            .decode()
+            .map_err(|err| anyhow!("failed to decode image {}: {err}", source_path.display()))?;
+
+        let encoded = if Self::is_jpeg_path(source_path) && is_jpeg {
+            bytes
+        } else {
+            Self::encode_dynamic_image_as_jpeg(decoded, 90)?
+        };
+
+        Self::save_manual_mod_image_bytes(mod_root, &encoded)
+    }
+
+    fn save_manual_mod_image_bytes(mod_root: &Path, encoded_jpeg: &[u8]) -> Result<String> {
+        let meta_dir = mod_root.join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir)?;
+        for _ in 0..8 {
+            let file_name = format!("manual_{}.jpg", Uuid::new_v4().simple());
+            let abs_path = meta_dir.join(&file_name);
+            if abs_path.exists() {
+                continue;
+            }
+            persistence::write_atomic_bytes(&abs_path, encoded_jpeg)?;
+            return Ok(format!("{MOD_META_DIR}\\{file_name}"));
+        }
+        bail!("failed to allocate a unique manual image name")
+    }
+
+    fn import_manual_images_from_paths(mod_root: &Path, paths: Vec<PathBuf>) -> Result<Vec<String>> {
+        let mut imported = Vec::new();
+        for path in paths {
+            match Self::save_manual_mod_image_from_path(mod_root, &path) {
+                Ok(rel) => imported.push(rel),
+                Err(err) => {
+                    for rel in &imported {
+                        let abs_path = mod_root.join(rel);
+                        if abs_path.exists() {
+                            let _ = fs::remove_file(abs_path);
+                        }
+                    }
+                    return Err(err);
+                }
+            }
+        }
+        Ok(imported)
+    }
+
+    fn enqueue_add_images_to_unlinked_mod(&mut self, mod_id: &str, paths: Vec<PathBuf>) -> Result<()> {
+        let (root_path, folder_name) = {
+            let mod_entry = self
+                .state
+                .mods
+                .iter()
+                .find(|item| item.id == mod_id)
+                .ok_or_else(|| anyhow!("mod not found"))?;
+            if !Self::is_unlinked_mod_entry(mod_entry) {
+                bail!("manual images are only supported for unlinked mods");
+            }
+            (mod_entry.root_path.clone(), mod_entry.folder_name.clone())
+        };
+
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let mod_id = mod_id.to_string();
+        let tx = self.manual_image_event_tx.clone();
+        let handle = self.runtime_services.handle();
+        self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_add(1);
+        self.runtime_services.spawn(async move {
+            let folder_name_for_error = folder_name.clone();
+            let result = handle
+                .spawn_blocking(move || Self::import_manual_images_from_paths(&root_path, paths))
+                .await;
+            let event = match result {
+                Ok(Ok(rel_paths)) => ManualImageEvent::Added {
+                    mod_id,
+                    folder_name,
+                    rel_paths,
+                },
+                Ok(Err(err)) => ManualImageEvent::Failed {
+                    folder_name: folder_name_for_error,
+                    error: format!("{err:#}"),
+                },
+                Err(err) => ManualImageEvent::Failed {
+                    folder_name: folder_name_for_error,
+                    error: format!("image import worker failed: {err}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
+        Ok(())
+    }
+
+    fn enqueue_clipboard_image_to_selected_unlinked_mod(&mut self) -> Result<()> {
+        let (mod_id, _) = self
+            .selected_unlinked_mod_context()
+            .ok_or_else(|| anyhow!("open an unlinked mod detail first"))?;
+
+        let (root_path, folder_name) = {
+            let mod_entry = self
+                .state
+                .mods
+                .iter()
+                .find(|item| item.id == mod_id)
+                .ok_or_else(|| anyhow!("mod not found"))?;
+            (mod_entry.root_path.clone(), mod_entry.folder_name.clone())
+        };
+        let tx = self.manual_image_event_tx.clone();
+        let handle = self.runtime_services.handle();
+        self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_add(1);
+        self.runtime_services.spawn(async move {
+            let folder_name_for_error = folder_name.clone();
+            let result = handle
+                .spawn_blocking(move || {
+                    let mut clipboard = arboard::Clipboard::new()
+                        .map_err(|err| anyhow!("failed to open clipboard: {err}"))?;
+                    let image = clipboard
+                        .get_image()
+                        .map_err(|err| anyhow!("clipboard does not contain an image: {err}"))?;
+                    let width = u32::try_from(image.width)
+                        .map_err(|err| anyhow!("clipboard image width is too large: {err}"))?;
+                    let height = u32::try_from(image.height)
+                        .map_err(|err| anyhow!("clipboard image height is too large: {err}"))?;
+                    let rgba = image.bytes.into_owned();
+                    let rgba = image::RgbaImage::from_raw(width, height, rgba)
+                        .ok_or_else(|| anyhow!("clipboard image data is invalid"))?;
+                    let encoded = Self::encode_dynamic_image_as_jpeg(
+                        image::DynamicImage::ImageRgba8(rgba),
+                        90,
+                    )?;
+                    Self::save_manual_mod_image_bytes(&root_path, &encoded).map(|rel| vec![rel])
+                })
+                .await;
+            let event = match result {
+                Ok(Ok(rel_paths)) => ManualImageEvent::Added {
+                    mod_id,
+                    folder_name,
+                    rel_paths,
+                },
+                Ok(Err(err)) => ManualImageEvent::Failed {
+                    folder_name: folder_name_for_error,
+                    error: format!("{err:#}"),
+                },
+                Err(err) => ManualImageEvent::Failed {
+                    folder_name: folder_name_for_error,
+                    error: format!("clipboard image worker failed: {err}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
+        Ok(())
+    }
+
+    fn consume_manual_image_events(&mut self) {
+        while let Ok(event) = self.manual_image_event_rx.try_recv() {
+            self.manual_image_imports_pending =
+                self.manual_image_imports_pending.saturating_sub(1);
+            match event {
+                ManualImageEvent::Added {
+                    mod_id,
+                    folder_name,
+                    rel_paths,
+                } => {
+                    if rel_paths.is_empty() {
+                        continue;
+                    }
+                    let count = rel_paths.len();
+                    let cover_changed = {
+                        let Some(mod_entry) = self.state.mods.iter_mut().find(|item| item.id == mod_id) else {
+                            self.report_warn(
+                                format!(
+                                    "manual images imported for missing mod {mod_id}: {}",
+                                    rel_paths.join(", ")
+                                ),
+                                Some("Could not attach images"),
+                            );
+                            continue;
+                        };
+                        let old_cover = mod_entry.metadata.user.cover_image.clone();
+                        mod_entry.metadata.user.screenshots.extend(rel_paths);
+                        Self::sync_mod_cover_to_first_screenshot(mod_entry);
+                        let cover_changed = old_cover != mod_entry.metadata.user.cover_image;
+                        if let Err(err) = xxmi::save_mod_metadata(mod_entry) {
+                            self.report_error(err, Some("Could not save images"));
+                            continue;
+                        }
+                        cover_changed
+                    };
+                    if cover_changed {
+                        self.clear_mod_card_texture(&mod_id);
+                    }
+                    self.save_state();
+                    self.log_action("Images Added", &folder_name);
+                    self.set_message_ok(format!("Added {count} image(s)"));
+                }
+                ManualImageEvent::Failed { folder_name, error } => {
+                    self.report_error_message(
+                        format!("manual image import failed for {folder_name}: {error}"),
+                        Some("Could not add images"),
+                    );
+                }
+            }
+        }
+    }
+
+    fn delete_unlinked_mod_image(&mut self, mod_id: &str, rel_path: &str) -> Result<()> {
+        let (abs_path, cover_changed) = {
+            let mod_entry = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|item| item.id == mod_id)
+                .ok_or_else(|| anyhow!("mod not found"))?;
+            if !Self::is_unlinked_mod_entry(mod_entry) {
+                bail!("manual images are only supported for unlinked mods");
+            }
+            let before = mod_entry.metadata.user.screenshots.len();
+            mod_entry
+                .metadata
+                .user
+                .screenshots
+                .retain(|item| item != rel_path);
+            if mod_entry.metadata.user.screenshots.len() == before {
+                bail!("image is not listed on this mod");
+            }
+
+            let old_cover = mod_entry.metadata.user.cover_image.clone();
+            let abs_path = mod_entry.root_path.join(rel_path);
+            Self::sync_mod_cover_to_first_screenshot(mod_entry);
+            let cover_changed = old_cover != mod_entry.metadata.user.cover_image;
+            xxmi::save_mod_metadata(mod_entry)?;
+            (abs_path, cover_changed)
+        };
+
+        if abs_path
+            .components()
+            .any(|part| part.as_os_str() == std::ffi::OsStr::new(MOD_META_DIR))
+            && abs_path.exists()
+        {
+            let _ = fs::remove_file(&abs_path);
+        }
+
+        self.clear_mod_screenshot_texture(mod_id, rel_path);
+        if cover_changed {
+            self.clear_mod_card_texture(mod_id);
+        }
+        self.save_state();
+        Ok(())
+    }
+
     fn enqueue_cover_preload(&mut self) {
         let Some(selected_game_id) = self
             .state

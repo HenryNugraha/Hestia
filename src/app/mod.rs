@@ -30,6 +30,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
+    WHATS_NEW_DATE, WHATS_NEW_HIGHLIGHTS,
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{
@@ -53,7 +54,10 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
 #[cfg(windows)]
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+main
 #[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
+
 use windows::core::PCWSTR;
 
 include!("constants.rs");
@@ -70,6 +74,7 @@ impl eframe::App for HestiaApp {
         install_resize_handles(ctx);
         self.consume_icon_results(ctx);
         self.consume_mod_image_results();
+        self.consume_manual_image_events();
         self.consume_gif_preview_events(ctx);
         self.consume_gif_animation_events(ctx);
         self.update_gif_animations(ctx);
@@ -113,6 +118,7 @@ impl eframe::App for HestiaApp {
         self.render_tasks_window(ctx);
         self.render_tools_window(ctx);
         self.render_tool_launch_options_prompt(ctx);
+        self.render_whats_new_window(ctx);
         self.render_log_panel(ctx);
         paint_window_frame(ctx);
 

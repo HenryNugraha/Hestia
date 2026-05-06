@@ -13,6 +13,8 @@ impl HestiaApp {
         let image_generation = Arc::new(AtomicU64::new(0));
         let (mod_image_request_tx, mod_image_request_rx) = tokio_mpsc::unbounded_channel::<LocalModImageRequest>();
         let (mod_image_result_tx, mod_image_result_rx) = tokio_mpsc::unbounded_channel::<LocalModImageResult>();
+        let (manual_image_event_tx, manual_image_event_rx) =
+            tokio_mpsc::unbounded_channel::<ManualImageEvent>();
         let cache_limit_bytes = Arc::new(AtomicU64::new(state.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
             &runtime_services,
@@ -75,9 +77,12 @@ impl HestiaApp {
         state.show_log = false;
         state.show_tasks = false;
         state.show_tools = false;
+        let show_whats_new = state.show_whats_new;
         let log_scroll_to_bottom = state.show_log;
         let log_window_nonce = if state.show_log { 1 } else { 0 };
         let log_force_default_pos = state.show_log;
+        let whats_new_window_nonce = if show_whats_new { 1 } else { 0 };
+        let whats_new_force_default_pos = show_whats_new;
         let tools_window_nonce = if state.show_tools { 1 } else { 0 };
         let tools_force_default_pos = state.show_tools;
         let tasks_window_nonce = if state.show_tasks { 1 } else { 0 };
@@ -124,6 +129,7 @@ impl HestiaApp {
             show_unlinked_mods: true,
             show_up_to_date_mods: true,
             show_update_available_mods: true,
+            show_check_skipped_mods: true,
             show_missing_source_mods: true,
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
@@ -139,6 +145,7 @@ impl HestiaApp {
             mod_detail_editing: false,
             mod_detail_edit_target_id: None,
             mod_detail_edit_name: String::new(),
+            clipboard_image_paste_held: false,
             category_rename_target_id: None,
             category_rename_name: String::new(),
             dragging_category_id: None,
@@ -146,6 +153,8 @@ impl HestiaApp {
             toasts: Vec::new(),
             pending_imports: VecDeque::new(),
             pending_conflicts: VecDeque::new(),
+            whats_new_window_nonce,
+            whats_new_force_default_pos,
             log_scroll_to_bottom,
             log_window_nonce,
             log_force_default_pos,
@@ -191,6 +200,9 @@ impl HestiaApp {
             icon_result_rx,
             mod_image_request_tx,
             mod_image_result_rx,
+            manual_image_event_tx,
+            manual_image_event_rx,
+            manual_image_imports_pending: 0,
             pending_mod_image_requests: HashSet::new(),
             pending_mod_image_queue: Vec::new(),
             pending_icon_requests: HashSet::new(),
@@ -1017,6 +1029,11 @@ impl HestiaApp {
                 {
                     return false;
                 }
+                if !self.show_check_skipped_mods
+                    && item.update_state == ModUpdateState::CheckSkipped
+                {
+                    return false;
+                }
                 if !self.show_missing_source_mods
                     && item.update_state == ModUpdateState::MissingSource
                 {
@@ -1172,6 +1189,14 @@ impl HestiaApp {
         self.save_state();
     }
 
+    fn toggle_whats_new_window(&mut self) {
+        self.state.show_whats_new = !self.state.show_whats_new;
+        if self.state.show_whats_new {
+            self.whats_new_window_nonce = self.whats_new_window_nonce.wrapping_add(1);
+            self.whats_new_force_default_pos = true;
+        }
+    }
+
     fn toggle_primary_view(&mut self) {
         self.current_view = match self.current_view {
             ViewMode::Library => ViewMode::Browse,
@@ -1224,6 +1249,22 @@ impl HestiaApp {
 
     fn delete_shortcut_has_mod_context(&self) -> bool {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
+    }
+
+    fn poll_windows_ctrl_v_edge(&mut self, ctx: &egui::Context) -> bool {
+        let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+        let v_down = unsafe { GetAsyncKeyState(i32::from(VK_V.0)) } < 0;
+        let down = ctrl_down && v_down;
+        let window_focused = ctx.input(|input| {
+            input.focused && input.viewport().focused.unwrap_or(input.focused)
+        });
+        if !window_focused {
+            self.clipboard_image_paste_held = down;
+            return false;
+        }
+        let pressed = down && !self.clipboard_image_paste_held;
+        self.clipboard_image_paste_held = down;
+        pressed
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1280,6 +1321,17 @@ impl HestiaApp {
                 && self.selected_mod().is_some()
             {
                 self.start_selected_mod_rename();
+            }
+            if !text_input_active
+                && self.selected_unlinked_mod_context().is_some()
+                && (ctx.input_mut(|input| {
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::V))
+                }) || self.poll_windows_ctrl_v_edge(ctx))
+            {
+                match self.enqueue_clipboard_image_to_selected_unlinked_mod() {
+                    Ok(()) => self.set_message_ok("Adding clipboard image..."),
+                    Err(err) => self.report_error(err, Some("Could not paste image")),
+                }
             }
         }
 

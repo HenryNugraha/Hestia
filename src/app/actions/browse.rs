@@ -1,3 +1,8 @@
+use tokio::io::AsyncWriteExt as _;
+
+const BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+
 impl HestiaApp {
     fn sanitized_preferred_browse_title_name(&self, raw_title: Option<&str>) -> Option<String> {
         let title = raw_title?.trim();
@@ -67,9 +72,9 @@ impl HestiaApp {
         format!("img:{}", hash64_hex(url.as_bytes()))
     }
 
-    fn browse_download_cache_key(mod_id: u64, file_name: &str) -> String {
+    fn browse_download_cache_key(mod_id: u64, file_name: &str, file_size: u64) -> String {
         let safe_name = sanitize_folder_name(file_name);
-        format!("dl:{mod_id}:{safe_name}")
+        format!("dl:{mod_id}:{safe_name}:{file_size}")
     }
 
     fn ensure_browse_bootstrap(&mut self) {
@@ -386,11 +391,15 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         if let Some(mod_id) = self.selected_mod_id.clone() {
             if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id) {
                 let prefix = format!("my-mod-shot-{}-", mod_entry.id);
-                if let Some(suffix) = texture_key.strip_prefix(&prefix) {
-                    if let Ok(index) = suffix.parse::<usize>() {
-                        if let Some(rel) = mod_entry.metadata.user.screenshots.get(index) {
-                            local_load = Some((texture_key.to_string(), mod_entry.root_path.join(rel)));
-                        }
+                if texture_key.starts_with(&prefix) {
+                    if let Some(rel) = mod_entry
+                        .metadata
+                        .user
+                        .screenshots
+                        .iter()
+                        .find(|rel| Self::my_mod_screenshot_texture_key(&mod_entry.id, rel) == texture_key)
+                    {
+                        local_load = Some((texture_key.to_string(), mod_entry.root_path.join(rel)));
                     }
                 }
             }
@@ -441,31 +450,13 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
 
     fn is_browse_mod_installed(&self, card: &BrowseCard) -> bool {
         let game_id = &card.game_id;
-        if self.state.mods.iter().any(|m| {
-            m.game_id == *game_id
-                && m
-                    .source
-                    .as_ref()
-                    .and_then(|s| s.gamebanana.as_ref())
-                    .is_some_and(|link| link.mod_id == card.id)
-        }) {
-            return true;
-        }
-        let normalized_card_name = normalize_lookup(&card.name);
         self.state.mods.iter().any(|m| {
             m.game_id == *game_id
                 && m
                     .source
                     .as_ref()
                     .and_then(|s| s.gamebanana.as_ref())
-                    .is_none()
-                && normalize_lookup(
-                    m.metadata
-                        .user
-                        .title
-                        .as_deref()
-                        .unwrap_or(&m.folder_name),
-                ) == normalized_card_name
+                    .is_some_and(|link| link.mod_id == card.id)
         })
     }
 
@@ -760,13 +751,30 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 let prefix = format!("my-mod-shot-{mod_id}-");
                 if overlay.texture_key.starts_with(&prefix) {
                     if let Some(mod_entry) = self.state.mods.iter().find(|m| &m.id == mod_id) {
-                        if let Some(suffix) = overlay.texture_key.strip_prefix(&prefix) {
-                            if let Ok(idx) = suffix.parse::<usize>() {
-                                if idx + 1 < mod_entry.metadata.user.screenshots.len() {
-                                    allowed_keys.insert(format!("{prefix}{}", idx + 1));
+                        if let Some(idx) = mod_entry
+                            .metadata
+                            .user
+                            .screenshots
+                            .iter()
+                            .position(|rel| {
+                                Self::my_mod_screenshot_texture_key(&mod_entry.id, rel)
+                                    == overlay.texture_key
+                            })
+                        {
+                            if idx + 1 < mod_entry.metadata.user.screenshots.len() {
+                                if let Some(rel) = mod_entry.metadata.user.screenshots.get(idx + 1) {
+                                    allowed_keys.insert(Self::my_mod_screenshot_texture_key(
+                                        &mod_entry.id,
+                                        rel,
+                                    ));
                                 }
-                                if idx > 0 {
-                                    allowed_keys.insert(format!("{prefix}{}", idx - 1));
+                            }
+                            if idx > 0 {
+                                if let Some(rel) = mod_entry.metadata.user.screenshots.get(idx - 1) {
+                                    allowed_keys.insert(Self::my_mod_screenshot_texture_key(
+                                        &mod_entry.id,
+                                        rel,
+                                    ));
                                 }
                             }
                         }
@@ -879,7 +887,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         let task_id = task_id.unwrap_or_else(|| self.next_background_job_id());
         let title = file.file_name.clone();
         let size = Some(file.file_size);
-        let cache_key = Self::browse_download_cache_key(mod_id, &file.file_name);
+        let cache_key = Self::browse_download_cache_key(mod_id, &file.file_name, file.file_size);
         if task_id == self.install_next_job_id {
             self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
         }
@@ -966,26 +974,20 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         .spawn_blocking(move || persistence::cache_get(&portable_for_get, &key))
                         .await
                     {
-                        return Ok::<u64, anyhow::Error>(bytes.len() as u64);
+                        let byte_size = bytes.len() as u64;
+                        if job.total_size.is_none_or(|expected| byte_size == expected) {
+                            return Ok::<u64, anyhow::Error>(byte_size);
+                        }
                     }
-                    let bytes = download_to_bytes_async(&client, &job.url, &cancel, progress).await?;
-                    let byte_size = bytes.len() as u64;
-                    let portable_for_put = portable.clone();
-                    let key = job.cache_key.clone();
-                    let bytes_for_put = bytes.clone();
-                    let max_bytes = job.cache_limit_bytes;
-                    let _ = handle
-                        .spawn_blocking(move || {
-                            persistence::cache_put(
-                                &portable_for_put,
-                                &key,
-                                "download",
-                                &bytes_for_put,
-                                max_bytes,
-                            )
-                        })
-                        .await
-                        .map_err(|err| anyhow!("download cache write join error: {err}"))??;
+                    let byte_size = download_browse_file_to_cache_with_retries(
+                        &client,
+                        &portable,
+                        &job,
+                        &cancel,
+                        progress,
+                        handle.clone(),
+                    )
+                    .await?;
                     Ok(byte_size)
                 }
                 .await;
@@ -1370,4 +1372,282 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         }
         self.set_message_ok("Download queued");
     }
+}
+
+async fn download_browse_file_to_cache_with_retries(
+    client: &ClientWithMiddleware,
+    portable: &PortablePaths,
+    job: &BrowseDownloadJob,
+    cancel: &Arc<AtomicBool>,
+    progress: Arc<RwLock<DownloadProgress>>,
+    handle: tokio::runtime::Handle,
+) -> Result<u64> {
+    let mut retry_delay = BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            bail!(importing::CANCELLED_ERROR);
+        }
+
+        match download_browse_file_to_cache_once(
+            client,
+            portable,
+            job,
+            cancel,
+            Arc::clone(&progress),
+            handle.clone(),
+        )
+        .await
+        {
+            Ok(byte_size) => return Ok(byte_size),
+            Err(err) if err.to_string() == importing::CANCELLED_ERROR => return Err(err),
+            Err(_) => {
+                if let Ok(mut guard) = progress.write() {
+                    guard.speed = 0.0;
+                    guard.bytes_since_last = 0;
+                    guard.last_update = std::time::Instant::now();
+                }
+                sleep_cancelable(retry_delay, cancel).await?;
+                retry_delay = (retry_delay * 2).min(BROWSE_DOWNLOAD_RETRY_MAX_DELAY);
+            }
+        }
+    }
+}
+
+async fn download_browse_file_to_cache_once(
+    client: &ClientWithMiddleware,
+    portable: &PortablePaths,
+    job: &BrowseDownloadJob,
+    cancel: &Arc<AtomicBool>,
+    progress: Arc<RwLock<DownloadProgress>>,
+    handle: tokio::runtime::Handle,
+) -> Result<u64> {
+    let partial_path = browse_download_partial_path(job);
+    if let Some(parent) = partial_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let expected_size = job.total_size;
+    let mut resume_from = tokio::fs::metadata(&partial_path)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+
+    if expected_size.is_some_and(|expected| resume_from > expected) {
+        let _ = tokio::fs::remove_file(&partial_path).await;
+        resume_from = 0;
+    }
+
+    if expected_size.is_some_and(|expected| resume_from == expected) && resume_from > 0 {
+        return cache_completed_browse_download(
+            portable,
+            &job.cache_key,
+            &partial_path,
+            job.cache_limit_bytes,
+            expected_size,
+            cancel,
+            handle,
+        )
+        .await;
+    }
+
+    if let Ok(mut guard) = progress.write() {
+        guard.downloaded = resume_from;
+        guard.total = expected_size;
+        guard.speed = 0.0;
+        guard.bytes_since_last = 0;
+        guard.last_update = std::time::Instant::now();
+    }
+
+    let mut request = client.get(&job.url);
+    if resume_from > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+    }
+
+    let response = request.send().await?;
+    let status = response.status();
+    let mut append = false;
+
+    if resume_from > 0 {
+        if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            validate_content_range(response.headers(), resume_from, expected_size)?;
+            append = true;
+        } else if status == reqwest::StatusCode::OK {
+            let _ = tokio::fs::remove_file(&partial_path).await;
+            resume_from = 0;
+            if let Ok(mut guard) = progress.write() {
+                guard.downloaded = 0;
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&partial_path).await;
+            response.error_for_status()?;
+            bail!("server rejected resumed download with status {status}");
+        }
+    }
+
+    let response = response.error_for_status()?;
+    let response_len = response.content_length();
+    if let Ok(mut guard) = progress.write() {
+        guard.total = if append {
+            response_len
+                .map(|len| resume_from.saturating_add(len))
+                .or(expected_size)
+        } else {
+            response_len.or(expected_size)
+        };
+    }
+
+    let mut file = if append {
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&partial_path)
+            .await?
+    } else {
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&partial_path)
+            .await?
+    };
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::Relaxed) {
+            bail!(importing::CANCELLED_ERROR);
+        }
+        let chunk = chunk?;
+        if chunk.is_empty() {
+            continue;
+        }
+        file.write_all(&chunk).await?;
+
+        if let Ok(mut guard) = progress.write() {
+            let read = chunk.len() as u64;
+            guard.downloaded = guard.downloaded.saturating_add(read);
+            guard.bytes_since_last = guard.bytes_since_last.saturating_add(read);
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(guard.last_update);
+            if elapsed.as_millis() >= 500 {
+                guard.speed = guard.bytes_since_last as f64 / elapsed.as_secs_f64();
+                guard.bytes_since_last = 0;
+                guard.last_update = now;
+            }
+        }
+    }
+    file.flush().await?;
+
+    let actual_size = tokio::fs::metadata(&partial_path).await?.len();
+    if let Some(expected) = expected_size {
+        if actual_size != expected {
+            bail!("download ended at {actual_size} bytes, expected {expected}");
+        }
+    }
+
+    cache_completed_browse_download(
+        portable,
+        &job.cache_key,
+        &partial_path,
+        job.cache_limit_bytes,
+        expected_size,
+        cancel,
+        handle,
+    )
+    .await
+}
+
+async fn cache_completed_browse_download(
+    portable: &PortablePaths,
+    cache_key: &str,
+    partial_path: &Path,
+    cache_limit_bytes: u64,
+    expected_size: Option<u64>,
+    cancel: &Arc<AtomicBool>,
+    handle: tokio::runtime::Handle,
+) -> Result<u64> {
+    if cancel.load(Ordering::Relaxed) {
+        bail!(importing::CANCELLED_ERROR);
+    }
+
+    let bytes = tokio::fs::read(partial_path).await?;
+    let byte_size = bytes.len() as u64;
+    if let Some(expected) = expected_size {
+        if byte_size != expected {
+            bail!("download cache size mismatch: expected {expected}, got {byte_size}");
+        }
+    }
+
+    let portable_for_put = portable.clone();
+    let key = cache_key.to_string();
+    handle
+        .spawn_blocking(move || {
+            persistence::cache_put(
+                &portable_for_put,
+                &key,
+                "download",
+                &bytes,
+                cache_limit_bytes,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!("download cache write join error: {err}"))??;
+
+    let _ = tokio::fs::remove_file(partial_path).await;
+    Ok(byte_size)
+}
+
+async fn sleep_cancelable(delay: Duration, cancel: &Arc<AtomicBool>) -> Result<()> {
+    let sleep = tokio::time::sleep(delay);
+    tokio::pin!(sleep);
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            bail!(importing::CANCELLED_ERROR);
+        }
+        tokio::select! {
+            _ = &mut sleep => return Ok(()),
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+}
+
+fn browse_download_partial_path(job: &BrowseDownloadJob) -> PathBuf {
+    persistence::runtime_temp_downloads_partial_dir()
+        .join(format!("{}.partial", hash64_hex(job.cache_key.as_bytes())))
+}
+
+fn validate_content_range(
+    headers: &reqwest::header::HeaderMap,
+    expected_start: u64,
+    expected_total: Option<u64>,
+) -> Result<()> {
+    let Some(value) = headers.get(reqwest::header::CONTENT_RANGE) else {
+        bail!("resumed download response did not include Content-Range");
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| anyhow!("resumed download returned invalid Content-Range"))?;
+    let Some(range) = value.strip_prefix("bytes ") else {
+        bail!("resumed download returned unsupported Content-Range: {value}");
+    };
+    let Some((span, total)) = range.split_once('/') else {
+        bail!("resumed download returned malformed Content-Range: {value}");
+    };
+    let Some((start, _end)) = span.split_once('-') else {
+        bail!("resumed download returned malformed Content-Range: {value}");
+    };
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| anyhow!("resumed download returned invalid Content-Range start"))?;
+    if start != expected_start {
+        bail!("resumed download started at byte {start}, expected {expected_start}");
+    }
+    if let Some(expected_total) = expected_total {
+        let total = total
+            .parse::<u64>()
+            .map_err(|_| anyhow!("resumed download returned invalid Content-Range total"))?;
+        if total != expected_total {
+            bail!("resumed download total was {total}, expected {expected_total}");
+        }
+    }
+    Ok(())
 }

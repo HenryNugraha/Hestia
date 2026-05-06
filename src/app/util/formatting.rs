@@ -101,10 +101,38 @@ fn mod_update_state_badge(state: ModUpdateState) -> (&'static str, Color32) {
         ModUpdateState::Unlinked => ("Unlinked", Color32::from_gray(140)),
         ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
         ModUpdateState::UpdateAvailable => ("Update Available", Color32::from_rgb(144, 188, 150)),
+        ModUpdateState::CheckSkipped => ("Check Skipped", Color32::from_rgb(142, 153, 168)),
         ModUpdateState::MissingSource => ("Missing Source", Color32::from_rgb(196, 166, 126)),
         ModUpdateState::ModifiedLocally => ("Modified Locally", Color32::from_rgb(179, 133, 133)),
         ModUpdateState::IgnoringUpdateOnce => ("Ignoring Update Once", Color32::from_rgb(181, 153, 196)),
         ModUpdateState::IgnoringUpdateAlways => ("Ignoring Update Always", Color32::from_rgb(181, 153, 196)),
+    }
+}
+
+fn mod_update_state_tooltip(state: ModUpdateState) -> &'static str {
+    match state {
+        ModUpdateState::Unlinked => "No GameBanana source is linked for this mod.",
+        ModUpdateState::UpToDate => {
+            "The linked source was checked and no newer version was found."
+        }
+        ModUpdateState::UpdateAvailable => {
+            "A newer version is available from the linked source."
+        }
+        ModUpdateState::CheckSkipped => {
+            "This mod is linked, but update checks are disabled for its current status."
+        }
+        ModUpdateState::MissingSource => {
+            "The linked source or tracked file is no longer available."
+        }
+        ModUpdateState::ModifiedLocally => {
+            "This mod has local changes since it was linked or last updated."
+        }
+        ModUpdateState::IgnoringUpdateOnce => {
+            "The current update is ignored until a newer update appears."
+        }
+        ModUpdateState::IgnoringUpdateAlways => {
+            "Updates for this mod are ignored until this option is turned off."
+        }
     }
 }
 

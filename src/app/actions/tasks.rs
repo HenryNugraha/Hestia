@@ -486,6 +486,7 @@ impl HestiaApp {
                 } else {
                     let filled_rect = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * ratio.clamp(0.0, 1.0), rect.height()));
                     ui.painter().rect_filled(filled_rect, egui::CornerRadius::same(4), Color32::from_rgb(60, 140, 200));
+                    ui.ctx().request_repaint();
                 }
 
                 let text_color = Color32::WHITE;
