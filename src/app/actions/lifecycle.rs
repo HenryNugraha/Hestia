@@ -349,14 +349,22 @@ impl HestiaApp {
     }
 
     fn detect_total_system_ram_bytes() -> Option<u64> {
-        let mut mem = MEMORYSTATUSEX {
-            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
-            ..Default::default()
-        };
-        unsafe {
-            GlobalMemoryStatusEx(&mut mem).ok()?;
+        #[cfg(windows)]
+        {
+            let mut mem = MEMORYSTATUSEX {
+                dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+                ..Default::default()
+            };
+            unsafe {
+                GlobalMemoryStatusEx(&mut mem).ok()?;
+            }
+            Some(mem.ullTotalPhys)
         }
-        Some(mem.ullTotalPhys)
+
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     fn texture_key(kind: TextureKind, key: &str) -> (TextureKind, String) {

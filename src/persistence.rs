@@ -217,7 +217,7 @@ struct PersistentDataPaths {
 }
 
 fn resolve_persistent_data_paths(exe: &Path, root: &Path) -> Result<PersistentDataPaths> {
-    let fallback_dir = appdata_fallback_dir()?;
+    let fallback_dir = platform_fallback_dir()?;
     Ok(resolve_persistent_data_paths_with_fallback_dir(
         exe,
         root,
@@ -266,9 +266,23 @@ fn resolve_persistent_data_paths_with_fallback_dir(
     }
 }
 
-fn appdata_fallback_dir() -> Result<PathBuf> {
-    let appdata = std::env::var("APPDATA").context("APPDATA is not set")?;
-    Ok(PathBuf::from(appdata).join("Hestia"))
+fn platform_fallback_dir() -> Result<PathBuf> {
+    if cfg!(windows) {
+        let appdata = std::env::var_os("APPDATA").context("APPDATA is not set")?;
+        return Ok(PathBuf::from(appdata).join("Hestia"));
+    }
+
+    if cfg!(target_os = "macos") {
+        let home = std::env::var_os("HOME").context("$HOME is not set")?;
+        return Ok(PathBuf::from(home).join("Library/Application Support/Hestia"));
+    }
+
+    if let Some(xdg_config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(xdg_config_home).join("Hestia"));
+    }
+
+    let home = std::env::var_os("HOME").context("$HOME is not set")?;
+    Ok(PathBuf::from(home).join(".config").join("Hestia"))
 }
 
 pub fn runtime_temp_root() -> PathBuf {

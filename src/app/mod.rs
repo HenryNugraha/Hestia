@@ -48,10 +48,16 @@ use crate::{
     persistence::{self, PortablePaths},
 };
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, RECT};
+#[cfg(windows)]
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+main
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
+
 use windows::core::PCWSTR;
 
 include!("constants.rs");
