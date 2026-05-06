@@ -28,6 +28,16 @@ fn install_lucide_font(ctx: &egui::Context) {
         );
     }
 
+    // Some layouts/widgets reference `FontFamily::Name("Bold")`. Ensure it is always bound
+    // (e.g. on non-Windows platforms where we won't have Segoe UI bold available).
+    if !fonts.families.contains_key(&FontFamily::Name("Bold".into())) {
+        if let Some(proportional) = fonts.families.get(&FontFamily::Proportional).cloned() {
+            if !proportional.is_empty() {
+                fonts.families.insert(FontFamily::Name("Bold".into()), proportional);
+            }
+        }
+    }
+
     for (font_name, font_path) in [
         ("malgun", "C:\\Windows\\Fonts\\malgun.ttf"),
         ("msyh", "C:\\Windows\\Fonts\\msyh.ttc"),
@@ -103,6 +113,7 @@ fn apply_theme(ctx: &egui::Context) {
     ctx.set_visuals_of(egui::Theme::Light, visuals);
 }
 
+#[cfg(windows)]
 fn prepare_initial_window_placement(
     cc: &eframe::CreationContext<'_>,
     state: &AppState,
@@ -146,6 +157,14 @@ fn prepare_initial_window_placement(
     }
 }
 
+#[cfg(not(windows))]
+fn prepare_initial_window_placement(
+    _cc: &eframe::CreationContext<'_>,
+    _state: &AppState,
+) {
+}
+
+#[cfg(windows)]
 fn apply_startup_window_background(hwnd: HWND) {
     static STARTUP_BACKGROUND_BRUSH: Lazy<isize> = Lazy::new(|| unsafe {
         windows::Win32::Graphics::Gdi::CreateSolidBrush(windows::Win32::Foundation::COLORREF(
@@ -163,6 +182,7 @@ fn apply_startup_window_background(hwnd: HWND) {
     }
 }
 
+#[cfg(windows)]
 fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
@@ -299,6 +319,12 @@ fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage>
     ))
 }
 
+#[cfg(not(windows))]
+fn load_exe_icon_color_image(_path: &Path, _size: u32) -> Option<egui::ColorImage> {
+    None
+}
+
+#[cfg(windows)]
 fn open_external_url(url: &str) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
@@ -323,6 +349,29 @@ fn open_external_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn open_external_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(url);
+        cmd
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let mut command = {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    };
+
+    command
+        .spawn()
+        .map_err(|err| anyhow!("failed to open browser: {err}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
 fn open_in_explorer(path: &Path) -> Result<()> {
     if !path.exists() {
         bail!("path does not exist");
@@ -331,6 +380,24 @@ fn open_in_explorer(path: &Path) -> Result<()> {
         .arg(path)
         .spawn()
         .map_err(|err| anyhow!("failed to open explorer: {err}"))?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn open_in_explorer(path: &Path) -> Result<()> {
+    if !path.exists() {
+        bail!("path does not exist");
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(target_os = "macos"))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command
+        .arg(path)
+        .spawn()
+        .map_err(|err| anyhow!("failed to open file manager: {err}"))?;
     Ok(())
 }
 

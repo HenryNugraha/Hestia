@@ -47,9 +47,13 @@ use crate::{
     persistence::{self, PortablePaths},
 };
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, RECT};
+#[cfg(windows)]
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
 include!("constants.rs");

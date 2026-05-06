@@ -1,4 +1,28 @@
-fn system_uses_24h_time() -> bool {     let mut buffer = [0u16; 80];     let len = unsafe {         GetLocaleInfoEx(             PCWSTR::null(),             LOCALE_STIMEFORMAT,             Some(&mut buffer),         )     };     if len <= 0 {         return true;     }     let value = String::from_utf16_lossy(&buffer[..(len as usize).saturating_sub(1)]);     value.contains('H') }  fn format_log_timestamp(timestamp: DateTime<Utc>, use_24h: bool) -> (String, String) {     let local = timestamp.with_timezone(&Local);     let date = local.format("%e %B %Y").to_string().trim_start().to_string();     let time = if use_24h {         local.format("%H:%M").to_string()     } else {         local.format("%I:%M %p").to_string()     };     (date, time) } 
+fn system_uses_24h_time() -> bool {
+    #[cfg(windows)]
+    {
+        let mut buffer = [0u16; 80];
+        let len = unsafe {
+            GetLocaleInfoEx(
+                PCWSTR::null(),
+                LOCALE_STIMEFORMAT,
+                Some(&mut buffer),
+            )
+        };
+        if len <= 0 {
+            return true;
+        }
+        let value = String::from_utf16_lossy(&buffer[..(len as usize).saturating_sub(1)]);
+        value.contains('H')
+    }
+
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+fn format_log_timestamp(timestamp: DateTime<Utc>, use_24h: bool) -> (String, String) {     let local = timestamp.with_timezone(&Local);     let date = local.format("%e %B %Y").to_string().trim_start().to_string();     let time = if use_24h {         local.format("%H:%M").to_string()     } else {         local.format("%I:%M %p").to_string()     };     (date, time) } 
 
 fn mod_age_label(updated_at: DateTime<Utc>) -> String {     relative_time_label(updated_at, false) }  fn relative_time_label(updated_at: DateTime<Utc>, compact_today: bool) -> String {     let local_now = Local::now();     let local_then = updated_at.with_timezone(&Local);     let delta = local_now.signed_duration_since(local_then);     let minutes = delta.num_minutes().max(0);     let hours = delta.num_hours().max(0);     let days = delta.num_days().max(0);     if days <= 0 {         if compact_today {             "Today".to_string()         } else if hours <= 0 {             if minutes <= 0 {                 "Now".to_string()             } else {                 format!("{minutes}m")             }         } else {             format!("{hours}h")         }     } else {         format!("{days}d")     } }  fn timestamp_to_utc(timestamp: i64) -> DateTime<Utc> {     DateTime::<Utc>::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now) } 
 
