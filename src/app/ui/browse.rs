@@ -878,6 +878,7 @@ impl HestiaApp {
                                             self.queue_overlay_full_texture(&full_key);
                                             self.browse_state.screenshot_overlay = Some(BrowseOverlayImage {
                                                 texture_key: full_key,
+                                                caption: image.caption.clone(),
                                             });
                                         }
                                         rects.push(rect);
@@ -1518,6 +1519,7 @@ impl HestiaApp {
             return;
         };
         let current_key = overlay.texture_key.clone();
+        let current_overlay_caption = overlay.caption.clone();
         
         let mut images: Vec<(String, Option<String>)> = Vec::new();
         if self.current_view == ViewMode::Browse {
@@ -1599,7 +1601,10 @@ impl HestiaApp {
                         Color32::WHITE
                     );
 
-                    if let Some(caption) = current_index.and_then(|i| images[i].1.as_ref()) {
+                    let caption = current_index
+                        .and_then(|i| images[i].1.as_ref())
+                        .or(current_overlay_caption.as_ref());
+                    if let Some(caption) = caption {
                         if !caption.trim().is_empty() {
                             let galley = ui.painter().layout(
                                 caption.to_string(),
@@ -1661,11 +1666,15 @@ impl HestiaApp {
                 if let Some(i) = current_index {
                     if i + 1 < images.len() {
                         let next_key = images[i + 1].0.clone();
+                        let next_caption = images[i + 1].1.clone();
                         self.queue_overlay_full_texture(&next_key);
                         if i + 2 < images.len() {
                             self.queue_overlay_full_texture(&images[i + 2].0);
                         }
-                        self.browse_state.screenshot_overlay = Some(BrowseOverlayImage { texture_key: next_key });
+                        self.browse_state.screenshot_overlay = Some(BrowseOverlayImage {
+                            texture_key: next_key,
+                            caption: next_caption,
+                        });
                     }
                 }
             }
@@ -1673,11 +1682,15 @@ impl HestiaApp {
                 if let Some(i) = current_index {
                     if i > 0 {
                         let prev_key = images[i - 1].0.clone();
+                        let prev_caption = images[i - 1].1.clone();
                         self.queue_overlay_full_texture(&prev_key);
                         if i > 1 {
                             self.queue_overlay_full_texture(&images[i - 2].0);
                         }
-                        self.browse_state.screenshot_overlay = Some(BrowseOverlayImage { texture_key: prev_key });
+                        self.browse_state.screenshot_overlay = Some(BrowseOverlayImage {
+                            texture_key: prev_key,
+                            caption: prev_caption,
+                        });
                     }
                 }
             }

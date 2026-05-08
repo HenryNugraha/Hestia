@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0-beta] - 2026-05-06
+
+### Added
+- Added auto-creating categories based on GameBanana category when downloading mods in Hestia.
+- Added "+ Add Note" button on a mod without description and metadata.
+
+### Changed
+- Improved async threading that handles caption when opening images in fullview mode.
+
+### Fixed
+- Fixed renaming a mod that has an update will sometime cancel the renaming and download the update instead.
+- Fixed bulk selecting mods in MY MODS tab when grouping mods by mod state.
+
 ## [1.2.0] - 2026-05-03
 
 ### Added

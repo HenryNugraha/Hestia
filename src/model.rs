@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub const DISABLED_CONTAINER: &str = "DISABLED_BY_HESTIA";
 pub const MOD_META_DIR: &str = "⬢HESTIA";
 pub const MOD_META_FILE: &str = "metadata.json";
+pub const PERSONAL_NOTE_FILE: &str = "Personal Note.txt";
 
 fn serde_default_true() -> bool {
     true
@@ -24,6 +25,8 @@ pub struct AppState {
     pub tools: Vec<ToolEntry>,
     #[serde(default)]
     pub categories: Vec<ModCategory>,
+    #[serde(default)]
+    pub create_downloaded_mod_category_by_game: HashMap<String, bool>,
     pub operations: Vec<OperationLogEntry>,
     #[serde(default)]
     pub tasks: Vec<TaskEntry>,
@@ -106,6 +109,8 @@ pub struct AppState {
     pub staged_app_update: Option<StagedAppUpdate>,
     #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
+    #[serde(skip)]
+    pub preferences_need_save: bool,
 }
 
 impl Default for AppState {
@@ -118,6 +123,7 @@ impl Default for AppState {
             mods: Vec::new(),
             tools: Vec::new(),
             categories: Vec::new(),
+            create_downloaded_mod_category_by_game: HashMap::new(),
             operations: Vec::new(),
             tasks: Vec::new(),
             show_log: false,
@@ -160,6 +166,7 @@ impl Default for AppState {
             automatically_check_for_update: true,
             staged_app_update: None,
             tool_blacklist: HashMap::new(),
+            preferences_need_save: false,
         }
     }
 }

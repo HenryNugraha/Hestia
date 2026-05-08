@@ -29,11 +29,12 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "4 May 2026";
+pub(crate) const WHATS_NEW_DATE: &str = "6 May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "Support manual image adding for externally sourced mods",
-    "Reworked download process with better reliability and resume support",
-    "Shows \"What's New\" after an update to highlights changelogs",
+    concat!("Auto-creates categories when downloading mods in Hestia\n",
+            "- It is DISABLED if you already created categories\n",
+            "- Can be ENABLED in Settings > General > Browse"),
+    "Allows adding a personal note to mods without a description",
 ];
 
 fn main() -> anyhow::Result<()> {
@@ -67,9 +68,10 @@ fn main() -> anyhow::Result<()> {
     if _single_instance_guard.is_none() && !after_update_launch {
         return Ok(());
     }
-    if state.show_whats_new {
+    if state.show_whats_new || state.preferences_need_save {
         persistence::save_app_state(&portable, &state)
-            .context("failed to save current app version")?;
+            .context("failed to save normalized app preferences")?;
+        state.preferences_need_save = false;
     }
     if app::HestiaApp::auto_detect_game_paths(&mut state) {
         persistence::save_app_state(&portable, &state)

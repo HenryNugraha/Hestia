@@ -5,7 +5,7 @@ impl HestiaApp {
         }
         let mut whats_new_open = self.state.show_whats_new;
         let force_default_pos = self.whats_new_force_default_pos;
-        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
         let mut window = egui::Window::new("What's New")
             .id(egui::Id::new(("whats_new_window", self.whats_new_window_nonce)))
             .open(&mut whats_new_open)
@@ -39,11 +39,22 @@ impl HestiaApp {
                     static_label(ui, RichText::new(format!("{}", WHATS_NEW_DATE)).italics().size(11.0).small());
                 });
             });
-            ui.add_space(6.0);
+            // ui.add_space(6.0);
             for highlight in WHATS_NEW_HIGHLIGHTS {
                 ui.horizontal_top(|ui| {
-                    static_label(ui, "•");
-                    static_label(ui, *highlight);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(12.0, 18.0),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            static_label(ui, "•");
+                        },
+                    );
+                    ui.add(
+                        egui::Label::new(*highlight)
+                            .wrap()
+                            .selectable(false),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::Default);
                 });
             }
         });
@@ -1478,6 +1489,43 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
+                        static_label(ui, bold("Browse").underline().size(16.0));
+                        ui.indent("setting_general_browse", |ui| {
+                            if let Some((game_id, game_name)) = self
+                                .selected_game()
+                                .map(|game| (game.definition.id.clone(), game.definition.name.clone()))
+                            {
+                                let game_has_categories = self
+                                    .state
+                                    .categories
+                                    .iter()
+                                    .any(|category| category.game_id == game_id);
+                                let preference_was_missing = !self
+                                    .state
+                                    .create_downloaded_mod_category_by_game
+                                    .contains_key(&game_id);
+                                let enabled = self
+                                    .state
+                                    .create_downloaded_mod_category_by_game
+                                    .entry(game_id)
+                                    .or_insert(!game_has_categories);
+                                let response = ui.checkbox(
+                                    enabled,
+                                    "Create downloaded mod's category",
+                                );
+                                response
+                                    .clone()
+                                    .on_hover_text(format!("Applies to {game_name}."));
+                                if preference_was_missing || response.changed() {
+                                    should_save = true;
+                                }
+                            } else {
+                                static_label(ui, "Select a game to configure Browse settings.");
+                            }
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
+                        
                         static_label(ui, bold("Tasks").underline().size(16.0));
                         ui.indent("setting_general_tasks", |ui| {
                             static_label(ui, "Tasks layout:");

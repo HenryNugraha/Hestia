@@ -188,6 +188,12 @@ pub struct WithholdNotice {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SubmissionCategory {
+    #[serde(rename = "_sName", default)]
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ProfileResponse {
     #[serde(rename = "_idRow", default)]
     pub id: u64,
@@ -237,6 +243,71 @@ pub struct ProfileResponse {
     pub content_ratings: HashMap<String, String>,
     #[serde(rename = "_aEmbeddedMedia", default)]
     pub embedded_media: Vec<String>,
+    #[serde(rename = "_aCategory")]
+    pub category: Option<SubmissionCategory>,
+    #[serde(rename = "_aSuperCategory")]
+    pub super_category: Option<SubmissionCategory>,
+}
+
+pub fn profile_category_name(profile: &ProfileResponse) -> Option<String> {
+    let super_name = profile
+        .super_category
+        .as_ref()
+        .map(|category| category.name.trim())
+        .filter(|name| !name.is_empty());
+    let category_name = profile
+        .category
+        .as_ref()
+        .map(|category| category.name.trim())
+        .filter(|name| !name.is_empty());
+    match (super_name, category_name) {
+        (Some(super_name), Some(category_name)) => Some(format!("{super_name}: {category_name}")),
+        (Some(super_name), None) => Some(super_name.to_string()),
+        (None, Some(category_name)) => Some(category_name.to_string()),
+        (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_category_name_joins_super_and_leaf_categories() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aSuperCategory": { "_sName": "Operators" },
+                "_aCategory": { "_sName": "Tangtang" }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile_category_name(&profile).as_deref(),
+            Some("Operators / Tangtang")
+        );
+    }
+
+    #[test]
+    fn profile_category_name_uses_single_available_category() {
+        let profile: ProfileResponse =
+            serde_json::from_str(r#"{ "_aCategory": { "_sName": "Tangtang" } }"#).unwrap();
+
+        assert_eq!(profile_category_name(&profile).as_deref(), Some("Tangtang"));
+    }
+
+    #[test]
+    fn profile_category_name_is_none_without_valid_category_metadata() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aSuperCategory": { "_sName": " " },
+                "_aCategory": { "_sName": "" }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(profile_category_name(&profile), None);
+    }
 }
 
 pub fn trashed_by_owner(profile: &ProfileResponse) -> Option<&SubmissionAuthor> {

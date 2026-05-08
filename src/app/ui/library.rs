@@ -34,6 +34,188 @@ fn clamp_metadata_source_label(text: &str) -> String {
     clamped
 }
 
+static PERSONAL_NOTE_HTML_TAG_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<[a-z][a-z0-9-]*(?:\s[^>]*)?>").unwrap());
+
+fn personal_note_markdown_for_display(
+    text: &str,
+    mod_entry: &ModEntry,
+    portable: &PortablePaths,
+) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let markdown = if PERSONAL_NOTE_HTML_TAG_RE.is_match(&normalized) {
+        prepare_markdown_for_display(
+            &normalized,
+            Some(&mod_entry.root_path),
+            Some(parse_gb_id_from_entry(mod_entry)),
+            portable,
+        )
+    } else {
+        normalized
+    };
+    preserve_personal_note_markdown_whitespace(&markdown)
+}
+
+fn preserve_personal_note_markdown_whitespace(markdown: &str) -> String {
+    let mut preserved = String::new();
+    let mut in_fenced_code = false;
+    for line in markdown.lines() {
+        let trimmed_start = line.trim_start();
+        let fence_line = trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~");
+        if fence_line {
+            in_fenced_code = !in_fenced_code;
+            preserved.push_str(line);
+            preserved.push('\n');
+            continue;
+        }
+        if in_fenced_code {
+            preserved.push_str(line);
+            preserved.push('\n');
+            continue;
+        }
+        if line.trim().is_empty() {
+            preserved.push_str("&nbsp;  \n");
+        } else {
+            preserved.push_str(&preserve_markdown_spaces(line));
+            preserved.push_str("  \n");
+        }
+    }
+    preserved
+}
+
+fn preserve_markdown_spaces(line: &str) -> String {
+    let mut preserved = String::new();
+    let mut space_count = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => space_count += 1,
+            '\t' => {
+                flush_preserved_spaces(&mut preserved, space_count);
+                space_count = 0;
+                preserved.push_str("&nbsp;&nbsp;&nbsp;&nbsp;");
+            }
+            _ => {
+                flush_preserved_spaces(&mut preserved, space_count);
+                space_count = 0;
+                preserved.push(ch);
+            }
+        }
+    }
+    flush_preserved_spaces(&mut preserved, space_count);
+    preserved
+}
+
+fn flush_preserved_spaces(output: &mut String, count: usize) {
+    if count == 1 {
+        output.push(' ');
+    } else {
+        for _ in 0..count {
+            output.push_str("&nbsp;");
+        }
+    }
+}
+
+fn personal_note_content_width(ui: &Ui) -> f32 {
+    (ui.available_width() - 28.0).max(0.0)
+}
+
+fn soft_add_note_button(ui: &mut Ui) -> egui::Response {
+    let text = "+ Add Note";
+    let font_id = egui::FontId::proportional(10.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id.clone(), Color32::WHITE);
+    let size = Vec2::new(galley.size().x, 16.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let color = if response.hovered() {
+        Color32::WHITE
+    } else {
+        Color32::from_gray(150)
+    };
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        font_id,
+        color,
+    );
+    response
+}
+
+fn select_mod_card_visible_range(
+    selected_mods: &mut HashSet<String>,
+    pivot_id: Option<&str>,
+    current_id: &str,
+    visible_card_ids: &[String],
+) -> bool {
+    let Some(pivot_id) = pivot_id else {
+        return false;
+    };
+    let pivot_idx = visible_card_ids.iter().position(|id| id == pivot_id);
+    let current_idx = visible_card_ids.iter().position(|id| id == current_id);
+    if let (Some(p), Some(c)) = (pivot_idx, current_idx) {
+        let start = p.min(c);
+        let end = p.max(c);
+        for id in &visible_card_ids[start..=end] {
+            selected_mods.insert(id.clone());
+        }
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod library_selection_tests {
+    use super::*;
+
+    #[test]
+    fn personal_note_whitespace_preserves_extra_spaces_and_blank_lines() {
+        let markdown = preserve_personal_note_markdown_whitespace("one  two\n\nthree    four");
+        assert!(markdown.contains("one&nbsp;&nbsp;two"));
+        assert!(markdown.contains("&nbsp;  \nthree"));
+        assert!(markdown.contains("three&nbsp;&nbsp;&nbsp;&nbsp;four"));
+    }
+
+    #[test]
+    fn shift_range_uses_visible_card_order() {
+        let visible_card_ids = ["k", "l", "m", "j"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut selected_mods = HashSet::new();
+
+        assert!(select_mod_card_visible_range(
+            &mut selected_mods,
+            Some("k"),
+            "m",
+            &visible_card_ids,
+        ));
+
+        assert!(selected_mods.contains("k"));
+        assert!(selected_mods.contains("l"));
+        assert!(selected_mods.contains("m"));
+        assert!(!selected_mods.contains("j"));
+    }
+
+    #[test]
+    fn shift_range_fails_when_anchor_is_not_visible() {
+        let visible_card_ids = ["k", "l", "m"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut selected_mods = HashSet::new();
+
+        assert!(!select_mod_card_visible_range(
+            &mut selected_mods,
+            Some("j"),
+            "m",
+            &visible_card_ids,
+        ));
+        assert!(selected_mods.is_empty());
+    }
+}
+
 fn update_button_text(modified: bool) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.append(
@@ -1783,7 +1965,116 @@ impl HestiaApp {
         mod_entry.metadata.extracted.description = Some(source.content);
         mod_entry.metadata.extracted.readme_path = Some(source.path);
         let _ = xxmi::save_mod_metadata(mod_entry);
+        if self.personal_note_edit_target_id.as_deref() == Some(mod_id) {
+            self.personal_note_edit_target_id = None;
+            self.personal_note_edit_text.clear();
+        }
         self.save_state();
+    }
+
+    fn start_personal_note_edit(&mut self, mod_id: &str, initial_text: String) {
+        self.personal_note_edit_target_id = Some(mod_id.to_string());
+        self.personal_note_edit_text = initial_text;
+    }
+
+    fn render_personal_note_editor(&mut self, ui: &mut Ui, mod_id: &str) {
+        let width = personal_note_content_width(ui);
+        let response = ui.add(
+            TextEdit::multiline(&mut self.personal_note_edit_text)
+                .id_source(("personal_note_editor", mod_id))
+                .desired_width(width)
+                .desired_rows(8)
+                .lock_focus(true),
+        );
+        response.request_focus();
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Enter)) {
+            self.save_personal_note_edit(mod_id);
+            return;
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.personal_note_edit_target_id = None;
+            self.personal_note_edit_text.clear();
+        }
+    }
+
+    fn save_personal_note_edit(&mut self, mod_id: &str) {
+        let raw = self.personal_note_edit_text.clone();
+        let personal_note_path = xxmi::personal_note_relative_path();
+        let result = (|| -> Result<bool> {
+            let mod_entry = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|mod_entry| mod_entry.id == mod_id)
+                .ok_or_else(|| anyhow!("no mod selected"))?;
+
+            let saved = xxmi::save_personal_note(&mod_entry.root_path, &raw)?;
+            mod_entry
+                .metadata
+                .extracted
+                .text_sources
+                .retain(|source| source.path != personal_note_path);
+
+            if let Some(content) = saved {
+                mod_entry
+                    .metadata
+                    .extracted
+                    .text_sources
+                    .push(crate::model::ExtractedMetadataTextSource {
+                        path: personal_note_path.clone(),
+                        label: "Personal Note".to_string(),
+                        content: content.clone(),
+                    });
+                mod_entry.metadata.user.extracted_metadata_source_path =
+                    Some(personal_note_path.clone());
+                mod_entry.metadata.extracted.description = Some(content);
+                mod_entry.metadata.extracted.readme_path = Some(personal_note_path);
+                mod_entry.metadata.prompt_for_missing_metadata = false;
+                xxmi::save_mod_metadata(mod_entry)?;
+                Ok(true)
+            } else {
+                let personal_note_was_selected =
+                    mod_entry.metadata.extracted.readme_path.as_deref()
+                        == Some(personal_note_path.as_str())
+                        || mod_entry
+                            .metadata
+                            .user
+                            .extracted_metadata_source_path
+                            .as_deref()
+                            == Some(personal_note_path.as_str());
+
+                if personal_note_was_selected {
+                    if let Some(fallback) = mod_entry.metadata.extracted.text_sources.first().cloned() {
+                        mod_entry.metadata.user.extracted_metadata_source_path =
+                            Some(fallback.path.clone());
+                        mod_entry.metadata.extracted.description = Some(fallback.content);
+                        mod_entry.metadata.extracted.readme_path = Some(fallback.path);
+                    } else {
+                        mod_entry.metadata.user.extracted_metadata_source_path = None;
+                        mod_entry.metadata.extracted.description = None;
+                        mod_entry.metadata.extracted.readme_path = None;
+                    }
+                    xxmi::save_mod_metadata(mod_entry)?;
+                    Ok(false)
+                } else {
+                    Ok(false)
+                }
+            }
+        })();
+
+        match result {
+            Ok(saved) => {
+                self.personal_note_edit_target_id = None;
+                self.personal_note_edit_text.clear();
+                if saved {
+                    self.set_message_ok("Saved personal note");
+                } else {
+                    self.set_message_ok("Personal note removed");
+                }
+                self.save_state();
+            }
+            Err(err) => self.report_error(err, Some("Could not save personal note")),
+        }
     }
 
     fn render_workspace_view(&mut self, ui: &mut Ui) {
@@ -2815,6 +3106,73 @@ impl HestiaApp {
                         let category_sections = self
                             .categories_for_game(&selected_game_id);
                         let selected_mods_snapshot = self.selected_mods.clone();
+                        let sections = [
+                            (ModStatus::Active, "Active", status_color(&ModStatus::Active)),
+                            (ModStatus::Disabled, "Disabled", status_color(&ModStatus::Disabled)),
+                            (ModStatus::Archived, "Archived", status_color(&ModStatus::Archived)),
+                        ];
+                        let visible_card_ids: Vec<String> = match library_group_mode {
+                            LibraryGroupMode::None => {
+                                cards.iter().map(|card| card.0.clone()).collect()
+                            }
+                            LibraryGroupMode::Status => sections
+                                .iter()
+                                .flat_map(|(status, _, _)| {
+                                    cards
+                                        .iter()
+                                        .filter(move |card| card.5 == *status)
+                                        .map(|card| card.0.clone())
+                                })
+                                .collect(),
+                            LibraryGroupMode::Category => {
+                                let has_categorized = cards.iter().any(|card| {
+                                    card.13.as_ref().is_some_and(|category_id| {
+                                        category_sections
+                                            .iter()
+                                            .any(|category| category.id == *category_id)
+                                    })
+                                });
+                                if !has_categorized {
+                                    cards.iter().map(|card| card.0.clone()).collect()
+                                } else {
+                                    let mut ids = Vec::with_capacity(cards.len());
+                                    if uncategorized_first {
+                                        ids.extend(
+                                            cards
+                                                .iter()
+                                                .filter(|card| card.13.is_none())
+                                                .map(|card| card.0.clone()),
+                                        );
+                                    }
+                                    for category in &category_sections {
+                                        ids.extend(
+                                            cards
+                                                .iter()
+                                                .filter(|card| {
+                                                    card.13.as_deref()
+                                                        == Some(category.id.as_str())
+                                                })
+                                                .map(|card| card.0.clone()),
+                                        );
+                                    }
+                                    if !uncategorized_first {
+                                        ids.extend(
+                                            cards
+                                                .iter()
+                                                .filter(|card| {
+                                                    card.13.as_ref().is_none_or(|category_id| {
+                                                        !category_sections.iter().any(|category| {
+                                                            category.id == *category_id
+                                                        })
+                                                    })
+                                                })
+                                                .map(|card| card.0.clone()),
+                                        );
+                                    }
+                                    ids
+                                }
+                            }
+                        };
 
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<
@@ -3004,20 +3362,12 @@ impl HestiaApp {
                                                     if cb_response.clicked() {
                                                         let modifiers = ui.input(|i| i.modifiers);
                                                         if modifiers.shift {
-                                                            let mut range_selected = false;
-                                                            if let Some(pivot_id) = &self.selected_mod_id {
-                                                                let pivot_idx = cards.iter().position(|c| &c.0 == pivot_id);
-                                                                let current_idx = cards.iter().position(|c| &c.0 == mod_id);
-                                                                if let (Some(p), Some(c)) = (pivot_idx, current_idx) {
-                                                                    let start = p.min(c);
-                                                                    let end = p.max(c);
-                                                                    for i in start..=end {
-                                                                        self.selected_mods.insert(cards[i].0.clone());
-                                                                    }
-                                                                    range_selected = true;
-                                                                }
-                                                            }
-                                                            if !range_selected {
+                                                            if !select_mod_card_visible_range(
+                                                                &mut self.selected_mods,
+                                                                self.selected_mod_id.as_deref(),
+                                                                mod_id,
+                                                                &visible_card_ids,
+                                                            ) {
                                                                 self.selected_mods.insert(mod_id.clone());
                                                             }
                                                             self.set_selected_mod_id(Some(mod_id.clone()));
@@ -3037,20 +3387,12 @@ impl HestiaApp {
                                                                 self.toggle_mod_selection(mod_id, !checked);
                                                             } else if modifiers.shift {
                                                                 // Range selection using the active mod as anchor
-                                                                let mut range_selected = false;
-                                                                if let Some(pivot_id) = &self.selected_mod_id {
-                                                                    let pivot_idx = cards.iter().position(|c| &c.0 == pivot_id);
-                                                                    let current_idx = cards.iter().position(|c| &c.0 == mod_id);
-                                                                    if let (Some(p), Some(c)) = (pivot_idx, current_idx) {
-                                                                        let start = p.min(c);
-                                                                        let end = p.max(c);
-                                                                        for i in start..=end {
-                                                                            self.selected_mods.insert(cards[i].0.clone());
-                                                                        }
-                                                                        range_selected = true;
-                                                                    }
-                                                                }
-                                                                if !range_selected {
+                                                                if !select_mod_card_visible_range(
+                                                                    &mut self.selected_mods,
+                                                                    self.selected_mod_id.as_deref(),
+                                                                    mod_id,
+                                                                    &visible_card_ids,
+                                                                ) {
                                                                     // Fallback: if no pivot or pivot is hidden, just select this one
                                                                     self.selected_mods.insert(mod_id.clone());
                                                                 }
@@ -3097,20 +3439,12 @@ impl HestiaApp {
                                                                     if modifiers.command || modifiers.ctrl {
                                                                         self.toggle_mod_selection(mod_id, !checked);
                                                                     } else if modifiers.shift {
-                                                                        let mut range_selected = false;
-                                                                        if let Some(pivot_id) = &self.selected_mod_id {
-                                                                            let pivot_idx = cards.iter().position(|c| &c.0 == pivot_id);
-                                                                            let current_idx = cards.iter().position(|c| &c.0 == mod_id);
-                                                                            if let (Some(p), Some(c)) = (pivot_idx, current_idx) {
-                                                                                let start = p.min(c);
-                                                                                let end = p.max(c);
-                                                                                for i in start..=end {
-                                                                                    self.selected_mods.insert(cards[i].0.clone());
-                                                                                }
-                                                                                range_selected = true;
-                                                                            }
-                                                                        }
-                                                                        if !range_selected {
+                                                                        if !select_mod_card_visible_range(
+                                                                            &mut self.selected_mods,
+                                                                            self.selected_mod_id.as_deref(),
+                                                                            mod_id,
+                                                                            &visible_card_ids,
+                                                                        ) {
                                                                             self.selected_mods.insert(mod_id.clone());
                                                                         }
                                                                         self.set_selected_mod_id(Some(mod_id.clone()));
@@ -3626,12 +3960,6 @@ impl HestiaApp {
                             }
                         };
 
-                        let sections = [
-                            (ModStatus::Active, "Active", status_color(&ModStatus::Active)),
-                            (ModStatus::Disabled, "Disabled", status_color(&ModStatus::Disabled)),
-                            (ModStatus::Archived, "Archived", status_color(&ModStatus::Archived)),
-                        ];
-
                         let mut section_select_changes: Vec<(Vec<String>, bool)> = Vec::new();
                         match library_group_mode {
                             LibraryGroupMode::None => {
@@ -3927,10 +4255,10 @@ impl HestiaApp {
                                 )
                             }).inner;
                         resp.request_focus();
-                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                             self.mod_detail_editing = false;
                         }
-                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                             self.perform_mod_rename(selected.id.clone());
                         }
                         let cancel_btn = ui.add(egui::Button::new(icon_rich(Icon::X, 14.0, Color32::from_rgba_unmultiplied(160,160,160,160))).frame(false));
@@ -3942,7 +4270,6 @@ impl HestiaApp {
                         if save_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             self.perform_mod_rename(selected.id.clone());
                         }
-                        // TODO: pressing enter = save
                     } else {
                         ui.heading(&title);
                         ui.add_space(-4.0);
@@ -4578,7 +4905,10 @@ impl HestiaApp {
                                         if !delete_clicked && response.clicked() {
                                             self.queue_overlay_full_texture(&texture_key);
                                             self.browse_state.screenshot_overlay =
-                                                Some(BrowseOverlayImage { texture_key: texture_key.clone() });
+                                                Some(BrowseOverlayImage {
+                                                    texture_key: texture_key.clone(),
+                                                    caption: None,
+                                                });
                                         }
 
                                         // Preload hi-res for current and neighbors to match Browse view performance
@@ -4640,8 +4970,12 @@ impl HestiaApp {
                                         }
                                         if response.clicked() {
                                             self.queue_overlay_full_texture(&full_key);
+                                            let caption = captions.get(idx).cloned().flatten();
                                             self.browse_state.screenshot_overlay =
-                                                Some(BrowseOverlayImage { texture_key: full_key.clone() });
+                                                Some(BrowseOverlayImage {
+                                                    texture_key: full_key.clone(),
+                                                    caption,
+                                                });
                                         }
                                         overlay_images.push(MyModOverlayImage {
                                             texture_key: full_key,
@@ -4838,11 +5172,30 @@ impl HestiaApp {
                     let markdown = mod_primary_description_markdown(&selected, &self.portable);
                     let has_description = markdown != "No description";
                     let extracted_markdown = mod_extracted_description_markdown(&selected);
+                    let personal_note_source_path = xxmi::personal_note_relative_path();
+                    let personal_note_source = selected
+                        .metadata
+                        .extracted
+                        .text_sources
+                        .iter()
+                        .find(|source| source.path == personal_note_source_path);
+                    let personal_note_editing =
+                        self.personal_note_edit_target_id.as_deref() == Some(&selected.id);
+                    let personal_note_selected =
+                        selected.metadata.extracted.readme_path.as_deref()
+                            == Some(personal_note_source_path.as_str())
+                            || personal_note_editing;
+                    let can_offer_personal_note_choice = !linked
+                        && personal_note_source.is_none()
+                        && !selected.metadata.extracted.text_sources.is_empty();
+                    let can_add_personal_note = !linked
+                        && selected.metadata.extracted.text_sources.is_empty()
+                        && !personal_note_editing;
                     let metadata_as_description = matches!(
                         self.state.metadata_visibility,
                         MetadataVisibility::OnlyIfNoDescription
                     ) && !has_description
-                        && extracted_markdown.is_some();
+                        && (extracted_markdown.is_some() || personal_note_editing);
 
                     if !metadata_as_description {
                         ui.add_space(10.0);
@@ -4851,11 +5204,51 @@ impl HestiaApp {
                             if selected.metadata.extracted.requires_rabbitfx {
                                 metadata_info_badge(ui, "Requires RabbitFX");
                             }
+                            if can_add_personal_note
+                                && !matches!(
+                                    self.state.metadata_visibility,
+                                    MetadataVisibility::Always
+                                )
+                            {
+                                let add_note_response = soft_add_note_button(ui)
+                                    .on_hover_text("Add a personal note")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if add_note_response.clicked() {
+                                    self.start_personal_note_edit(&selected.id, String::new());
+                                }
+                            }
+                            if personal_note_editing
+                                && !matches!(
+                                    self.state.metadata_visibility,
+                                    MetadataVisibility::Always
+                                )
+                            {
+                                let save_note_response = ui
+                                    .add(
+                                        egui::Button::new(icon_rich(
+                                            Icon::Check,
+                                            13.0,
+                                            Color32::from_rgb(110, 194, 132),
+                                        ))
+                                        .frame(false),
+                                    )
+                                    .on_hover_text("Save personal note")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if save_note_response.clicked() {
+                                    self.save_personal_note_edit(&selected.id);
+                                }
+                            }
                         });
-                        self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
-                        let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
-                        self.prewarm_markdown_images(&markdown);
-                        self.render_markdown_with_inline_images(ui, &markdown);
+                        if personal_note_editing
+                            && !matches!(self.state.metadata_visibility, MetadataVisibility::Always)
+                        {
+                            self.render_personal_note_editor(ui, &selected.id);
+                        } else {
+                            self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
+                            let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
+                            self.prewarm_markdown_images(&markdown);
+                            self.render_markdown_with_inline_images(ui, &markdown);
+                        }
                     }
                     
                     let show_metadata = match self.state.metadata_visibility {
@@ -4864,8 +5257,15 @@ impl HestiaApp {
                         MetadataVisibility::Always => true,
                     };
 
-                    if show_metadata {
-                        if let Some(extracted) = extracted_markdown {
+                    if show_metadata
+                        && (extracted_markdown.is_some()
+                            || personal_note_editing
+                            || (can_add_personal_note
+                                && matches!(
+                                    self.state.metadata_visibility,
+                                    MetadataVisibility::Always
+                                )))
+                    {
                             if has_description {
                                 ui.add_space(16.0);
                                 ui.separator();
@@ -4902,19 +5302,20 @@ impl HestiaApp {
                                         .and_then(|name| name.to_str())
                                         .unwrap_or(source)
                                 });
-                                if let (Some(source), Some(source_name)) = (source_path, source_name) {
-                                    let has_source_choices =
-                                        selected.metadata.extracted.text_sources.len() > 1;
-                                    let clamped_source_name =
-                                        clamp_metadata_source_label(source_name);
-                                    let badge_text = if has_source_choices {
-                                        format!("{clamped_source_name} ▾")
+                                if personal_note_selected {
+                                    let badge_text = if selected.metadata.extracted.text_sources.len() > 1
+                                        || can_offer_personal_note_choice
+                                    {
+                                        "Personal Note ▾"
                                     } else {
-                                        clamped_source_name
+                                        "Personal Note"
                                     };
                                     let mut source_response =
-                                        metadata_info_badge(ui, &badge_text).on_hover_text(source);
-                                    if has_source_choices {
+                                        metadata_info_badge(ui, badge_text)
+                                            .on_hover_text("Editable user note");
+                                    if selected.metadata.extracted.text_sources.len() > 1
+                                        || can_offer_personal_note_choice
+                                    {
                                         source_response = source_response
                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                                         let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
@@ -4931,8 +5332,11 @@ impl HestiaApp {
                                                         for source in selected.metadata.extracted.text_sources.clone() {
                                                             let selected_source =
                                                                 selected.metadata.extracted.readme_path.as_deref()
-                                                                    == Some(source.path.as_str());
-                                                            let label = if source.label.trim().is_empty() {
+                                                                    == Some(source.path.as_str())
+                                                                    && source.path == personal_note_source_path;
+                                                            let label = if source.path == personal_note_source_path {
+                                                                "Personal Note"
+                                                            } else if source.label.trim().is_empty() {
                                                                 source.path.as_str()
                                                             } else {
                                                                 source.label.as_str()
@@ -4943,7 +5347,11 @@ impl HestiaApp {
                                                                 Sense::click(),
                                                             );
                                                             let response = response
-                                                                .on_hover_text(source.path.as_str())
+                                                                .on_hover_text(if source.path == personal_note_source_path {
+                                                                    "Editable user note"
+                                                                } else {
+                                                                    source.path.as_str()
+                                                                })
                                                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                             let fill = if selected_source {
                                                                 ui.visuals().selection.bg_fill
@@ -4985,16 +5393,225 @@ impl HestiaApp {
                                     } else {
                                         source_response.on_hover_cursor(egui::CursorIcon::Default);
                                     }
+                                    let note_button_icon = if personal_note_editing {
+                                        Icon::Check
+                                    } else {
+                                        Icon::Pencil
+                                    };
+                                    let note_button_color = if personal_note_editing {
+                                        Color32::from_rgb(110, 194, 132)
+                                    } else {
+                                        Color32::from_gray(160)
+                                    };
+                                    let note_button = ui
+                                        .add(
+                                            egui::Button::new(icon_rich(
+                                                note_button_icon,
+                                                9.0,
+                                                note_button_color,
+                                            ))
+                                            .frame(false),
+                                        )
+                                        .on_hover_text(if personal_note_editing {
+                                            "Save personal note"
+                                        } else {
+                                            "Edit personal note"
+                                        })
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if note_button.clicked() {
+                                        if personal_note_editing {
+                                            self.save_personal_note_edit(&selected.id);
+                                        } else {
+                                            self.start_personal_note_edit(
+                                                &selected.id,
+                                                personal_note_source
+                                                    .map(|source| source.content.clone())
+                                                    .unwrap_or_default(),
+                                            );
+                                        }
+                                    }
+                                } else if let (Some(source), Some(source_name)) = (source_path, source_name) {
+                                    let has_source_choices =
+                                        selected.metadata.extracted.text_sources.len() > 1
+                                            || can_offer_personal_note_choice;
+                                    let clamped_source_name = clamp_metadata_source_label(source_name);
+                                    let badge_text = if has_source_choices {
+                                        format!("{clamped_source_name} ▾")
+                                    } else {
+                                        clamped_source_name
+                                    };
+                                    let mut source_response =
+                                        metadata_info_badge(ui, &badge_text).on_hover_text(source);
+                                    if has_source_choices {
+                                        source_response = source_response
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
+                                        egui::Popup::menu(&source_response)
+                                            .id(popup_id)
+                                            .width(120.0)
+                                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                            .show(|ui| {
+                                                ui.set_min_width(120.0);
+                                                ui.spacing_mut().item_spacing.y = 3.0;
+                                                egui::Frame::new()
+                                                    .inner_margin(egui::Margin::same(6))
+                                                    .show(ui, |ui| {
+                                                        for source in selected.metadata.extracted.text_sources.clone() {
+                                                            let selected_source =
+                                                                selected.metadata.extracted.readme_path.as_deref()
+                                                                    == Some(source.path.as_str());
+                                                            let label = if source.label.trim().is_empty() {
+                                                                source.path.as_str()
+                                                            } else {
+                                                                source.label.as_str()
+                                                            };
+                                                            let label = clamp_metadata_source_label(label);
+                                                            let (row_rect, response) = ui.allocate_exact_size(
+                                                                Vec2::new(ui.available_width(), 24.0),
+                                                                Sense::click(),
+                                                            );
+                                                            let response = response
+                                                                .on_hover_text(if source.path == personal_note_source_path {
+                                                                    "Editable user note"
+                                                                } else {
+                                                                    source.path.as_str()
+                                                                })
+                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                            let fill = if selected_source {
+                                                                ui.visuals().selection.bg_fill
+                                                            } else if response.hovered() {
+                                                                ui.visuals().widgets.hovered.bg_fill
+                                                            } else {
+                                                                Color32::TRANSPARENT
+                                                            };
+                                                            if fill != Color32::TRANSPARENT {
+                                                                ui.painter().rect_filled(
+                                                                    row_rect,
+                                                                    egui::CornerRadius::same(4),
+                                                                    fill,
+                                                                );
+                                                            }
+                                                            let text_color = if selected_source {
+                                                                ui.visuals().selection.stroke.color
+                                                            } else {
+                                                                ui.visuals().text_color()
+                                                            };
+                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
+                                                            ui.painter().with_clip_rect(text_rect).text(
+                                                                text_rect.left_center(),
+                                                                egui::Align2::LEFT_CENTER,
+                                                                label.as_str(),
+                                                                egui::FontId::proportional(12.0),
+                                                                text_color,
+                                                            );
+                                                            if response.clicked() {
+                                                                self.select_extracted_metadata_source(
+                                                                    &selected.id,
+                                                                    &source.path,
+                                                                );
+                                                                ui.close();
+                                                            }
+                                                        }
+                                                        if can_offer_personal_note_choice {
+                                                            let (row_rect, response) = ui.allocate_exact_size(
+                                                                Vec2::new(ui.available_width(), 24.0),
+                                                                Sense::click(),
+                                                            );
+                                                            let response = response
+                                                                .on_hover_text("Editable user note")
+                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                            if response.hovered() {
+                                                                ui.painter().rect_filled(
+                                                                    row_rect,
+                                                                    egui::CornerRadius::same(4),
+                                                                    ui.visuals().widgets.hovered.bg_fill,
+                                                                );
+                                                            }
+                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
+                                                            ui.painter().with_clip_rect(text_rect).text(
+                                                                text_rect.left_center(),
+                                                                egui::Align2::LEFT_CENTER,
+                                                                "+ Add Note",
+                                                                egui::FontId::proportional(12.0),
+                                                                ui.visuals().text_color(),
+                                                            );
+                                                            if response.clicked() {
+                                                                self.start_personal_note_edit(
+                                                                    &selected.id,
+                                                                    String::new(),
+                                                                );
+                                                                ui.close();
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                    } else {
+                                        source_response.on_hover_cursor(egui::CursorIcon::Default);
+                                    }
+                                } else if can_add_personal_note
+                                    && matches!(
+                                        self.state.metadata_visibility,
+                                        MetadataVisibility::Always
+                                    )
+                                {
+                                    let add_note_response = soft_add_note_button(ui)
+                                        .on_hover_text("Add a personal note")
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if add_note_response.clicked() {
+                                        self.start_personal_note_edit(
+                                            &selected.id,
+                                            String::new(),
+                                        );
+                                    }
+                                } else if personal_note_editing {
+                                    let save_note_response = ui
+                                        .add(
+                                            egui::Button::new(icon_rich(
+                                                Icon::Check,
+                                                13.0,
+                                                Color32::from_rgb(110, 194, 132),
+                                            ))
+                                            .frame(false),
+                                        )
+                                        .on_hover_text("Save personal note")
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if save_note_response.clicked() {
+                                        self.save_personal_note_edit(&selected.id);
+                                    }
                                 }
                             });
-                            // Use a simple label to preserve the literal formatting (newlines) 
-                            // of the extracted text file (e.g. README.txt).
-                            ui.add(egui::Label::new(
-                                RichText::new(extracted)
-                                    .size(13.0)
-                                    .color(Color32::from_gray(175))
-                            ).wrap().selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
-                        }
+                            if personal_note_editing {
+                                self.render_personal_note_editor(ui, &selected.id);
+                            } else if let Some(extracted) = extracted_markdown {
+                                if personal_note_selected {
+                                    let markdown = personal_note_markdown_for_display(
+                                        &extracted,
+                                        &selected,
+                                        &self.portable,
+                                    );
+                                    self.queue_gif_previews_for_markdown(
+                                        ui.ctx(),
+                                        &markdown,
+                                        Some(&selected.root_path),
+                                    );
+                                    let markdown = rewrite_markdown_gif_images(
+                                        &markdown,
+                                        Some(&selected.root_path),
+                                    );
+                                    self.prewarm_markdown_images(&markdown);
+                                    let width = personal_note_content_width(ui);
+                                    ui.scope(|ui| {
+                                        ui.set_max_width(width);
+                                        self.render_markdown_with_inline_images(ui, &markdown);
+                                    });
+                                } else {
+                                    ui.add(egui::Label::new(
+                                        RichText::new(extracted)
+                                            .size(13.0)
+                                            .color(Color32::from_gray(175))
+                                    ).wrap().selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                }
+                            }
                     }
                     ui.add_space(10.0);
                     let row_height = 20.0;

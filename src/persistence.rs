@@ -114,6 +114,8 @@ struct AppPreferences {
     #[serde(default)]
     categories: Vec<ModCategory>,
     #[serde(default)]
+    create_downloaded_mod_category_by_game: HashMap<String, bool>,
+    #[serde(default)]
     update_check_statuses: ModStatusTargets,
     #[serde(default)]
     auto_update_statuses: ModStatusTargets,
@@ -169,6 +171,9 @@ impl From<&AppState> for AppPreferences {
             library_uncategorized_first: state.library_uncategorized_first,
             tools: state.tools.clone(),
             categories: state.categories.clone(),
+            create_downloaded_mod_category_by_game: state
+                .create_downloaded_mod_category_by_game
+                .clone(),
             update_check_statuses: state.update_check_statuses,
             auto_update_statuses: state.auto_update_statuses,
             modified_update_behavior: state.modified_update_behavior,
@@ -306,6 +311,8 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
 
     let loaded_version = prefs.version;
     let previous_app_version = prefs.app_version.clone();
+    let app_version_needs_save =
+        app_version_needs_normalization(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
     state.version = prefs.version.max(7);
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
@@ -345,6 +352,14 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.library_uncategorized_first = prefs.library_uncategorized_first;
     state.tools = prefs.tools;
     state.categories = prefs.categories;
+    let (create_downloaded_mod_category_by_game, preferences_need_save) =
+        normalize_create_downloaded_mod_category_by_game(
+            &state.games,
+            &state.categories,
+            prefs.create_downloaded_mod_category_by_game,
+        );
+    state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
+    state.preferences_need_save = preferences_need_save || app_version_needs_save;
     initialize_tool_orders(&mut state, loaded_version);
     state.update_check_statuses = prefs.update_check_statuses;
     state.auto_update_statuses = prefs.auto_update_statuses;
@@ -354,6 +369,25 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.staged_app_update = prefs.staged_app_update;
     state.tool_blacklist = prefs.tool_blacklist;
     Ok(state)
+}
+
+fn normalize_create_downloaded_mod_category_by_game(
+    games: &[GameInstall],
+    categories: &[ModCategory],
+    mut saved: HashMap<String, bool>,
+) -> (HashMap<String, bool>, bool) {
+    let mut changed = false;
+    for game in games {
+        let game_id = &game.definition.id;
+        if !saved.contains_key(game_id) {
+            let game_has_categories = categories
+                .iter()
+                .any(|category| category.game_id == *game_id);
+            saved.insert(game_id.clone(), !game_has_categories);
+            changed = true;
+        }
+    }
+    (saved, changed)
 }
 
 fn should_show_whats_new(previous_app_version: Option<&str>, current_app_version: &str) -> bool {
@@ -367,6 +401,16 @@ fn should_show_whats_new(previous_app_version: Option<&str>, current_app_version
         return false;
     };
     previous < current
+}
+
+fn app_version_needs_normalization(
+    previous_app_version: Option<&str>,
+    current_app_version: &str,
+) -> bool {
+    match previous_app_version {
+        Some(previous_app_version) => previous_app_version.trim() != current_app_version,
+        None => true,
+    }
 }
 
 fn initialize_tool_orders(state: &mut AppState, loaded_version: u32) {
@@ -1032,6 +1076,84 @@ mod tests {
     fn whats_new_stays_closed_for_same_or_newer_app_versions() {
         assert!(!should_show_whats_new(Some("1.2.3"), "1.2.3"));
         assert!(!should_show_whats_new(Some("1.2.4"), "1.2.3"));
+    }
+
+    #[test]
+    fn newer_app_version_stays_closed_but_normalizes_preferences() {
+        assert!(!should_show_whats_new(Some("9.0.0"), "1.2.3"));
+        assert!(app_version_needs_normalization(Some("9.0.0"), "1.2.3"));
+    }
+
+    #[test]
+    fn downloaded_mod_category_defaults_true_when_game_has_no_categories() {
+        let state = AppState::default();
+        let game_id = state.games[0].definition.id.clone();
+        let (prefs, changed) =
+            normalize_create_downloaded_mod_category_by_game(&state.games, &[], HashMap::new());
+
+        assert!(changed);
+        assert_eq!(prefs.get(&game_id), Some(&true));
+    }
+
+    #[test]
+    fn downloaded_mod_category_defaults_false_only_for_games_with_categories() {
+        let state = AppState::default();
+        let game_with_category = state.games[0].definition.id.clone();
+        let game_without_category = state.games[1].definition.id.clone();
+        let categories = vec![ModCategory {
+            id: "category-1".to_string(),
+            game_id: game_with_category.clone(),
+            name: "Existing".to_string(),
+            order: 0,
+        }];
+
+        let (prefs, changed) = normalize_create_downloaded_mod_category_by_game(
+            &state.games,
+            &categories,
+            HashMap::new(),
+        );
+
+        assert!(changed);
+        assert_eq!(prefs.get(&game_with_category), Some(&false));
+        assert_eq!(prefs.get(&game_without_category), Some(&true));
+    }
+
+    #[test]
+    fn downloaded_mod_category_preserves_saved_values() {
+        let state = AppState::default();
+        let game_id = state.games[0].definition.id.clone();
+        let mut saved = HashMap::new();
+        saved.insert(game_id.clone(), false);
+
+        let (prefs, changed) =
+            normalize_create_downloaded_mod_category_by_game(&state.games[0..1], &[], saved);
+
+        assert!(!changed);
+        assert_eq!(prefs.get(&game_id), Some(&false));
+    }
+
+    #[test]
+    fn downloaded_mod_category_only_defaults_missing_game_entries() {
+        let state = AppState::default();
+        let saved_game = state.games[0].definition.id.clone();
+        let missing_game_with_category = state.games[1].definition.id.clone();
+        let missing_game_without_category = state.games[2].definition.id.clone();
+        let categories = vec![ModCategory {
+            id: "category-1".to_string(),
+            game_id: missing_game_with_category.clone(),
+            name: "Existing".to_string(),
+            order: 0,
+        }];
+        let mut saved = HashMap::new();
+        saved.insert(saved_game.clone(), true);
+
+        let (prefs, changed) =
+            normalize_create_downloaded_mod_category_by_game(&state.games, &categories, saved);
+
+        assert!(changed);
+        assert_eq!(prefs.get(&saved_game), Some(&true));
+        assert_eq!(prefs.get(&missing_game_with_category), Some(&false));
+        assert_eq!(prefs.get(&missing_game_without_category), Some(&true));
     }
 
     #[test]

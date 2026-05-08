@@ -145,6 +145,8 @@ impl HestiaApp {
             mod_detail_editing: false,
             mod_detail_edit_target_id: None,
             mod_detail_edit_name: String::new(),
+            personal_note_edit_target_id: None,
+            personal_note_edit_text: String::new(),
             clipboard_image_paste_held: false,
             category_rename_target_id: None,
             category_rename_name: String::new(),

@@ -41,7 +41,7 @@ use crate::{
     model::{
         AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata,
         ExtractedMetadataTextSource, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus,
-        PortableModState,
+        PERSONAL_NOTE_FILE, PortableModState,
     },
     persistence,
 };
@@ -217,6 +217,58 @@ fn repair_duplicate_scanned_mod_ids(
 #[allow(dead_code)]
 pub fn save_mod_metadata(mod_entry: &mut ModEntry) -> Result<()> {
     write_portable_metadata(mod_entry)
+}
+
+pub fn personal_note_relative_path() -> String {
+    Path::new(MOD_META_DIR)
+        .join(PERSONAL_NOTE_FILE)
+        .to_string_lossy()
+        .to_string()
+}
+
+pub fn personal_note_path(mod_root: &Path) -> PathBuf {
+    mod_root.join(MOD_META_DIR).join(PERSONAL_NOTE_FILE)
+}
+
+pub fn sanitize_personal_note_content(raw: &str) -> Option<String> {
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let mut cleaned = String::with_capacity(normalized.len());
+
+    for line in normalized.lines() {
+        let line = line
+            .chars()
+            .filter(|ch| *ch == '\t' || !ch.is_control())
+            .collect::<String>();
+        let line = line.trim_end();
+        cleaned.push_str(line);
+        cleaned.push('\n');
+    }
+
+    let trimmed = cleaned.trim();
+    if trimmed.chars().any(|ch| {
+        !ch.is_whitespace() && !matches!(ch, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}')
+    }) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+pub fn save_personal_note(mod_root: &Path, raw: &str) -> Result<Option<String>> {
+    let path = personal_note_path(mod_root);
+    if let Some(sanitized) = sanitize_personal_note_content(raw) {
+        let dir = path
+            .parent()
+            .ok_or_else(|| anyhow!("invalid personal note path"))?;
+        fs::create_dir_all(dir)?;
+        persistence::write_atomic_text(&path, &sanitized)?;
+        Ok(Some(sanitized))
+    } else {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(None)
+    }
 }
 
 pub fn disable_mod(mod_entry: &mut ModEntry) -> Result<()> {
@@ -1061,6 +1113,23 @@ fn extract_metadata(
         }
     }
 
+    let personal_note_relative = personal_note_relative_path();
+    let personal_note_path = personal_note_path(root);
+    if personal_note_path.exists() {
+        let raw = fs::read_to_string(&personal_note_path).unwrap_or_default();
+        if let Some(content) = sanitize_personal_note_content(&raw) {
+            let source_index = text_sources.len();
+            text_sources.push(ExtractedMetadataTextSource {
+                path: personal_note_relative.clone(),
+                label: "Personal Note".to_string(),
+                content,
+            });
+            if selected_source_path == Some(personal_note_relative.as_str()) {
+                selected_text_index = Some(source_index);
+            }
+        }
+    }
+
     if let Some(source_index) = selected_text_index.or(best_text_index) {
         if let Some(source) = text_sources.get(source_index) {
             description = Some(source.content.clone());
@@ -1073,6 +1142,11 @@ fn extract_metadata(
     executables.sort();
     executables.dedup();
     text_sources.sort_by(|left, right| {
+        let left_personal = left.path == personal_note_relative;
+        let right_personal = right.path == personal_note_relative;
+        if left_personal != right_personal {
+            return left_personal.cmp(&right_personal);
+        }
         text_metadata_priority(Path::new(&right.path))
             .cmp(&text_metadata_priority(Path::new(&left.path)))
             .then_with(|| {
@@ -1138,4 +1212,72 @@ fn text_mentions_rabbitfx_requirement(text: &str) -> bool {
         || normalized.contains("if you don't have rabbitfx installed")
         || normalized.contains("if you dont have rabbitfx installed")
         || normalized.contains("install rabbitfx")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn personal_note_sanitizer_trims_controls_and_empty_notes() {
+        assert_eq!(
+            sanitize_personal_note_content("  first line  \r\nsecond\tline\0  "),
+            Some("first line\nsecond\tline".to_string())
+        );
+        assert_eq!(sanitize_personal_note_content(" \r\n\t \n"), None);
+        assert_eq!(sanitize_personal_note_content("\u{200b}\u{200c}"), None);
+    }
+
+    #[test]
+    fn personal_note_sanitizer_preserves_multiple_blank_lines() {
+        assert_eq!(
+            sanitize_personal_note_content("one\n\n\n\n\ntwo"),
+            Some("one\n\n\n\n\ntwo".to_string())
+        );
+    }
+
+    #[test]
+    fn personal_note_is_metadata_source_last_and_selectable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(root.join("README.txt"), "Readme content").unwrap();
+        let note_dir = root.join(MOD_META_DIR);
+        fs::create_dir_all(&note_dir).unwrap();
+        fs::write(
+            note_dir.join(PERSONAL_NOTE_FILE),
+            "Personal note\nsecond line",
+        )
+        .unwrap();
+
+        let note_path = personal_note_relative_path();
+        let extracted = extract_metadata(root, Some(&note_path), false).unwrap();
+
+        assert_eq!(
+            extracted.description.as_deref(),
+            Some("Personal note\nsecond line")
+        );
+        assert_eq!(extracted.readme_path.as_deref(), Some(note_path.as_str()));
+        assert_eq!(
+            extracted
+                .text_sources
+                .last()
+                .map(|source| source.label.as_str()),
+            Some("Personal Note")
+        );
+    }
+
+    #[test]
+    fn personal_note_does_not_change_mod_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(root.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let before = compute_mod_fingerprint(root).unwrap();
+
+        let note_dir = root.join(MOD_META_DIR);
+        fs::create_dir_all(&note_dir).unwrap();
+        fs::write(note_dir.join(PERSONAL_NOTE_FILE), "Personal note").unwrap();
+        let after = compute_mod_fingerprint(root).unwrap();
+
+        assert_eq!(before, after);
+    }
 }

@@ -960,6 +960,13 @@ impl HestiaApp {
                 candidate_labels,
             );
         }
+        for id in &newly_installed_ids {
+            self.apply_browse_download_category(
+                id,
+                pending_meta.as_ref(),
+                gb_profile.as_deref(),
+            );
+        }
 
         if let Some((target_mod_id, rename_to)) = post_install_rename {
             match self.rename_mod_folder(&target_mod_id, &rename_to) {
@@ -1034,6 +1041,111 @@ impl HestiaApp {
             self.log_action("Installed", fallback_name);
             self.set_message_ok(format!("Installed: {fallback_name}"));
         }
+    }
+
+    fn apply_browse_download_category(
+        &mut self,
+        mod_entry_id: &str,
+        pending_meta: Option<&PendingBrowseInstallMeta>,
+        gb_profile: Option<&gamebanana::ProfileResponse>,
+    ) {
+        let Some(meta) = pending_meta else { return; };
+        if meta.update_target_mod_id.is_some() {
+            return;
+        }
+
+        let enabled = if let Some(enabled) = self
+            .state
+            .create_downloaded_mod_category_by_game
+            .get(&meta.game_id)
+            .copied()
+        {
+            enabled
+        } else {
+            let game_has_categories = self
+                .state
+                .categories
+                .iter()
+                .any(|category| category.game_id == meta.game_id);
+            let enabled = !game_has_categories;
+            self.state
+                .create_downloaded_mod_category_by_game
+                .insert(meta.game_id.clone(), enabled);
+            self.save_state();
+            enabled
+        };
+        if !enabled {
+            return;
+        }
+
+        let Some(mod_index) = self
+            .state
+            .mods
+            .iter()
+            .position(|mod_entry| mod_entry.id == mod_entry_id && mod_entry.game_id == meta.game_id)
+        else {
+            return;
+        };
+        let mod_name = self.state.mods[mod_index]
+            .metadata
+            .user
+            .title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(&self.state.mods[mod_index].folder_name)
+            .to_string();
+
+        let Some(category_name) = gb_profile.and_then(gamebanana::profile_category_name) else {
+            self.log_action(
+                "Category",
+                &format!("{mod_name} has no valid GameBanana category; skipped category creation"),
+            );
+            return;
+        };
+
+        let (category_id, category_name) = if let Some(existing) = self
+            .state
+            .categories
+            .iter()
+            .find(|category| {
+                category.game_id == meta.game_id
+                    && category.name.eq_ignore_ascii_case(category_name.as_str())
+            })
+        {
+            (existing.id.clone(), existing.name.clone())
+        } else {
+            let category_id = Uuid::new_v4().to_string();
+            let order = self
+                .state
+                .categories
+                .iter()
+                .filter(|category| category.game_id == meta.game_id)
+                .map(|category| category.order)
+                .max()
+                .unwrap_or(-1)
+                + 1;
+            self.state.categories.push(ModCategory {
+                id: category_id.clone(),
+                game_id: meta.game_id.clone(),
+                name: category_name.clone(),
+                order,
+            });
+            self.log_action("Category", &format!("Created \"{category_name}\""));
+            (category_id, category_name)
+        };
+
+        let old_category = self.state.mods[mod_index].metadata.user.category.clone();
+        let changed = self.state.mods[mod_index].metadata.user.category_id.as_deref()
+            != Some(category_id.as_str())
+            || old_category != category_name;
+        if changed {
+            let mod_entry = &mut self.state.mods[mod_index];
+            mod_entry.metadata.user.category_id = Some(category_id);
+            mod_entry.metadata.user.category = category_name.clone();
+            let _ = xxmi::save_mod_metadata(mod_entry);
+            self.log_category_change(&mod_name, &old_category, &category_name);
+        }
+        self.save_state();
     }
 
     fn apply_sync_metadata(

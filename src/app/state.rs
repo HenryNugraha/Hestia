@@ -102,6 +102,8 @@ pub struct HestiaApp {
     mod_detail_editing: bool,
     mod_detail_edit_target_id: Option<String>,
     mod_detail_edit_name: String,
+    personal_note_edit_target_id: Option<String>,
+    personal_note_edit_text: String,
     clipboard_image_paste_held: bool,
     category_rename_target_id: Option<String>,
     category_rename_name: String,
@@ -442,6 +444,7 @@ struct BrowseSelectableFile {
 
 struct BrowseOverlayImage {
     texture_key: String,
+    caption: Option<String>,
 }
 
 #[derive(Clone)]
