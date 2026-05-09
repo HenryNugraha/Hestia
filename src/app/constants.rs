@@ -1,6 +1,8 @@
 // Font and shared icon resources.
 const APP_FONT_FAMILY: &str = "selawik";
 const APP_BOLD_FONT_FAMILY: &str = "selawik_bold";
+const CLASSIC_FONT_FAMILY: &str = "segoe_ui";
+const CLASSIC_BOLD_FONT_FAMILY: &str = "segoe_ui_bold";
 const BOLD_FONT_FAMILY: &str = "Bold";
 const LUCIDE_FAMILY: &str = "lucide";
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.3.0-beta] - 2026-05-06
+## [1.3.0] - 2026-05-09
 
 ### Added
 - Added auto-creating categories based on GameBanana category when downloading mods in Hestia.
@@ -8,6 +8,7 @@
 
 ### Changed
 - Improved async threading that handles caption when opening images in fullview mode.
+- Improved Linux compatibility, including refactoring fonts (now uses Selawik by default instead of Segoe UI).
 
 ### Fixed
 - Fixed renaming a mod that has an update will sometime cancel the renaming and download the update instead.

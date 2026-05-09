@@ -19,7 +19,6 @@ use fast_image_resize as fir;
 use futures_util::StreamExt;
 use lucide_icons::{Icon, LUCIDE_FONT_BYTES};
 use once_cell::sync::Lazy;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use regex::Regex;
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
@@ -34,19 +33,22 @@ use crate::{
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{
-        AfterInstallBehavior, AppState, BrowseSort, CacheSizeTier, ConflictChoice, DeleteBehavior,
-        FileSetRecipe, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot, GameInstall,
-        IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource, LaunchBehavior,
-        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory, ModEntry,
-        ModSourceData, ModStatus, ModStatusTargets, ModUpdateState, ModifiedUpdateBehavior,
-        OperationLogEntry, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus,
-        TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode,
-        default_modded_exe_candidates, default_mods_path, default_vanilla_exe_candidates,
-        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
-        shortcut_modded_exe_candidates,
+        AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, ConflictChoice,
+        DeleteBehavior, FileSetRecipe, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot,
+        GameInstall, IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource,
+        LaunchBehavior, LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility,
+        ModCategory, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
+        ModifiedUpdateBehavior, OperationLogEntry, SearchSort, StagedAppUpdate, TaskEntry,
+        TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta,
+        UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
+        default_vanilla_exe_candidates, registry_modded_exe_candidates,
+        registry_vanilla_exe_candidates, shortcut_modded_exe_candidates,
     },
     persistence::{self, PortablePaths},
 };
+
+#[cfg(windows)]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, RECT};

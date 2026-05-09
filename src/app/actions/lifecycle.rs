@@ -5,7 +5,7 @@ impl HestiaApp {
         mut state: AppState,
         runtime_services: RuntimeServices,
     ) -> Self {
-        install_app_fonts(&cc.egui_ctx);
+        install_app_fonts(&cc.egui_ctx, state.font_style);
         apply_theme(&cc.egui_ctx);
         let (icon_request_tx, icon_request_rx) = tokio_mpsc::unbounded_channel::<IconRequest>();
         let (icon_result_tx, icon_result_rx) = tokio_mpsc::unbounded_channel::<IconResult>();
@@ -147,6 +147,7 @@ impl HestiaApp {
             mod_detail_edit_name: String::new(),
             personal_note_edit_target_id: None,
             personal_note_edit_text: String::new(),
+            #[cfg(windows)]
             clipboard_image_paste_held: false,
             category_rename_target_id: None,
             category_rename_name: String::new(),
@@ -1243,6 +1244,7 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
+    #[cfg(windows)]
     fn poll_windows_ctrl_v_edge(&mut self, ctx: &egui::Context) -> bool {
         let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
         let v_down = unsafe { GetAsyncKeyState(i32::from(VK_V.0)) } < 0;
@@ -1257,6 +1259,11 @@ impl HestiaApp {
         let pressed = down && !self.clipboard_image_paste_held;
         self.clipboard_image_paste_held = down;
         pressed
+    }
+
+    #[cfg(not(windows))]
+    fn poll_windows_ctrl_v_edge(&mut self, _ctx: &egui::Context) -> bool {
+        false
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {

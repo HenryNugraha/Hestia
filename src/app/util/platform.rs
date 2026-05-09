@@ -4,7 +4,10 @@ struct SystemFontCandidate {
     index: u32,
 }
 
-fn install_app_fonts(ctx: &egui::Context) {
+const CLASSIC_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeui.ttf";
+const CLASSIC_BOLD_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeuib.ttf";
+
+fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         APP_FONT_FAMILY.to_string(),
@@ -27,15 +30,40 @@ fn install_app_fonts(ctx: &egui::Context) {
         FontData::from_static(LUCIDE_FONT_BYTES).into(),
     );
 
+    let classic_available =
+        load_system_font(&mut fonts, CLASSIC_FONT_FAMILY, CLASSIC_FONT_PATH, 0)
+            && load_system_font(&mut fonts, CLASSIC_BOLD_FONT_FAMILY, CLASSIC_BOLD_FONT_PATH, 0);
+    let font_style = match preferred_style {
+        AppFontStyle::Classic if classic_available => AppFontStyle::Classic,
+        AppFontStyle::Classic | AppFontStyle::Modern => AppFontStyle::Modern,
+    };
+    let (primary_family, bold_family) = match font_style {
+        AppFontStyle::Classic => (CLASSIC_FONT_FAMILY, CLASSIC_BOLD_FONT_FAMILY),
+        AppFontStyle::Modern => (APP_FONT_FAMILY, APP_BOLD_FONT_FAMILY),
+    };
+
     fonts
         .families
         .entry(FontFamily::Proportional)
         .or_default()
-        .insert(0, APP_FONT_FAMILY.to_owned());
+        .insert(0, primary_family.to_owned());
+    if primary_family != APP_FONT_FAMILY {
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .push(APP_FONT_FAMILY.to_owned());
+    }
     fonts.families.insert(
         FontFamily::Name(BOLD_FONT_FAMILY.into()),
-        vec![APP_BOLD_FONT_FAMILY.to_owned()],
+        vec![bold_family.to_owned()],
     );
+    if bold_family != APP_BOLD_FONT_FAMILY {
+        if let Some(bold_fonts) = fonts.families.get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
+        {
+            bold_fonts.push(APP_BOLD_FONT_FAMILY.to_owned());
+        }
+    }
 
     install_system_fallback_fonts(&mut fonts);
 
@@ -47,22 +75,49 @@ fn install_app_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+fn classic_font_style_available() -> bool {
+    static AVAILABLE: Lazy<bool> = Lazy::new(|| {
+        system_font_is_available(CLASSIC_FONT_PATH, 0)
+            && system_font_is_available(CLASSIC_BOLD_FONT_PATH, 0)
+    });
+    *AVAILABLE
+}
+
+fn system_font_is_available(path: &str, index: u32) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    ab_glyph::FontRef::try_from_slice_and_index(&bytes, index).is_ok()
+}
+
+fn load_system_font(
+    fonts: &mut FontDefinitions,
+    name: &'static str,
+    path: &'static str,
+    index: u32,
+) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    if ab_glyph::FontRef::try_from_slice_and_index(&bytes, index).is_err() {
+        return false;
+    }
+    fonts.font_data.insert(
+        name.to_string(),
+        FontData {
+            index,
+            ..FontData::from_owned(bytes)
+        }
+        .into(),
+    );
+    true
+}
+
 fn install_system_fallback_fonts(fonts: &mut FontDefinitions) {
     for candidate in system_font_candidates() {
-        let Ok(bytes) = fs::read(candidate.path) else {
-            continue;
-        };
-        if ab_glyph::FontRef::try_from_slice_and_index(&bytes, candidate.index).is_err() {
+        if !load_system_font(fonts, candidate.name, candidate.path, candidate.index) {
             continue;
         }
-        fonts.font_data.insert(
-            candidate.name.to_string(),
-            FontData {
-                index: candidate.index,
-                ..FontData::from_owned(bytes)
-            }
-            .into(),
-        );
         fonts
             .families
             .entry(FontFamily::Proportional)

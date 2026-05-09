@@ -491,7 +491,7 @@ pub fn launch_vanilla_executable(path: &Path) -> Result<()> {
 fn launch_executable_with_args(
     path: &Path,
     args: &[&str],
-    detached: bool,
+    #[cfg_attr(not(windows), allow(unused_variables))] detached: bool,
     label: &str,
 ) -> Result<()> {
     if !path.is_file() {

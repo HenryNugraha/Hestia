@@ -1229,6 +1229,31 @@ impl HestiaApp {
 
                         static_label(ui, bold("Interface").underline().size(16.0));
                         ui.indent("setting_general_interface", |ui| {
+                            if classic_font_style_available() {
+                                static_label(ui, "Font Style:");
+                                ui.add_space(-4.0);
+                                let previous_font_style = self.state.font_style;
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.state.font_style,
+                                        AppFontStyle::Classic,
+                                        "Classic",
+                                    )
+                                    .on_hover_text("Uses 'Segoe UI' typeface");
+                                    ui.add_space(12.0);
+                                    ui.radio_value(
+                                        &mut self.state.font_style,
+                                        AppFontStyle::Modern,
+                                        "Modern",
+                                    )
+                                    .on_hover_text("Uses 'Selawik' typeface");
+                                });
+                                if self.state.font_style != previous_font_style {
+                                    install_app_fonts(ctx, self.state.font_style);
+                                    should_save = true;
+                                }
+                                ui.add_space(8.0);
+                            }
                             static_label(ui, "When launching a game:");
                             ui.add_space(-4.0);
                             let launch_behavior = self.state.launch_behavior;

@@ -58,6 +58,8 @@ pub struct AppState {
     #[serde(default)]
     pub scan_rabbitfx_requirement: bool,
     #[serde(default)]
+    pub font_style: AppFontStyle,
+    #[serde(default)]
     pub launch_behavior: LaunchBehavior,
     #[serde(default)]
     pub tool_launch_behavior: LaunchBehavior,
@@ -140,6 +142,7 @@ impl Default for AppState {
             hide_archived: false,
             metadata_visibility: MetadataVisibility::default(),
             scan_rabbitfx_requirement: false,
+            font_style: AppFontStyle::default(),
             launch_behavior: LaunchBehavior::default(),
             tool_launch_behavior: LaunchBehavior::default(),
             after_install_behavior: AfterInstallBehavior::default(),
@@ -255,6 +258,13 @@ pub enum MetadataVisibility {
     #[default]
     OnlyIfNoDescription,
     Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AppFontStyle {
+    Classic,
+    #[default]
+    Modern,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

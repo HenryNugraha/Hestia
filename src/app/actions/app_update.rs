@@ -436,7 +436,7 @@ fn build_manual_app_update_message() -> Result<String, String> {
         .parent()
         .ok_or_else(|| format!("current executable has no parent folder: {}", exe.display()))?;
     Ok(format!(
-        "Hestia is installed in a folder this process cannot update:\n{}\nRun the installer manually to move Hestia to %LOCALAPPDATA%\\Programs\\Hestia, or update this install from an elevated process.",
+        "Hestia is installed in a folder this process cannot update:\n{}\nMove Hestia to another folder and try again, or update this install from an elevated process.",
         install_dir.display()
     ))
 }

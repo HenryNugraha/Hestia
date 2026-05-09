@@ -284,7 +284,7 @@ mod tests {
 
         assert_eq!(
             profile_category_name(&profile).as_deref(),
-            Some("Operators / Tangtang")
+            Some("Operators: Tangtang")
         );
     }
 

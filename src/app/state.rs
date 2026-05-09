@@ -104,6 +104,7 @@ pub struct HestiaApp {
     mod_detail_edit_name: String,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
+    #[cfg(windows)]
     clipboard_image_paste_held: bool,
     category_rename_target_id: Option<String>,
     category_rename_name: String,
