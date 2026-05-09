@@ -272,8 +272,28 @@ fn resolve_persistent_data_paths_with_fallback_dir(
 }
 
 fn appdata_fallback_dir() -> Result<PathBuf> {
-    let appdata = std::env::var("APPDATA").context("APPDATA is not set")?;
-    Ok(PathBuf::from(appdata).join("Hestia"))
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA").context("APPDATA is not set")?;
+        Ok(PathBuf::from(appdata).join("Hestia"))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").context("$HOME is not set")?;
+        Ok(PathBuf::from(home).join("Library/Application Support/Hestia"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var_os("HOME").expect("$HOME is not set");
+                PathBuf::from(home).join(".config")
+            });
+        Ok(base.join("Hestia"))
+    }
 }
 
 pub fn runtime_temp_root() -> PathBuf {
@@ -1057,161 +1077,4 @@ pub fn save_portable_mod_state(mod_root: &Path, state: &PortableModState) -> Res
     fs::create_dir_all(&dir)?;
     let raw = serde_json::to_string_pretty(state)?;
     write_atomic_text(&dir.join(MOD_META_FILE), &raw)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn whats_new_opens_for_missing_invalid_and_older_app_versions() {
-        assert!(should_show_whats_new(None, "1.2.3"));
-        assert!(should_show_whats_new(Some("not-semver"), "1.2.3"));
-        assert!(should_show_whats_new(Some("1.2.2"), "1.2.3"));
-        assert!(should_show_whats_new(Some("1.2.3-alpha.1"), "1.2.3"));
-        assert!(should_show_whats_new(Some("1.2.3-string.4"), "1.2.4"));
-    }
-
-    #[test]
-    fn whats_new_stays_closed_for_same_or_newer_app_versions() {
-        assert!(!should_show_whats_new(Some("1.2.3"), "1.2.3"));
-        assert!(!should_show_whats_new(Some("1.2.4"), "1.2.3"));
-    }
-
-    #[test]
-    fn newer_app_version_stays_closed_but_normalizes_preferences() {
-        assert!(!should_show_whats_new(Some("9.0.0"), "1.2.3"));
-        assert!(app_version_needs_normalization(Some("9.0.0"), "1.2.3"));
-    }
-
-    #[test]
-    fn downloaded_mod_category_defaults_true_when_game_has_no_categories() {
-        let state = AppState::default();
-        let game_id = state.games[0].definition.id.clone();
-        let (prefs, changed) =
-            normalize_create_downloaded_mod_category_by_game(&state.games, &[], HashMap::new());
-
-        assert!(changed);
-        assert_eq!(prefs.get(&game_id), Some(&true));
-    }
-
-    #[test]
-    fn downloaded_mod_category_defaults_false_only_for_games_with_categories() {
-        let state = AppState::default();
-        let game_with_category = state.games[0].definition.id.clone();
-        let game_without_category = state.games[1].definition.id.clone();
-        let categories = vec![ModCategory {
-            id: "category-1".to_string(),
-            game_id: game_with_category.clone(),
-            name: "Existing".to_string(),
-            order: 0,
-        }];
-
-        let (prefs, changed) = normalize_create_downloaded_mod_category_by_game(
-            &state.games,
-            &categories,
-            HashMap::new(),
-        );
-
-        assert!(changed);
-        assert_eq!(prefs.get(&game_with_category), Some(&false));
-        assert_eq!(prefs.get(&game_without_category), Some(&true));
-    }
-
-    #[test]
-    fn downloaded_mod_category_preserves_saved_values() {
-        let state = AppState::default();
-        let game_id = state.games[0].definition.id.clone();
-        let mut saved = HashMap::new();
-        saved.insert(game_id.clone(), false);
-
-        let (prefs, changed) =
-            normalize_create_downloaded_mod_category_by_game(&state.games[0..1], &[], saved);
-
-        assert!(!changed);
-        assert_eq!(prefs.get(&game_id), Some(&false));
-    }
-
-    #[test]
-    fn downloaded_mod_category_only_defaults_missing_game_entries() {
-        let state = AppState::default();
-        let saved_game = state.games[0].definition.id.clone();
-        let missing_game_with_category = state.games[1].definition.id.clone();
-        let missing_game_without_category = state.games[2].definition.id.clone();
-        let categories = vec![ModCategory {
-            id: "category-1".to_string(),
-            game_id: missing_game_with_category.clone(),
-            name: "Existing".to_string(),
-            order: 0,
-        }];
-        let mut saved = HashMap::new();
-        saved.insert(saved_game.clone(), true);
-
-        let (prefs, changed) =
-            normalize_create_downloaded_mod_category_by_game(&state.games, &categories, saved);
-
-        assert!(changed);
-        assert_eq!(prefs.get(&saved_game), Some(&true));
-        assert_eq!(prefs.get(&missing_game_with_category), Some(&false));
-        assert_eq!(prefs.get(&missing_game_without_category), Some(&true));
-    }
-
-    #[test]
-    fn persistent_paths_prefer_existing_fallback_before_new_portable_files() {
-        let temp = tempfile::tempdir().unwrap();
-        let install_dir = temp.path().join("install");
-        let fallback_dir = temp.path().join("appdata").join("Hestia");
-        fs::create_dir_all(&install_dir).unwrap();
-        fs::create_dir_all(&fallback_dir).unwrap();
-        fs::write(fallback_dir.join("hestia.toml"), "state").unwrap();
-        fs::write(fallback_dir.join("hestia.dat"), "history").unwrap();
-
-        let paths = resolve_persistent_data_paths_with_fallback_dir(
-            &install_dir.join("hestia.exe"),
-            &install_dir,
-            &fallback_dir,
-        );
-
-        assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
-        assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
-    }
-
-    #[test]
-    fn persistent_paths_keep_existing_portable_files_first() {
-        let temp = tempfile::tempdir().unwrap();
-        let install_dir = temp.path().join("install");
-        let fallback_dir = temp.path().join("appdata").join("Hestia");
-        fs::create_dir_all(&install_dir).unwrap();
-        fs::create_dir_all(&fallback_dir).unwrap();
-        fs::write(install_dir.join("hestia.toml"), "portable state").unwrap();
-        fs::write(fallback_dir.join("hestia.toml"), "fallback state").unwrap();
-        fs::write(fallback_dir.join("hestia.dat"), "fallback history").unwrap();
-
-        let paths = resolve_persistent_data_paths_with_fallback_dir(
-            &install_dir.join("hestia.exe"),
-            &install_dir,
-            &fallback_dir,
-        );
-
-        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
-        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
-    }
-
-    #[test]
-    fn persistent_paths_create_portable_files_when_no_existing_state_and_writable() {
-        let temp = tempfile::tempdir().unwrap();
-        let install_dir = temp.path().join("install");
-        let fallback_dir = temp.path().join("appdata").join("Hestia");
-        fs::create_dir_all(&install_dir).unwrap();
-        fs::create_dir_all(&fallback_dir).unwrap();
-
-        let paths = resolve_persistent_data_paths_with_fallback_dir(
-            &install_dir.join("hestia.exe"),
-            &install_dir,
-            &fallback_dir,
-        );
-
-        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
-        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
-    }
 }

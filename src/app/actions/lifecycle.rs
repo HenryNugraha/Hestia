@@ -5,7 +5,7 @@ impl HestiaApp {
         mut state: AppState,
         runtime_services: RuntimeServices,
     ) -> Self {
-        install_lucide_font(&cc.egui_ctx);
+        install_app_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx);
         let (icon_request_tx, icon_request_rx) = tokio_mpsc::unbounded_channel::<IconRequest>();
         let (icon_result_tx, icon_result_rx) = tokio_mpsc::unbounded_channel::<IconResult>();
@@ -351,14 +351,12 @@ impl HestiaApp {
     }
 
     fn detect_total_system_ram_bytes() -> Option<u64> {
-        let mut mem = MEMORYSTATUSEX {
-            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
-            ..Default::default()
-        };
-        unsafe {
-            GlobalMemoryStatusEx(&mut mem).ok()?;
-        }
-        Some(mem.ullTotalPhys)
+        use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+        let sys = System::new_with_specifics(
+            RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
+        );
+        let total = sys.total_memory();
+        (total > 0).then_some(total)
     }
 
     fn texture_key(kind: TextureKind, key: &str) -> (TextureKind, String) {

@@ -21,7 +21,7 @@ fn sanitize_folder_name(input: &str) -> String {
 }
 
 fn bold(text: impl Into<String>) -> RichText {
-    RichText::new(text).family(FontFamily::Name("Bold".into()))
+    RichText::new(text).family(FontFamily::Name(BOLD_FONT_FAMILY.into()))
 }
 
 fn non_empty(value: String) -> Option<String> {

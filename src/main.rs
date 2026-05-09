@@ -31,9 +31,11 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
 
 pub(crate) const WHATS_NEW_DATE: &str = "6 May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    concat!("Auto-creates categories when downloading mods in Hestia\n",
-            "- It is DISABLED if you already created categories\n",
-            "- Can be ENABLED in Settings > General > Browse"),
+    concat!(
+        "Auto-creates categories when downloading mods in Hestia\n",
+        "- It is DISABLED if you already created categories\n",
+        "- Can be ENABLED in Settings > General > Browse"
+    ),
     "Allows adding a personal note to mods without a description",
 ];
 

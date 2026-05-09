@@ -1,59 +1,43 @@
-fn install_lucide_font(ctx: &egui::Context) {
+struct SystemFontCandidate {
+    name: &'static str,
+    path: &'static str,
+    index: u32,
+}
+
+fn install_app_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        APP_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/selawk.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
+        APP_BOLD_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/selawkb.ttf"
+        )))
+        .into(),
+    );
     fonts.font_data.insert(
         LUCIDE_FAMILY.to_string(),
         FontData::from_static(LUCIDE_FONT_BYTES).into(),
     );
 
-    for (name, path) in [
-        ("segoe_ui", "C:\\Windows\\Fonts\\segoeui.ttf"),
-        ("segoe_ui_bold", "C:\\Windows\\Fonts\\segoeuib.ttf"),
-    ] {
-        if let Ok(bytes) = fs::read(path) {
-            fonts.font_data.insert(name.to_string(), FontData::from_owned(bytes).into());
-        }
-    }
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .insert(0, APP_FONT_FAMILY.to_owned());
+    fonts.families.insert(
+        FontFamily::Name(BOLD_FONT_FAMILY.into()),
+        vec![APP_BOLD_FONT_FAMILY.to_owned()],
+    );
 
-    if fonts.font_data.contains_key("segoe_ui") {
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, "segoe_ui".to_owned());
-    }
-    if fonts.font_data.contains_key("segoe_ui_bold") {
-        fonts.families.insert(
-            FontFamily::Name("Bold".into()),
-            vec!["segoe_ui_bold".to_owned()],
-        );
-    }
-
-    for (font_name, font_path) in [
-        ("malgun", "C:\\Windows\\Fonts\\malgun.ttf"),
-        ("msyh", "C:\\Windows\\Fonts\\msyh.ttc"),
-        ("msgothic", "C:\\Windows\\Fonts\\msgothic.ttc"),
-        ("yugothr", "C:\\Windows\\Fonts\\YuGothR.ttc"),
-    ] {
-        if let Ok(bytes) = fs::read(font_path) {
-            fonts.font_data.insert(
-                font_name.to_string(),
-                FontData::from_owned(bytes).into(),
-            );
-            fonts
-                .families
-                .entry(FontFamily::Proportional)
-                .or_default()
-                .push(font_name.to_string());
-            fonts
-                .families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .push(font_name.to_string());
-            if let Some(bold_family) = fonts.families.get_mut(&FontFamily::Name("Bold".into())) {
-                bold_family.push(font_name.to_string());
-            }
-        }
-    }
+    install_system_fallback_fonts(&mut fonts);
 
     fonts
         .families
@@ -61,6 +45,168 @@ fn install_lucide_font(ctx: &egui::Context) {
         .or_default()
         .push(LUCIDE_FAMILY.to_string());
     ctx.set_fonts(fonts);
+}
+
+fn install_system_fallback_fonts(fonts: &mut FontDefinitions) {
+    for candidate in system_font_candidates() {
+        let Ok(bytes) = fs::read(candidate.path) else {
+            continue;
+        };
+        if ab_glyph::FontRef::try_from_slice_and_index(&bytes, candidate.index).is_err() {
+            continue;
+        }
+        fonts.font_data.insert(
+            candidate.name.to_string(),
+            FontData {
+                index: candidate.index,
+                ..FontData::from_owned(bytes)
+            }
+            .into(),
+        );
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .push(candidate.name.to_string());
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .push(candidate.name.to_string());
+        if let Some(bold_family) =
+            fonts.families.get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
+        {
+            bold_family.push(candidate.name.to_string());
+        }
+    }
+}
+
+#[cfg(windows)]
+fn system_font_candidates() -> &'static [SystemFontCandidate] {
+    &[
+        SystemFontCandidate {
+            name: "cjk_zh_sc",
+            path: "C:\\Windows\\Fonts\\msyh.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_zh_tc",
+            path: "C:\\Windows\\Fonts\\msjh.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ja",
+            path: "C:\\Windows\\Fonts\\YuGothR.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ja_legacy",
+            path: "C:\\Windows\\Fonts\\msgothic.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ko",
+            path: "C:\\Windows\\Fonts\\malgun.ttf",
+            index: 0,
+        },
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn system_font_candidates() -> &'static [SystemFontCandidate] {
+    &[
+        SystemFontCandidate {
+            name: "cjk_zh",
+            path: "/System/Library/Fonts/PingFang.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ja",
+            path: "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ja_alt",
+            path: "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_ko",
+            path: "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+            index: 0,
+        },
+    ]
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_font_candidates() -> &'static [SystemFontCandidate] {
+    &[
+        SystemFontCandidate {
+            name: "cjk_noto_jp",
+            path: "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_kr",
+            path: "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            index: 1,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_sc",
+            path: "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            index: 2,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_tc",
+            path: "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            index: 3,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_jp_debian",
+            path: "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_kr_debian",
+            path: "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            index: 1,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_sc_debian",
+            path: "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            index: 2,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_tc_debian",
+            path: "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            index: 3,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_jp_alt",
+            path: "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            index: 0,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_kr_alt",
+            path: "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            index: 1,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_sc_alt",
+            path: "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            index: 2,
+        },
+        SystemFontCandidate {
+            name: "cjk_noto_tc_alt",
+            path: "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            index: 3,
+        },
+    ]
+}
+
+#[cfg(not(any(windows, target_os = "macos", unix)))]
+fn system_font_candidates() -> &'static [SystemFontCandidate] {
+    &[]
 }
 
 fn apply_theme(ctx: &egui::Context) {
@@ -103,6 +249,7 @@ fn apply_theme(ctx: &egui::Context) {
     ctx.set_visuals_of(egui::Theme::Light, visuals);
 }
 
+#[cfg(windows)]
 fn prepare_initial_window_placement(
     cc: &eframe::CreationContext<'_>,
     state: &AppState,
@@ -146,6 +293,15 @@ fn prepare_initial_window_placement(
     }
 }
 
+#[cfg(not(windows))]
+fn prepare_initial_window_placement(
+    _cc: &eframe::CreationContext<'_>,
+    _state: &AppState,
+) {
+    // need improvement here but I hate dealing with linux DE :(
+}
+
+#[cfg(windows)]
 fn apply_startup_window_background(hwnd: HWND) {
     static STARTUP_BACKGROUND_BRUSH: Lazy<isize> = Lazy::new(|| unsafe {
         windows::Win32::Graphics::Gdi::CreateSolidBrush(windows::Win32::Foundation::COLORREF(
@@ -163,10 +319,13 @@ fn apply_startup_window_background(hwnd: HWND) {
     }
 }
 
+#[cfg(windows)]
 fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage> {
+    #[cfg(not(windows))]
+    return None;
+
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
-
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
         DeleteDC, DeleteObject, GetDC, HGDIOBJ, ReleaseDC, SelectObject,
@@ -299,6 +458,12 @@ fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage>
     ))
 }
 
+#[cfg(not(windows))]
+fn load_exe_icon_color_image(_path: &Path, _size: u32) -> Option<egui::ColorImage> {
+    None
+}
+
+#[cfg(windows)]
 fn open_external_url(url: &str) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
@@ -323,6 +488,29 @@ fn open_external_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn open_external_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(url);
+        cmd
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let mut command = {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    };
+
+    command
+        .spawn()
+        .map_err(|err| anyhow!("failed to open browser: {err}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
 fn open_in_explorer(path: &Path) -> Result<()> {
     if !path.exists() {
         bail!("path does not exist");
@@ -331,6 +519,24 @@ fn open_in_explorer(path: &Path) -> Result<()> {
         .arg(path)
         .spawn()
         .map_err(|err| anyhow!("failed to open explorer: {err}"))?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn open_in_explorer(path: &Path) -> Result<()> {
+    if !path.exists() {
+        bail!("path does not exist");
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(target_os = "macos"))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command
+        .arg(path)
+        .spawn()
+        .map_err(|err| anyhow!("failed to open file manager: {err}"))?;
     Ok(())
 }
 

@@ -1,4 +1,7 @@
 // Font and shared icon resources.
+const APP_FONT_FAMILY: &str = "selawik";
+const APP_BOLD_FONT_FAMILY: &str = "selawik_bold";
+const BOLD_FONT_FAMILY: &str = "Bold";
 const LUCIDE_FAMILY: &str = "lucide";
 
 // Main workspace and reusable card layout sizing.
