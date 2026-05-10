@@ -4208,7 +4208,7 @@ impl HestiaApp {
         let details_pos = details_rect.min + details_offset;
         let details_size = BROWSE_DETAIL_SIZE;
         let mut mod_detail_open = self.mod_detail_open;
-        let mod_detail_response = egui::Window::new("Mod Detail") // MY MOD view's mod detail GUI
+        let mod_detail_response = egui::Window::new(icon_text_sized(Icon::PackageSearch, "Mod Detail", 14.0, 14.0)) // MY MOD view's mod detail GUI
             .id(egui::Id::new("mod_detail_window"))
             .default_pos(details_pos)
             .default_size(details_size)

@@ -678,7 +678,7 @@ impl HestiaApp {
                     let bottom_height = 348.0;
                     let spacer = (ui.available_height() - bottom_height).max(8.0);
                     ui.add_space(spacer);
-                    if action_icon_button(ui, Icon::FileCog, "Tools", self.state.show_tools, Some("Tools (Ctrl+T)")) {
+                    if action_icon_button(ui, Icon::AppWindow, "Tools", self.state.show_tools, Some("Tools (Ctrl+T)")) {
                         self.toggle_tools_window();
                     }
                     ui.add_space(8.0);
@@ -727,9 +727,19 @@ impl HestiaApp {
             selected_game_id
         };
         let response = game_switcher_button(ui, &self.game_icon_textures, switcher_id);
+        let popup_id = ui.id().with("game_selector_popup");
+        let popup_was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let popup_is_open = if response.clicked() {
+            !popup_was_open
+        } else {
+            popup_was_open
+        };
+        if popup_is_open {
+            paint_game_switcher_dim_overlay(ui.ctx());
+        }
 
         egui::Popup::menu(&response)
-            .id(ui.id().with("game_selector_popup"))
+            .id(popup_id)
             .width(860.0)
             .frame({
                 let mut frame = egui::Frame::menu(ui.style());
@@ -967,4 +977,17 @@ impl HestiaApp {
             });
     }
 
+}
+
+fn paint_game_switcher_dim_overlay(ctx: &egui::Context) {
+    let screen_rect = ctx.viewport_rect();
+    egui::Area::new(egui::Id::new("game_switcher_dim_overlay"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(screen_rect.min)
+        .interactable(false)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen_rect.size(), Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 0.0, Color32::from_black_alpha(200));
+        });
 }

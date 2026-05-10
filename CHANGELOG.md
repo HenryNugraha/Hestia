@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0-alpha] - 2026-05-XX
+
+### Added
+- 
+
+### Changed
+- Minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, fixed Tools and Log button having the same icon.
+- Unchecking "Use default XXMI mod path for games" now prefil the mods folder input bars with current value.
+
+### Fixed
+- 
+
 ## [1.3.0] - 2026-05-09
 
 ### Added
