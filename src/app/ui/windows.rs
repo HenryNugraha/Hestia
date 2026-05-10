@@ -6,7 +6,7 @@ impl HestiaApp {
         let mut whats_new_open = self.state.show_whats_new;
         let force_default_pos = self.whats_new_force_default_pos;
         let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let mut window = egui::Window::new("What's New")
+        let mut window = egui::Window::new(icon_text_sized(Icon::Bell, "What's New", 14.0, 14.0))
             .id(egui::Id::new(("whats_new_window", self.whats_new_window_nonce)))
             .open(&mut whats_new_open)
             .title_bar(true)
@@ -74,7 +74,7 @@ impl HestiaApp {
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let log_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
-        let mut window = egui::Window::new("Log")
+        let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, "Log", 14.0, 14.0))
             .id(egui::Id::new(("log_window", self.log_window_nonce)))
             .open(&mut log_open)
             .title_bar(true)
@@ -161,7 +161,7 @@ impl HestiaApp {
         let just_opened = self.tasks_force_default_pos;
         let force_default_pos = self.tasks_force_default_pos;
         let tasks_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
-        let mut window = egui::Window::new("Tasks")
+        let mut window = egui::Window::new(icon_text_sized(Icon::ListChecks, "Tasks", 14.0, 14.0))
             .id(egui::Id::new(("tasks_window", self.tasks_window_nonce)))
             .open(&mut tasks_open)
             .title_bar(true)
@@ -460,7 +460,7 @@ impl HestiaApp {
         let just_opened = self.tools_force_default_pos;
         let force_default_pos = self.tools_force_default_pos;
         let tools_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
-        let mut window = egui::Window::new("Tools")
+        let mut window = egui::Window::new(icon_text_sized(Icon::AppWindow, "Tools", 14.0, 14.0))
             .id(egui::Id::new(("tools_window", self.tools_window_nonce)))
             .open(&mut tools_open)
             .title_bar(true)
@@ -1064,7 +1064,7 @@ impl HestiaApp {
         let mut draft_args = prompt.launch_args.clone();
         let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
 
-        egui::Window::new("Set Launch Options")
+        egui::Window::new(icon_text_sized(Icon::Terminal, "Set Launch Options", 14.0, 14.0))
             .id(egui::Id::new(("tool_launch_options", tool.id.clone())))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .default_size(egui::vec2(360.0, 172.0))
@@ -1166,7 +1166,7 @@ impl HestiaApp {
 
         let mut settings_open = self.settings_open;
         let settings_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let mut window = egui::Window::new("Settings")
+        let mut window = egui::Window::new(icon_text_sized(Icon::Settings2, "Settings", 14.0, 14.0))
             .open(&mut settings_open)
             .title_bar(true)
             .frame(settings_frame);
@@ -1709,7 +1709,21 @@ impl HestiaApp {
                             ui.add_space(-4.0);
                             ui.horizontal(|ui| {
                                 ui.add_space(4.0);
+                                let was_using_default_mods_path = self.state.use_default_mods_path;
                                 if ui.checkbox(&mut self.state.use_default_mods_path, "Use default XXMI mod path for games").changed() {
+                                    if was_using_default_mods_path && !self.state.use_default_mods_path {
+                                        for game in self.state.games.iter_mut().filter(|game| game.enabled) {
+                                            if game.mods_path_override.is_none() {
+                                                game.mods_path_override = game.mods_path(was_using_default_mods_path);
+                                            }
+                                            ui.data_mut(|data| {
+                                                data.remove::<String>(egui::Id::new((
+                                                    "settings_mods_path",
+                                                    game.definition.id.as_str(),
+                                                )));
+                                            });
+                                        }
+                                    }
                                     should_save = true;
                                 }
                             });

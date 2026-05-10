@@ -29,23 +29,9 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "9 May 2026";
+pub(crate) const WHATS_NEW_DATE: &str = "XX May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    concat!(
-        "Auto-creates categories when downloading mods in Hestia\n",
-        "- It is DISABLED if you already created categories\n",
-        "- Can be ENABLED in Settings > General > Browse"
-    ),
-    "Allows adding a personal note to mods without a description",
-    concat!(
-        "Significantly improved compatibility when running Hestia on Linux\n",
-        "Thanks to @solomoncyj on Github"
-    ),
-    concat!(
-        "Switched the default font for Linux compatibility\n",
-        "- The new MODERN font uses 'Selawik'\n",
-        "- Switch to the previous CLASSIC font in Settings > General > Interface"
-    ),
+    "Minor visual interface improvements",
 ];
 
 fn main() -> anyhow::Result<()> {

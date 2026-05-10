@@ -587,7 +587,7 @@ impl HestiaApp {
         let details_offset = egui::vec2(0.0, 32.0);
         let details_pos = details_rect.min + details_offset;
         let mut browse_detail_open = self.browse_detail_open;
-        let response = egui::Window::new("Mod Detail") // BROWSE view's mod detail GUI
+        let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, "Mod Detail", 14.0, 14.0)) // BROWSE view's mod detail GUI
             .id(egui::Id::new(BROWSE_DETAIL_WINDOW_ID))
             .default_pos(details_pos)
             .default_size(BROWSE_DETAIL_SIZE)
@@ -1395,7 +1395,7 @@ impl HestiaApp {
         let mut open = true;
         let mut should_cancel = false;
         let mut should_confirm = false;
-        egui::Window::new("Choose Files")
+        egui::Window::new(icon_text_sized(Icon::Files, "Choose Files", 14.0, 14.0))
             .id(egui::Id::new(BROWSE_FILE_PICKER_WINDOW_ID))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .default_size(egui::vec2(420.0, 420.0))

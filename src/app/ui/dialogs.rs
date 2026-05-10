@@ -154,7 +154,7 @@ impl HestiaApp {
         }
 
         let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
-        let window = egui::Window::new("Missing .ini")
+        let window = egui::Window::new(icon_text_sized(Icon::Info, "Missing .ini", 14.0, 14.0))
             .id(egui::Id::new(("import_review", job_id)))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .default_size(egui::vec2(420.0, 420.0))
@@ -379,7 +379,7 @@ impl HestiaApp {
             let mut choice = None;
 
         let warn_color = Color32::from_rgb(214, 96, 34);
-        let mut window = egui::Window::new("Installation Conflict")
+        let mut window = egui::Window::new(icon_text_sized(Icon::TriangleAlert, "Installation Conflict", 14.0, 14.0))
             .collapsible(false)
             .order(egui::Order::Foreground)
             .resizable(false)
