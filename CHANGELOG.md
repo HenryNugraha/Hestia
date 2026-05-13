@@ -3,7 +3,8 @@
 ## [1.4.0-alpha] - 2026-05-XX
 
 ### Added
-- 
+- Categories can now be sorted automatically.
+- Enabled managing categories via new Settings > Category tab.
 
 ### Changed
 - Minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, fixed Tools and Log button having the same icon.
