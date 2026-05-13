@@ -22,6 +22,167 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+#[cfg(test)]
+mod category_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn category(id: &str, name: &str, order: i32) -> ModCategory {
+        ModCategory {
+            id: id.to_string(),
+            game_id: "game".to_string(),
+            name: name.to_string(),
+            order,
+        }
+    }
+
+    #[test]
+    fn multi_category_drag_preserves_selected_display_order() {
+        let ordered = ids(&["A", "B", "C", "D", "E"]);
+        let moving = ids(&["B", "D"]);
+
+        let reordered = reorder_category_ids_for_drag(&ordered, &moving, 0).unwrap();
+
+        assert_eq!(reordered, ids(&["B", "D", "A", "C", "E"]));
+    }
+
+    #[test]
+    fn category_drag_returns_none_when_order_is_unchanged() {
+        let ordered = ids(&["A", "B", "C"]);
+        let moving = ids(&["B"]);
+
+        assert_eq!(reorder_category_ids_for_drag(&ordered, &moving, 1), None);
+    }
+
+    #[test]
+    fn category_sort_by_name_uses_name_then_existing_order() {
+        let mut categories = vec![
+            category("c", "Tools", 2),
+            category("a", "Characters", 1),
+            category("b", "Characters", 0),
+        ];
+
+        sort_categories_with_counts(&mut categories, ModCategorySortMode::ByNameAsc, |_| 0);
+
+        let sorted_ids: Vec<_> = categories.into_iter().map(|category| category.id).collect();
+        assert_eq!(sorted_ids, ids(&["b", "a", "c"]));
+    }
+
+    #[test]
+    fn category_sort_by_mod_count_supports_both_directions() {
+        let categories = vec![
+            category("a", "A", 0),
+            category("b", "B", 1),
+            category("c", "C", 2),
+        ];
+        let counts = HashMap::from([
+            ("a".to_string(), 2),
+            ("b".to_string(), 5),
+            ("c".to_string(), 1),
+        ]);
+
+        let mut ascending = categories.clone();
+        sort_categories_with_counts(&mut ascending, ModCategorySortMode::ByModCountAsc, |id| {
+            counts.get(id).copied().unwrap_or_default()
+        });
+        let ascending_ids: Vec<_> = ascending.into_iter().map(|category| category.id).collect();
+        assert_eq!(ascending_ids, ids(&["c", "a", "b"]));
+
+        let mut descending = categories;
+        sort_categories_with_counts(&mut descending, ModCategorySortMode::ByModCountDesc, |id| {
+            counts.get(id).copied().unwrap_or_default()
+        });
+        let descending_ids: Vec<_> = descending.into_iter().map(|category| category.id).collect();
+        assert_eq!(descending_ids, ids(&["b", "a", "c"]));
+    }
+}
+
+fn reorder_category_ids_for_drag(
+    ordered_ids: &[String],
+    moving_ids: &[String],
+    slot_index: usize,
+) -> Option<Vec<String>> {
+    if moving_ids.is_empty() {
+        return None;
+    }
+    let moving_set: HashSet<&str> = moving_ids.iter().map(String::as_str).collect();
+    let moving_in_order: Vec<String> = ordered_ids
+        .iter()
+        .filter(|id| moving_set.contains(id.as_str()))
+        .cloned()
+        .collect();
+    if moving_in_order.is_empty() {
+        return None;
+    }
+    let removed_before_slot = ordered_ids
+        .iter()
+        .take(slot_index.min(ordered_ids.len()))
+        .filter(|id| moving_set.contains(id.as_str()))
+        .count();
+    let mut reordered: Vec<String> = ordered_ids
+        .iter()
+        .filter(|id| !moving_set.contains(id.as_str()))
+        .cloned()
+        .collect();
+    let target_index = slot_index
+        .saturating_sub(removed_before_slot)
+        .min(reordered.len());
+    for (offset, id) in moving_in_order.into_iter().enumerate() {
+        reordered.insert(target_index + offset, id);
+    }
+    if reordered == ordered_ids {
+        None
+    } else {
+        Some(reordered)
+    }
+}
+
+fn sort_categories_with_counts<F>(
+    categories: &mut [ModCategory],
+    mode: ModCategorySortMode,
+    mut member_count: F,
+) where
+    F: FnMut(&str) -> usize,
+{
+    match mode {
+        ModCategorySortMode::Manual => {
+            categories.sort_by(|a, b| {
+                a.order
+                    .cmp(&b.order)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+        }
+        ModCategorySortMode::ByNameAsc => {
+            categories.sort_by(|a, b| {
+                a.name
+                    .to_lowercase()
+                    .cmp(&b.name.to_lowercase())
+                    .then_with(|| a.order.cmp(&b.order))
+            });
+        }
+        ModCategorySortMode::ByModCountAsc => {
+            categories.sort_by(|a, b| {
+                member_count(&a.id)
+                    .cmp(&member_count(&b.id))
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    .then_with(|| a.order.cmp(&b.order))
+            });
+        }
+        ModCategorySortMode::ByModCountDesc => {
+            categories.sort_by(|a, b| {
+                member_count(&b.id)
+                    .cmp(&member_count(&a.id))
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    .then_with(|| a.order.cmp(&b.order))
+            });
+        }
+    }
+}
+
 fn clamp_metadata_source_label(text: &str) -> String {
     const MAX_CHARS: usize = 15;
     const PREFIX_CHARS: usize = 12;
@@ -460,12 +621,63 @@ impl HestiaApp {
             .filter(|category| category.game_id == game_id)
             .cloned()
             .collect();
-        categories.sort_by(|a, b| {
-            a.order
-                .cmp(&b.order)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        self.sort_categories_for_game(game_id, &mut categories);
         categories
+    }
+
+    fn category_sort_mode_for_game(&self, game_id: &str) -> ModCategorySortMode {
+        self.state
+            .category_sort_mode_by_game
+            .get(game_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn category_sort_mode_label(mode: ModCategorySortMode) -> &'static str {
+        match mode {
+            ModCategorySortMode::Manual => "Manual",
+            ModCategorySortMode::ByNameAsc => "By Name (A-Z)",
+            ModCategorySortMode::ByModCountAsc => "By Least Mods",
+            ModCategorySortMode::ByModCountDesc => "By Most Mods",
+        }
+    }
+
+    fn sort_categories_for_game(&self, game_id: &str, categories: &mut [ModCategory]) {
+        sort_categories_with_counts(
+            categories,
+            self.category_sort_mode_for_game(game_id),
+            |category_id| self.category_member_count(game_id, category_id),
+        );
+    }
+
+    fn set_category_sort_mode_for_game(&mut self, game_id: &str, mode: ModCategorySortMode) {
+        if mode == ModCategorySortMode::Manual {
+            self.state.category_sort_mode_by_game.remove(game_id);
+        } else {
+            self.state
+                .category_sort_mode_by_game
+                .insert(game_id.to_string(), mode);
+        }
+        self.sync_category_order_with_display(game_id);
+        self.save_state();
+    }
+
+    fn sync_category_order_with_display(&mut self, game_id: &str) {
+        let ordered_ids: Vec<String> = self
+            .categories_for_game(game_id)
+            .into_iter()
+            .map(|category| category.id)
+            .collect();
+        for (index, id) in ordered_ids.iter().enumerate() {
+            if let Some(category) = self
+                .state
+                .categories
+                .iter_mut()
+                .find(|category| category.id == *id)
+            {
+                category.order = index as i32;
+            }
+        }
     }
 
     fn compact_category_order_for_game(&mut self, game_id: &str) {
@@ -691,6 +903,41 @@ impl HestiaApp {
         Some(job)
     }
 
+    fn move_category_ids_to_slot(
+        &mut self,
+        game_id: &str,
+        moving_ids: &[String],
+        slot_index: usize,
+    ) -> bool {
+        if moving_ids.is_empty() {
+            return false;
+        }
+        let ordered_ids: Vec<String> = self
+            .categories_for_game(game_id)
+            .into_iter()
+            .map(|category| category.id)
+            .collect();
+        let Some(reordered) =
+            reorder_category_ids_for_drag(&ordered_ids, moving_ids, slot_index)
+        else {
+            return false;
+        };
+        for (index, id) in reordered.iter().enumerate() {
+            if let Some(category) = self
+                .state
+                .categories
+                .iter_mut()
+                .find(|category| category.id == *id)
+            {
+                category.order = index as i32;
+            }
+        }
+        self.state.category_sort_mode_by_game.remove(game_id);
+        self.compact_category_order_for_game(game_id);
+        self.save_state();
+        true
+    }
+
     fn move_category_order_to_slot(&mut self, category_id: &str, slot_index: usize) -> bool {
         let Some(game_id) = self
             .state
@@ -701,33 +948,7 @@ impl HestiaApp {
         else {
             return false;
         };
-        let mut ordered_ids: Vec<String> = self
-            .categories_for_game(&game_id)
-            .into_iter()
-            .map(|category| category.id)
-            .collect();
-        let Some(current_index) = ordered_ids.iter().position(|id| id == category_id) else {
-            return false;
-        };
-        let slot_index = slot_index.min(ordered_ids.len());
-        let adjusted_index = if slot_index > current_index {
-            slot_index.saturating_sub(1)
-        } else {
-            slot_index
-        };
-        if current_index == adjusted_index {
-            return false;
-        }
-        let moving = ordered_ids.remove(current_index);
-        ordered_ids.insert(adjusted_index, moving);
-        for (index, id) in ordered_ids.iter().enumerate() {
-            if let Some(category) = self.state.categories.iter_mut().find(|category| category.id == *id) {
-                category.order = index as i32;
-            }
-        }
-        self.compact_category_order_for_game(&game_id);
-        self.save_state();
-        true
+        self.move_category_ids_to_slot(&game_id, &[category_id.to_string()], slot_index)
     }
 
     fn finish_category_drag(&mut self) -> bool {
@@ -919,21 +1140,44 @@ impl HestiaApp {
     }
 
     fn delete_category(&mut self, category_id: &str) {
-        self.state.categories.retain(|category| category.id != category_id);
+        self.delete_categories(&[category_id.to_string()]);
+    }
+
+    fn delete_categories(&mut self, category_ids: &[String]) {
+        if category_ids.is_empty() {
+            return;
+        }
+        let deleting: HashSet<&str> = category_ids.iter().map(String::as_str).collect();
+        self.state
+            .categories
+            .retain(|category| !deleting.contains(category.id.as_str()));
         for mod_entry in self
             .state
             .mods
             .iter_mut()
-            .filter(|mod_entry| mod_entry.metadata.user.category_id.as_deref() == Some(category_id))
+            .filter(|mod_entry| {
+                mod_entry
+                    .metadata
+                    .user
+                    .category_id
+                    .as_deref()
+                    .is_some_and(|category_id| deleting.contains(category_id))
+            })
         {
             mod_entry.metadata.user.category_id = None;
             mod_entry.metadata.user.category.clear();
             let _ = xxmi::save_mod_metadata(mod_entry);
         }
-        if self.category_rename_target_id.as_deref() == Some(category_id) {
+        if self
+            .category_rename_target_id
+            .as_deref()
+            .is_some_and(|category_id| deleting.contains(category_id))
+        {
             self.category_rename_target_id = None;
             self.category_rename_name.clear();
         }
+        self.selected_category_ids
+            .retain(|category_id| !deleting.contains(category_id.as_str()));
         self.save_state();
     }
 

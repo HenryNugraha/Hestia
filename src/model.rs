@@ -26,6 +26,8 @@ pub struct AppState {
     #[serde(default)]
     pub categories: Vec<ModCategory>,
     #[serde(default)]
+    pub category_sort_mode_by_game: HashMap<String, ModCategorySortMode>,
+    #[serde(default)]
     pub create_downloaded_mod_category_by_game: HashMap<String, bool>,
     pub operations: Vec<OperationLogEntry>,
     #[serde(default)]
@@ -125,6 +127,7 @@ impl Default for AppState {
             mods: Vec::new(),
             tools: Vec::new(),
             categories: Vec::new(),
+            category_sort_mode_by_game: HashMap::new(),
             create_downloaded_mod_category_by_game: HashMap::new(),
             operations: Vec::new(),
             tasks: Vec::new(),
@@ -189,6 +192,15 @@ pub struct ModCategory {
     pub name: String,
     #[serde(default)]
     pub order: i32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ModCategorySortMode {
+    #[default]
+    Manual,
+    ByNameAsc,
+    ByModCountAsc,
+    ByModCountDesc,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

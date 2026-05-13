@@ -49,6 +49,7 @@ enum ViewMode {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     General,
+    Categories,
     Advanced,
     Path,
     About,
@@ -110,6 +111,9 @@ pub struct HestiaApp {
     category_rename_name: String,
     dragging_category_id: Option<String>,
     dragging_category_target_index: Option<usize>,
+    selected_category_ids: HashSet<String>,
+    settings_dragging_category_ids: Vec<String>,
+    settings_dragging_category_target_index: Option<usize>,
     toasts: Vec<ToastEntry>,
     pending_imports: VecDeque<PendingImport>,
     pending_conflicts: VecDeque<PendingConflict>,

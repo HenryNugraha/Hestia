@@ -17,9 +17,9 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::model::{
     AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, DeleteBehavior,
     GameInstall, ImportResolution, LaunchBehavior, LibraryFolder, LibraryGroupMode, MOD_META_DIR,
-    MOD_META_FILE, MetadataVisibility, ModCategory, ModStatusTargets, ModifiedUpdateBehavior,
-    OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
-    TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
+    MOD_META_FILE, MetadataVisibility, ModCategory, ModCategorySortMode, ModStatusTargets,
+    ModifiedUpdateBehavior, OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate,
+    TaskEntry, TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
 };
 
 #[derive(Debug, Clone)]
@@ -116,6 +116,8 @@ struct AppPreferences {
     #[serde(default)]
     categories: Vec<ModCategory>,
     #[serde(default)]
+    category_sort_mode_by_game: HashMap<String, ModCategorySortMode>,
+    #[serde(default)]
     create_downloaded_mod_category_by_game: HashMap<String, bool>,
     #[serde(default)]
     update_check_statuses: ModStatusTargets,
@@ -174,6 +176,7 @@ impl From<&AppState> for AppPreferences {
             library_uncategorized_first: state.library_uncategorized_first,
             tools: state.tools.clone(),
             categories: state.categories.clone(),
+            category_sort_mode_by_game: state.category_sort_mode_by_game.clone(),
             create_downloaded_mod_category_by_game: state
                 .create_downloaded_mod_category_by_game
                 .clone(),
@@ -376,6 +379,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.library_uncategorized_first = prefs.library_uncategorized_first;
     state.tools = prefs.tools;
     state.categories = prefs.categories;
+    state.category_sort_mode_by_game = prefs.category_sort_mode_by_game;
     let (create_downloaded_mod_category_by_game, preferences_need_save) =
         normalize_create_downloaded_mod_category_by_game(
             &state.games,

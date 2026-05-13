@@ -7,7 +7,10 @@ impl HestiaApp {
         let force_default_pos = self.whats_new_force_default_pos;
         let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
         let mut window = egui::Window::new(icon_text_sized(Icon::Bell, "What's New", 14.0, 14.0))
-            .id(egui::Id::new(("whats_new_window", self.whats_new_window_nonce)))
+            .id(egui::Id::new((
+                "whats_new_window",
+                self.whats_new_window_nonce,
+            )))
             .open(&mut whats_new_open)
             .title_bar(true)
             .resizable(false)
@@ -24,7 +27,8 @@ impl HestiaApp {
                 .constrain_to(inset_rect);
             if force_default_pos {
                 let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);
-                window = window.fixed_pos(top_right - egui::vec2(window_size.x, 0.0) - window_offset);
+                window =
+                    window.fixed_pos(top_right - egui::vec2(window_size.x, 0.0) - window_offset);
             }
         } else {
             window = window.default_width(460.0).default_height(220.0);
@@ -32,11 +36,20 @@ impl HestiaApp {
 
         window.show(ctx, |ui| {
             ui.horizontal(|ui| {
-                static_label(ui, bold(format!("Hestia {APP_VERSION}")).underline().size(16.0));
+                static_label(
+                    ui,
+                    bold(format!("Hestia {APP_VERSION}")).underline().size(16.0),
+                );
                 ui.add_space(-4.0);
                 ui.vertical(|ui| {
                     ui.add_space(5.0);
-                    static_label(ui, RichText::new(format!("{}", WHATS_NEW_DATE)).italics().size(11.0).small());
+                    static_label(
+                        ui,
+                        RichText::new(format!("{}", WHATS_NEW_DATE))
+                            .italics()
+                            .size(11.0)
+                            .small(),
+                    );
                 });
             });
             // ui.add_space(6.0);
@@ -49,12 +62,8 @@ impl HestiaApp {
                             static_label(ui, "•");
                         },
                     );
-                    ui.add(
-                        egui::Label::new(*highlight)
-                            .wrap()
-                            .selectable(false),
-                    )
-                    .on_hover_cursor(egui::CursorIcon::Default);
+                    ui.add(egui::Label::new(*highlight).wrap().selectable(false))
+                        .on_hover_cursor(egui::CursorIcon::Default);
                 });
             }
         });
@@ -84,7 +93,11 @@ impl HestiaApp {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
             let log_offset = egui::vec2(4.0, 4.0);
             let log_size = egui::vec2(460.0, 420.0);
-            window = window.movable(true).resizable(true).constrain_to(inset_rect).collapsible(true);
+            window = window
+                .movable(true)
+                .resizable(true)
+                .constrain_to(inset_rect)
+                .collapsible(true);
             if just_opened {
                 window = window.default_size(log_size);
             }
@@ -101,21 +114,21 @@ impl HestiaApp {
                 .auto_shrink([false, false])
                 .stick_to_bottom(stick_to_bottom)
                 .show(ui, |ui| {
-                let mut last_date: Option<String> = None;
-                for entry in self.state.operations.iter().rev() {
-                    let (date, time) = format_log_timestamp(entry.timestamp, use_24h);
-                    if last_date.as_deref() != Some(date.as_str()) {
-                        if last_date.is_some() {
-                            ui.add_space(12.0);
+                    let mut last_date: Option<String> = None;
+                    for entry in self.state.operations.iter().rev() {
+                        let (date, time) = format_log_timestamp(entry.timestamp, use_24h);
+                        if last_date.as_deref() != Some(date.as_str()) {
+                            if last_date.is_some() {
+                                ui.add_space(12.0);
+                            }
+                            static_label(ui, bold(date.clone()).underline());
+                            last_date = Some(date);
+                            ui.add_space(-4.0);
                         }
-                        static_label(ui, bold(date.clone()).underline());
-                        last_date = Some(date);
-                        ui.add_space(-4.0);
+                        let summary = sanitize_log_subject(&entry.summary);
+                        static_label(ui, format!("[{}] {}", time, summary));
                     }
-                    let summary = sanitize_log_subject(&entry.summary);
-                    static_label(ui, format!("[{}] {}", time, summary));
-                }
-            });
+                });
         });
 
         if let Some(inner) = log_response {
@@ -181,82 +194,87 @@ impl HestiaApp {
             }
             if force_default_pos {
                 let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);
-                window = window.fixed_pos(
-                    top_right - egui::vec2(tasks_size.x, 0.0) - tasks_offset,
-                );
+                window = window.fixed_pos(top_right - egui::vec2(tasks_size.x, 0.0) - tasks_offset);
             }
         } else if just_opened {
             window = window.default_width(460.0).default_height(420.0);
         }
 
-        window.show(ctx, |ui| {
-            match self.state.tasks_layout {
-                TasksLayout::Sections => {
-                    let ongoing = self.sorted_tasks(|task| {
-                        matches!(
-                            task.status,
-                            TaskStatus::Queued
-                                | TaskStatus::Installing
-                                | TaskStatus::Downloading
-                                | TaskStatus::Canceling
-                        )
-                    });
-                    let completed = self.sorted_tasks(|task| {
-                        !self.browse_download_queue.iter().any(|j| j.task_id == task.id)
-                            && !self.browse_download_inflight.contains_key(&task.id)
-                            && !self.install_queue.iter().any(|j| j.id == task.id)
-                            && !self.install_inflight.contains_key(&task.id)
-                    });
+        window.show(ctx, |ui| match self.state.tasks_layout {
+            TasksLayout::Sections => {
+                let ongoing = self.sorted_tasks(|task| {
+                    matches!(
+                        task.status,
+                        TaskStatus::Queued
+                            | TaskStatus::Installing
+                            | TaskStatus::Downloading
+                            | TaskStatus::Canceling
+                    )
+                });
+                let completed = self.sorted_tasks(|task| {
+                    !self
+                        .browse_download_queue
+                        .iter()
+                        .any(|j| j.task_id == task.id)
+                        && !self.browse_download_inflight.contains_key(&task.id)
+                        && !self.install_queue.iter().any(|j| j.id == task.id)
+                        && !self.install_inflight.contains_key(&task.id)
+                });
 
-                    let render_section_label = |ui: &mut Ui, label: &str| {
-                        let section_height = 20.0;
-                        let (rect, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), section_height),
-                            Sense::hover(),
-                        );
-                        let line_y = rect.center().y;
-                        let line_color = Color32::from_gray(70);
-                        ui.painter().line_segment(
-                            [egui::pos2(rect.left(), line_y), egui::pos2(rect.right(), line_y)],
-                            egui::Stroke::new(1.0, line_color),
-                        );
-                        let galley = ui.painter().layout_no_wrap(
-                            label.to_string(),
-                            egui::FontId::proportional(12.0),
-                            Color32::from_gray(200),
-                        );
-                        let text_rect =
-                            egui::Rect::from_center_size(rect.center(), galley.size());
-                        ui.painter().rect_filled(
-                            text_rect.expand(6.0),
-                            6.0,
-                            Color32::from_rgba_premultiplied(28, 30, 34, 230),
-                        );
-                        ui.painter().galley(text_rect.min, galley, Color32::WHITE);
-                    };
+                let render_section_label = |ui: &mut Ui, label: &str| {
+                    let section_height = 20.0;
+                    let (rect, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), section_height),
+                        Sense::hover(),
+                    );
+                    let line_y = rect.center().y;
+                    let line_color = Color32::from_gray(70);
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(rect.left(), line_y),
+                            egui::pos2(rect.right(), line_y),
+                        ],
+                        egui::Stroke::new(1.0, line_color),
+                    );
+                    let galley = ui.painter().layout_no_wrap(
+                        label.to_string(),
+                        egui::FontId::proportional(12.0),
+                        Color32::from_gray(200),
+                    );
+                    let text_rect = egui::Rect::from_center_size(rect.center(), galley.size());
+                    ui.painter().rect_filled(
+                        text_rect.expand(6.0),
+                        6.0,
+                        Color32::from_rgba_premultiplied(28, 30, 34, 230),
+                    );
+                    ui.painter().galley(text_rect.min, galley, Color32::WHITE);
+                };
 
-                    let available_height = ui.available_height().max(1.0);
-                    let section_gap = 10.0;
-                    let ongoing_height = (available_height * 0.55).max(120.0);
-                    let completed_height =
-                        (available_height - ongoing_height - section_gap).max(120.0);
+                let available_height = ui.available_height().max(1.0);
+                let section_gap = 10.0;
+                let ongoing_height = (available_height * 0.55).max(120.0);
+                let completed_height = (available_height - ongoing_height - section_gap).max(120.0);
 
-                    let ongoing_label = if ongoing.is_empty() {
-                        "Ongoing".to_string()
-                    } else {
-                        format!("Ongoing ({})", ongoing.len())
-                    };
-                    render_section_label(ui, &ongoing_label);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), ongoing_height),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ScrollArea::vertical()
-                                .id_salt("tasks_ongoing")
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
+                let ongoing_label = if ongoing.is_empty() {
+                    "Ongoing".to_string()
+                } else {
+                    format!("Ongoing ({})", ongoing.len())
+                };
+                render_section_label(ui, &ongoing_label);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), ongoing_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ScrollArea::vertical()
+                            .id_salt("tasks_ongoing")
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
                                 if ongoing.is_empty() {
-                                    static_label(ui, RichText::new("No active tasks").color(Color32::from_gray(140)));
+                                    static_label(
+                                        ui,
+                                        RichText::new("No active tasks")
+                                            .color(Color32::from_gray(140)),
+                                    );
                                 } else {
                                     for task in ongoing {
                                         ui.push_id(task.id, |ui| {
@@ -266,25 +284,29 @@ impl HestiaApp {
                                     }
                                 }
                             });
-                        },
-                    );
-                    ui.add_space(section_gap);
-                    let completed_label = if completed.is_empty() {
-                        "Completed".to_string()
-                    } else {
-                        format!("Completed ({})", completed.len())
-                    };
-                    render_section_label(ui, &completed_label);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), completed_height),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ScrollArea::vertical()
-                                .id_salt("tasks_completed")
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
+                    },
+                );
+                ui.add_space(section_gap);
+                let completed_label = if completed.is_empty() {
+                    "Completed".to_string()
+                } else {
+                    format!("Completed ({})", completed.len())
+                };
+                render_section_label(ui, &completed_label);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), completed_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ScrollArea::vertical()
+                            .id_salt("tasks_completed")
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
                                 if completed.is_empty() {
-                                    static_label(ui, RichText::new("No completed tasks").color(Color32::from_gray(140)));
+                                    static_label(
+                                        ui,
+                                        RichText::new("No completed tasks")
+                                            .color(Color32::from_gray(140)),
+                                    );
                                 } else {
                                     for task in completed {
                                         ui.push_id(task.id, |ui| {
@@ -294,93 +316,77 @@ impl HestiaApp {
                                     }
                                 }
                             });
-                        },
-                    );
-                }
-                TasksLayout::Tabbed => {
-                    let download_count =
-                        self.browse_download_queue.len() + self.browse_download_inflight.len();
-                    let install_count = self
-                        .state
-                        .tasks
-                        .iter()
-                        .filter(|task| {
-                            task.kind == TaskKind::Install
-                                && matches!(
-                                    task.status,
-                                    TaskStatus::Queued
-                                        | TaskStatus::Installing
-                                        | TaskStatus::Canceling
-                                )
-                        })
-                        .count();
-                    let completed_count = self
-                        .state
-                        .tasks
-                        .iter()
-                        .filter(|task| {
-                            matches!(
+                    },
+                );
+            }
+            TasksLayout::Tabbed => {
+                let download_count =
+                    self.browse_download_queue.len() + self.browse_download_inflight.len();
+                let install_count = self
+                    .state
+                    .tasks
+                    .iter()
+                    .filter(|task| {
+                        task.kind == TaskKind::Install
+                            && matches!(
                                 task.status,
-                                TaskStatus::Completed
-                                    | TaskStatus::Failed
-                                    | TaskStatus::Canceled
+                                TaskStatus::Queued | TaskStatus::Installing | TaskStatus::Canceling
                             )
-                        })
-                        .count();
-                    let failed_count = self
-                        .state
-                        .tasks
-                        .iter()
-                        .filter(|task| task.status == TaskStatus::Failed)
-                        .count();
-                    let downloads_label = if download_count > 0 {
-                        format!("Downloads ({download_count})")
-                    } else {
-                        "Downloads".to_string()
-                    };
-                    let installs_label = if install_count > 0 {
-                        format!("Installs ({install_count})")
-                    } else {
-                        "Installs".to_string()
-                    };
-                    let completed_label = if completed_count > 0 {
-                        format!("Completed ({completed_count})")
-                    } else {
-                        "Completed".to_string()
-                    };
-                    let failed_label = if failed_count > 0 {
-                        format!("Failed ({failed_count})")
-                    } else {
-                        "Failed".to_string()
-                    };
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(
-                            &mut self.tasks_tab,
-                            TasksTab::Downloads,
-                            downloads_label,
-                        );
-                        ui.selectable_value(
-                            &mut self.tasks_tab,
-                            TasksTab::Installs,
-                            installs_label,
-                        );
-                        ui.selectable_value(
-                            &mut self.tasks_tab,
-                            TasksTab::Completed,
-                            completed_label,
-                        );
-                        ui.selectable_value(
-                            &mut self.tasks_tab,
-                            TasksTab::Failed,
-                            failed_label,
-                        );
-                    });
-                    ui.add_space(6.0);
+                    })
+                    .count();
+                let completed_count = self
+                    .state
+                    .tasks
+                    .iter()
+                    .filter(|task| {
+                        matches!(
+                            task.status,
+                            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Canceled
+                        )
+                    })
+                    .count();
+                let failed_count = self
+                    .state
+                    .tasks
+                    .iter()
+                    .filter(|task| task.status == TaskStatus::Failed)
+                    .count();
+                let downloads_label = if download_count > 0 {
+                    format!("Downloads ({download_count})")
+                } else {
+                    "Downloads".to_string()
+                };
+                let installs_label = if install_count > 0 {
+                    format!("Installs ({install_count})")
+                } else {
+                    "Installs".to_string()
+                };
+                let completed_label = if completed_count > 0 {
+                    format!("Completed ({completed_count})")
+                } else {
+                    "Completed".to_string()
+                };
+                let failed_label = if failed_count > 0 {
+                    format!("Failed ({failed_count})")
+                } else {
+                    "Failed".to_string()
+                };
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.tasks_tab, TasksTab::Downloads, downloads_label);
+                    ui.selectable_value(&mut self.tasks_tab, TasksTab::Installs, installs_label);
+                    ui.selectable_value(&mut self.tasks_tab, TasksTab::Completed, completed_label);
+                    ui.selectable_value(&mut self.tasks_tab, TasksTab::Failed, failed_label);
+                });
+                ui.add_space(6.0);
 
-                    ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
                         let items = match self.tasks_tab {
                             TasksTab::Downloads => self.sorted_tasks(|task| {
-                                self.browse_download_queue.iter().any(|j| j.task_id == task.id)
+                                self.browse_download_queue
+                                    .iter()
+                                    .any(|j| j.task_id == task.id)
                                     || self.browse_download_inflight.contains_key(&task.id)
                             }),
                             TasksTab::Installs => self.sorted_tasks(|task| {
@@ -388,7 +394,10 @@ impl HestiaApp {
                                     || self.install_inflight.contains_key(&task.id)
                             }),
                             TasksTab::Completed => self.sorted_tasks(|task| {
-                                !self.browse_download_queue.iter().any(|j| j.task_id == task.id)
+                                !self
+                                    .browse_download_queue
+                                    .iter()
+                                    .any(|j| j.task_id == task.id)
                                     && !self.browse_download_inflight.contains_key(&task.id)
                                     && !self.install_queue.iter().any(|j| j.id == task.id)
                                     && !self.install_inflight.contains_key(&task.id)
@@ -399,7 +408,10 @@ impl HestiaApp {
                             }
                         };
                         if items.is_empty() {
-                            static_label(ui, RichText::new("No tasks").color(Color32::from_gray(140)));
+                            static_label(
+                                ui,
+                                RichText::new("No tasks").color(Color32::from_gray(140)),
+                            );
                         } else {
                             for task in items {
                                 ui.push_id(task.id, |ui| {
@@ -409,21 +421,22 @@ impl HestiaApp {
                             }
                         }
                     });
-                }
-                TasksLayout::SingleList => {
-                    let stick_to_bottom =
-                        self.state.tasks_order == TasksOrder::OldestFirst
-                            && self.tasks_scroll_to_edge;
-                    let scroll_to_top =
-                        self.state.tasks_order == TasksOrder::NewestFirst
-                            && self.tasks_scroll_to_edge;
-                    ScrollArea::vertical()
-                        .auto_shrink([false, true])
-                        .stick_to_bottom(stick_to_bottom)
-                        .show(ui, |ui| {
+            }
+            TasksLayout::SingleList => {
+                let stick_to_bottom =
+                    self.state.tasks_order == TasksOrder::OldestFirst && self.tasks_scroll_to_edge;
+                let scroll_to_top =
+                    self.state.tasks_order == TasksOrder::NewestFirst && self.tasks_scroll_to_edge;
+                ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .stick_to_bottom(stick_to_bottom)
+                    .show(ui, |ui| {
                         let items = self.sorted_tasks(|_| true);
                         if items.is_empty() {
-                            static_label(ui, RichText::new("No tasks").color(Color32::from_gray(140)));
+                            static_label(
+                                ui,
+                                RichText::new("No tasks").color(Color32::from_gray(140)),
+                            );
                         } else {
                             for task in items {
                                 ui.push_id(task.id, |ui| {
@@ -436,9 +449,8 @@ impl HestiaApp {
                             }
                         }
                     });
-                    if self.tasks_scroll_to_edge {
-                        self.tasks_scroll_to_edge = false;
-                    }
+                if self.tasks_scroll_to_edge {
+                    self.tasks_scroll_to_edge = false;
                 }
             }
         });
@@ -480,9 +492,7 @@ impl HestiaApp {
             }
             if force_default_pos {
                 let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);
-                window = window.fixed_pos(
-                    top_right - egui::vec2(tools_size.x, 0.0) - tools_offset,
-                );
+                window = window.fixed_pos(top_right - egui::vec2(tools_size.x, 0.0) - tools_offset);
             }
         } else if just_opened {
             window = window.default_width(560.0).default_height(460.0);
@@ -501,7 +511,10 @@ impl HestiaApp {
 
         window.show(ctx, |ui| {
             let Some(_game) = self.selected_game().cloned() else {
-                static_label(ui, RichText::new("No game selected").color(Color32::from_gray(160)));
+                static_label(
+                    ui,
+                    RichText::new("No game selected").color(Color32::from_gray(160)),
+                );
                 return;
             };
 
@@ -510,117 +523,183 @@ impl HestiaApp {
                 self.ensure_tool_icon_texture(ctx, tool);
             }
 
-            ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+            ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
 
-                    for tool in &tools {
-                        let is_missing = !tool.path.is_file();
-                        let allow_hover_cursor = self.dragging_window_tool_id.is_none();
-                        let is_dragging_this = self
-                            .dragging_window_tool_id
-                            .as_ref()
-                            .is_some_and(|dragging_id| dragging_id == &tool.id);
-                        let card_size = Vec2::new(168.0, 204.0);
-                        let (rect, response) =
-                            ui.allocate_exact_size(card_size, Sense::click_and_drag());
-                        tool_card_rects.push(rect);
-                        let response = if allow_hover_cursor {
-                            response.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        } else {
-                            response
-                        };
-                        let fill = if is_dragging_this {
-                            Color32::from_rgba_premultiplied(31, 33, 37, 110)
-                        } else if response.hovered() {
-                            Color32::from_rgba_premultiplied(44, 47, 52, 242)
-                        } else {
-                            Color32::from_rgba_premultiplied(31, 33, 37, 242)
-                        };
-                        let stroke = if is_dragging_this {
-                            Color32::from_rgb(214, 104, 58)
-                        } else if response.hovered() {
-                            Color32::from_rgb(92, 98, 107)
-                        } else {
-                            Color32::from_rgb(69, 74, 81)
-                        };
-                        ui.painter().rect(
-                            rect.shrink(1.0),
-                            egui::CornerRadius::same(16),
-                            fill,
-                            egui::Stroke::new(1.0, stroke),
-                            egui::StrokeKind::Inside,
-                        );
-                        let icon_size = 92.0;
-                        let icon_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.center().x, rect.top() + 72.0),
-                            Vec2::splat(icon_size),
-                        );
-                        let mut icon_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(icon_rect)
-                                .layout(egui::Layout::top_down(egui::Align::Center)),
-                        );
-                        let icon_response = paint_tool_icon(
-                            &mut icon_ui,
-                            &self.tool_icon_textures,
-                            &tool.id,
-                            &tool.path,
-                            icon_size,
-                            if is_missing && !tool.auto_detected {
-                                Color32::from_gray(130)
+                        for tool in &tools {
+                            let is_missing = !tool.path.is_file();
+                            let allow_hover_cursor = self.dragging_window_tool_id.is_none();
+                            let is_dragging_this = self
+                                .dragging_window_tool_id
+                                .as_ref()
+                                .is_some_and(|dragging_id| dragging_id == &tool.id);
+                            let card_size = Vec2::new(168.0, 204.0);
+                            let (rect, response) =
+                                ui.allocate_exact_size(card_size, Sense::click_and_drag());
+                            tool_card_rects.push(rect);
+                            let response = if allow_hover_cursor {
+                                response.on_hover_cursor(egui::CursorIcon::PointingHand)
                             } else {
-                                Color32::WHITE
-                            },
-                            Sense::hover(),
-                        );
-                        icon_response.on_hover_text(tool.path.display().to_string());
+                                response
+                            };
+                            let fill = if is_dragging_this {
+                                Color32::from_rgba_premultiplied(31, 33, 37, 110)
+                            } else if response.hovered() {
+                                Color32::from_rgba_premultiplied(44, 47, 52, 242)
+                            } else {
+                                Color32::from_rgba_premultiplied(31, 33, 37, 242)
+                            };
+                            let stroke = if is_dragging_this {
+                                Color32::from_rgb(214, 104, 58)
+                            } else if response.hovered() {
+                                Color32::from_rgb(92, 98, 107)
+                            } else {
+                                Color32::from_rgb(69, 74, 81)
+                            };
+                            ui.painter().rect(
+                                rect.shrink(1.0),
+                                egui::CornerRadius::same(16),
+                                fill,
+                                egui::Stroke::new(1.0, stroke),
+                                egui::StrokeKind::Inside,
+                            );
+                            let icon_size = 92.0;
+                            let icon_rect = egui::Rect::from_center_size(
+                                egui::pos2(rect.center().x, rect.top() + 72.0),
+                                Vec2::splat(icon_size),
+                            );
+                            let mut icon_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(icon_rect)
+                                    .layout(egui::Layout::top_down(egui::Align::Center)),
+                            );
+                            let icon_response = paint_tool_icon(
+                                &mut icon_ui,
+                                &self.tool_icon_textures,
+                                &tool.id,
+                                &tool.path,
+                                icon_size,
+                                if is_missing && !tool.auto_detected {
+                                    Color32::from_gray(130)
+                                } else {
+                                    Color32::WHITE
+                                },
+                                Sense::hover(),
+                            );
+                            icon_response.on_hover_text(tool.path.display().to_string());
 
-                        let label_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.center().x, rect.bottom() - 34.0),
-                            egui::vec2(rect.width() - 22.0, 34.0),
-                        );
-                        let mut label_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(label_rect)
-                                .layout(
+                            let label_rect = egui::Rect::from_center_size(
+                                egui::pos2(rect.center().x, rect.bottom() - 34.0),
+                                egui::vec2(rect.width() - 22.0, 34.0),
+                            );
+                            let mut label_ui =
+                                ui.new_child(egui::UiBuilder::new().max_rect(label_rect).layout(
                                     egui::Layout::centered_and_justified(egui::Direction::TopDown),
-                                ),
-                        );
-                        let label_response = label_ui
-                            .add(
-                            egui::Label::new(
-                                RichText::new(&tool.label)
-                                    .size(14.0)
-                                    .color(if is_missing && !tool.auto_detected {
-                                        Color32::from_rgb(212, 122, 122)
-                                    } else {
-                                        Color32::from_rgb(228, 231, 235)
-                                    }),
-                            )
-                            .truncate(),
-                        )
-                            .on_hover_cursor(egui::CursorIcon::Default);
-                        if label_response.hovered() {
-                            response.clone().on_hover_text_at_pointer(&tool.label);
-                        }
+                                ));
+                            let label_response = label_ui
+                                .add(
+                                    egui::Label::new(RichText::new(&tool.label).size(14.0).color(
+                                        if is_missing && !tool.auto_detected {
+                                            Color32::from_rgb(212, 122, 122)
+                                        } else {
+                                            Color32::from_rgb(228, 231, 235)
+                                        },
+                                    ))
+                                    .truncate(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::Default);
+                            if label_response.hovered() {
+                                response.clone().on_hover_text_at_pointer(&tool.label);
+                            }
 
-                        let menu_rect = egui::Rect::from_min_size(
-                            egui::pos2(rect.right() - 34.0, rect.top() + 10.0),
-                            Vec2::new(24.0, 24.0),
-                        );
-                        let mut menu_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(menu_rect)
-                                .layout(egui::Layout::top_down(egui::Align::Center)),
-                        );
-                        menu_ui.style_mut().spacing.button_padding = egui::vec2(4.0, 2.0);
-                        let menu_response = menu_ui.menu_button(
-                            RichText::new(icon_char(Icon::EllipsisVertical).to_string())
-                                .family(FontFamily::Name(LUCIDE_FAMILY.into()))
-                                .size(18.0)
-                                .color(Color32::from_rgb(220, 224, 229)),
-                            |ui| {
+                            let menu_rect = egui::Rect::from_min_size(
+                                egui::pos2(rect.right() - 34.0, rect.top() + 10.0),
+                                Vec2::new(24.0, 24.0),
+                            );
+                            let mut menu_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(menu_rect)
+                                    .layout(egui::Layout::top_down(egui::Align::Center)),
+                            );
+                            menu_ui.style_mut().spacing.button_padding = egui::vec2(4.0, 2.0);
+                            let menu_response = menu_ui.menu_button(
+                                RichText::new(icon_char(Icon::EllipsisVertical).to_string())
+                                    .family(FontFamily::Name(LUCIDE_FAMILY.into()))
+                                    .size(18.0)
+                                    .color(Color32::from_rgb(220, 224, 229)),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !is_missing,
+                                            egui::Button::new(icon_text_sized(
+                                                Icon::Play,
+                                                "Launch",
+                                                14.0,
+                                                13.0,
+                                            )),
+                                        )
+                                        .clicked()
+                                    {
+                                        pending_launch = Some(tool.id.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::SquareTerminal,
+                                            "Set launch options",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        pending_launch_options = Some(tool.id.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FolderOpen,
+                                            "Open Folder",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        pending_open = Some(tool.id.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            if tool.show_in_titlebar {
+                                                Icon::PinOff
+                                            } else {
+                                                Icon::Pin
+                                            },
+                                            if tool.show_in_titlebar {
+                                                "Unpin from Titlebar"
+                                            } else {
+                                                "Pin to Titlebar"
+                                            },
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        pin_changes.push((tool.id.clone(), !tool.show_in_titlebar));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(Icon::Trash2, "Remove", 14.0, 13.0))
+                                        .clicked()
+                                    {
+                                        pending_remove = Some(tool.id.clone());
+                                        ui.close();
+                                    }
+                                },
+                            );
+                            response.context_menu(|ui| {
                                 if ui
                                     .add_enabled(
                                         !is_missing,
@@ -681,297 +760,237 @@ impl HestiaApp {
                                     ui.close();
                                 }
                                 if ui
-                                    .button(icon_text_sized(
-                                        Icon::Trash2,
-                                        "Remove",
-                                        14.0,
-                                        13.0,
-                                    ))
+                                    .button(icon_text_sized(Icon::Trash2, "Remove", 14.0, 13.0))
                                     .clicked()
                                 {
                                     pending_remove = Some(tool.id.clone());
                                     ui.close();
                                 }
-                            },
-                        );
-                        response.context_menu(|ui| {
-                            if ui
-                                .add_enabled(
-                                    !is_missing,
-                                    egui::Button::new(icon_text_sized(
-                                        Icon::Play,
-                                        "Launch",
-                                        14.0,
-                                        13.0,
-                                    )),
-                                )
-                                .clicked()
+                            });
+                            let pointer_over_menu = ui
+                                .ctx()
+                                .pointer_latest_pos()
+                                .is_some_and(|pos| menu_rect.contains(pos));
+                            if response.drag_started() {
+                                self.dragging_window_tool_id = Some(tool.id.clone());
+                                self.dragging_window_tool_target_index =
+                                    tools.iter().position(|candidate| candidate.id == tool.id);
+                            }
+                            let pointer_over_card = ui
+                                .ctx()
+                                .pointer_latest_pos()
+                                .is_some_and(|pos| rect.contains(pos));
+                            let insert_before = ui
+                                .ctx()
+                                .pointer_latest_pos()
+                                .is_some_and(|pos| pos.x < rect.center().x);
+                            let this_index =
+                                tools.iter().position(|candidate| candidate.id == tool.id);
+                            let insertion_slot = this_index.map(|index| {
+                                if insert_before {
+                                    index
+                                } else {
+                                    index.saturating_add(1)
+                                }
+                            });
+                            if self.dragging_window_tool_id.is_some()
+                                && ui.input(|input| input.pointer.primary_down())
+                                && self
+                                    .dragging_window_tool_id
+                                    .as_ref()
+                                    .is_some_and(|dragging_id| dragging_id != &tool.id)
+                                && pointer_over_card
+                            {
+                                if let Some(slot_index) = insertion_slot {
+                                    self.dragging_window_tool_target_index = Some(slot_index);
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                            if response.drag_stopped()
+                                && self
+                                    .dragging_window_tool_id
+                                    .as_ref()
+                                    .is_some_and(|dragging_id| dragging_id == &tool.id)
+                            {
+                                if let (Some(dragging_id), Some(target_index)) = (
+                                    self.dragging_window_tool_id.clone(),
+                                    self.dragging_window_tool_target_index,
+                                ) {
+                                    if self
+                                        .move_tool_window_order_to_slot(&dragging_id, target_index)
+                                    {
+                                        save_after_drag = true;
+                                    }
+                                }
+                                self.dragging_window_tool_id = None;
+                                self.dragging_window_tool_target_index = None;
+                            }
+                            if response.clicked()
+                                && !response.dragged()
+                                && !menu_response.response.hovered()
+                                && !pointer_over_menu
                             {
                                 pending_launch = Some(tool.id.clone());
-                                ui.close();
                             }
-                            if ui
-                                .button(icon_text_sized(
-                                    Icon::SquareTerminal,
-                                    "Set launch options",
-                                    14.0,
-                                    13.0,
-                                ))
-                                .clicked()
-                            {
-                                pending_launch_options = Some(tool.id.clone());
-                                ui.close();
-                            }
-                            if ui
-                                .button(icon_text_sized(
-                                    Icon::FolderOpen,
-                                    "Open Folder",
-                                    14.0,
-                                    13.0,
-                                ))
-                                .clicked()
-                            {
-                                pending_open = Some(tool.id.clone());
-                                ui.close();
-                            }
-                            if ui
-                                .button(icon_text_sized(
-                                    if tool.show_in_titlebar {
-                                        Icon::PinOff
-                                    } else {
-                                        Icon::Pin
-                                    },
-                                    if tool.show_in_titlebar {
-                                        "Unpin from Titlebar"
-                                    } else {
-                                        "Pin to Titlebar"
-                                    },
-                                    14.0,
-                                    13.0,
-                                ))
-                                .clicked()
-                            {
-                                pin_changes.push((tool.id.clone(), !tool.show_in_titlebar));
-                                ui.close();
-                            }
-                            if ui
-                                .button(icon_text_sized(
-                                    Icon::Trash2,
-                                    "Remove",
-                                    14.0,
-                                    13.0,
-                                ))
-                                .clicked()
-                            {
-                                pending_remove = Some(tool.id.clone());
-                                ui.close();
-                            }
-                        });
-                        let pointer_over_menu = ui
-                            .ctx()
-                            .pointer_latest_pos()
-                            .is_some_and(|pos| menu_rect.contains(pos));
-                        if response.drag_started() {
-                            self.dragging_window_tool_id = Some(tool.id.clone());
-                            self.dragging_window_tool_target_index =
-                                tools.iter().position(|candidate| candidate.id == tool.id);
-                        }
-                        let pointer_over_card = ui
-                            .ctx()
-                            .pointer_latest_pos()
-                            .is_some_and(|pos| rect.contains(pos));
-                        let insert_before = ui
-                            .ctx()
-                            .pointer_latest_pos()
-                            .is_some_and(|pos| pos.x < rect.center().x);
-                        let this_index = tools.iter().position(|candidate| candidate.id == tool.id);
-                        let insertion_slot = this_index.map(|index| {
-                            if insert_before {
-                                index
-                            } else {
-                                index.saturating_add(1)
-                            }
-                        });
-                        if self.dragging_window_tool_id.is_some()
-                            && ui.input(|input| input.pointer.primary_down())
-                            && self
-                                .dragging_window_tool_id
-                                .as_ref()
-                                .is_some_and(|dragging_id| dragging_id != &tool.id)
-                            && pointer_over_card
-                        {
-                            if let Some(slot_index) = insertion_slot {
-                                self.dragging_window_tool_target_index = Some(slot_index);
-                                ui.ctx().request_repaint();
+                            if is_dragging_this {
+                                dragged_window_preview = Some((
+                                    tool.id.clone(),
+                                    tool.label.clone(),
+                                    is_missing && !tool.auto_detected,
+                                    rect,
+                                ));
                             }
                         }
-                        if response.drag_stopped()
-                            && self
-                                .dragging_window_tool_id
-                                .as_ref()
-                                .is_some_and(|dragging_id| dragging_id == &tool.id)
-                        {
-                            if let (Some(dragging_id), Some(target_index)) = (
-                                self.dragging_window_tool_id.clone(),
-                                self.dragging_window_tool_target_index,
-                            ) {
-                                if self.move_tool_window_order_to_slot(&dragging_id, target_index) {
-                                    save_after_drag = true;
-                                }
-                            }
-                            self.dragging_window_tool_id = None;
-                            self.dragging_window_tool_target_index = None;
-                        }
-                        if response.clicked()
-                            && !response.dragged()
-                            && !menu_response.response.hovered()
-                            && !pointer_over_menu
-                        {
-                            pending_launch = Some(tool.id.clone());
-                        }
-                        if is_dragging_this {
-                            dragged_window_preview = Some((
-                                tool.id.clone(),
-                                tool.label.clone(),
-                                is_missing && !tool.auto_detected,
-                                rect,
-                            ));
-                        }
-                    }
 
-                    let add_size = Vec2::new(168.0, 204.0);
-                    let (add_rect, add_response) = ui.allocate_exact_size(add_size, Sense::click());
-                    add_card_rect = Some(add_rect);
-                    let add_response = if self.dragging_window_tool_id.is_none() {
-                        add_response.on_hover_cursor(egui::CursorIcon::PointingHand)
-                    } else {
-                        add_response
-                    };
-                    let add_fill = if add_response.hovered() {
-                        Color32::from_rgba_premultiplied(44, 47, 52, 242)
-                    } else {
-                        Color32::from_rgba_premultiplied(31, 33, 37, 242)
-                    };
-                    ui.painter().rect(
-                        add_rect.shrink(1.0),
-                        egui::CornerRadius::same(16),
-                        add_fill,
-                        egui::Stroke::new(1.0, Color32::from_rgb(86, 92, 100)),
-                        egui::StrokeKind::Inside,
-                    );
-                    let dash = 10.0;
-                    let gap = 6.0;
-                    let outline = add_rect.shrink2(egui::vec2(18.0, 18.0));
-                    let stroke = egui::Stroke::new(1.0, Color32::from_rgb(104, 110, 118));
-                    let mut x = outline.left();
-                    while x < outline.right() {
-                        let x2 = (x + dash).min(outline.right());
-                        ui.painter().line_segment(
-                            [egui::pos2(x, outline.top()), egui::pos2(x2, outline.top())],
-                            stroke,
+                        let add_size = Vec2::new(168.0, 204.0);
+                        let (add_rect, add_response) =
+                            ui.allocate_exact_size(add_size, Sense::click());
+                        add_card_rect = Some(add_rect);
+                        let add_response = if self.dragging_window_tool_id.is_none() {
+                            add_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        } else {
+                            add_response
+                        };
+                        let add_fill = if add_response.hovered() {
+                            Color32::from_rgba_premultiplied(44, 47, 52, 242)
+                        } else {
+                            Color32::from_rgba_premultiplied(31, 33, 37, 242)
+                        };
+                        ui.painter().rect(
+                            add_rect.shrink(1.0),
+                            egui::CornerRadius::same(16),
+                            add_fill,
+                            egui::Stroke::new(1.0, Color32::from_rgb(86, 92, 100)),
+                            egui::StrokeKind::Inside,
                         );
-                        ui.painter().line_segment(
-                            [egui::pos2(x, outline.bottom()), egui::pos2(x2, outline.bottom())],
-                            stroke,
+                        let dash = 10.0;
+                        let gap = 6.0;
+                        let outline = add_rect.shrink2(egui::vec2(18.0, 18.0));
+                        let stroke = egui::Stroke::new(1.0, Color32::from_rgb(104, 110, 118));
+                        let mut x = outline.left();
+                        while x < outline.right() {
+                            let x2 = (x + dash).min(outline.right());
+                            ui.painter().line_segment(
+                                [egui::pos2(x, outline.top()), egui::pos2(x2, outline.top())],
+                                stroke,
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(x, outline.bottom()),
+                                    egui::pos2(x2, outline.bottom()),
+                                ],
+                                stroke,
+                            );
+                            x += dash + gap;
+                        }
+                        let mut y = outline.top();
+                        while y < outline.bottom() {
+                            let y2 = (y + dash).min(outline.bottom());
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(outline.left(), y),
+                                    egui::pos2(outline.left(), y2),
+                                ],
+                                stroke,
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(outline.right(), y),
+                                    egui::pos2(outline.right(), y2),
+                                ],
+                                stroke,
+                            );
+                            y += dash + gap;
+                        }
+                        ui.painter().text(
+                            egui::pos2(add_rect.center().x, add_rect.center().y - 18.0),
+                            egui::Align2::CENTER_CENTER,
+                            icon_char(Icon::Plus),
+                            egui::FontId::new(36.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                            Color32::from_rgb(214, 218, 223),
                         );
-                        x += dash + gap;
-                    }
-                    let mut y = outline.top();
-                    while y < outline.bottom() {
-                        let y2 = (y + dash).min(outline.bottom());
-                        ui.painter().line_segment(
-                            [egui::pos2(outline.left(), y), egui::pos2(outline.left(), y2)],
-                            stroke,
+                        ui.painter().text(
+                            egui::pos2(add_rect.center().x, add_rect.center().y + 22.0),
+                            egui::Align2::CENTER_CENTER,
+                            "Add Tool",
+                            egui::FontId::proportional(14.0),
+                            Color32::from_rgb(214, 218, 223),
                         );
-                        ui.painter().line_segment(
-                            [egui::pos2(outline.right(), y), egui::pos2(outline.right(), y2)],
-                            stroke,
-                        );
-                        y += dash + gap;
-                    }
-                    ui.painter().text(
-                        egui::pos2(add_rect.center().x, add_rect.center().y - 18.0),
-                        egui::Align2::CENTER_CENTER,
-                        icon_char(Icon::Plus),
-                        egui::FontId::new(36.0, FontFamily::Name(LUCIDE_FAMILY.into())),
-                        Color32::from_rgb(214, 218, 223),
-                    );
-                    ui.painter().text(
-                        egui::pos2(add_rect.center().x, add_rect.center().y + 22.0),
-                        egui::Align2::CENTER_CENTER,
-                        "Add Tool",
-                        egui::FontId::proportional(14.0),
-                        Color32::from_rgb(214, 218, 223),
-                    );
-                    if add_response.clicked() {
-                        pending_add = true;
-                    }
-                    if add_response.contains_pointer()
-                        && self.dragging_window_tool_id.is_some()
-                        && ui.input(|input| input.pointer.primary_down())
-                    {
-                        self.dragging_window_tool_target_index = Some(tools.len());
-                        ui.ctx().request_repaint();
-                    }
-                    if let (Some(target_index), Some(add_rect)) =
-                        (self.dragging_window_tool_target_index, add_card_rect)
-                    {
-                        let line = if !tool_card_rects.is_empty()
+                        if add_response.clicked() {
+                            pending_add = true;
+                        }
+                        if add_response.contains_pointer()
                             && self.dragging_window_tool_id.is_some()
-                            && target_index <= tool_card_rects.len()
+                            && ui.input(|input| input.pointer.primary_down())
                         {
-                            if target_index == 0 {
-                                Some((
-                                    tool_card_rects[0].left() - 3.0,
-                                    tool_card_rects[0].top() + 8.0,
-                                    tool_card_rects[0].bottom() - 8.0,
-                                ))
-                            } else if target_index < tool_card_rects.len() {
-                                let previous = tool_card_rects[target_index - 1];
-                                let next = tool_card_rects[target_index];
-                                if (previous.center().y - next.center().y).abs() < 4.0 {
+                            self.dragging_window_tool_target_index = Some(tools.len());
+                            ui.ctx().request_repaint();
+                        }
+                        if let (Some(target_index), Some(add_rect)) =
+                            (self.dragging_window_tool_target_index, add_card_rect)
+                        {
+                            let line = if !tool_card_rects.is_empty()
+                                && self.dragging_window_tool_id.is_some()
+                                && target_index <= tool_card_rects.len()
+                            {
+                                if target_index == 0 {
                                     Some((
-                                        (previous.right() + next.left()) * 0.5,
-                                        previous.top().max(next.top()) + 8.0,
-                                        previous.bottom().min(next.bottom()) - 8.0,
+                                        tool_card_rects[0].left() - 3.0,
+                                        tool_card_rects[0].top() + 8.0,
+                                        tool_card_rects[0].bottom() - 8.0,
                                     ))
+                                } else if target_index < tool_card_rects.len() {
+                                    let previous = tool_card_rects[target_index - 1];
+                                    let next = tool_card_rects[target_index];
+                                    if (previous.center().y - next.center().y).abs() < 4.0 {
+                                        Some((
+                                            (previous.right() + next.left()) * 0.5,
+                                            previous.top().max(next.top()) + 8.0,
+                                            previous.bottom().min(next.bottom()) - 8.0,
+                                        ))
+                                    } else {
+                                        Some((
+                                            next.left() - 3.0,
+                                            next.top() + 8.0,
+                                            next.bottom() - 8.0,
+                                        ))
+                                    }
                                 } else {
-                                    Some((next.left() - 3.0, next.top() + 8.0, next.bottom() - 8.0))
+                                    Some((
+                                        add_rect.left() - 3.0,
+                                        add_rect.top() + 8.0,
+                                        add_rect.bottom() - 8.0,
+                                    ))
                                 }
                             } else {
-                                Some((add_rect.left() - 3.0, add_rect.top() + 8.0, add_rect.bottom() - 8.0))
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some((line_x, top, bottom)) = line {
-                            let dash = 5.0;
-                            let gap = 4.0;
-                            let mut y = top;
-                            while y < bottom {
-                                let y2 = (y + dash).min(bottom);
-                                ui.painter().line_segment(
-                                    [egui::pos2(line_x, y), egui::pos2(line_x, y2)],
-                                    egui::Stroke::new(
-                                        1.0,
-                                        Color32::from_rgba_premultiplied(232, 153, 118, 160),
-                                    ),
-                                );
-                                y += dash + gap;
+                                None
+                            };
+                            if let Some((line_x, top, bottom)) = line {
+                                let dash = 5.0;
+                                let gap = 4.0;
+                                let mut y = top;
+                                while y < bottom {
+                                    let y2 = (y + dash).min(bottom);
+                                    ui.painter().line_segment(
+                                        [egui::pos2(line_x, y), egui::pos2(line_x, y2)],
+                                        egui::Stroke::new(
+                                            1.0,
+                                            Color32::from_rgba_premultiplied(232, 153, 118, 160),
+                                        ),
+                                    );
+                                    y += dash + gap;
+                                }
                             }
                         }
-                    }
+                    });
                 });
-            });
         });
 
         if let Some((_, label, is_missing, source_rect)) = dragged_window_preview {
             if let Some(pointer_pos) = ctx.pointer_latest_pos() {
                 let size = source_rect.size();
-                let ghost_rect = egui::Rect::from_center_size(
-                    pointer_pos + egui::vec2(8.0, 10.0),
-                    size,
-                );
+                let ghost_rect =
+                    egui::Rect::from_center_size(pointer_pos + egui::vec2(8.0, 10.0), size);
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Tooltip,
                     egui::Id::new("dragging_window_tool_ghost"),
@@ -1062,77 +1081,81 @@ impl HestiaApp {
         let mut should_save = false;
         let mut should_cancel = false;
         let mut draft_args = prompt.launch_args.clone();
-        let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
+        let constrain_rect = self
+            .last_right_pane_rect
+            .unwrap_or_else(|| ctx.available_rect());
 
-        egui::Window::new(icon_text_sized(Icon::Terminal, "Set Launch Options", 14.0, 14.0))
-            .id(egui::Id::new(("tool_launch_options", tool.id.clone())))
-            .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
-            .default_size(egui::vec2(360.0, 172.0))
-            .order(egui::Order::Foreground)
-            .resizable(false)
-            .collapsible(false)
-            .constrain_to(constrain_rect)
-            .open(&mut open)
-            .frame(
-                egui::Frame::window(&ctx.style())
-                    .inner_margin(egui::Margin::same(16))
-                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
-            )
-            .show(ctx, |ui| {
-                static_label(
-                    ui,
-                    RichText::new(&directory)
-                        .family(FontFamily::Monospace)
-                        .size(13.0)
-                        .color(Color32::from_gray(180)),
+        egui::Window::new(icon_text_sized(
+            Icon::Terminal,
+            "Set Launch Options",
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new(("tool_launch_options", tool.id.clone())))
+        .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
+        .default_size(egui::vec2(360.0, 172.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .constrain_to(constrain_rect)
+        .open(&mut open)
+        .frame(
+            egui::Frame::window(&ctx.style())
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
+        )
+        .show(ctx, |ui| {
+            static_label(
+                ui,
+                RichText::new(&directory)
+                    .family(FontFamily::Monospace)
+                    .size(13.0)
+                    .color(Color32::from_gray(180)),
+            );
+            ui.horizontal(|ui| {
+                let spacing = ui.spacing().item_spacing.x;
+                let available_width = ui.available_width();
+                let file_width = (available_width - 196.0 - spacing).clamp(84.0, 168.0);
+                let file_response = ui.add_sized(
+                    [file_width, 22.0],
+                    egui::Label::new(
+                        RichText::new(&file_name)
+                            .family(FontFamily::Monospace)
+                            .size(14.0)
+                            .color(Color32::from_rgb(226, 230, 234)),
+                    )
+                    .truncate()
+                    .selectable(false),
                 );
-                ui.horizontal(|ui| {
-                    let spacing = ui.spacing().item_spacing.x;
-                    let available_width = ui.available_width();
-                    let file_width = (available_width - 196.0 - spacing).clamp(84.0, 168.0);
-                    let file_response = ui.add_sized(
-                        [file_width, 22.0],
-                        egui::Label::new(
-                            RichText::new(&file_name)
-                                .family(FontFamily::Monospace)
-                                .size(14.0)
-                                .color(Color32::from_rgb(226, 230, 234)),
-                        )
-                        .truncate()
-                        .selectable(false),
-                    );
-                    file_response
-                        .clone()
-                        .on_hover_cursor(egui::CursorIcon::Default);
-                    let input = ui.add(
-                        TextEdit::singleline(&mut draft_args)
-                            .id_salt(("tool_launch_options_input", tool.id.clone()))
-                            .desired_width(ui.available_width())
-                            .hint_text(
-                                RichText::new("Launch options (ie, -option value -flag)")
-                                    .color(Color32::from_gray(130)),
-                            ),
-                    );
-                    if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        should_save = true;
-                    }
-                });
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new("Save")
-                                .fill(Color32::from_rgb(180, 78, 35)),
-                        )
-                        .clicked()
-                    {
-                        should_save = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        should_cancel = true;
-                    }
-                });
+                file_response
+                    .clone()
+                    .on_hover_cursor(egui::CursorIcon::Default);
+                let input = ui.add(
+                    TextEdit::singleline(&mut draft_args)
+                        .id_salt(("tool_launch_options_input", tool.id.clone()))
+                        .desired_width(ui.available_width())
+                        .hint_text(
+                            RichText::new("Launch options (ie, -option value -flag)")
+                                .color(Color32::from_gray(130)),
+                        ),
+                );
+                if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    should_save = true;
+                }
             });
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Button::new("Save").fill(Color32::from_rgb(180, 78, 35)))
+                    .clicked()
+                {
+                    should_save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    should_cancel = true;
+                }
+            });
+        });
 
         if should_save {
             if let Some(prompt) = self.tool_launch_options_prompt.as_mut() {
@@ -1144,6 +1167,615 @@ impl HestiaApp {
         } else if let Some(prompt) = self.tool_launch_options_prompt.as_mut() {
             prompt.launch_args = draft_args;
         }
+    }
+
+    fn finish_settings_category_drag(&mut self, game_id: &str) -> bool {
+        let moved = if let Some(target_index) = self.settings_dragging_category_target_index {
+            let moving_ids = self.settings_dragging_category_ids.clone();
+            self.move_category_ids_to_slot(game_id, &moving_ids, target_index)
+        } else {
+            false
+        };
+        self.settings_dragging_category_ids.clear();
+        self.settings_dragging_category_target_index = None;
+        moved
+    }
+
+    fn update_settings_category_drag_target(
+        &mut self,
+        ui: &mut Ui,
+        pointer_pos: Option<egui::Pos2>,
+        category_row_rects: &[egui::Rect],
+    ) {
+        if self.settings_dragging_category_ids.is_empty()
+            || !ui.input(|input| input.pointer.primary_down())
+            || category_row_rects.is_empty()
+        {
+            return;
+        }
+        let Some(pointer_pos) = pointer_pos else {
+            return;
+        };
+        let left = category_row_rects
+            .iter()
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        let right = category_row_rects
+            .iter()
+            .map(|rect| rect.right())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let top = category_row_rects[0].top();
+        let bottom = category_row_rects[category_row_rects.len() - 1].bottom();
+        if pointer_pos.x >= left && pointer_pos.x <= right {
+            if pointer_pos.y <= top {
+                self.settings_dragging_category_target_index = Some(0);
+                ui.ctx().request_repaint();
+            } else if pointer_pos.y >= bottom {
+                self.settings_dragging_category_target_index = Some(category_row_rects.len());
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+
+    fn paint_settings_category_drop_indicator(
+        &self,
+        ui: &mut Ui,
+        category_row_rects: &[egui::Rect],
+    ) {
+        if self.settings_dragging_category_ids.is_empty()
+            || !ui.input(|input| input.pointer.primary_down())
+            || category_row_rects.is_empty()
+        {
+            return;
+        }
+        let Some(target_index) = self.settings_dragging_category_target_index else {
+            return;
+        };
+        let clamped_index = target_index.min(category_row_rects.len());
+        let y = if clamped_index == 0 {
+            category_row_rects[0].top() + 1.0
+        } else if clamped_index >= category_row_rects.len() {
+            category_row_rects[category_row_rects.len() - 1].bottom() - 1.0
+        } else {
+            (category_row_rects[clamped_index - 1].bottom()
+                + category_row_rects[clamped_index].top())
+                * 0.5
+        };
+        let left = category_row_rects
+            .iter()
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        let right = category_row_rects
+            .iter()
+            .map(|rect| rect.right())
+            .fold(f32::NEG_INFINITY, f32::max);
+        ui.painter().line_segment(
+            [egui::pos2(left, y), egui::pos2(right, y)],
+            egui::Stroke::new(2.0, Color32::from_rgb(120, 170, 220)),
+        );
+    }
+
+    fn render_category_sort_menu(&mut self, ui: &mut Ui, game_id: &str) {
+        let current_mode = self.category_sort_mode_for_game(game_id);
+        let selected_label = Self::category_sort_mode_label(current_mode);
+        ui.scope(|ui| {
+            let radius = egui::CornerRadius::same(6);
+            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+            ui.style_mut().visuals.widgets.open.corner_radius = radius;
+            ui.menu_button(
+                icon_text_sized(Icon::ArrowDownNarrowWide, selected_label, 13.0, 13.0),
+                |ui| {
+                    let options = [
+                        ModCategorySortMode::ByNameAsc,
+                        ModCategorySortMode::ByModCountAsc,
+                        ModCategorySortMode::ByModCountDesc,
+                    ];
+                    for mode in options {
+                        let active = current_mode == mode;
+                        ui.horizontal(|ui| {
+                            let icon = if active {
+                                icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                            } else {
+                                RichText::new("")
+                            };
+                            ui.add_sized([18.0, 20.0], egui::Label::new(icon).selectable(false));
+                            if ui
+                                .button(Self::category_sort_mode_label(mode))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                self.set_category_sort_mode_for_game(game_id, mode);
+                                ui.close();
+                            }
+                        });
+                    }
+                },
+            )
+            .response
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        });
+    }
+
+    fn clamp_settings_category_name(text: &str) -> String {
+        const MAX_CHARS: usize = 45;
+        const PREFIX_CHARS: usize = 42;
+        if text.chars().count() <= MAX_CHARS {
+            return text.to_string();
+        }
+        let mut clamped: String = text.chars().take(PREFIX_CHARS).collect();
+        clamped.truncate(clamped.trim_end().len());
+        clamped.push_str("...");
+        clamped
+    }
+
+    fn uncategorized_mod_count_for_game(
+        &self,
+        game_id: &str,
+        category_ids: &HashSet<String>,
+    ) -> usize {
+        self.state
+            .mods
+            .iter()
+            .filter(|mod_entry| {
+                mod_entry.game_id == game_id
+                    && mod_entry
+                        .metadata
+                        .user
+                        .category_id
+                        .as_ref()
+                        .is_none_or(|category_id| !category_ids.contains(category_id))
+            })
+            .count()
+    }
+
+    fn render_categories_settings_tab(&mut self, ui: &mut Ui, should_save: &mut bool) {
+        let Some((game_id, game_name)) = self
+            .selected_game()
+            .map(|game| (game.definition.id.clone(), game.definition.name.clone()))
+        else {
+            static_label(ui, "Select a game to configure categories.");
+            return;
+        };
+
+        static_label(ui, bold("Browse").underline().size(16.0));
+        ui.indent("setting_categories_browse", |ui| {
+            let game_has_categories = self
+                .state
+                .categories
+                .iter()
+                .any(|category| category.game_id == game_id);
+            let preference_was_missing = !self
+                .state
+                .create_downloaded_mod_category_by_game
+                .contains_key(&game_id);
+            let enabled = self
+                .state
+                .create_downloaded_mod_category_by_game
+                .entry(game_id.clone())
+                .or_insert(!game_has_categories);
+            let response = ui.checkbox(
+                enabled,
+                "Auto-create GameBanana categories for downloaded mods",
+            );
+            response
+                .clone()
+                .on_hover_text(format!("Applies to {game_name}."));
+            if preference_was_missing || response.changed() {
+                *should_save = true;
+            }
+            ui.add_space(1.0);
+        });
+        ui.add_space(24.0);
+
+        let current_category_ids: HashSet<String> = self
+            .state
+            .categories
+            .iter()
+            .filter(|category| category.game_id == game_id)
+            .map(|category| category.id.clone())
+            .collect();
+        self.selected_category_ids
+            .retain(|category_id| current_category_ids.contains(category_id));
+        let uncategorized_count =
+            self.uncategorized_mod_count_for_game(&game_id, &current_category_ids);
+
+        static_label(ui, bold("Categories").underline().size(16.0));
+        let categories = self.categories_for_game(&game_id);
+        let category_controls_width = (ui.available_width() - 48.0).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(category_controls_width, 24.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let has_selected_categories = !self.selected_category_ids.is_empty();
+                let all_selected = !categories.is_empty()
+                    && categories
+                        .iter()
+                        .all(|category| self.selected_category_ids.contains(&category.id));
+                let select_all_response = ui.add_enabled(
+                    !categories.is_empty(),
+                    egui::Button::new(icon_rich(
+                        Icon::SquaresIntersect,
+                        13.0,
+                        Color32::from_gray(220),
+                    ))
+                    .corner_radius(egui::CornerRadius::same(6)),
+                );
+                if select_all_response
+                    .on_hover_text(if all_selected {
+                        "Unselect all categories"
+                    } else {
+                        "Select all categories"
+                    })
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    if all_selected {
+                        for category in &categories {
+                            self.selected_category_ids.remove(&category.id);
+                        }
+                    } else {
+                        self.selected_category_ids
+                            .extend(categories.iter().map(|category| category.id.clone()));
+                    }
+                }
+                ui.add_space(-6.0);
+                self.render_category_sort_menu(ui, &game_id);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(icon_text_sized(Icon::Plus, "New", 13.0, 13.0))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.create_category_for_game(&game_id);
+                    }
+                    ui.add_space(-6.0);
+                    if has_selected_categories
+                        && ui
+                            .button(icon_text_sized(Icon::Trash2, "Delete", 13.0, 13.0))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                    {
+                        let selected_ids: Vec<String> =
+                            self.selected_category_ids.iter().cloned().collect();
+                        self.delete_categories(&selected_ids);
+                    }
+                });
+            },
+        );
+        let pointer_pos = ui.ctx().pointer_latest_pos();
+        let mut row_rects = Vec::new();
+        ui.add_space(-4.0);
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(4))
+            .show(ui, |ui| {
+                ui.set_min_height(180.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width() - 48.0, 320.0),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.style_mut().spacing.scroll.floating_allocated_width = 6.0;
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        egui::ScrollArea::vertical()
+                            .max_height(320.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                let category_drag_active =
+                                    !self.settings_dragging_category_ids.is_empty();
+                                let render_uncategorized_row = |ui: &mut Ui| {
+                                    let (row_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 21.0),
+                                        Sense::hover(),
+                                    );
+                                    let row_hovered = !category_drag_active
+                                        && pointer_pos.is_some_and(|pos| row_rect.contains(pos));
+                                    if row_hovered {
+                                        ui.painter().rect_filled(
+                                            row_rect.expand2(egui::vec2(2.0, 0.0)),
+                                            egui::CornerRadius::same(3),
+                                            Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+                                        );
+                                    }
+                                    let mut row_ui = ui.new_child(
+                                        egui::UiBuilder::new().max_rect(row_rect).layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                        ),
+                                    );
+                                    row_ui.spacing_mut().item_spacing.x = 3.0;
+                                    row_ui.scope(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 3.0;
+                                        ui.add_sized(
+                                            [18.0, 20.0],
+                                            egui::Label::new("").selectable(false),
+                                        );
+                                        let mut placeholder_checked = false;
+                                        ui.add_visible(
+                                            false,
+                                            egui::Checkbox::new(&mut placeholder_checked, ""),
+                                        );
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(178.0, 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new("Uncategorized")
+                                                            .color(Color32::from_gray(185)),
+                                                    )
+                                                    .selectable(false),
+                                                );
+                                            },
+                                        );
+                                        ui.add_space(-8.0);
+                                        ui.add_sized(
+                                            [34.0, 20.0],
+                                            egui::Label::new(
+                                                RichText::new(format!("({uncategorized_count})"))
+                                                    .size(12.0)
+                                                    .color(Color32::from_gray(145)),
+                                            )
+                                            .selectable(false),
+                                        );
+                                        ui.allocate_response(
+                                            egui::vec2(18.0, 20.0),
+                                            Sense::hover(),
+                                        );
+                                        ui.allocate_response(
+                                            egui::vec2(18.0, 20.0),
+                                            Sense::hover(),
+                                        );
+                                    });
+                                };
+
+                                if self.state.library_uncategorized_first {
+                                    render_uncategorized_row(ui);
+                                }
+                                for (index, category) in categories.iter().enumerate() {
+                                    let (row_rect, row_response) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 21.0),
+                                        Sense::hover(),
+                                    );
+                                    let selected =
+                                        self.selected_category_ids.contains(&category.id);
+                                    let row_hovered = !category_drag_active
+                                        && pointer_pos.is_some_and(|pos| row_rect.contains(pos));
+                                    let row_highlighted = row_hovered || selected;
+                                    if row_highlighted {
+                                        ui.painter().rect_filled(
+                                            row_rect.expand2(egui::vec2(2.0, 0.0)),
+                                            egui::CornerRadius::same(3),
+                                            Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+                                        );
+                                    }
+                                    let mut row_ui = ui.new_child(
+                                        egui::UiBuilder::new().max_rect(row_rect).layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                        ),
+                                    );
+                                    row_ui.spacing_mut().item_spacing.x = 3.0;
+                                    row_ui.scope(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 3.0;
+                                        let drag_response = ui
+                                            .add_sized(
+                                                [18.0, 20.0],
+                                                egui::Label::new(icon_rich(
+                                                    Icon::GripVertical,
+                                                    12.0,
+                                                    Color32::from_gray(165),
+                                                ))
+                                                .selectable(false)
+                                                .sense(Sense::click_and_drag()),
+                                            )
+                                            .on_hover_cursor(egui::CursorIcon::Grab);
+                                        if drag_response.drag_started() {
+                                            if self.selected_category_ids.contains(&category.id) {
+                                                self.settings_dragging_category_ids = categories
+                                                    .iter()
+                                                    .filter(|category| {
+                                                        self.selected_category_ids
+                                                            .contains(&category.id)
+                                                    })
+                                                    .map(|category| category.id.clone())
+                                                    .collect();
+                                            } else {
+                                                self.settings_dragging_category_ids =
+                                                    vec![category.id.clone()];
+                                            }
+                                            self.settings_dragging_category_target_index =
+                                                Some(index);
+                                        }
+
+                                        let mut selected = selected;
+                                        if ui.checkbox(&mut selected, "").changed() {
+                                            if selected {
+                                                self.selected_category_ids
+                                                    .insert(category.id.clone());
+                                            } else {
+                                                self.selected_category_ids.remove(&category.id);
+                                            }
+                                        }
+
+                                        if self.category_rename_target_id.as_deref()
+                                            == Some(category.id.as_str())
+                                        {
+                                            let input = ui.add(
+                                                TextEdit::singleline(
+                                                    &mut self.category_rename_name,
+                                                )
+                                                .desired_width(178.0)
+                                                .margin(egui::Margin::same(4)),
+                                            );
+                                            input.request_focus();
+                                            let save_rename = input.has_focus()
+                                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                            let cancel_rename = input.has_focus()
+                                                && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                            if save_rename {
+                                                let draft = self.category_rename_name.clone();
+                                                self.rename_category(&category.id, &draft);
+                                            }
+                                            if cancel_rename {
+                                                self.category_rename_target_id = None;
+                                                self.category_rename_name.clear();
+                                            }
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(icon_rich(
+                                                        Icon::Check,
+                                                        13.0,
+                                                        Color32::from_rgb(110, 194, 132),
+                                                    ))
+                                                    .frame(false),
+                                                )
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                let draft = self.category_rename_name.clone();
+                                                self.rename_category(&category.id, &draft);
+                                            }
+                                        } else {
+                                            let action_idle_alpha =
+                                                if row_hovered { 77 } else { 0 };
+                                            let label_response = ui
+                                                .allocate_ui_with_layout(
+                                                    egui::vec2(178.0, 20.0),
+                                                    egui::Layout::left_to_right(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                Self::clamp_settings_category_name(
+                                                                    &category.name,
+                                                                ),
+                                                            )
+                                                            .selectable(false),
+                                                        )
+                                                    },
+                                                )
+                                                .inner;
+                                            label_response.on_hover_text(&category.name);
+                                            ui.add_space(-8.0);
+                                            ui.add_sized(
+                                                [34.0, 20.0],
+                                                egui::Label::new({
+                                                    let count = self.category_member_count(
+                                                        &game_id,
+                                                        &category.id,
+                                                    );
+                                                    RichText::new(format!("({count})"))
+                                                        .size(12.0)
+                                                        .color(Color32::from_gray(145))
+                                                })
+                                                .selectable(false),
+                                            );
+                                            let edit_response = ui.allocate_response(
+                                                egui::vec2(18.0, 20.0),
+                                                Sense::click(),
+                                            );
+                                            let edit_alpha = if edit_response.hovered() {
+                                                230
+                                            } else {
+                                                action_idle_alpha
+                                            };
+                                            ui.painter().text(
+                                                edit_response.rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                icon_char(Icon::Pencil),
+                                                egui::FontId::new(
+                                                    12.0,
+                                                    FontFamily::Name(LUCIDE_FAMILY.into()),
+                                                ),
+                                                Color32::from_rgba_unmultiplied(
+                                                    175, 175, 175, edit_alpha,
+                                                ),
+                                            );
+                                            if edit_response
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                self.category_rename_target_id =
+                                                    Some(category.id.clone());
+                                                self.category_rename_name = category.name.clone();
+                                            }
+                                            let delete_response = ui.allocate_response(
+                                                egui::vec2(18.0, 20.0),
+                                                Sense::click(),
+                                            );
+                                            let delete_alpha = if delete_response.hovered() {
+                                                230
+                                            } else {
+                                                action_idle_alpha
+                                            };
+                                            ui.painter().text(
+                                                delete_response.rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                icon_char(Icon::Trash2),
+                                                egui::FontId::new(
+                                                    12.0,
+                                                    FontFamily::Name(LUCIDE_FAMILY.into()),
+                                                ),
+                                                Color32::from_rgba_unmultiplied(
+                                                    190,
+                                                    120,
+                                                    120,
+                                                    delete_alpha,
+                                                ),
+                                            );
+                                            if delete_response
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                self.delete_category(&category.id);
+                                            }
+                                        }
+                                    });
+                                    row_rects.push(row_response.rect);
+                                    if !self.settings_dragging_category_ids.is_empty()
+                                        && pointer_pos
+                                            .is_some_and(|pos| row_response.rect.contains(pos))
+                                    {
+                                        let insert_after = pointer_pos.is_some_and(|pos| {
+                                            pos.y > row_response.rect.center().y
+                                        });
+                                        self.settings_dragging_category_target_index =
+                                            Some(if insert_after {
+                                                index.saturating_add(1)
+                                            } else {
+                                                index
+                                            });
+                                        ui.ctx().request_repaint();
+                                    }
+                                }
+                                if !self.state.library_uncategorized_first {
+                                    render_uncategorized_row(ui);
+                                }
+                                self.update_settings_category_drag_target(
+                                    ui,
+                                    pointer_pos,
+                                    &row_rects,
+                                );
+                                self.paint_settings_category_drop_indicator(ui, &row_rects);
+                            });
+                    },
+                );
+            });
+
+        if !self.settings_dragging_category_ids.is_empty()
+            && !ui.ctx().input(|input| input.pointer.primary_down())
+        {
+            self.finish_settings_category_drag(&game_id);
+        }
+        if !self.settings_dragging_category_ids.is_empty()
+            && ui.ctx().input(|input| input.pointer.primary_down())
+        {
+            ui.ctx()
+                .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
+        }
+        ui.add_space(24.0);
     }
 
     fn render_settings_window(&mut self, ctx: &egui::Context) {
@@ -1166,10 +1798,11 @@ impl HestiaApp {
 
         let mut settings_open = self.settings_open;
         let settings_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let mut window = egui::Window::new(icon_text_sized(Icon::Settings2, "Settings", 14.0, 14.0))
-            .open(&mut settings_open)
-            .title_bar(true)
-            .frame(settings_frame);
+        let mut window =
+            egui::Window::new(icon_text_sized(Icon::Settings2, "Settings", 14.0, 14.0))
+                .open(&mut settings_open)
+                .title_bar(true)
+                .frame(settings_frame);
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -1196,6 +1829,11 @@ impl HestiaApp {
                     &mut self.settings_tab,
                     SettingsTab::General,
                     bold("General".to_uppercase()),
+                ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                ui.selectable_value(
+                    &mut self.settings_tab,
+                    SettingsTab::Categories,
+                    bold("Category".to_uppercase()),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
@@ -1514,43 +2152,6 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold("Browse").underline().size(16.0));
-                        ui.indent("setting_general_browse", |ui| {
-                            if let Some((game_id, game_name)) = self
-                                .selected_game()
-                                .map(|game| (game.definition.id.clone(), game.definition.name.clone()))
-                            {
-                                let game_has_categories = self
-                                    .state
-                                    .categories
-                                    .iter()
-                                    .any(|category| category.game_id == game_id);
-                                let preference_was_missing = !self
-                                    .state
-                                    .create_downloaded_mod_category_by_game
-                                    .contains_key(&game_id);
-                                let enabled = self
-                                    .state
-                                    .create_downloaded_mod_category_by_game
-                                    .entry(game_id)
-                                    .or_insert(!game_has_categories);
-                                let response = ui.checkbox(
-                                    enabled,
-                                    "Create downloaded mod's category",
-                                );
-                                response
-                                    .clone()
-                                    .on_hover_text(format!("Applies to {game_name}."));
-                                if preference_was_missing || response.changed() {
-                                    should_save = true;
-                                }
-                            } else {
-                                static_label(ui, "Select a game to configure Browse settings.");
-                            }
-                            ui.add_space(1.0);
-                        });
-                        ui.add_space(24.0);
-                        
                         static_label(ui, bold("Tasks").underline().size(16.0));
                         ui.indent("setting_general_tasks", |ui| {
                             static_label(ui, "Tasks layout:");
@@ -1598,6 +2199,9 @@ impl HestiaApp {
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
+                    }
+                    SettingsTab::Categories => {
+                        self.render_categories_settings_tab(ui, &mut should_save);
                     }
                     SettingsTab::Path => {
                     static_label(ui, bold("XXMI").underline().size(16.0));
@@ -2213,5 +2817,4 @@ impl HestiaApp {
             self.queue_update_check_for_linked_mods(game_id.as_deref());
         }
     }
-
 }
