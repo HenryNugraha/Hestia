@@ -1,4 +1,247 @@
 impl HestiaApp {
+    const STARTUP_PATH_CHOOSER_OFFSET_Y: f32 = -10.0;
+    const STARTUP_PATH_COMPACT_CHARS: usize = 84;
+
+    fn render_startup_path_scan_overlay(&mut self, ctx: &egui::Context) {
+        if self.startup_path_scan.is_none() {
+            return;
+        }
+
+        egui::Area::new(egui::Id::new("startup_path_scan_overlay"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(ctx.viewport_rect().min)
+            .show(ctx, |ui| {
+                let screen_rect = ctx.viewport_rect();
+                ui.set_min_size(screen_rect.size());
+                ui.painter()
+                    .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(24, 26, 29));
+
+                let content_rect = egui::Rect::from_center_size(
+                    ui.max_rect().center(),
+                    Vec2::new(620.0, ui.max_rect().height().min(720.0)),
+                );
+                let mut content_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(content_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                );
+                let ui = &mut content_ui;
+                ui.add_space((content_rect.height() * 0.15).min(96.0));
+                ui.set_width(620.0);
+                ui.visuals_mut().override_text_color = Some(Color32::WHITE);
+                ui.vertical_centered(|ui| {
+                    static_label(
+                        ui,
+                        RichText::new("Finding your XXMI and game paths")
+                            .size(34.0)
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+                    ui.add_space(-10.0);
+                    static_label(
+                        ui,
+                        RichText::new(
+                            "Hestia is now deep scanning accessible drives for XXMI and supported games.",
+                        )
+                        .size(15.0)
+                        .color(Color32::from_gray(190)),
+                    );
+                });
+                ui.add_space(6.0);
+
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(33, 36, 40))
+                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(62, 68, 75)))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(14))
+                    .show(ui, |ui| {
+                        static_label(
+                            ui,
+                            bold("Scan Results")
+                                .size(16.0)
+                                //.underline()
+                                .color(Color32::from_gray(220)),
+                        );
+                        ui.add_space(2.0);
+                        if let Some(scan) = self.startup_path_scan.as_mut() {
+                            let finished = scan.finished;
+                            let stopped = scan.stopped;
+                            for status in &mut scan.statuses {
+                                Self::render_startup_path_status_row(ui, status, finished, stopped);
+                            }
+                        }
+                    });
+
+                ui.add_space(18.0);
+                ui.vertical_centered(|ui| {
+                    let finished = self
+                        .startup_path_scan
+                        .as_ref()
+                        .is_some_and(|scan| scan.finished);
+                    if finished {
+                        let continue_button = egui::Button::new(
+                            bold("Continue").size(15.0),
+                        )
+                        .fill(Color32::from_rgb(180, 78, 35))
+                        .min_size(Vec2::new(140.0, 38.0));
+                        if ui
+                            .add(continue_button)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.finish_startup_path_scan(ctx);
+                        }
+                    } else {
+                        let stop_button = egui::Button::new(RichText::new("Stop Scan").size(15.0))
+                            .min_size(Vec2::new(140.0, 38.0));
+                        if ui
+                            .add(stop_button)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if let Some(scan) = self.startup_path_scan.as_ref() {
+                                scan.cancel.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            });
+
+        ctx.request_repaint();
+    }
+
+    fn render_startup_path_status_row(
+        ui: &mut Ui,
+        status: &mut StartupPathScanStatus,
+        finished: bool,
+        stopped: bool,
+    ) {
+        ui.horizontal(|ui| {
+            ui.set_height(28.0);
+            static_label(
+                ui,
+                RichText::new(&status.label)
+                    .size(14.0)
+                    .color(Color32::from_gray(220)),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                match status.candidates.len() {
+                    0 => {
+                        if finished {
+                            let label = if stopped { "Stopped" } else { "Not found" };
+                            static_label(
+                                ui,
+                                RichText::new(label).size(13.0).color(Color32::from_gray(145)),
+                            );
+                            static_label(ui, icon_rich(Icon::Minus, 14.0, Color32::from_gray(140)));
+                        } else {
+                            static_label(
+                                ui,
+                                RichText::new("Searching...")
+                                    .size(13.0)
+                                    .color(Color32::from_gray(170)),
+                            );
+                            ui.add(egui::Spinner::new().size(14.0));
+                        }
+                    }
+                    1 => {
+                        static_label(
+                            ui,
+                            RichText::new("Found")
+                                .size(13.0)
+                                .color(Color32::from_rgb(126, 205, 145)),
+                        )
+                        .on_hover_text(status.candidates[0].display().to_string());
+                        static_label(
+                            ui,
+                            icon_rich(Icon::Check, 14.0, Color32::from_rgb(126, 205, 145)),
+                        );
+                    }
+                    _ => {
+                        if ui
+                            .button("Choose...")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            status.choosing = !status.choosing;
+                        }
+                        static_label(
+                            ui,
+                            RichText::new("Multiple found")
+                                .size(13.0)
+                                .color(Color32::from_rgb(224, 174, 86)),
+                        );
+                        if status.selected_candidate.is_some() {
+                            static_label(
+                                ui,
+                                icon_rich(Icon::Check, 14.0, Color32::from_rgb(126, 205, 145)),
+                            );
+                        } else {
+                            static_label(
+                                ui,
+                                icon_rich(
+                                    Icon::TriangleAlert,
+                                    14.0,
+                                    Color32::from_rgb(224, 174, 86),
+                                )
+                            );
+                        }
+                    }
+                }
+            });
+        });
+
+        if status.candidates.len() > 1 && status.choosing {
+            ui.add_space(Self::STARTUP_PATH_CHOOSER_OFFSET_Y);
+            egui::Frame::new()
+                .fill(Color32::from_rgb(28, 30, 34))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(54, 60, 67)))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.set_min_width(360.0);
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    for path in &status.candidates {
+                        let selected = status
+                            .selected_candidate
+                            .as_ref()
+                            .is_some_and(|selected| selected == path);
+                        let response = ui
+                            .selectable_label(
+                                selected,
+                                RichText::new(Self::compact_startup_path(path))
+                                    .size(12.0)
+                                    .color(Color32::from_gray(210)),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(path.display().to_string());
+                        if response.clicked() {
+                            status.selected_candidate = Some(path.clone());
+                            status.choosing = false;
+                        }
+                    }
+                    });
+                });
+        }
+    }
+
+    fn compact_startup_path(path: &Path) -> String {
+        let raw = path.display().to_string();
+        if raw.chars().count() <= Self::STARTUP_PATH_COMPACT_CHARS {
+            return raw;
+        }
+        let tail_len = Self::STARTUP_PATH_COMPACT_CHARS.saturating_sub(3);
+        let tail = raw
+            .chars()
+            .rev()
+            .take(tail_len)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>();
+        format!("...{tail}")
+    }
+
     fn render_pending_import(&mut self, ctx: &egui::Context) {
         if !self.pending_conflicts.is_empty() {
             return;

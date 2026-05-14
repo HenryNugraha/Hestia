@@ -11,6 +11,7 @@ use anyhow::Context;
 use eframe::icon_data;
 use egui::{pos2, vec2};
 use mimalloc::MiMalloc;
+use model::{SurveyAnswer, SurveyQuestion};
 use std::collections::HashSet;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -29,11 +30,54 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "XX May 2026";
+pub(crate) const WHATS_NEW_DATE: &str = "15 May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "Added new 'Category' tab in the Settings",
     "Various visual interface improvements",
+    "Added new 'Category' tab in the Settings",
+    concat!(
+        "Added deep-scan mode to resolve path detection issues\n",
+        "- Automatically run when needed on first app launch\n",
+        "- Manually trigger it via Settings > Game & Path"
+    ),
+    "Added unintrusive quick feedback form"
 ];
+
+pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
+pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[
+    SurveyQuestion {
+        id: "new_category_in_settings",
+        prompt: "Did you find the new Category settings useful?",
+        answers: &[
+            SurveyAnswer {
+                id: 1,
+                label: "Yes",
+            },
+            SurveyAnswer {
+                 id: 2, 
+                 label: "No"
+            },
+            SurveyAnswer {
+                id: 3,
+                label: "Haven't used it",
+            },
+        ],
+    },
+    SurveyQuestion {
+        id: "path_detection",
+        prompt: "Have you ever had an issue with Hestia detecting paths?",
+        answers: &[
+            SurveyAnswer {
+                id: 1,
+                label: "Yes",
+            },
+            SurveyAnswer {
+                id: 2,
+                label: "No" 
+            },
+        ],
+    },
+];
+pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: &str = "Anything you'd like to say?";
 
 fn main() -> anyhow::Result<()> {
     let log_filter = EnvFilter::from_default_env().add_directive(
@@ -66,7 +110,12 @@ fn main() -> anyhow::Result<()> {
     if _single_instance_guard.is_none() && !after_update_launch {
         return Ok(());
     }
-    if state.show_whats_new || state.preferences_need_save {
+    let feedback_survey_changed = state.prepare_feedback_survey_on_launch(model::feedback_survey());
+    if state.show_whats_new
+        || state.show_feedback_survey
+        || state.preferences_need_save
+        || feedback_survey_changed
+    {
         persistence::save_app_state(&portable, &state)
             .context("failed to save normalized app preferences")?;
         state.preferences_need_save = false;
@@ -75,6 +124,7 @@ fn main() -> anyhow::Result<()> {
         persistence::save_app_state(&portable, &state)
             .context("failed to save auto-detected game paths")?;
     }
+    let startup_path_scan_due = !state.startup_path_scan_completed;
     persistence::load_history(&portable, &mut state).context("failed to load persisted history")?;
     let selected_mods_root = state
         .last_selected_game_id
@@ -119,6 +169,7 @@ fn main() -> anyhow::Result<()> {
                 portable.clone(),
                 state,
                 runtime_services.clone(),
+                startup_path_scan_due,
             )))
         }),
     )

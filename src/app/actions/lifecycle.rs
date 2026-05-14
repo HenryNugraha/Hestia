@@ -4,6 +4,7 @@ impl HestiaApp {
         portable: PortablePaths,
         mut state: AppState,
         runtime_services: RuntimeServices,
+        startup_path_scan_due: bool,
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.font_style);
         apply_theme(&cc.egui_ctx);
@@ -48,6 +49,15 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<BrowseDownloadEvent>();
         let (app_update_event_tx, app_update_event_rx) =
             tokio_mpsc::unbounded_channel::<AppUpdateEvent>();
+        let (feedback_survey_submit_tx, feedback_survey_worker_rx) =
+            tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitRequest>();
+        let (feedback_survey_worker_tx, feedback_survey_submit_rx) =
+            tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitEvent>();
+        spawn_feedback_survey_submit_worker(
+            &runtime_services,
+            feedback_survey_worker_rx,
+            feedback_survey_worker_tx,
+        );
         let (update_check_tx, update_check_worker_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckRequest>();
         let (update_check_worker_tx, update_check_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckResult>();
         spawn_update_check_worker(
@@ -73,6 +83,18 @@ impl HestiaApp {
         Self::auto_detect_game_paths(&mut state);
         let (startup_scan_tx, startup_scan_rx) =
             tokio_mpsc::unbounded_channel::<StartupScanEvent>();
+        let (startup_path_scan_tx, startup_path_scan_rx) =
+            tokio_mpsc::unbounded_channel::<StartupPathScanEvent>();
+        let startup_path_targets = if startup_path_scan_due {
+            Self::startup_path_scan_targets(&state, false)
+        } else {
+            Vec::new()
+        };
+        if startup_path_scan_due && startup_path_targets.is_empty() {
+            state.startup_path_scan_completed = true;
+        }
+        let startup_path_scan =
+            Self::build_startup_path_scan_state(&startup_path_targets, true);
         state.tasks.retain(|task| task.status.is_terminal());
         state.show_log = false;
         state.show_tasks = false;
@@ -83,6 +105,9 @@ impl HestiaApp {
         let log_force_default_pos = state.show_log;
         let whats_new_window_nonce = if show_whats_new { 1 } else { 0 };
         let whats_new_force_default_pos = show_whats_new;
+        let show_feedback_survey = state.show_feedback_survey;
+        let feedback_survey_window_nonce = if show_feedback_survey { 1 } else { 0 };
+        let feedback_survey_force_default_pos = show_feedback_survey;
         let tools_window_nonce = if state.show_tools { 1 } else { 0 };
         let tools_force_default_pos = state.show_tools;
         let tasks_window_nonce = if state.show_tasks { 1 } else { 0 };
@@ -161,6 +186,14 @@ impl HestiaApp {
             pending_conflicts: VecDeque::new(),
             whats_new_window_nonce,
             whats_new_force_default_pos,
+            feedback_survey_window_nonce,
+            feedback_survey_force_default_pos,
+            feedback_survey_answers: HashMap::new(),
+            feedback_survey_message: String::new(),
+            feedback_survey_privacy_expanded: false,
+            feedback_survey_submitting: false,
+            feedback_survey_submit_tx,
+            feedback_survey_submit_rx,
             log_scroll_to_bottom,
             log_window_nonce,
             log_force_default_pos,
@@ -275,7 +308,11 @@ impl HestiaApp {
             window_was_maximized,
             selection_empty_at: None,
             startup_scan_loading: true,
+            startup_scan_tx,
             startup_scan_rx,
+            startup_path_scan,
+            startup_path_scan_tx,
+            startup_path_scan_rx,
             gif_preview_request_tx,
             gif_preview_event_rx,
             pending_gif_previews: HashSet::new(),
@@ -285,33 +322,15 @@ impl HestiaApp {
             animated_gif_state: HashMap::new(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
+        app.retry_pending_feedback_survey_on_launch();
         app.set_selected_game(selected_game, &cc.egui_ctx);
         app.ensure_selected_game_enabled(&cc.egui_ctx);
-        let scan_runtime = app.runtime_services.handle();
-        let mut startup_scan_state = app.state.clone();
-        app.runtime_services.spawn(async move {
-            let result = scan_runtime
-                .spawn_blocking(move || -> Result<Vec<ModEntry>> {
-                    xxmi::refresh_state(&mut startup_scan_state, None)?;
-                    Ok(startup_scan_state.mods)
-                })
-                .await;
-            match result {
-                Ok(Ok(mods)) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Ready(mods));
-                }
-                Ok(Err(err)) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
-                        "Initial refresh failed: {err:#}"
-                    )));
-                }
-                Err(err) => {
-                    let _ = startup_scan_tx.send(StartupScanEvent::Failed(format!(
-                        "Initial refresh join failed: {err}"
-                    )));
-                }
-            }
-        });
+        if startup_path_targets.is_empty() {
+            app.dispatch_startup_mod_scan();
+        } else {
+            app.startup_scan_loading = false;
+            app.dispatch_startup_path_scan(startup_path_targets);
+        }
         app
     }
 
@@ -322,6 +341,86 @@ impl HestiaApp {
                 Some("Could not save settings"),
             );
         }
+    }
+
+    fn dispatch_startup_mod_scan(&mut self) {
+        self.startup_scan_loading = true;
+        let scan_tx = self.startup_scan_tx.clone();
+        let scan_runtime = self.runtime_services.handle();
+        let mut startup_scan_state = self.state.clone();
+        self.runtime_services.spawn(async move {
+            let result = scan_runtime
+                .spawn_blocking(move || -> Result<Vec<ModEntry>> {
+                    xxmi::refresh_state(&mut startup_scan_state, None)?;
+                    Ok(startup_scan_state.mods)
+                })
+                .await;
+            match result {
+                Ok(Ok(mods)) => {
+                    let _ = scan_tx.send(StartupScanEvent::Ready(mods));
+                }
+                Ok(Err(err)) => {
+                    let _ = scan_tx.send(StartupScanEvent::Failed(format!(
+                        "Initial refresh failed: {err:#}"
+                    )));
+                }
+                Err(err) => {
+                    let _ = scan_tx.send(StartupScanEvent::Failed(format!(
+                        "Initial refresh join failed: {err}"
+                    )));
+                }
+            }
+        });
+    }
+
+    fn start_manual_path_scan(&mut self) {
+        if self.startup_path_scan.is_some() {
+            return;
+        }
+        let targets = Self::startup_path_scan_targets(&self.state, true);
+        self.startup_path_scan = Self::build_startup_path_scan_state(&targets, false);
+        self.dispatch_startup_path_scan(targets);
+    }
+
+    fn build_startup_path_scan_state(
+        targets: &[StartupPathScanTarget],
+        run_initial_mod_scan_after: bool,
+    ) -> Option<StartupPathScanState> {
+        if targets.is_empty() {
+            return None;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let statuses = targets
+            .iter()
+            .map(|target| StartupPathScanStatus {
+                kind: target.kind.clone(),
+                label: target.label.clone(),
+                candidates: target.initial_candidates.clone(),
+                selected_candidate: None,
+                choosing: false,
+            })
+            .collect();
+        Some(StartupPathScanState {
+            statuses,
+            cancel,
+            stopped: false,
+            finished: false,
+            run_initial_mod_scan_after,
+        })
+    }
+
+    fn dispatch_startup_path_scan(&self, targets: Vec<StartupPathScanTarget>) {
+        let cancel = self
+            .startup_path_scan
+            .as_ref()
+            .map(|scan| Arc::clone(&scan.cancel))
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
+        spawn_startup_path_scan_worker(
+            &self.runtime_services,
+            targets,
+            cancel,
+            self.startup_path_scan_tx.clone(),
+        );
     }
 
     fn runtime_temp_downloads_dir() -> PathBuf {
@@ -727,6 +826,67 @@ impl HestiaApp {
             changed = true;
         }
         changed
+    }
+
+    fn startup_path_scan_targets(state: &AppState, include_all: bool) -> Vec<StartupPathScanTarget> {
+        let xxmi_existing = state
+            .modded_launcher_path_override
+            .as_ref()
+            .filter(|path| path.is_file())
+            .cloned()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let has_missing_xxmi = state
+            .modded_launcher_path_override
+            .as_ref()
+            .is_none_or(|path| !path.is_file());
+
+        let mut has_missing_game = false;
+        let mut game_targets = Vec::new();
+        for game in &state.games {
+            let game_existing = game
+                .vanilla_exe_path_override
+                .as_ref()
+                .filter(|path| path.is_file())
+                .cloned()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let game_missing = game
+                .vanilla_exe_path_override
+                .as_ref()
+                .is_none_or(|path| !path.is_file());
+            has_missing_game |= game_missing;
+            let file_names = vanilla_exe_file_names(&game.definition.id)
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            if !file_names.is_empty() {
+                game_targets.push(StartupPathScanTarget {
+                    kind: StartupPathTargetKind::Game(game.definition.id.clone()),
+                    label: game.definition.name.clone(),
+                    file_names,
+                    initial_candidates: game_existing,
+                });
+            }
+        }
+
+        if !include_all && !has_missing_xxmi && !has_missing_game {
+            return Vec::new();
+        }
+
+        let mut targets = Vec::new();
+        targets.push(StartupPathScanTarget {
+            kind: StartupPathTargetKind::Xxmi,
+            label: "XXMI Launcher".to_string(),
+            file_names: xxmi_launcher_file_names()
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            initial_candidates: xxmi_existing,
+        });
+        targets.extend(game_targets);
+
+        targets
     }
 
     fn auto_detect_enabled_game_paths(&mut self, game_id: &str) -> bool {
@@ -1191,6 +1351,16 @@ impl HestiaApp {
             self.whats_new_window_nonce = self.whats_new_window_nonce.wrapping_add(1);
             self.whats_new_force_default_pos = true;
         }
+    }
+
+    fn open_feedback_survey_window(&mut self) {
+        if feedback_survey().is_none() {
+            self.set_message_ok("No feedback survey is configured for this version.");
+            return;
+        }
+        self.state.show_feedback_survey = true;
+        self.feedback_survey_window_nonce = self.feedback_survey_window_nonce.wrapping_add(1);
+        self.feedback_survey_force_default_pos = true;
     }
 
     fn toggle_primary_view(&mut self) {

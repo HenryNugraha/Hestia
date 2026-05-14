@@ -16,10 +16,11 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::model::{
     AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, DeleteBehavior,
-    GameInstall, ImportResolution, LaunchBehavior, LibraryFolder, LibraryGroupMode, MOD_META_DIR,
-    MOD_META_FILE, MetadataVisibility, ModCategory, ModCategorySortMode, ModStatusTargets,
-    ModifiedUpdateBehavior, OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate,
-    TaskEntry, TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
+    FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior, LibraryFolder,
+    LibraryGroupMode, MOD_META_DIR, MOD_META_FILE, MetadataVisibility, ModCategory,
+    ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
+    PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus, TasksLayout,
+    TasksOrder, ToolEntry, UnsafeContentMode,
 };
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,10 @@ struct AppPreferences {
     show_tasks: bool,
     #[serde(default)]
     show_tools: bool,
+    #[serde(default)]
+    feedback_survey: FeedbackSurveyState,
+    #[serde(default = "serde_default_true")]
+    startup_path_scan_completed: bool,
     #[serde(default)]
     tasks_layout: TasksLayout,
     #[serde(default)]
@@ -145,6 +150,8 @@ impl From<&AppState> for AppPreferences {
             show_log: state.show_log,
             show_tasks: state.show_tasks,
             show_tools: state.show_tools,
+            feedback_survey: state.feedback_survey.clone(),
+            startup_path_scan_completed: state.startup_path_scan_completed,
             tasks_layout: state.tasks_layout,
             tasks_order: state.tasks_order,
             last_selected_game_id: state.last_selected_game_id.clone(),
@@ -330,6 +337,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let mut state = AppState::default();
     if !paths.state_archive.exists() {
         state.show_whats_new = true;
+        state.startup_path_scan_completed = false;
         return Ok(state);
     }
     let raw = fs::read_to_string(&paths.state_archive).context("failed to read hestia.toml")?;
@@ -348,6 +356,8 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.show_log = prefs.show_log;
     state.show_tasks = prefs.show_tasks;
     state.show_tools = prefs.show_tools;
+    state.feedback_survey = prefs.feedback_survey;
+    state.startup_path_scan_completed = prefs.startup_path_scan_completed;
     state.tasks_layout = prefs.tasks_layout;
     state.tasks_order = prefs.tasks_order;
     state.last_selected_game_id = prefs.last_selected_game_id;

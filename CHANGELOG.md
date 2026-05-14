@@ -1,17 +1,16 @@
 # Changelog
 
-## [1.4.0-alpha] - 2026-05-XX
+## [1.4.0] - 2026-05-15
 
 ### Added
 - Categories can now be sorted automatically.
 - Enabled managing categories via new Settings > Category tab.
+- Added deep-scan mode to resolve path detection issues.
+- Added unintrusive quick feedback form.
 
 ### Changed
-- Various minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, fixed Tools and Log button having the same icon.
+- Various minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, separated Tools and Log buttons from using the same icon.
 - Unchecking "Use default XXMI mod path for games" now prefil the mods folder input bars with current value.
-
-### Fixed
-- 
 
 ## [1.3.0] - 2026-05-09
 

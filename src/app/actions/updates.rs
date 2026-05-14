@@ -797,6 +797,149 @@ impl HestiaApp {
         }
     }
 
+    fn consume_startup_path_scan_events(&mut self, ctx: &egui::Context) {
+        let mut finished = false;
+        let mut saw_event = false;
+        while let Ok(event) = self.startup_path_scan_rx.try_recv() {
+            saw_event = true;
+            match event {
+                StartupPathScanEvent::Found { kind, path } => {
+                    if let Some(scan) = self.startup_path_scan.as_mut() {
+                        if let Some(status) =
+                            scan.statuses.iter_mut().find(|status| status.kind == kind)
+                        {
+                            if !status.candidates.iter().any(|candidate| candidate == &path) {
+                                status.candidates.push(path);
+                            }
+                        }
+                    }
+                }
+                StartupPathScanEvent::Finished { stopped } => {
+                    if let Some(scan) = self.startup_path_scan.as_mut() {
+                        scan.stopped = stopped;
+                        scan.finished = true;
+                    }
+                    finished = true;
+                }
+            }
+        }
+
+        if finished {
+            if !self.startup_path_scan_needs_review() {
+                self.finish_startup_path_scan(ctx);
+            }
+        }
+
+        if saw_event || self.startup_path_scan.is_some() {
+            ctx.request_repaint();
+        }
+    }
+
+    fn startup_path_scan_needs_review(&self) -> bool {
+        let Some(scan) = self.startup_path_scan.as_ref() else {
+            return false;
+        };
+        scan.stopped || scan.statuses.iter().any(|status| status.candidates.is_empty())
+    }
+
+    fn finish_startup_path_scan(&mut self, ctx: &egui::Context) {
+        let stopped = self
+            .startup_path_scan
+            .as_ref()
+            .is_some_and(|scan| scan.stopped);
+        self.apply_startup_path_scan_results(ctx, !stopped);
+        let run_initial_mod_scan_after = self
+            .startup_path_scan
+            .as_ref()
+            .is_some_and(|scan| scan.run_initial_mod_scan_after);
+        self.state.startup_path_scan_completed = true;
+        self.save_state();
+        self.ensure_selected_game_enabled(ctx);
+        self.startup_path_scan = None;
+        if run_initial_mod_scan_after {
+            self.dispatch_startup_mod_scan();
+        }
+    }
+
+    fn apply_startup_path_scan_results(&mut self, ctx: &egui::Context, allow_fallback: bool) {
+        let Some(scan) = self.startup_path_scan.as_ref() else {
+            return;
+        };
+        let paths_to_apply = scan
+            .statuses
+            .iter()
+            .filter_map(|status| {
+                let path = status
+                    .selected_candidate
+                    .clone()
+                    .or_else(|| allow_fallback.then(|| status.candidates.first().cloned()).flatten())?;
+                Some((status.kind.clone(), path))
+            })
+            .collect::<Vec<_>>();
+        for (kind, path) in paths_to_apply {
+            match kind {
+                StartupPathTargetKind::Xxmi => {
+                    self.state.modded_launcher_path_override = Some(path.clone());
+                    for game in &mut self.state.games {
+                        game.modded_exe_path_override = Some(path.clone());
+                        game.mods_path_override =
+                            default_mods_path_from_launcher(&path, &game.definition.xxmi_code);
+                    }
+                    let mods_dir_error = self
+                        .state
+                        .games
+                        .iter()
+                        .filter(|game| {
+                            game.enabled
+                                && game
+                                    .vanilla_exe_path_override
+                                    .as_ref()
+                                    .is_some_and(|path| path.is_file())
+                        })
+                        .filter_map(|game| {
+                            let mods_path = game.mods_path(self.state.use_default_mods_path)?;
+                            fs::create_dir_all(&mods_path)
+                                .err()
+                                .map(|err| (mods_path, err))
+                        })
+                        .next();
+                    ctx.data_mut(|data| {
+                        data.remove::<String>(egui::Id::new("launcher_path_input"));
+                        for game in &self.state.games {
+                            data.remove::<String>(egui::Id::new((
+                                "settings_mods_path",
+                                game.definition.id.as_str(),
+                            )));
+                        }
+                    });
+                    if let Some((mods_path, err)) = mods_dir_error {
+                        self.report_error_message(
+                            format!("failed to create mod directory: {}: {err}", mods_path.display()),
+                            Some("Could not create mods folder"),
+                        );
+                    }
+                }
+                StartupPathTargetKind::Game(game_id) => {
+                    if let Some(game) = self
+                        .state
+                        .games
+                        .iter_mut()
+                        .find(|game| game.definition.id == game_id)
+                    {
+                        game.vanilla_exe_path_override = Some(path);
+                        game.enabled = true;
+                        ctx.data_mut(|data| {
+                            data.remove::<String>(egui::Id::new((
+                                "settings_vanilla_path",
+                                game.definition.id.as_str(),
+                            )));
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn queue_game_refresh(&mut self, game_id: String) {
         if self.refresh_inflight {
             self.refresh_pending_selected_game = Some(game_id);

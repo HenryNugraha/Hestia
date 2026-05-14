@@ -1,7 +1,12 @@
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use uuid::Uuid;
 
 pub const DISABLED_CONTAINER: &str = "DISABLED_BY_HESTIA";
 pub const MOD_META_DIR: &str = "⬢HESTIA";
@@ -39,6 +44,12 @@ pub struct AppState {
     pub show_tools: bool,
     #[serde(default)]
     pub show_whats_new: bool,
+    #[serde(default)]
+    pub show_feedback_survey: bool,
+    #[serde(default)]
+    pub feedback_survey: FeedbackSurveyState,
+    #[serde(default = "serde_default_true")]
+    pub startup_path_scan_completed: bool,
     #[serde(default)]
     pub tasks_layout: TasksLayout,
     #[serde(default)]
@@ -135,6 +146,9 @@ impl Default for AppState {
             show_tasks: false,
             show_tools: false,
             show_whats_new: false,
+            show_feedback_survey: false,
+            feedback_survey: FeedbackSurveyState::default(),
+            startup_path_scan_completed: true,
             tasks_layout: TasksLayout::SingleList,
             tasks_order: TasksOrder::OldestFirst,
             last_selected_game_id: None,
@@ -174,6 +188,191 @@ impl Default for AppState {
             tool_blacklist: HashMap::new(),
             preferences_need_save: false,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SurveyDefinition {
+    pub id: &'static str,
+    pub version: &'static str,
+    pub title: &'static str,
+    pub launch_delay: u32,
+    pub later_delay: u32,
+    pub questions: &'static [SurveyQuestion],
+    pub message_label: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct SurveyQuestion {
+    pub id: &'static str,
+    pub prompt: &'static str,
+    pub answers: &'static [SurveyAnswer],
+}
+
+#[derive(Debug, Clone)]
+pub struct SurveyAnswer {
+    pub id: u8,
+    pub label: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeedbackSurveyState {
+    #[serde(default, deserialize_with = "deserialize_optional_uuid_lossy")]
+    pub client_id: Option<Uuid>,
+    #[serde(default)]
+    pub never_show: bool,
+    #[serde(default)]
+    pub surveys: HashMap<String, FeedbackSurveyVersionState>,
+}
+
+fn deserialize_optional_uuid_lossy<'de, D>(deserializer: D) -> Result<Option<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| Uuid::parse_str(value.trim()).ok()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeedbackSurveyVersionState {
+    #[serde(default)]
+    pub launches_seen: u32,
+    #[serde(default)]
+    pub next_prompt_launch: u32,
+    #[serde(default)]
+    pub submitted: bool,
+    #[serde(default)]
+    pub skipped: bool,
+    #[serde(default)]
+    pub submit_pending: bool,
+    #[serde(default)]
+    pub submit_discarded: bool,
+}
+
+impl SurveyDefinition {
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.version, self.id)
+    }
+}
+
+const FEEDBACK_SURVEY: SurveyDefinition = SurveyDefinition {
+    id: "feedback",
+    version: env!("CARGO_PKG_VERSION"),
+    title: "Quick Feedback",
+    launch_delay: 5,
+    later_delay: 3,
+    questions: crate::FEEDBACK_SURVEY_QUESTIONS,
+    message_label: crate::FEEDBACK_SURVEY_MESSAGE_LABEL,
+};
+
+pub(crate) fn feedback_survey() -> Option<&'static SurveyDefinition> {
+    if !crate::FEEDBACK_SURVEY_ENABLED {
+        return None;
+    }
+    if FEEDBACK_SURVEY.questions.is_empty() && FEEDBACK_SURVEY.message_label.trim().is_empty() {
+        return None;
+    }
+    Some(&FEEDBACK_SURVEY)
+}
+
+impl AppState {
+    pub fn prepare_feedback_survey_on_launch(&mut self, survey: Option<&SurveyDefinition>) -> bool {
+        let Some(survey) = survey else {
+            let changed = self.show_feedback_survey;
+            self.show_feedback_survey = false;
+            return changed;
+        };
+
+        let mut changed = false;
+        if self.feedback_survey.client_id.is_none() {
+            self.feedback_survey.client_id = Some(Uuid::new_v4());
+            changed = true;
+        }
+
+        if self.feedback_survey.never_show {
+            if self.show_feedback_survey {
+                self.show_feedback_survey = false;
+                changed = true;
+            }
+            return changed;
+        }
+
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        if survey_state.submitted
+            || survey_state.skipped
+            || survey_state.submit_pending
+            || survey_state.submit_discarded
+        {
+            if self.show_feedback_survey {
+                self.show_feedback_survey = false;
+                changed = true;
+            }
+            return changed;
+        }
+
+        if self.show_feedback_survey {
+            return changed;
+        }
+
+        survey_state.launches_seen = survey_state.launches_seen.saturating_add(1);
+        changed = true;
+
+        let next_prompt_launch = survey_state
+            .next_prompt_launch
+            .max(survey.launch_delay.max(1));
+        if survey_state.launches_seen >= next_prompt_launch {
+            self.show_feedback_survey = true;
+        }
+
+        changed
+    }
+
+    pub fn defer_feedback_survey(&mut self, survey: &SurveyDefinition) {
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        survey_state.next_prompt_launch = survey_state
+            .launches_seen
+            .saturating_add(survey.later_delay.max(1));
+        self.show_feedback_survey = false;
+    }
+
+    pub fn skip_feedback_survey(&mut self, survey: &SurveyDefinition) {
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        survey_state.skipped = true;
+        survey_state.submit_pending = false;
+        self.show_feedback_survey = false;
+    }
+
+    pub fn mark_feedback_survey_submit_pending(&mut self, survey: &SurveyDefinition) {
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        survey_state.submit_pending = true;
+        survey_state.submit_discarded = false;
+        self.show_feedback_survey = false;
+    }
+
+    pub fn mark_feedback_survey_submitted(&mut self, survey: &SurveyDefinition) {
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        survey_state.submitted = true;
+        survey_state.submit_pending = false;
+        survey_state.submit_discarded = false;
+        self.show_feedback_survey = false;
+    }
+
+    pub fn discard_pending_feedback_survey(&mut self, survey: &SurveyDefinition) {
+        let key = survey.key();
+        let survey_state = self.feedback_survey.surveys.entry(key).or_default();
+        survey_state.submit_pending = false;
+        survey_state.submit_discarded = true;
+        self.show_feedback_survey = false;
+    }
+
+    pub fn disable_feedback_surveys(&mut self) {
+        self.feedback_survey.never_show = true;
+        self.show_feedback_survey = false;
     }
 }
 
@@ -249,7 +448,10 @@ pub struct GameInstall {
 impl GameInstall {
     pub fn mods_path(&self, use_default: bool) -> Option<PathBuf> {
         if use_default {
-            default_mods_path(&self.definition.xxmi_code)
+            self.modded_exe_path_override
+                .as_ref()
+                .and_then(|path| default_mods_path_from_launcher(path, &self.definition.xxmi_code))
+                .or_else(|| default_mods_path(&self.definition.xxmi_code))
         } else {
             self.mods_path_override.clone()
         }
@@ -805,6 +1007,29 @@ fn xxmi_launcher_rels() -> &'static [&'static str] {
     ]
 }
 
+pub fn default_mods_path_from_launcher(launcher_exe: &Path, xxmi_code: &str) -> Option<PathBuf> {
+    let launcher_dir = launcher_exe.parent()?;
+    let root = if launcher_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("Bin"))
+        && launcher_dir
+            .parent()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("Resources"))
+    {
+        launcher_dir.parent()?.parent()?
+    } else {
+        launcher_dir
+    };
+    Some(root.join(xxmi_code).join("Mods"))
+}
+
+pub fn xxmi_launcher_file_names() -> &'static [&'static str] {
+    &["XXMI Launcher.exe", "XXMI-Launcher.exe"]
+}
+
 pub fn default_vanilla_exe_candidates(game_id: &str) -> Vec<PathBuf> {
     let roots = common_roots();
     build_candidates(&roots, vanilla_exe_rels(game_id))
@@ -891,6 +1116,19 @@ fn vanilla_exe_rels(game_id: &str) -> &'static [&'static str] {
         ],
         _ => &[],
     }
+}
+
+pub fn vanilla_exe_file_names(game_id: &str) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    for rel in vanilla_exe_rels(game_id) {
+        let Some(name) = Path::new(rel).file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 fn common_roots() -> Vec<PathBuf> {
@@ -1376,4 +1614,131 @@ pub fn seeded_games() -> Vec<GameInstall> {
         enabled: true,
     })
     .collect()
+}
+
+#[cfg(test)]
+mod feedback_survey_tests {
+    use super::*;
+
+    const ANSWERS: &[SurveyAnswer] = &[
+        SurveyAnswer {
+            id: 1,
+            label: "Yes",
+        },
+        SurveyAnswer { id: 2, label: "No" },
+    ];
+    const QUESTIONS: &[SurveyQuestion] = &[SurveyQuestion {
+        id: "q1",
+        prompt: "Question?",
+        answers: ANSWERS,
+    }];
+    const SURVEY: SurveyDefinition = SurveyDefinition {
+        id: "survey",
+        version: "1.2.3",
+        title: "Survey",
+        launch_delay: 5,
+        later_delay: 3,
+        questions: QUESTIONS,
+        message_label: "Anything else?",
+    };
+
+    #[test]
+    fn feedback_survey_opens_after_configured_launches() {
+        let mut state = AppState::default();
+
+        for _ in 0..4 {
+            assert!(state.prepare_feedback_survey_on_launch(Some(&SURVEY)));
+            assert!(!state.show_feedback_survey);
+        }
+
+        assert!(state.prepare_feedback_survey_on_launch(Some(&SURVEY)));
+        assert!(state.show_feedback_survey);
+    }
+
+    #[test]
+    fn feedback_survey_open_window_does_not_advance_launch_delay() {
+        let mut state = AppState::default();
+        for _ in 0..5 {
+            state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+        assert!(state.show_feedback_survey);
+
+        assert!(!state.prepare_feedback_survey_on_launch(Some(&SURVEY)));
+        let survey_state = state.feedback_survey.surveys.get(&SURVEY.key()).unwrap();
+        assert_eq!(survey_state.launches_seen, 5);
+        assert!(state.show_feedback_survey);
+    }
+
+    #[test]
+    fn feedback_survey_maybe_later_delays_three_launches() {
+        let mut state = AppState::default();
+        for _ in 0..5 {
+            state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+
+        state.defer_feedback_survey(&SURVEY);
+        assert!(!state.show_feedback_survey);
+        for _ in 0..2 {
+            state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+            assert!(!state.show_feedback_survey);
+        }
+
+        state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        assert!(state.show_feedback_survey);
+    }
+
+    #[test]
+    fn feedback_survey_skip_and_never_show_suppress_future_prompts() {
+        let mut skipped = AppState::default();
+        skipped.skip_feedback_survey(&SURVEY);
+        for _ in 0..6 {
+            skipped.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+        assert!(!skipped.show_feedback_survey);
+
+        let mut disabled = AppState::default();
+        disabled.disable_feedback_surveys();
+        for _ in 0..6 {
+            disabled.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+        assert!(!disabled.show_feedback_survey);
+    }
+
+    #[test]
+    fn feedback_survey_pending_and_discarded_suppress_future_prompts() {
+        let mut pending = AppState::default();
+        pending.mark_feedback_survey_submit_pending(&SURVEY);
+        for _ in 0..6 {
+            pending.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+        assert!(!pending.show_feedback_survey);
+        let pending_state = pending.feedback_survey.surveys.get(&SURVEY.key()).unwrap();
+        assert!(pending_state.submit_pending);
+        assert!(!pending_state.submitted);
+
+        let mut discarded = AppState::default();
+        discarded.discard_pending_feedback_survey(&SURVEY);
+        for _ in 0..6 {
+            discarded.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        }
+        assert!(!discarded.show_feedback_survey);
+        let discarded_state = discarded
+            .feedback_survey
+            .surveys
+            .get(&SURVEY.key())
+            .unwrap();
+        assert!(discarded_state.submit_discarded);
+        assert!(!discarded_state.submitted);
+    }
+
+    #[test]
+    fn feedback_survey_invalid_client_uuid_deserializes_as_missing() {
+        let raw = r#"
+            client_id = "not-a-uuid"
+            never_show = false
+        "#;
+
+        let state: FeedbackSurveyState = toml::from_str(raw).unwrap();
+        assert!(state.client_id.is_none());
+    }
 }

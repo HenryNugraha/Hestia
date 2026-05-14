@@ -48,6 +48,7 @@ const APP_NAME: &str = "Hestia";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const APP_ICON_ID: &str = "__app__";
+const FEEDBACK_SURVEY_SERVER_URL: &str = "https://hestia-survey.hnawc.com/";
 
 // Persistent egui widget/window IDs used for focus, popups, and window state.
 const BROWSE_DETAIL_WINDOW_ID: &str = "browse_detail_window";

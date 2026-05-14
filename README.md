@@ -148,7 +148,7 @@ Runtime cache and temporary files are stored under `%TEMP%\Hestia`
 
 Modding always carries some risk. Hestia does not remove or add the normal risks that come with using XXMI or third-party mods. Hestia itself does not interact directly with the games. It manages files, metadata, downloads, and related tools around your XXMI setup.
 
-For transparency, Hestia does keep local records of your activity and downloads, visible through the Tasks and Log windows. But they remain entirely on your PC and never leave it unless you yourself choose to share them. Hestia does not include any telemetry, tracking, or external data collection of any kind.
+For transparency, Hestia keeps local records of your activity and downloads, visible through the Tasks and Log windows. These records remain on your PC and never leave it unless you choose to share them. Hestia does not include background telemetry or tracking. It has an optional feedback survey. Responses are only sent if you press `Submit Feedback`, and you can see the what's included before sending it. 
 
 ### ※ Can I assign categories to mods?
 

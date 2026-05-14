@@ -41,8 +41,9 @@ use crate::{
         ModUpdateState, ModifiedUpdateBehavior, OperationLogEntry, SearchSort, StagedAppUpdate,
         TaskEntry, TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta,
         UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
-        default_vanilla_exe_candidates, registry_modded_exe_candidates,
-        registry_vanilla_exe_candidates, shortcut_modded_exe_candidates,
+        default_mods_path_from_launcher, default_vanilla_exe_candidates, feedback_survey,
+        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
     },
     persistence::{self, PortablePaths},
 };
@@ -85,7 +86,9 @@ impl eframe::App for HestiaApp {
         self.consume_browse_image_results();
         self.consume_browse_download_events();
         self.consume_app_update_events();
+        self.consume_feedback_survey_events();
         self.consume_update_check_results();
+        self.consume_startup_path_scan_events(ctx);
         self.consume_startup_scan_events();
         self.process_local_mod_image_queue();
         self.process_pending_texture_uploads(ctx);
@@ -121,8 +124,10 @@ impl eframe::App for HestiaApp {
         self.render_tools_window(ctx);
         self.render_tool_launch_options_prompt(ctx);
         self.render_whats_new_window(ctx);
+        self.render_feedback_survey_window(ctx);
         self.render_log_panel(ctx);
         paint_window_frame(ctx);
+        self.render_startup_path_scan_overlay(ctx);
 
         self.render_pending_conflict(ctx);
         self.render_pending_import(ctx);

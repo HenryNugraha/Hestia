@@ -119,6 +119,14 @@ pub struct HestiaApp {
     pending_conflicts: VecDeque<PendingConflict>,
     whats_new_window_nonce: u64,
     whats_new_force_default_pos: bool,
+    feedback_survey_window_nonce: u64,
+    feedback_survey_force_default_pos: bool,
+    feedback_survey_answers: HashMap<String, u8>,
+    feedback_survey_message: String,
+    feedback_survey_privacy_expanded: bool,
+    feedback_survey_submitting: bool,
+    feedback_survey_submit_tx: WorkerTx<FeedbackSurveySubmitRequest>,
+    feedback_survey_submit_rx: WorkerRx<FeedbackSurveySubmitEvent>,
     log_scroll_to_bottom: bool,
     log_window_nonce: u64,
     log_force_default_pos: bool,
@@ -229,7 +237,11 @@ pub struct HestiaApp {
     window_was_maximized: bool,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
+    startup_scan_tx: WorkerTx<StartupScanEvent>,
     startup_scan_rx: WorkerRx<StartupScanEvent>,
+    startup_path_scan: Option<StartupPathScanState>,
+    startup_path_scan_tx: WorkerTx<StartupPathScanEvent>,
+    startup_path_scan_rx: WorkerRx<StartupPathScanEvent>,
     gif_preview_request_tx: WorkerTx<GifPreviewRequest>,
     gif_preview_event_rx: WorkerRx<GifPreviewEvent>,
     gif_animation_request_tx: WorkerTx<GifAnimationRequest>,
@@ -439,6 +451,26 @@ enum AppUpdateEvent {
     },
     DownloadCanceled {
         task_id: u64,
+    },
+}
+
+struct FeedbackSurveySubmitRequest {
+    version: String,
+    payload_json: String,
+    pending_path: PathBuf,
+    discard_on_failure: bool,
+}
+
+enum FeedbackSurveySubmitEvent {
+    Submitted {
+        version: String,
+        pending_path: PathBuf,
+    },
+    Failed {
+        version: String,
+        pending_path: PathBuf,
+        error: String,
+        discard_on_failure: bool,
     },
 }
 
@@ -860,6 +892,46 @@ struct TextureEntryMeta {
 enum StartupScanEvent {
     Ready(Vec<ModEntry>),
     Failed(String),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum StartupPathTargetKind {
+    Xxmi,
+    Game(String),
+}
+
+#[derive(Clone)]
+struct StartupPathScanTarget {
+    kind: StartupPathTargetKind,
+    label: String,
+    file_names: Vec<String>,
+    initial_candidates: Vec<PathBuf>,
+}
+
+struct StartupPathScanStatus {
+    kind: StartupPathTargetKind,
+    label: String,
+    candidates: Vec<PathBuf>,
+    selected_candidate: Option<PathBuf>,
+    choosing: bool,
+}
+
+struct StartupPathScanState {
+    statuses: Vec<StartupPathScanStatus>,
+    cancel: Arc<AtomicBool>,
+    stopped: bool,
+    finished: bool,
+    run_initial_mod_scan_after: bool,
+}
+
+enum StartupPathScanEvent {
+    Found {
+        kind: StartupPathTargetKind,
+        path: PathBuf,
+    },
+    Finished {
+        stopped: bool,
+    },
 }
 
 #[derive(Clone)]

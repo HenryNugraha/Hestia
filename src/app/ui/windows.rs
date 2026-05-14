@@ -36,10 +36,24 @@ impl HestiaApp {
 
         window.show(ctx, |ui| {
             ui.horizontal(|ui| {
-                static_label(
-                    ui,
-                    bold(format!("Hestia {APP_VERSION}")).underline().size(16.0),
-                );
+                if feedback_survey().is_some() {
+                    let version_response = ui
+                        .add(
+                            egui::Label::new(bold(format!("Hestia {APP_VERSION}")).underline().size(16.0))
+                                .selectable(false)
+                                .sense(Sense::click()),
+                        )
+                        .on_hover_text("Click to show feedback survey.")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if version_response.clicked() {
+                        self.open_feedback_survey_window();
+                    }
+                } else {
+                    static_label(
+                        ui,
+                        bold(format!("Hestia {APP_VERSION}")).underline().size(16.0),
+                    );
+                }
                 ui.add_space(-4.0);
                 ui.vertical(|ui| {
                     ui.add_space(5.0);
@@ -52,7 +66,6 @@ impl HestiaApp {
                     );
                 });
             });
-            // ui.add_space(6.0);
             for highlight in WHATS_NEW_HIGHLIGHTS {
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
@@ -72,6 +85,295 @@ impl HestiaApp {
             self.whats_new_force_default_pos = false;
         }
         self.state.show_whats_new = whats_new_open;
+    }
+
+    fn render_feedback_survey_window(&mut self, ctx: &egui::Context) {
+        if !self.state.show_feedback_survey {
+            return;
+        }
+
+        let Some(survey) = feedback_survey() else {
+            self.state.show_feedback_survey = false;
+            return;
+        };
+        let mut survey_open = self.state.show_feedback_survey;
+        let force_default_pos = self.feedback_survey_force_default_pos;
+        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let mut window =
+            egui::Window::new(icon_text_sized(Icon::ClipboardList, survey.title, 14.0, 14.0))
+            .id(egui::Id::new((
+                "feedback_survey_window",
+                self.feedback_survey_window_nonce,
+            )))
+            .open(&mut survey_open)
+            .title_bar(true)
+            .resizable(false)
+            .collapsible(true)
+            .frame(window_frame);
+
+        let window_size = egui::vec2(420.0, 420.0);
+
+        window = window.fixed_size(window_size);
+
+        if let Some(rect) = self.last_right_pane_rect {
+            let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
+            let window_offset = egui::vec2(4.0, 4.0);
+            window = window.movable(true).constrain_to(inset_rect);
+            if force_default_pos {
+                let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);
+                window =
+                    window.fixed_pos(top_right - egui::vec2(window_size.x, 0.0) - window_offset);
+            }
+        } else {
+            window = window.default_size(window_size);
+        }
+
+        enum SurveyAction {
+            Submit,
+            MaybeLater,
+            SkipVersion,
+            NeverShow,
+        }
+
+        let mut action = None;
+        window.show(ctx, |ui| {
+            let content_width = (window_size.x - 40.0).max(80.0);
+            ui.set_max_width(content_width);
+            let content_height = (window_size.y - 160.0).max(48.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(content_width.min(ui.available_width()), content_height),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ScrollArea::vertical()
+                        .max_height(content_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for question in survey.questions {
+                                ui.indent(("feedback_survey_question", question.id), |ui| {
+                                    ui.label(question.prompt);
+                                    ui.horizontal_wrapped(|ui| {
+                                        let selected = self
+                                            .feedback_survey_answers
+                                            .entry(question.id.to_string())
+                                            .or_insert(0);
+                                        for answer in question.answers {
+                                            ui.radio_value(selected, answer.id, answer.label)
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        }
+                                    });
+                                });
+                                ui.add_space(6.0);
+                            }
+
+                            if !survey.message_label.trim().is_empty() {
+                                ui.label(survey.message_label);
+                                ui.add(
+                                    TextEdit::multiline(&mut self.feedback_survey_message)
+                                        .desired_rows(5)
+                                        .hint_text(
+                                            RichText::new("Optional").color(Color32::from_gray(120)),
+                                        ),
+                                );
+                            }
+                        });
+                },
+            );
+
+            ui.add_space(2.0);
+
+            let has_answer = survey.questions.iter().any(|question| {
+                self.feedback_survey_answers
+                    .get(question.id)
+                    .is_some_and(|answer| *answer != 0)
+            });
+            let has_message = self.feedback_survey_message.trim().chars().count() >= 4;
+            let complete = has_answer || has_message;
+
+            ui.horizontal(|ui| {
+                let submit_label = if self.feedback_survey_submitting {
+                    "Submitting..."
+                } else {
+                    "Submit Feedback"
+                };
+                let submit_button = egui::Button::new(submit_label)
+                    .fill(Color32::from_rgb(180, 78, 35))
+                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)));
+                let submit_enabled = complete && !self.feedback_survey_submitting;
+                let submit_response = ui.add_enabled(submit_enabled, submit_button).on_hover_cursor(
+                    if submit_enabled {
+                        egui::CursorIcon::PointingHand
+                    } else {
+                        egui::CursorIcon::NotAllowed
+                    },
+                );
+                if submit_response.clicked() {
+                    action = Some(SurveyAction::Submit);
+                }
+
+                ui.menu_button("Dismiss", |ui| {
+                    if ui
+                        .button("Remind me later")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(SurveyAction::MaybeLater);
+                        ui.close();
+                    }
+                    if ui
+                        .button("Skip this version")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(SurveyAction::SkipVersion);
+                        ui.close();
+                    }
+                    if ui
+                        .button("Never show")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(SurveyAction::NeverShow);
+                        ui.close();
+                    }
+                })
+                .response
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let privacy_response = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new("Privacy details")
+                                    .size(10.0)
+                                    .color(Color32::from_gray(170)),
+                            )
+                            .selectable(false)
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if privacy_response.clicked() {
+                        self.feedback_survey_privacy_expanded =
+                            !self.feedback_survey_privacy_expanded;
+                    }
+                });
+            });
+
+            if self.feedback_survey_privacy_expanded {
+                ui.add_space(6.0);
+                ui.separator();
+                static_label(
+                    ui,
+                    RichText::new(format!(
+                        concat!(
+                            "Only the following data payload will be sent to the survey server.\n",
+                            "• Client: Sha256 hash of randomly generated UUID in hestia.toml file\n",
+                            "• Server URL: {}"
+                        ),
+                        FEEDBACK_SURVEY_SERVER_URL
+                    ))
+                        .size(11.0)
+                        .color(Color32::from_gray(180)),
+                );
+                ui.add_space(-4.0);
+                let mut payload_preview = self.feedback_survey_payload_json();
+                ui.add(
+                    TextEdit::multiline(&mut payload_preview)
+                        .desired_rows(6)
+                        .code_editor()
+                        .interactive(true),
+                );
+            }
+        });
+
+        if force_default_pos {
+            self.feedback_survey_force_default_pos = false;
+        }
+
+        match action {
+            Some(SurveyAction::Submit) => {
+                self.submit_feedback_survey(self.feedback_survey_payload_json());
+            }
+            Some(SurveyAction::MaybeLater) => {
+                self.state.defer_feedback_survey(survey);
+                self.save_state();
+            }
+            Some(SurveyAction::SkipVersion) => {
+                self.state.skip_feedback_survey(survey);
+                self.feedback_survey_answers.clear();
+                self.feedback_survey_message.clear();
+                self.feedback_survey_privacy_expanded = false;
+                self.save_state();
+            }
+            Some(SurveyAction::NeverShow) => {
+                self.state.disable_feedback_surveys();
+                self.feedback_survey_answers.clear();
+                self.feedback_survey_message.clear();
+                self.feedback_survey_privacy_expanded = false;
+                self.save_state();
+            }
+            None => {
+                if self.state.show_feedback_survey && !survey_open {
+                    self.state.defer_feedback_survey(survey);
+                    self.save_state();
+                } else {
+                    self.state.show_feedback_survey = survey_open;
+                }
+            }
+        }
+    }
+
+    fn feedback_survey_payload_json(&self) -> String {
+        let Some(survey) = feedback_survey() else {
+            return "{}".to_string();
+        };
+        let mut answers = serde_json::Map::new();
+        for question in survey.questions {
+            if let Some(answer) = self.feedback_survey_answers.get(question.id) {
+                if *answer != 0 {
+                    answers.insert(
+                        question.id.to_string(),
+                        serde_json::Value::from(*answer),
+                    );
+                }
+            }
+        }
+
+        let message = self.feedback_survey_message.trim();
+        #[derive(serde::Serialize)]
+        struct FeedbackSurveyPayload<'a> {
+            client: String,
+            version: &'a str,
+            answers: serde_json::Map<String, serde_json::Value>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            message: Option<&'a str>,
+        }
+
+        let payload = FeedbackSurveyPayload {
+            client: self.feedback_survey_client_hash(),
+            version: survey.version,
+            answers,
+            message: (!message.is_empty()).then_some(message),
+        };
+
+        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    fn feedback_survey_client_hash(&self) -> String {
+        use sha2::{Digest, Sha256};
+
+        const SURVEY_CLIENT_HASH_SALT: &[u8] = b"hestia-feedback-survey-client-v1";
+        let Some(client_id) = self.state.feedback_survey.client_id else {
+            return String::new();
+        };
+
+        let mut hasher = Sha256::new();
+        hasher.update(SURVEY_CLIENT_HASH_SALT);
+        hasher.update(client_id.as_bytes());
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     fn render_log_panel(&mut self, ctx: &egui::Context) {
@@ -2204,6 +2506,51 @@ impl HestiaApp {
                         self.render_categories_settings_tab(ui, &mut should_save);
                     }
                     SettingsTab::Path => {
+                    ui.indent("path_scan_tools", |ui| {
+                            static_label(
+                                ui,
+                                RichText::new("Having trouble with paths?")
+                                    .size(14.0)
+                                    .color(Color32::from_gray(220)),
+                            );
+                            ui.add_space(-10.0);
+                            static_label(
+                                ui,
+                                RichText::new("Hestia can perform a deep scan to detect paths for XXMI and supported game")
+                                    .size(12.0)
+                                    .color(Color32::from_gray(165)),
+                            );
+                            ui.add_space(-4.0);
+                            ui.scope(|ui| {
+                                let radius = egui::CornerRadius::same(3);
+                                ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                                ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                                ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                                let scanning = self.startup_path_scan.is_some();
+                                let scan_button = egui::Button::new(icon_text_sized(
+                                    Icon::Search,
+                                    if scanning { "Scanning..." } else { "Scan Paths" },
+                                    14.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)));
+                                if ui
+                                    .add_enabled(!scanning, scan_button)
+                                    .on_hover_text("Scan accessible drives for XXMI and game executables.")
+                                    .on_hover_cursor(if scanning {
+                                        egui::CursorIcon::NotAllowed
+                                    } else {
+                                        egui::CursorIcon::PointingHand
+                                    })
+                                    .clicked()
+                                {
+                                    self.start_manual_path_scan();
+                                }
+                                ui.add_space(1.0);
+                            });
+                    });
+                    ui.add_space(16.0);
                     static_label(ui, bold("XXMI").underline().size(16.0));
                     ui.group(|ui| {
                         let warn_color = Color32::from_rgb(124, 45, 58);
@@ -2242,7 +2589,7 @@ impl HestiaApp {
                             ui.horizontal(|ui| {
                                 let browse_width = 28.0;
                                 let input_width = 320.0;
-                                let input_id = ui.make_persistent_id("launcher_path_input");
+                                let input_id = egui::Id::new("launcher_path_input");
 
                                 let current_launcher_value = self
                                     .state
@@ -2297,15 +2644,47 @@ impl HestiaApp {
                                 if launcher_dirty && (action_clicked || submit_with_enter) {
                                     self.state.modded_launcher_path_override =
                                         non_empty(launcher_value).map(PathBuf::from);
-                                    ui.data_mut(|d| d.remove::<String>(input_id));
+                                    if let Some(path) = self.state.modded_launcher_path_override.clone() {
+                                        for game in &mut self.state.games {
+                                            game.modded_exe_path_override = Some(path.clone());
+                                            game.mods_path_override = default_mods_path_from_launcher(
+                                                &path,
+                                                &game.definition.xxmi_code,
+                                            );
+                                        }
+                                    }
+                                    ui.data_mut(|d| {
+                                        d.remove::<String>(input_id);
+                                        for game in &self.state.games {
+                                            d.remove::<String>(egui::Id::new((
+                                                "settings_mods_path",
+                                                game.definition.id.as_str(),
+                                            )));
+                                        }
+                                    });
                                     should_save = true;
                                 } else if !launcher_dirty && action_clicked {
                                     if let Some(path) = FileDialog::new()
                                         .add_filter("Executable", &["exe"])
                                         .pick_file()
                                     {
-                                        self.state.modded_launcher_path_override = Some(path);
-                                        ui.data_mut(|d| d.remove::<String>(input_id));
+                                        self.state.modded_launcher_path_override = Some(path.clone());
+                                        for game in &mut self.state.games {
+                                            game.modded_exe_path_override = Some(path.clone());
+                                            game.mods_path_override = default_mods_path_from_launcher(
+                                                &path,
+                                                &game.definition.xxmi_code,
+                                            );
+                                        }
+                                        ui.data_mut(|d| {
+                                            d.remove::<String>(input_id);
+                                            for game in &self.state.games {
+                                                d.remove::<String>(egui::Id::new((
+                                                    "settings_mods_path",
+                                                    game.definition.id.as_str(),
+                                                )));
+                                            }
+                                        });
                                         should_save = true;
                                     }
                                 }
@@ -2748,6 +3127,7 @@ impl HestiaApp {
                                         .selectable(false)
                                         .sense(Sense::click()),
                                     )
+                                    .on_hover_text("Click to show What's New.")
                                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                                 if version_response.clicked() {
                                     self.toggle_whats_new_window();
