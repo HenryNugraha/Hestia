@@ -824,8 +824,8 @@ fn larger_checkbox(ui: &mut Ui, checked: bool) -> egui::Response {
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "✓",
-            egui::FontId::new(16.0, FontFamily::Proportional),
+            icon_char(Icon::Check),
+            egui::FontId::new(16.0, FontFamily::Name(LUCIDE_FAMILY.into())),
             Color32::from_rgb(140, 146, 154),
         );
     }

@@ -32,7 +32,7 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
 pub(crate) const WHATS_NEW_DATE: &str = "XX May 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
     "Added new 'Category' tab in the Settings",
-    "Minor visual interface improvements",
+    "Various visual interface improvements",
 ];
 
 fn main() -> anyhow::Result<()> {

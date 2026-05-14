@@ -7,7 +7,7 @@
 - Enabled managing categories via new Settings > Category tab.
 
 ### Changed
-- Minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, fixed Tools and Log button having the same icon.
+- Various minor visual interface improvements: dim screen when game switcher is open, added icons on child windows, fixed Tools and Log button having the same icon.
 - Unchecking "Use default XXMI mod path for games" now prefil the mods folder input bars with current value.
 
 ### Fixed
