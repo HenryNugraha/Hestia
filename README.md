@@ -75,66 +75,82 @@ If games are not detected, follow the steps shown in-app.
 
 ## Screenshots
 
+### #1 - Main View
 ![Main view](docs/screenshots/01_main_view.webp)
 &nbsp; ⤷ Main view with installed mods, thumbnails, categories, and mod states.
 <p>&nbsp;</p>
 
+### #2 - Mod Detail
 ![Mod detail](docs/screenshots/02_mod_detail.webp)
 &nbsp; ⤷ Mod detail window with actions, images, description, category, and source information.
 <p>&nbsp;</p>
 
+### #3 - Browsing Gamebanana
 ![Browsing GameBanana](docs/screenshots/03_browsing_gamebanana.webp)
 &nbsp; ⤷ Browse GameBanana mods inside Hestia, with install buttons and installed-state detection.
 <p>&nbsp;</p>
 
+### #4 - Searching for Mods
 ![Searching for mods](docs/screenshots/04_searching_for_mods.webp)
 &nbsp; ⤷ Search GameBanana results and switch between best-match and recent-update sorting.
 <p>&nbsp;</p>
 
+### #5 - Downloading a Mod
 ![Downloading a mod](docs/screenshots/05_downloading_a_mod.webp)
 &nbsp; ⤷ Download and install mods while tracking progress in the built-in Tasks window.
 <p>&nbsp;</p>
 
+### #6 - Convenient Context Menu
 ![Convenient context menu](docs/screenshots/06_convenient_context_menu.webp)
 &nbsp; ⤷ Right-click mod actions for enabling, categories, archiving, deleting, and update preferences.
 <p>&nbsp;</p>
 
+### #7 - Bulk Manage Mods
 ![Bulk manage mods](docs/screenshots/07_bulk_manage_mods.webp)
 &nbsp; ⤷ Select multiple mods and apply common actions in bulk.
 <p>&nbsp;</p>
 
+### #8 - Managing Categories
 ![Managing categories](docs/screenshots/08_managing_categories.webp)
 &nbsp; ⤷ Manage categories from Settings, including sorting, manual order, and GameBanana category creation.
 <p>&nbsp;</p>
 
+### #9 - Filtering Mods
 ![Filtering mods](docs/screenshots/09_filtering_mods.webp)
 &nbsp; ⤷ Filter installed mods by local state and update state.
 <p>&nbsp;</p>
 
+### #10 - Auto-check and Install Updates
 ![Auto-check and install updates](docs/screenshots/10_auto-check_and_install_updates.webp)
 &nbsp; ⤷ Detect available updates and update eligible mods from the mod detail window.
 <p>&nbsp;</p>
 
+### #11 - Adjustable Grouping
 ![Adjustable grouping](docs/screenshots/11_adjustable_grouping.webp)
 &nbsp; ⤷ Choose how the installed mod list is grouped and how extra card details are displayed.
 <p>&nbsp;</p>
 
+### #12 - Powerful Customization
 ![Powerful customization](docs/screenshots/12_powerful_customization.webp)
 &nbsp; ⤷ Configure update behavior, modified-mod handling, install conflicts, deletion, and task layout.
 <p>&nbsp;</p>
 
+### #13 - Add External Tools
 ![Add external tools](docs/screenshots/13_add_external_tools.webp)
 &nbsp; ⤷ Add external tool shortcuts, launch them from Hestia, and pin frequently used tools.
 <p>&nbsp;</p>
 
+### #14 - Built-in Console Log
 ![Built-in console log](docs/screenshots/14_built-in_console_log.webp)
 &nbsp; ⤷ Local activity log showing installs, syncs, category changes, and tool actions.
 <p>&nbsp;</p>
 
+### #15 - Supported Games
 ![Supported games](docs/screenshots/15_supported_games.webp)
 &nbsp; ⤷ Game switcher for supported games.
 <p>&nbsp;</p>
 
+### #16 - Scanning for Games
 ![Scanning for games](docs/screenshots/16_scanning_for_games.webp)
 &nbsp; ⤷ Deep scan flow for finding XXMI and supported game paths when automatic detection needs help.
 
