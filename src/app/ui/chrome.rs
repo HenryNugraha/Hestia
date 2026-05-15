@@ -65,7 +65,7 @@ impl HestiaApp {
                         }
                     );
                     job.append(
-                        "\nXXMI Mod Manager",
+                        "\nMod Manager",
                         0.0,
                         TextFormat {
                             font_id: egui::FontId::proportional(12.0),

@@ -1,8 +1,14 @@
-# Hestia <a href="https://github.com/HenryNugraha/Hestia/blob/main/CHANGELOG.md"><img src="https://img.shields.io/github/v/tag/HenryNugraha/Hestia?style=flat-square&label=Version&color=%23237648"></a> <a href="https://github.com/HenryNugraha/Hestia/releases/latest"><img src="https://img.shields.io/github/downloads/HenryNugraha/Hestia/total?style=flat-square&label=Downloads&color=%230f5dab"></a>
+<div align="center">
 
-<img src="https://raw.githubusercontent.com/HenryNugraha/Hestia/main/src/asset/icon.png" width="128">
+<img src="https://raw.githubusercontent.com/HenryNugraha/Hestia/main/src/asset/icon.png" width="128"><br>
+<strong>━ HESTIA ━</strong><br>
+<sub>“Powerful yet simple mod management</sub><br>
+<sup>with GameBanana integration”</sup><br>
+<a href="https://github.com/HenryNugraha/Hestia/blob/main/CHANGELOG.md"><img src="https://img.shields.io/github/v/tag/HenryNugraha/Hestia?style=flat-square&label=Version&color=%23237648"></a> <a href="https://github.com/HenryNugraha/Hestia/releases/latest"><img src="https://img.shields.io/github/downloads/HenryNugraha/Hestia/total?style=flat-square&label=Downloads&color=%230f5dab"></a><br>
+</div>
+<br>
 
-Hestia is a mod manager for games supported by XXMI. I started building it because with the little patience I have, navigating through existing mod managers was not something I could enjoy. The project is built with a heavy focus on user experience to achieve simpler setup, intuitive interface, and fewer manual steps.
+Hestia is an unofficial mod manager for local XXMI-based mod setups, built to make setup, organization, and day-to-day mod management simpler. The project focuses on a cleaner interface, fewer manual steps, and keeping local mods easy to inspect and maintain.
 
 ## Supported Games
 
@@ -13,30 +19,31 @@ Hestia is a mod manager for games supported by XXMI. I started building it becau
 - Genshin Impact
 - Honkai Impact 3rd
 
-Hestia targets games supported by XXMI. If an XXMI-supported game is missing from the list, let me know so I can hook it into the app.
+Hestia targets games with existing XXMI support, but Hestia itself is independent and is not affiliated with, endorsed by, or maintained by the XXMI developers or projects. If an XXMI-supported game is missing from the list, let me know so I can hook it into the app.
 
 ## Features
 
-- Installer and portable builds: use whichever format you prefer.
-- Simplified local mod management.
-- Intuitive category management.
-- Manual mod installation.
-- Bulk mod installation.
-- Built-in task manager to track downloads and installs.
-- Built-in activity and console log. Logs stay on your PC.
-- Enable, disable, archive, restore, rename, and delete mods.
-- Browse GameBanana mods inside the app.
-- Download and install supported GameBanana mods from inside the app.
-- Link installed mods to GameBanana pages.
-- Check installed mods against GameBanana for updates.
-- Auto-update eligible mods when configured.
+- Installer and portable builds.
+- Automatic path detection, with deep scan fallback for harder setups.
+- Manage local mods with enable, disable, archive, restore, rename, and delete actions.
+- Manual and bulk mod installation with drag-and-drop support.
+- Sort, group, and filter your installed mod library.
+- Category management with drag ordering, automatic sorting, and bulk assignment.
+- Browse, download, and install mods from GameBanana directly inside the app.
+- Auto-create categories from GameBanana categories when downloading mods.
+- Resumable downloads for interrupted GameBanana installs.
+- Auto-check and update eligible mods.
+- Link installed mods to GameBanana pages for metadata and update checks.
 - Keep user-made local mod changes from being overwritten by default.
-- Discover and launch mod-related tools.
+- Personal notes, images, and metadata for local/unlinked mods.
+- Built-in Tasks panel for downloads and installs.
+- Add shortcuts for external tools and launch them from inside Hestia.
 - Keep installed mods usable even after Hestia is removed.
-- Built with Rust, with memory-safety guarantees that help prevent classes of bugs such as buffer overflows.
-- Built-in signature verifier to harden the update mechanism.
+- Optional feedback form with no background telemetry.
+- Signed update verification to reduce the risk of tampered app updates.
+- Built with Rust for native performance and memory safety.
 
-## Download
+## Download & Install
 
 Always-latest direct links:
 - Installer: <https://hestia.hnawc.com/binary/latest/hestia-setup-latest.exe>
@@ -56,13 +63,15 @@ Installer version:
 2. Run setup.
 3. Launch Hestia.
 
-There is no required install folder. Hestia stores app state beside the executable when possible, and falls back to `%APPDATA%\Hestia` when the current folder is not writable.
+There is no required install folder. Hestia stores app state beside `hestia.exe` when that folder is writable, and falls back to `%APPDATA%\Hestia` when it is not.
+
+Avoid installing or placing Hestia in write-protected folders such as `Program Files`, especially if you want in-app updates to work without running as administrator. The installer defaults to a per-user folder for this reason.
 
 ## First Run
 
 Use the game switcher in the top-left corner to select a game. Hestia will try to detect the expected game, XXMI, and mod paths automatically.
 
-If a game is not detected, follow the steps shown in-app.
+If games are not detected, follow the steps shown in-app.
 
 ## Screenshots
 
@@ -140,15 +149,17 @@ Yes. Hestia is designed for XXMI-based mod setups. Without XXMI, Hestia has no s
 
 ### ※ Where are settings saved?
 
-If the folder containing `hestia.exe` is writable, Hestia stores app state beside the executable.
-If the folder is not writable, Hestia stores app state in `%APPDATA%\Hestia`
-Runtime cache and temporary files are stored under `%TEMP%\Hestia`
+If the folder containing `hestia.exe` is writable, Hestia stores app state beside the executable. If that folder is not writable, Hestia falls back to `%APPDATA%\Hestia`.
+
+Runtime cache and temporary files are stored under `%TEMP%\Hestia`.
 
 ### ※ Is it safe to use?
 
-Modding always carries some risk. Hestia does not remove or add the normal risks that come with using XXMI or third-party mods. Hestia itself does not interact directly with the games. It manages files, metadata, downloads, and related tools around your XXMI setup.
+Modding always carries some risk. Hestia does not remove or add the normal risks that come with using XXMI or third-party mods. Hestia itself does not interact directly with the games. It manages files, metadata, downloads, and related tools around your local mod setup.
 
-For transparency, Hestia keeps local records of your activity and downloads, visible through the Tasks and Log windows. These records remain on your PC and never leave it unless you choose to share them. Hestia does not include background telemetry or tracking. It has an optional feedback survey. Responses are only sent if you press `Submit Feedback`, and you can see the what's included before sending it. 
+### ※ What is Hestia’s privacy policy?
+
+Hestia keeps local activity and download records so you can inspect them in the Tasks and Log windows. These records stay on your PC unless you choose to share them manually. Hestia does not include background telemetry or tracking, but has an optional feedback survey that only sends a response if you press `Submit Feedback`, and you can see what data will be included before sending it.
 
 ### ※ Can I assign categories to mods?
 
@@ -156,9 +167,13 @@ Yes. Click a mod, then click `Uncategorized` in the mod detail window.
 
 You can also select multiple mods and use the `Category` button to assign them in bulk. First-time users may need to click `+ New Category` to create a category. Categories can be dragged to rearrange their order.
 
+### ※ Can I sort or organize categories?
+
+Yes. Categories can be managed from `Settings → Category`. You can keep manual order, sort by name, or sort by mod count.
+
 ### ※ What are Tools?
 
-Tools are external programs you may want to run for a game or mod setup. In many cases, this means a mod fixer after a game version update. Don't worry if you never used any, they are mostly optional.
+Tools are external programs you may want to run for a game or mod setup. In many cases, this means a mod fixer after a game version update. Hestia lets you add shortcuts for those tools and launch them from inside the app. Don't worry if you never used any, they are mostly situational.
 
 ### ※ What are Tasks?
 
@@ -174,7 +189,9 @@ The Browse view uses GameBanana.
 
 ### ※ Do I need to have a GameBanana account?
 
-No. GameBanana support is an add-on inside Hestia. You can use Hestia only for local mod management, or use the Browse view to explore GameBanana mods without needing to know the website first. Though, browsing GameBanana directly and support the creators is highly encouraged.
+No. GameBanana support is an add-on inside Hestia. You can use Hestia only for local mod management, or use the Browse view to explore public GameBanana mods without a GameBanana account.
+
+Browsing GameBanana and supporting creators directly on site is still encouraged, though.
 
 ### ※ Why are some mods hidden because of NSFW content?
 
@@ -194,13 +211,13 @@ Adjust auto-update behavior in:
 
 Your mods are most likely in an `unlinked` state.
 
-### ※ What is unlinked mod?
+### ※ What is an unlinked mod?
 
-It is when the mod is not associated to any GameBanana mod. Think of it as being offline.
+An unlinked mod is a local mod that is not associated with a GameBanana page. Think of it as offline/local-only. This usually happens when you install a mod outside Hestia's Browse page, such as mods from Patreon.
 
-Hestia cannot check for an updates on `unlinked` mods.
+Hestia cannot check updates for unlinked mods until they are linked to a GameBanana mod page.
 
-This normally happens when you install a mod outside of Hestia's `Browse` page.
+If linking the mod is not possible, Hestia still lets you add personal notes and manually assign images in the mod detail window.
 
 ### ※ How do I link my mods?
 
@@ -217,11 +234,11 @@ By default, no. Hestia detects and tries to avoid overwriting locally modified m
 You can adjust this behavior in:
 `Settings → General → Operational`
 
-### ※ I do not want a certain mods updated.
+### ※ I do not want a certain mod updated.
 
-Click the mod, open the mod detail window, scroll down past the description, click the double downward arrows in the bottom-right, then enable either `Ignore update once` or `Ignore update always` whichever suit your need.
+Click the mod, open the mod detail window, scroll down past the description, click the double downward arrows in the bottom-right, then enable either `Ignore update once` or `Ignore update always`, whichever suit your need.
 
-`Ignore update once` only ignores the currently detected update. If a newer version is detected, the ignore state is cleared and it will update normally.
+`Ignore update once` only ignores the currently detected update. If a newer version is detected later, the ignore state is cleared and it will update normally.
 
 ### ※ A mod has multiple files and Hestia installs the wrong one when updating.
 
@@ -229,7 +246,7 @@ Some multi-file mods need special handling that cannot be guessed reliably. Open
 
 ### ※ Can I filter the mod list by status?
 
-Yes. Right-click the filter icon to filter by mod status.
+Yes. Right-click the filter icon in My Mods to filter by mod status, including active, disabled, archived, unlinked, modified, missing source, and update-related states.
 
 ### ※ Can I build my own version?
 
@@ -237,6 +254,6 @@ Yes. Build instructions are above. Forks are welcome, and issues or questions ar
 
 ### ※ Does Hestia support Linux or macOS?
 
-No. Hestia is currently Windows-only because that is where I use these games and tools.
+Not officially. Hestia is currently Windows-only since that is where I run these games, but I try to keep cross-platform compatibility in mind during development.
 
 If you want to help with Linux or macOS support, feel free to open an issue with details.

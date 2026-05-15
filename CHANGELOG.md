@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1] - 2026-05-15
+
+### Changed
+- Clarified Hestia's independent project status in README wording.
+- Renamed app subtitle and installer shortcut name from "XXMI Mod Manager" to "Mod Manager" to avoid implying affiliation with XXMI projects.
+- Added installer cleanup for the old "Hestia - XXMI Mod Manager" shortcut name.
+
 ## [1.4.0] - 2026-05-15
 
 ### Added

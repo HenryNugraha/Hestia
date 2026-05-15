@@ -39,7 +39,8 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
         "- Automatically run when needed on first app launch\n",
         "- Manually trigger it via Settings > Game & Path"
     ),
-    "Added unintrusive quick feedback form"
+    "Added unintrusive quick feedback form",
+    "Clarified project wording and app naming"
 ];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
@@ -186,7 +187,7 @@ fn acquire_single_instance_guard() -> anyhow::Result<Option<windows::Win32::Foun
         CreateMutexW(
             None,
             true,
-            w!("Local\\Hestia-XXMI-Mod-Manager-Single-Instance"),
+            w!("Local\\Hestia-Mod-Manager-Single-Instance"),
         )
     }
     .context("failed to create single-instance mutex")?;
