@@ -75,36 +75,68 @@ If games are not detected, follow the steps shown in-app.
 
 ## Screenshots
 
-![Supported games](docs/screenshots/01_supported_games.webp)
-&nbsp; ⤷ Game switcher menu.
+![Main view](docs/screenshots/01_main_view.webp)
+&nbsp; ⤷ Main view with installed mods, thumbnails, categories, and mod states.
 <p>&nbsp;</p>
 
-![Organized mod details](docs/screenshots/02_organized_details.webp)
-&nbsp; ⤷ Main app with mod detail window open.
+![Mod detail](docs/screenshots/02_mod_detail.webp)
+&nbsp; ⤷ Mod detail window with actions, images, description, category, and source information.
 <p>&nbsp;</p>
 
-![Category management](docs/screenshots/03_category_management.webp)
-&nbsp; ⤷ Mod category management.
+![Browsing GameBanana](docs/screenshots/03_browsing_gamebanana.webp)
+&nbsp; ⤷ Browse GameBanana mods inside Hestia, with install buttons and installed-state detection.
 <p>&nbsp;</p>
 
-![GameBanana browse](docs/screenshots/04_gamebanana_browse.webp)
-&nbsp; ⤷ Browsing mods from GameBanana.
+![Searching for mods](docs/screenshots/04_searching_for_mods.webp)
+&nbsp; ⤷ Search GameBanana results and switch between best-match and recent-update sorting.
 <p>&nbsp;</p>
 
-![Downloader and installer](docs/screenshots/05_downloader_installer.webp)
-&nbsp; ⤷ Built-in task monitor to track downloads and installs.
+![Downloading a mod](docs/screenshots/05_downloading_a_mod.webp)
+&nbsp; ⤷ Download and install mods while tracking progress in the built-in Tasks window.
 <p>&nbsp;</p>
 
-![Update detection](docs/screenshots/06_detects_update.webp)
-&nbsp; ⤷ Check mods for an update.
+![Convenient context menu](docs/screenshots/06_convenient_context_menu.webp)
+&nbsp; ⤷ Right-click mod actions for enabling, categories, archiving, deleting, and update preferences.
 <p>&nbsp;</p>
 
-![Activity log](docs/screenshots/07_activity_log.webp)
-&nbsp; ⤷ Terminal-like console log window.
+![Bulk manage mods](docs/screenshots/07_bulk_manage_mods.webp)
+&nbsp; ⤷ Select multiple mods and apply common actions in bulk.
 <p>&nbsp;</p>
 
-![External tools](docs/screenshots/08_external_tools.webp)
-&nbsp; ⤷ Listing external programs and pin them to the top.
+![Managing categories](docs/screenshots/08_managing_categories.webp)
+&nbsp; ⤷ Manage categories from Settings, including sorting, manual order, and GameBanana category creation.
+<p>&nbsp;</p>
+
+![Filtering mods](docs/screenshots/09_filtering_mods.webp)
+&nbsp; ⤷ Filter installed mods by local state and update state.
+<p>&nbsp;</p>
+
+![Auto-check and install updates](docs/screenshots/10_auto-check_and_install_updates.webp)
+&nbsp; ⤷ Detect available updates and update eligible mods from the mod detail window.
+<p>&nbsp;</p>
+
+![Adjustable grouping](docs/screenshots/11_adjustable_grouping.webp)
+&nbsp; ⤷ Choose how the installed mod list is grouped and how extra card details are displayed.
+<p>&nbsp;</p>
+
+![Powerful customization](docs/screenshots/12_powerful_customization.webp)
+&nbsp; ⤷ Configure update behavior, modified-mod handling, install conflicts, deletion, and task layout.
+<p>&nbsp;</p>
+
+![Add external tools](docs/screenshots/13_add_external_tools.webp)
+&nbsp; ⤷ Add external tool shortcuts, launch them from Hestia, and pin frequently used tools.
+<p>&nbsp;</p>
+
+![Built-in console log](docs/screenshots/14_built-in_console_log.webp)
+&nbsp; ⤷ Local activity log showing installs, syncs, category changes, and tool actions.
+<p>&nbsp;</p>
+
+![Supported games](docs/screenshots/15_supported_games.webp)
+&nbsp; ⤷ Game switcher for supported games.
+<p>&nbsp;</p>
+
+![Scanning for games](docs/screenshots/16_scanning_for_games.webp)
+&nbsp; ⤷ Deep scan flow for finding XXMI and supported game paths when automatic detection needs help.
 
 ## Building From Source
 
