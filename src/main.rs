@@ -30,17 +30,9 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "15 May 2026";
+pub(crate) const WHATS_NEW_DATE: &str = "xx June 2026";
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "Various visual interface improvements",
-    "Added new 'Category' tab in the Settings",
-    concat!(
-        "Added deep-scan mode to resolve path detection issues\n",
-        "- Automatically run when needed on first app launch\n",
-        "- Manually trigger it via Settings > Game & Path"
-    ),
-    "Added unintrusive quick feedback form",
-    "Clarified project wording and app naming"
+    "see changelog",
 ];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
@@ -53,10 +45,7 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[
                 id: 1,
                 label: "Yes",
             },
-            SurveyAnswer {
-                 id: 2, 
-                 label: "No"
-            },
+            SurveyAnswer { id: 2, label: "No" },
             SurveyAnswer {
                 id: 3,
                 label: "Haven't used it",
@@ -71,10 +60,7 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[
                 id: 1,
                 label: "Yes",
             },
-            SurveyAnswer {
-                id: 2,
-                label: "No" 
-            },
+            SurveyAnswer { id: 2, label: "No" },
         ],
     },
 ];
@@ -183,14 +169,9 @@ fn acquire_single_instance_guard() -> anyhow::Result<Option<windows::Win32::Foun
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::core::w;
 
-    let handle = unsafe {
-        CreateMutexW(
-            None,
-            true,
-            w!("Local\\Hestia-Mod-Manager-Single-Instance"),
-        )
-    }
-    .context("failed to create single-instance mutex")?;
+    let handle =
+        unsafe { CreateMutexW(None, true, w!("Local\\Hestia-Mod-Manager-Single-Instance")) }
+            .context("failed to create single-instance mutex")?;
     let last_error = unsafe { GetLastError() };
     if last_error == ERROR_ALREADY_EXISTS {
         Ok(None)

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.0-alpha] - 2026-06-xx
+
+### WIP
+Work in progress...
+
 ## [1.4.1] - 2026-05-15
 
 ### Changed

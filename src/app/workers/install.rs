@@ -105,6 +105,7 @@ fn spawn_install_workers(
 
                                 for (i, &idx) in candidate_indices.iter().enumerate() {
                                     let preferred_name = &preferred_names[i];
+                                    importing::validate_install_folder_name(preferred_name)?;
                                     let candidate = prepared
                                         .inspection
                                         .candidates

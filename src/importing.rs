@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -32,11 +33,245 @@ fn check_cancel(flag: &CancelFlag) -> Result<()> {
     Ok(())
 }
 
+fn validate_windows_relative_path(path: &Path) -> Result<()> {
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            bail!("import contains invalid path: {}", path.display());
+        };
+        validate_windows_file_name(name)
+            .with_context(|| format!("import contains invalid file name: {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn validate_windows_file_name(name: &OsStr) -> Result<()> {
+    let name = name
+        .to_str()
+        .ok_or_else(|| anyhow!("file name is not valid UTF-8"))?;
+    if name.is_empty() {
+        bail!("file name is empty");
+    }
+    if name.ends_with([' ', '.']) {
+        bail!("file name ends with a space or dot");
+    }
+    if name.chars().any(|c| {
+        c.is_ascii_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+    }) {
+        bail!("file name contains a character Windows does not allow");
+    }
+
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        bail!("file name uses a reserved Windows device name");
+    }
+
+    Ok(())
+}
+
+fn sanitize_windows_file_name(name: &OsStr) -> Result<OsString> {
+    let name = name
+        .to_str()
+        .ok_or_else(|| anyhow!("file name is not valid UTF-8"))?
+        .trim();
+    let mut sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_control()
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    while sanitized.ends_with([' ', '.']) {
+        sanitized.pop();
+    }
+    if sanitized.is_empty() {
+        sanitized = "Imported Mod".to_string();
+    }
+
+    let stem = sanitized
+        .split('.')
+        .next()
+        .unwrap_or(&sanitized)
+        .to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        sanitized.push('_');
+    }
+    Ok(OsString::from(sanitized))
+}
+
+fn validate_import_tree(root: &Path, cancel: Option<&CancelFlag>) -> Result<()> {
+    for entry in WalkDir::new(root) {
+        if let Some(flag) = cancel {
+            check_cancel(flag)?;
+        }
+        let entry = entry?;
+        let relative = entry.path().strip_prefix(root)?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        validate_windows_relative_path(relative)?;
+    }
+    Ok(())
+}
+
+fn validate_import_candidates(
+    inspection: &ImportInspection,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    for candidate in &inspection.candidates {
+        validate_import_tree(&candidate.path, cancel).with_context(|| {
+            format!(
+                "import candidate contains invalid file names: {}",
+                candidate.label
+            )
+        })?;
+    }
+    Ok(())
+}
+
+pub fn validate_install_folder_name(name: &str) -> Result<()> {
+    validate_windows_file_name(OsStr::new(name))
+        .with_context(|| format!("invalid install folder name: {name}"))
+}
+
+fn zip_top_level_sanitize_map(
+    archive: &mut zip::ZipArchive<fs::File>,
+) -> Result<Option<HashMap<OsString, OsString>>> {
+    let mut has_top_level_dir = false;
+    let mut has_top_level_file = false;
+    let mut original_names = HashMap::<OsString, OsString>::new();
+    let mut sanitized_keys = HashMap::<String, OsString>::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        let enclosed = entry
+            .enclosed_name()
+            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
+        let mut components = enclosed.components();
+        let Some(Component::Normal(first)) = components.next() else {
+            bail!("archive contains invalid path");
+        };
+        if first == OsStr::new("__MACOSX") {
+            continue;
+        }
+        if components.next().is_some() || entry.name().ends_with('/') {
+            has_top_level_dir = true;
+            let original = first.to_os_string();
+            if !original_names.contains_key(&original) {
+                let sanitized = sanitize_windows_file_name(first)?;
+                let key = sanitized.to_string_lossy().to_lowercase();
+                if let Some(existing) = sanitized_keys.get(&key) {
+                    if existing != &original {
+                        bail!(
+                            "archive top-level folders sanitize to the same install name: {} and {}",
+                            existing.to_string_lossy(),
+                            first.to_string_lossy()
+                        );
+                    }
+                }
+                sanitized_keys.insert(key, original.clone());
+                original_names.insert(original, sanitized);
+            }
+        } else {
+            has_top_level_file = true;
+        }
+    }
+    if has_top_level_dir && !has_top_level_file {
+        Ok(Some(original_names))
+    } else {
+        Ok(None)
+    }
+}
+
+fn zip_entry_relative_path(
+    enclosed: &Path,
+    sanitized_top_level: Option<&HashMap<OsString, OsString>>,
+) -> Result<PathBuf> {
+    let mut out = PathBuf::new();
+    for (index, component) in enclosed.components().enumerate() {
+        let Component::Normal(name) = component else {
+            bail!("archive contains invalid path: {}", enclosed.display());
+        };
+        if index == 0 {
+            if let Some(map) = sanitized_top_level {
+                let sanitized = map.get(name).ok_or_else(|| {
+                    anyhow!("archive contains invalid path: {}", enclosed.display())
+                })?;
+                out.push(sanitized);
+                continue;
+            }
+        }
+        validate_windows_file_name(name).with_context(|| {
+            format!("archive contains invalid file name: {}", enclosed.display())
+        })?;
+        out.push(name);
+    }
+    Ok(out)
+}
+
+fn zip_entry_is_ignored_metadata(path: &Path) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component == Component::Normal(OsStr::new("__MACOSX")))
+}
+
 #[allow(dead_code)]
 pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImport> {
     match source.clone() {
         ImportSource::Folder(path) => {
             let inspection = inspect_directory(game_id, &source, &path)?;
+            validate_import_candidates(&inspection, None)?;
             Ok(PreparedImport {
                 _temp_dir: None,
                 inspection,
@@ -51,6 +286,7 @@ pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImp
                 .context("failed to create temp dir for archive inspection")?;
             extract_archive(&path, temp_dir.path())?;
             let inspection = inspect_directory(game_id, &source, temp_dir.path())?;
+            validate_import_candidates(&inspection, None)?;
             Ok(PreparedImport {
                 _temp_dir: Some(temp_dir),
                 inspection,
@@ -68,6 +304,7 @@ pub fn inspect_source_cancelable(
     match source.clone() {
         ImportSource::Folder(path) => {
             let inspection = inspect_directory_cancelable(game_id, &source, &path, cancel)?;
+            validate_import_candidates(&inspection, Some(cancel))?;
             Ok(PreparedImport {
                 _temp_dir: None,
                 inspection,
@@ -84,6 +321,8 @@ pub fn inspect_source_cancelable(
             check_cancel(cancel)?;
             let inspection =
                 inspect_directory_cancelable(game_id, &source, temp_dir.path(), cancel)?;
+            validate_import_candidates(&inspection, Some(cancel))?;
+            check_cancel(cancel)?;
             Ok(PreparedImport {
                 _temp_dir: Some(temp_dir),
                 inspection,
@@ -99,6 +338,7 @@ pub fn install_candidate(
     target_root: &Path,
     choice: ConflictChoice,
 ) -> Result<Option<PathBuf>> {
+    validate_install_folder_name(preferred_name)?;
     fs::create_dir_all(target_root)?;
     let initial_target = target_root.join(preferred_name);
 
@@ -309,12 +549,17 @@ fn extract_archive_cancelable(
 fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
     let file = fs::File::open(archive)?;
     let mut archive = zip::ZipArchive::new(file)?;
+    let sanitized_top_level = zip_top_level_sanitize_map(&mut archive)?;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         let enclosed = entry
             .enclosed_name()
             .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        let outpath = destination.join(enclosed);
+        if zip_entry_is_ignored_metadata(&enclosed) {
+            continue;
+        }
+        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
+        let outpath = destination.join(relative);
         if entry.name().ends_with('/') {
             fs::create_dir_all(&outpath)?;
         } else {
@@ -331,13 +576,18 @@ fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
 fn extract_zip_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
     let file = fs::File::open(archive)?;
     let mut archive = zip::ZipArchive::new(file)?;
+    let sanitized_top_level = zip_top_level_sanitize_map(&mut archive)?;
     for index in 0..archive.len() {
         check_cancel(cancel)?;
         let mut entry = archive.by_index(index)?;
         let enclosed = entry
             .enclosed_name()
             .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        let outpath = destination.join(enclosed);
+        if zip_entry_is_ignored_metadata(&enclosed) {
+            continue;
+        }
+        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
+        let outpath = destination.join(relative);
         if entry.name().ends_with('/') {
             fs::create_dir_all(&outpath)?;
         } else {
@@ -502,6 +752,7 @@ pub fn copy_dir(source: &Path, destination: &Path, replace_existing: bool) -> Re
         if relative.as_os_str().is_empty() {
             continue;
         }
+        validate_windows_relative_path(relative)?;
         let target = destination.join(relative);
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
@@ -533,6 +784,7 @@ pub fn copy_dir_cancelable(
         if relative.as_os_str().is_empty() {
             continue;
         }
+        validate_windows_relative_path(relative)?;
         let target = destination.join(relative);
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
@@ -553,6 +805,7 @@ pub fn install_candidate_cancelable(
     choice: ConflictChoice,
     cancel: &CancelFlag,
 ) -> Result<Option<PathBuf>> {
+    validate_install_folder_name(preferred_name)?;
     fs::create_dir_all(target_root)?;
     let initial_target = target_root.join(preferred_name);
 
@@ -582,6 +835,7 @@ pub fn install_candidate_cancelable(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn nested_folder_becomes_single_candidate() {
@@ -607,5 +861,89 @@ mod tests {
         let inspected = inspect_source("wuwa", ImportSource::Folder(root.clone())).unwrap();
         assert_eq!(inspected.inspection.candidates.len(), 1);
         assert_eq!(inspected.inspection.candidates[0].path, root);
+    }
+
+    #[test]
+    fn windows_path_validation_rejects_invalid_names() {
+        for path in [
+            Path::new("Bad:Name/file.txt"),
+            Path::new("Bad<Name/file.txt"),
+            Path::new("BadName./file.txt"),
+            Path::new("BadName /file.txt"),
+            Path::new("CON/readme.txt"),
+            Path::new("aux.ini"),
+            Path::new("nested/LPT1.cfg"),
+        ] {
+            assert!(
+                validate_windows_relative_path(path).is_err(),
+                "{} should be rejected",
+                path.display()
+            );
+        }
+
+        validate_windows_relative_path(Path::new("Good Name/readme.txt")).unwrap();
+    }
+
+    #[test]
+    fn zip_extract_sanitizes_top_level_candidate_folder_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("outer-name.zip");
+        {
+            let file = fs::File::create(&archive_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("Bad:Name/readme.txt", options).unwrap();
+            writer.write_all(b"demo").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let destination = temp.path().join("extract");
+        extract_zip(&archive_path, &destination).unwrap();
+        assert!(destination.join("Bad_Name").join("readme.txt").exists());
+    }
+
+    #[test]
+    fn zip_extract_ignores_macos_metadata_while_sanitizing_candidates() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("macos-metadata.zip");
+        {
+            let file = fs::File::create(&archive_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("__MACOSX/._Bad:Name", options).unwrap();
+            writer.write_all(b"metadata").unwrap();
+            writer.start_file("Bad:Name/readme.txt", options).unwrap();
+            writer.write_all(b"demo").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let destination = temp.path().join("extract");
+        extract_zip(&archive_path, &destination).unwrap();
+        assert!(destination.join("Bad_Name").join("readme.txt").exists());
+        assert!(!destination.join("__MACOSX").exists());
+    }
+
+    #[test]
+    fn zip_extract_rejects_windows_invalid_payload_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("invalid-payload.zip");
+        {
+            let file = fs::File::create(&archive_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            writer
+                .start_file("GoodMod/Bad:Name/readme.txt", options)
+                .unwrap();
+            writer.write_all(b"demo").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let destination = temp.path().join("extract");
+        let err = extract_zip(&archive_path, &destination).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid file name"),
+            "unexpected error: {err:#}"
+        );
+        assert!(!destination.join("GoodMod").join("Bad:Name").exists());
     }
 }

@@ -1081,6 +1081,38 @@ impl HestiaApp {
             }
         }
 
+        if pending_meta
+            .as_ref()
+            .is_some_and(|meta| meta.update_target_was_disabled)
+        {
+            if let Some(target_mod_id) = pending_meta
+                .as_ref()
+                .and_then(|meta| meta.update_target_mod_id.as_deref())
+            {
+                let (result, name) = if newly_installed_ids.iter().any(|id| id == target_mod_id) {
+                    if let Some(mod_entry) = self
+                        .state
+                        .mods
+                        .iter_mut()
+                        .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
+                    {
+                        let name = mod_entry.folder_name.clone();
+                        (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                };
+                if let (Some(Err(err)), Some(name)) = (result, name) {
+                    self.report_error_message(
+                        format!("updated mod could not be kept disabled for {name}: {err:#}"),
+                        Some("Could not keep mod disabled"),
+                    );
+                }
+            }
+        }
+
         for id in &newly_installed_ids {
             let candidate_labels = self
                 .state

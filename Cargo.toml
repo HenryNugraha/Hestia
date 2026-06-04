@@ -1,6 +1,6 @@
 [package]
 name = "hestia"
-version = "1.4.1"
+version = "1.5.0-alpha"
 authors = ["Henry Nugraha"]
 edition = "2024"
 

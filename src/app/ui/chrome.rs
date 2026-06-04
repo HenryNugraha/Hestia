@@ -23,6 +23,7 @@ impl HestiaApp {
                     }),
             )
             .show(ctx, |ui| {
+                self.last_titlebar_rect = Some(ui.max_rect());
             let titlebar_height = TITLEBAR_GAME_ICON_SIZE + 20.0;
             let (titlebar_rect, titlebar_drag) = ui.allocate_exact_size(
                 Vec2::new(ui.available_width(), titlebar_height),

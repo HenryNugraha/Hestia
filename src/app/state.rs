@@ -97,6 +97,7 @@ pub struct HestiaApp {
     browse_detail_open: bool,
     settings_tab: SettingsTab,
     mod_detail_tab: ModDetailTab,
+    last_titlebar_rect: Option<egui::Rect>,
     last_right_pane_rect: Option<egui::Rect>,
     mod_detail_focus_requested: bool,
     browse_detail_focus_requested: bool,
@@ -358,6 +359,7 @@ struct PendingBrowseInstallMeta {
     selected_files: Vec<gamebanana::ModFile>,
     update_folder_name: Option<String>,
     update_target_mod_id: Option<String>,
+    update_target_was_disabled: bool,
     post_install_rename_to: Option<String>,
 }
 

@@ -3418,6 +3418,7 @@ impl HestiaApp {
                             }
                         };
 
+                        let titlebar_context_block_rect = self.last_titlebar_rect;
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<
                             &(
@@ -3875,6 +3876,10 @@ impl HestiaApp {
                                                     .hover_pos()
                                                     .is_some_and(|pos| {
                                                         card_frame.response.rect.contains(pos)
+                                                            && !titlebar_context_block_rect
+                                                                .is_some_and(|rect| {
+                                                                    rect.contains(pos)
+                                                                })
                                                     })
                                         });
                                         let open_batch_context_menu = open_context_menu
@@ -5956,7 +5961,11 @@ impl HestiaApp {
                                         });
                                     ui.add_space(6.0);
                                     ui.horizontal_centered(|ui| {
-                                        if ui.button(icon_text_sized(Icon::FolderOpen, "Open in File Explorer", 12.0, 12.0)).clicked() {
+                                        if ui
+                                            .button(icon_text_sized(Icon::FolderOpen, "Open in File Explorer", 12.0, 12.0))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
                                             let _ = open_in_explorer(&selected.root_path);
                                         }
                                     });
@@ -6040,6 +6049,7 @@ impl HestiaApp {
                                                         [combined_button_width, ui.spacing().interact_size.y],
                                                         egui::Button::new(browse_job),
                                                     )
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                     .clicked()
                                                 {
                                                     open_in_browse_id = Some(gb_id);
@@ -6047,11 +6057,19 @@ impl HestiaApp {
                                             });
                                             ui.add_space(-3.0);
                                             ui.horizontal(|ui| {
-                                                if ui.button(resync_job).clicked() {
+                                                if ui
+                                                    .button(resync_job)
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
                                                     link_and_sync_id = Some(gb_id);
                                                 }
                                                 ui.add_space(-2.0);
-                                                if ui.button(unlink_job).clicked() {
+                                                if ui
+                                                    .button(unlink_job)
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
                                                     unlink_requested = true;
                                                 }
                                             });
@@ -6068,7 +6086,11 @@ impl HestiaApp {
                                                 );
                                                 ui.add_space(-6.0);
                                                 let parsed_id = parse_gb_id(&input_str);
-                                                if ui.add_enabled(parsed_id.is_some(), egui::Button::new(icon_text_sized(Icon::Link, "Sync Mod", 12.0, 12.0))).clicked() {
+                                                if ui
+                                                    .add_enabled(parsed_id.is_some(), egui::Button::new(icon_text_sized(Icon::Link, "Sync Mod", 12.0, 12.0)))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
                                                     if let Some(id) = parsed_id {
                                                         link_and_sync_id = Some(id);
                                                         input_str.clear();

@@ -228,7 +228,7 @@ impl HestiaApp {
                         ui.close();
                     }
                     if ui
-                        .button("Never show")
+                        .button("Never ask again")
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {

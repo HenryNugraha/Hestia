@@ -912,6 +912,10 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         }
         self.pending_browse_install_safety
             .insert(task_id, unsafe_content);
+        let update_target_was_disabled = update_target_mod_id
+            .as_deref()
+            .and_then(|target_id| self.state.mods.iter().find(|m| m.id == target_id))
+            .is_some_and(|mod_entry| mod_entry.status == ModStatus::Disabled);
         self.pending_browse_install_meta.insert(
             task_id,
             PendingBrowseInstallMeta {
@@ -920,6 +924,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 selected_files,
                 update_folder_name,
                 update_target_mod_id,
+                update_target_was_disabled,
                 post_install_rename_to,
             },
         );

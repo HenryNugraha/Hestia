@@ -164,6 +164,7 @@ impl HestiaApp {
             browse_detail_open: false,
             settings_tab: SettingsTab::General,
             mod_detail_tab: ModDetailTab::Overview,
+            last_titlebar_rect: None,
             last_right_pane_rect: None,
             mod_detail_focus_requested: false,
             browse_detail_focus_requested: false,
