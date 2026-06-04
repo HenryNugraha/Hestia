@@ -100,6 +100,8 @@ pub struct AppState {
     pub library_sort: LibrarySort,
     #[serde(default)]
     pub library_group_mode: LibraryGroupMode,
+    #[serde(default)]
+    pub library_category_display_mode: LibraryCategoryDisplayMode,
     #[serde(default = "serde_default_true")]
     pub library_sort_status_first: bool,
     #[serde(default = "serde_default_true")]
@@ -174,6 +176,7 @@ impl Default for AppState {
             search_sort: SearchSort::default(),
             library_sort: LibrarySort::default(),
             library_group_mode: LibraryGroupMode::default(),
+            library_category_display_mode: LibraryCategoryDisplayMode::default(),
             library_sort_status_first: true,
             library_status_group_show_category: true,
             library_category_group_show_status: true,
@@ -632,6 +635,13 @@ pub enum LibraryGroupMode {
     Category,
     Status,
     None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum LibraryCategoryDisplayMode {
+    #[default]
+    GroupedSections,
+    Folders,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

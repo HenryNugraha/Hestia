@@ -16,8 +16,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::model::{
     AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, DeleteBehavior,
-    FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior, LibraryFolder,
-    LibraryGroupMode, MOD_META_DIR, MOD_META_FILE, MetadataVisibility, ModCategory,
+    FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior, LibraryCategoryDisplayMode,
+    LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE, MetadataVisibility, ModCategory,
     ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
     PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus, TasksLayout,
     TasksOrder, ToolEntry, UnsafeContentMode,
@@ -106,6 +106,8 @@ struct AppPreferences {
     search_sort: SearchSort,
     #[serde(default)]
     library_group_mode: LibraryGroupMode,
+    #[serde(default)]
+    library_category_display_mode: LibraryCategoryDisplayMode,
     #[serde(default = "serde_default_true")]
     library_sort_status_first: bool,
     #[serde(default = "serde_default_true")]
@@ -176,6 +178,7 @@ impl From<&AppState> for AppPreferences {
             browse_sort: state.browse_sort,
             search_sort: state.search_sort,
             library_group_mode: state.library_group_mode,
+            library_category_display_mode: state.library_category_display_mode,
             library_sort_status_first: state.library_sort_status_first,
             library_status_group_show_category: state.library_status_group_show_category,
             library_category_group_show_status: state.library_category_group_show_status,
@@ -382,6 +385,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.browse_sort = prefs.browse_sort;
     state.search_sort = prefs.search_sort;
     state.library_group_mode = prefs.library_group_mode;
+    state.library_category_display_mode = prefs.library_category_display_mode;
     state.library_sort_status_first = prefs.library_sort_status_first;
     state.library_status_group_show_category = prefs.library_status_group_show_category;
     state.library_category_group_show_status = prefs.library_category_group_show_status;

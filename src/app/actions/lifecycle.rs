@@ -158,6 +158,7 @@ impl HestiaApp {
             show_missing_source_mods: true,
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
+            selected_category_folder_id: None,
             current_view: ViewMode::Library,
             settings_open: false,
             mod_detail_open: false,

@@ -22,6 +22,17 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+struct CategoryFolderTile {
+    id: String,
+    name: String,
+    total_count: usize,
+    active_count: usize,
+    disabled_count: usize,
+    archived_count: usize,
+    has_update: bool,
+    representative_mod_id: Option<String>,
+}
+
 #[cfg(test)]
 mod category_tests {
     use super::*;
@@ -3355,6 +3366,124 @@ impl HestiaApp {
                             (ModStatus::Disabled, "Disabled", status_color(&ModStatus::Disabled)),
                             (ModStatus::Archived, "Archived", status_color(&ModStatus::Archived)),
                         ];
+                        let category_display_mode = self.state.library_category_display_mode;
+                        let selected_category_folder_id =
+                            self.selected_category_folder_id.clone().filter(|selected_id| {
+                                category_sections
+                                    .iter()
+                                    .any(|category| category.id == *selected_id)
+                            });
+                        let category_folder_selection_stale =
+                            self.selected_category_folder_id.is_some()
+                                && selected_category_folder_id.is_none();
+                        let modified_update_behavior = self.state.modified_update_behavior;
+                        let library_filter_active = !self.mods_search_query.trim().is_empty()
+                            || !self.show_enabled_mods
+                            || self.state.hide_disabled
+                            || self.state.hide_archived
+                            || !self.show_unlinked_mods
+                            || !self.show_up_to_date_mods
+                            || !self.show_update_available_mods
+                            || !self.show_check_skipped_mods
+                            || !self.show_missing_source_mods
+                            || !self.show_modified_locally_mods
+                            || !self.show_ignoring_update_mods;
+                        let folder_tiles: Vec<CategoryFolderTile> = if matches!(
+                            category_display_mode,
+                            LibraryCategoryDisplayMode::Folders
+                        ) {
+                            category_sections
+                                .iter()
+                                .filter_map(|category| {
+                                    let section_cards: Vec<_> = cards
+                                        .iter()
+                                        .filter(|card| {
+                                            card.13.as_deref() == Some(category.id.as_str())
+                                        })
+                                        .collect();
+                                    if library_filter_active && section_cards.is_empty() {
+                                        return None;
+                                    }
+                                    let active_count = section_cards
+                                        .iter()
+                                        .filter(|card| card.5 == ModStatus::Active)
+                                        .count();
+                                    let disabled_count = section_cards
+                                        .iter()
+                                        .filter(|card| card.5 == ModStatus::Disabled)
+                                        .count();
+                                    let archived_count = section_cards
+                                        .iter()
+                                        .filter(|card| card.5 == ModStatus::Archived)
+                                        .count();
+                                    let has_update = section_cards.iter().any(|card| {
+                                        matches!(card.8, ModUpdateState::UpdateAvailable)
+                                            || (modified_update_behavior
+                                                != ModifiedUpdateBehavior::HideButton
+                                                && card.10)
+                                    });
+                                    let representative_mod_id = section_cards
+                                        .iter()
+                                        .find(|card| {
+                                            card.5 == ModStatus::Active
+                                                && card
+                                                    .3
+                                                    .as_deref()
+                                                    .is_some_and(|cover| !cover.trim().is_empty())
+                                        })
+                                        .or_else(|| {
+                                            section_cards.iter().find(|card| {
+                                                card.5 == ModStatus::Disabled
+                                                    && card
+                                                        .3
+                                                        .as_deref()
+                                                        .is_some_and(|cover| !cover.trim().is_empty())
+                                            })
+                                        })
+                                        .or_else(|| {
+                                            section_cards.iter().find(|card| {
+                                                card.5 == ModStatus::Archived
+                                                    && card
+                                                        .3
+                                                        .as_deref()
+                                                        .is_some_and(|cover| !cover.trim().is_empty())
+                                            })
+                                        })
+                                        .map(|card| card.0.clone());
+
+                                    Some(CategoryFolderTile {
+                                        id: category.id.clone(),
+                                        name: category.name.clone(),
+                                        total_count: section_cards.len(),
+                                        active_count,
+                                        disabled_count,
+                                        archived_count,
+                                        has_update,
+                                        representative_mod_id,
+                                    })
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        let folder_tile_textures: HashMap<String, Option<egui::TextureHandle>> =
+                            folder_tiles
+                                .iter()
+                                .map(|tile| {
+                                    let texture = tile
+                                        .representative_mod_id
+                                        .as_deref()
+                                        .and_then(|mod_id| {
+                                            if !self.mod_cover_textures.contains_key(mod_id) {
+                                                self.queue_mod_card_thumb_load_with_priority(
+                                                    mod_id, 20,
+                                                );
+                                            }
+                                            self.get_mod_thumb_texture(mod_id, 2).cloned()
+                                        });
+                                    (tile.id.clone(), texture)
+                                })
+                                .collect();
                         let visible_card_ids: Vec<String> = match library_group_mode {
                             LibraryGroupMode::None => {
                                 cards.iter().map(|card| card.0.clone()).collect()
@@ -3369,51 +3498,84 @@ impl HestiaApp {
                                 })
                                 .collect(),
                             LibraryGroupMode::Category => {
-                                let has_categorized = cards.iter().any(|card| {
-                                    card.13.as_ref().is_some_and(|category_id| {
-                                        category_sections
+                                if matches!(
+                                    category_display_mode,
+                                    LibraryCategoryDisplayMode::Folders
+                                ) {
+                                    if let Some(selected_category_id) =
+                                        selected_category_folder_id.as_deref()
+                                    {
+                                        cards
                                             .iter()
-                                            .any(|category| category.id == *category_id)
-                                    })
-                                });
-                                if !has_categorized {
-                                    cards.iter().map(|card| card.0.clone()).collect()
-                                } else {
-                                    let mut ids = Vec::with_capacity(cards.len());
-                                    if uncategorized_first {
-                                        ids.extend(
-                                            cards
-                                                .iter()
-                                                .filter(|card| card.13.is_none())
-                                                .map(|card| card.0.clone()),
-                                        );
-                                    }
-                                    for category in &category_sections {
-                                        ids.extend(
-                                            cards
-                                                .iter()
-                                                .filter(|card| {
-                                                    card.13.as_deref()
-                                                        == Some(category.id.as_str())
-                                                })
-                                                .map(|card| card.0.clone()),
-                                        );
-                                    }
-                                    if !uncategorized_first {
-                                        ids.extend(
-                                            cards
-                                                .iter()
-                                                .filter(|card| {
-                                                    card.13.as_ref().is_none_or(|category_id| {
-                                                        !category_sections.iter().any(|category| {
-                                                            category.id == *category_id
-                                                        })
+                                            .filter(|card| {
+                                                card.13.as_deref() == Some(selected_category_id)
+                                            })
+                                            .map(|card| card.0.clone())
+                                            .collect()
+                                    } else {
+                                        cards
+                                            .iter()
+                                            .filter(|card| {
+                                                card.13.as_ref().is_none_or(|category_id| {
+                                                    !category_sections.iter().any(|category| {
+                                                        category.id == *category_id
                                                     })
                                                 })
-                                                .map(|card| card.0.clone()),
-                                        );
+                                            })
+                                            .map(|card| card.0.clone())
+                                            .collect()
                                     }
-                                    ids
+                                } else {
+                                    let has_categorized = cards.iter().any(|card| {
+                                        card.13.as_ref().is_some_and(|category_id| {
+                                            category_sections
+                                                .iter()
+                                                .any(|category| category.id == *category_id)
+                                        })
+                                    });
+                                    if !has_categorized {
+                                        cards.iter().map(|card| card.0.clone()).collect()
+                                    } else {
+                                        let mut ids = Vec::with_capacity(cards.len());
+                                        if uncategorized_first {
+                                            ids.extend(
+                                                cards
+                                                    .iter()
+                                                    .filter(|card| card.13.is_none())
+                                                    .map(|card| card.0.clone()),
+                                            );
+                                        }
+                                        for category in &category_sections {
+                                            ids.extend(
+                                                cards
+                                                    .iter()
+                                                    .filter(|card| {
+                                                        card.13.as_deref()
+                                                            == Some(category.id.as_str())
+                                                    })
+                                                    .map(|card| card.0.clone()),
+                                            );
+                                        }
+                                        if !uncategorized_first {
+                                            ids.extend(
+                                                cards
+                                                    .iter()
+                                                    .filter(|card| {
+                                                        card.13.as_ref().is_none_or(
+                                                            |category_id| {
+                                                                !category_sections
+                                                                    .iter()
+                                                                    .any(|category| {
+                                                                        category.id == *category_id
+                                                                    })
+                                                            },
+                                                        )
+                                                    })
+                                                    .map(|card| card.0.clone()),
+                                            );
+                                        }
+                                        ids
+                                    }
                                 }
                             }
                         };
@@ -4209,7 +4371,159 @@ impl HestiaApp {
                             }
                         };
 
+                        let render_category_folder_tile =
+                            |ui: &mut Ui, tile: &CategoryFolderTile| -> egui::Response {
+                                let tile_height = 176.0;
+                                let (rect, response) = ui.allocate_exact_size(
+                                    Vec2::new(CARD_WIDTH, tile_height),
+                                    Sense::click(),
+                                );
+                                let selected = selected_category_folder_id.as_deref()
+                                    == Some(tile.id.as_str());
+                                let fill = if response.hovered() || selected {
+                                    Color32::from_rgba_premultiplied(42, 45, 50, 242)
+                                } else {
+                                    Color32::from_rgba_premultiplied(33, 35, 39, 242)
+                                };
+                                let stroke = if response.hovered() || selected {
+                                    Color32::from_rgb(186, 84, 43)
+                                } else {
+                                    Color32::from_rgb(60, 64, 70)
+                                };
+                                ui.painter().rect(
+                                    rect,
+                                    egui::CornerRadius::same(8),
+                                    fill,
+                                    egui::Stroke::new(1.0, stroke),
+                                    egui::StrokeKind::Inside,
+                                );
+
+                                let thumb_rect =
+                                    egui::Rect::from_min_size(rect.min, Vec2::new(CARD_WIDTH, 112.0))
+                                        .shrink(1.0);
+                                ui.painter().rect_filled(
+                                    thumb_rect,
+                                    egui::CornerRadius {
+                                        nw: 8,
+                                        ne: 8,
+                                        sw: 0,
+                                        se: 0,
+                                    },
+                                    Color32::from_rgba_premultiplied(45, 48, 53, 242),
+                                );
+                                if let Some(Some(texture)) = folder_tile_textures.get(&tile.id) {
+                                    paint_thumbnail_image(
+                                        ui,
+                                        thumb_rect,
+                                        texture,
+                                        ThumbnailFit::Cover,
+                                        Color32::from_white_alpha(205),
+                                        egui::CornerRadius {
+                                            nw: 8,
+                                            ne: 8,
+                                            sw: 0,
+                                            se: 0,
+                                        },
+                                    );
+                                    ui.painter().rect_filled(
+                                        thumb_rect,
+                                        egui::CornerRadius {
+                                            nw: 8,
+                                            ne: 8,
+                                            sw: 0,
+                                            se: 0,
+                                        },
+                                        Color32::from_rgba_premultiplied(15, 18, 22, 72),
+                                    );
+                                }
+                                let folder_badge_rect = egui::Rect::from_min_size(
+                                    thumb_rect.left_top() + egui::vec2(8.0, 8.0),
+                                    Vec2::new(30.0, 26.0),
+                                );
+                                ui.painter().rect_filled(
+                                    folder_badge_rect,
+                                    6.0,
+                                    Color32::from_rgba_premultiplied(20, 22, 26, 185),
+                                );
+                                ui.painter().rect_stroke(
+                                    folder_badge_rect,
+                                    6.0,
+                                    egui::Stroke::new(
+                                        1.0,
+                                        Color32::from_rgba_premultiplied(236, 218, 176, 95),
+                                    ),
+                                    egui::StrokeKind::Inside,
+                                );
+                                ui.painter().text(
+                                    folder_badge_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    icon_char(Icon::FolderOpen),
+                                    egui::FontId::new(
+                                        16.0,
+                                        FontFamily::Name(LUCIDE_FAMILY.into()),
+                                    ),
+                                    Color32::from_rgb(236, 218, 176),
+                                );
+
+                                if tile.has_update {
+                                    let badge_rect = egui::Rect::from_min_size(
+                                        thumb_rect.right_top() + egui::vec2(-34.0, 8.0),
+                                        Vec2::new(24.0, 18.0),
+                                    );
+                                    ui.painter().rect_filled(
+                                        badge_rect,
+                                        5.0,
+                                        Color32::from_rgba_premultiplied(186, 84, 43, 235),
+                                    );
+                                    ui.painter().text(
+                                        badge_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "!",
+                                        egui::FontId::proportional(13.0),
+                                        Color32::WHITE,
+                                    );
+                                }
+
+                                let text_left = rect.left() + 10.0;
+                                let text_right = rect.right() - 10.0;
+                                ui.painter().text(
+                                    egui::pos2(text_left, thumb_rect.bottom() + 9.0),
+                                    egui::Align2::LEFT_TOP,
+                                    clamp_category_card_label(&tile.name),
+                                    egui::FontId::proportional(13.5),
+                                    Color32::from_rgb(232, 235, 238),
+                                );
+                                ui.painter().text(
+                                    egui::pos2(text_left, thumb_rect.bottom() + 31.0),
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{} mods", tile.total_count),
+                                    egui::FontId::proportional(12.0),
+                                    Color32::from_gray(165),
+                                );
+                                let status_text = format!(
+                                    "{} active / {} disabled / {} archived",
+                                    tile.active_count, tile.disabled_count, tile.archived_count
+                                );
+                                let galley = ui.painter().layout_no_wrap(
+                                    status_text,
+                                    egui::FontId::proportional(10.5),
+                                    Color32::from_gray(145),
+                                );
+                                let galley_pos = egui::pos2(text_left, rect.bottom() - 20.0);
+                                let clip_rect = egui::Rect::from_min_max(
+                                    galley_pos,
+                                    egui::pos2(text_right, rect.bottom() - 4.0),
+                                );
+                                ui.painter()
+                                    .with_clip_rect(clip_rect)
+                                    .galley(galley_pos, galley, Color32::from_gray(145));
+
+                                response
+                                    .on_hover_text(format!("Open {}", tile.name))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            };
                         let mut section_select_changes: Vec<(Vec<String>, bool)> = Vec::new();
+                        let mut pending_category_folder_id: Option<Option<String>> = None;
                         match library_group_mode {
                             LibraryGroupMode::None => {
                                 render_cards(ui, cards.iter().collect());
@@ -4243,86 +4557,145 @@ impl HestiaApp {
                                 }
                             }
                             LibraryGroupMode::Category => {
-                                let has_categorized = cards.iter().any(|card| {
-                                    card.13.as_ref().is_some_and(|category_id| {
-                                        category_sections
-                                            .iter()
-                                            .any(|category| category.id == *category_id)
-                                    })
-                                });
-                                if !has_categorized {
-                                    render_cards(ui, cards.iter().collect());
-                                } else {
-                                    let category_color = Color32::from_rgb(176, 198, 218);
-                                    let mut rendered_category_ids = Vec::new();
-                                    let uncategorized_cards: Vec<_> =
-                                        cards.iter().filter(|card| card.13.is_none()).collect();
-                                    if uncategorized_first && !uncategorized_cards.is_empty() {
-                                        let response = render_section_label(
-                                            ui,
-                                            "Uncategorized",
-                                            Color32::from_gray(165),
-                                            uncategorized_cards.len(),
-                                        );
-                                        if response.clicked() {
-                                            let ids: Vec<String> = uncategorized_cards
+                                if matches!(
+                                    category_display_mode,
+                                    LibraryCategoryDisplayMode::Folders
+                                ) {
+                                    let selected_category = selected_category_folder_id
+                                        .as_deref()
+                                        .and_then(|selected_id| {
+                                            category_sections
                                                 .iter()
-                                                .map(|card| card.0.clone())
-                                                .collect();
-                                            let all_selected = ids
-                                                .iter()
-                                                .all(|id| selected_mods_snapshot.contains(id));
-                                            section_select_changes.push((ids, !all_selected));
-                                        }
-                                        render_cards(ui, uncategorized_cards.clone());
+                                                .find(|category| category.id == selected_id)
+                                        });
+
+                                    if category_folder_selection_stale {
+                                        pending_category_folder_id = Some(None);
                                     }
-                                    for category in category_sections {
+
+                                    if let Some(category) = selected_category {
                                         let section_cards: Vec<_> = cards
                                             .iter()
-                                            .filter(|card| card.13.as_deref() == Some(category.id.as_str()))
+                                            .filter(|card| {
+                                                card.13.as_deref() == Some(category.id.as_str())
+                                            })
                                             .collect();
-                                        if section_cards.is_empty() {
-                                            continue;
-                                        }
-                                        rendered_category_ids.push(category.id.clone());
-                                        let response = render_section_label(
-                                            ui,
-                                            &category.name,
-                                            category_color,
-                                            section_cards.len(),
-                                        );
-                                        if response.clicked() {
-                                            let ids: Vec<String> = section_cards
-                                                .iter()
-                                                .map(|card| card.0.clone())
-                                                .collect();
-                                            let all_selected = ids
-                                                .iter()
-                                                .all(|id| selected_mods_snapshot.contains(id));
-                                            section_select_changes.push((ids, !all_selected));
-                                        }
+                                        let active_count = section_cards
+                                            .iter()
+                                            .filter(|card| card.5 == ModStatus::Active)
+                                            .count();
+                                        let disabled_count = section_cards
+                                            .iter()
+                                            .filter(|card| card.5 == ModStatus::Disabled)
+                                            .count();
+                                        let archived_count = section_cards
+                                            .iter()
+                                            .filter(|card| card.5 == ModStatus::Archived)
+                                            .count();
+
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(left_padding);
+                                            let back_response = ui
+                                                .button(icon_text_sized(
+                                                    Icon::ChevronLeft,
+                                                    "Categories",
+                                                    13.0,
+                                                    12.0,
+                                                ))
+                                                .on_hover_text("Back to category folders")
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            if back_response.clicked() {
+                                                pending_category_folder_id = Some(None);
+                                            }
+                                            ui.add_space(8.0);
+                                            ui.vertical(|ui| {
+                                                static_label(
+                                                    ui,
+                                                    RichText::new(&category.name)
+                                                        .size(16.0)
+                                                        .strong()
+                                                        .color(Color32::from_rgb(232, 235, 238)),
+                                                );
+                                                ui.add_space(-3.0);
+                                                static_label(
+                                                    ui,
+                                                    RichText::new(format!(
+                                                        "{} mods / {} active / {} disabled / {} archived",
+                                                        section_cards.len(),
+                                                        active_count,
+                                                        disabled_count,
+                                                        archived_count
+                                                    ))
+                                                    .size(11.5)
+                                                    .color(Color32::from_gray(155)),
+                                                );
+                                            });
+                                        });
+                                        ui.add_space(8.0);
                                         render_cards(ui, section_cards);
-                                    }
-                                    if !uncategorized_first {
-                                        let fallback_uncategorized_cards: Vec<_> = cards
+                                    } else {
+                                        let categorized_ids: HashSet<&str> = category_sections
+                                            .iter()
+                                            .map(|category| category.id.as_str())
+                                            .collect();
+                                        let uncategorized_cards: Vec<_> = cards
                                             .iter()
                                             .filter(|card| {
                                                 card.13.as_ref().is_none_or(|category_id| {
-                                                    !rendered_category_ids
-                                                        .iter()
-                                                        .any(|rendered_id| rendered_id == category_id)
+                                                    !categorized_ids.contains(category_id.as_str())
                                                 })
                                             })
                                             .collect();
-                                        if !fallback_uncategorized_cards.is_empty() {
+                                        let folder_count = folder_tiles.len();
+
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(left_padding);
+                                            ui.vertical(|ui| {
+                                                static_label(
+                                                    ui,
+                                                    RichText::new("Categories")
+                                                        .size(16.0)
+                                                        .strong()
+                                                        .color(Color32::from_rgb(232, 235, 238)),
+                                                );
+                                                ui.add_space(-3.0);
+                                                static_label(
+                                                    ui,
+                                                    RichText::new(format!(
+                                                        "{} folders / {} uncategorized mods",
+                                                        folder_count,
+                                                        uncategorized_cards.len()
+                                                    ))
+                                                    .size(11.5)
+                                                    .color(Color32::from_gray(155)),
+                                                );
+                                            });
+                                        });
+                                        ui.add_space(8.0);
+
+                                        for row in folder_tiles.chunks(columns) {
+                                            ui.horizontal_top(|ui| {
+                                                ui.add_space(left_padding);
+                                                for tile in row {
+                                                    let response = render_category_folder_tile(ui, tile);
+                                                    if response.clicked() {
+                                                        pending_category_folder_id =
+                                                            Some(Some(tile.id.clone()));
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(10.0);
+                                        }
+
+                                        if !uncategorized_cards.is_empty() {
                                             let response = render_section_label(
                                                 ui,
                                                 "Uncategorized",
                                                 Color32::from_gray(165),
-                                                fallback_uncategorized_cards.len(),
+                                                uncategorized_cards.len(),
                                             );
                                             if response.clicked() {
-                                                let ids: Vec<String> = fallback_uncategorized_cards
+                                                let ids: Vec<String> = uncategorized_cards
                                                     .iter()
                                                     .map(|card| card.0.clone())
                                                     .collect();
@@ -4331,7 +4704,107 @@ impl HestiaApp {
                                                     .all(|id| selected_mods_snapshot.contains(id));
                                                 section_select_changes.push((ids, !all_selected));
                                             }
-                                            render_cards(ui, fallback_uncategorized_cards);
+                                            render_cards(ui, uncategorized_cards);
+                                        }
+                                    }
+                                } else {
+                                    let has_categorized = cards.iter().any(|card| {
+                                        card.13.as_ref().is_some_and(|category_id| {
+                                            category_sections
+                                                .iter()
+                                                .any(|category| category.id == *category_id)
+                                        })
+                                    });
+                                    if !has_categorized {
+                                        render_cards(ui, cards.iter().collect());
+                                    } else {
+                                        let category_color = Color32::from_rgb(176, 198, 218);
+                                        let mut rendered_category_ids = Vec::new();
+                                        let uncategorized_cards: Vec<_> =
+                                            cards.iter().filter(|card| card.13.is_none()).collect();
+                                        if uncategorized_first && !uncategorized_cards.is_empty() {
+                                            let response = render_section_label(
+                                                ui,
+                                                "Uncategorized",
+                                                Color32::from_gray(165),
+                                                uncategorized_cards.len(),
+                                            );
+                                            if response.clicked() {
+                                                let ids: Vec<String> = uncategorized_cards
+                                                    .iter()
+                                                    .map(|card| card.0.clone())
+                                                    .collect();
+                                                let all_selected = ids
+                                                    .iter()
+                                                    .all(|id| selected_mods_snapshot.contains(id));
+                                                section_select_changes.push((ids, !all_selected));
+                                            }
+                                            render_cards(ui, uncategorized_cards.clone());
+                                        }
+                                        for category in category_sections {
+                                            let section_cards: Vec<_> = cards
+                                                .iter()
+                                                .filter(|card| {
+                                                    card.13.as_deref()
+                                                        == Some(category.id.as_str())
+                                                })
+                                                .collect();
+                                            if section_cards.is_empty() {
+                                                continue;
+                                            }
+                                            rendered_category_ids.push(category.id.clone());
+                                            let response = render_section_label(
+                                                ui,
+                                                &category.name,
+                                                category_color,
+                                                section_cards.len(),
+                                            );
+                                            if response.clicked() {
+                                                let ids: Vec<String> = section_cards
+                                                    .iter()
+                                                    .map(|card| card.0.clone())
+                                                    .collect();
+                                                let all_selected = ids
+                                                    .iter()
+                                                    .all(|id| selected_mods_snapshot.contains(id));
+                                                section_select_changes.push((ids, !all_selected));
+                                            }
+                                            render_cards(ui, section_cards);
+                                        }
+                                        if !uncategorized_first {
+                                            let fallback_uncategorized_cards: Vec<_> = cards
+                                                .iter()
+                                                .filter(|card| {
+                                                    card.13.as_ref().is_none_or(|category_id| {
+                                                        !rendered_category_ids.iter().any(
+                                                            |rendered_id| {
+                                                                rendered_id == category_id
+                                                            },
+                                                        )
+                                                    })
+                                                })
+                                                .collect();
+                                            if !fallback_uncategorized_cards.is_empty() {
+                                                let response = render_section_label(
+                                                    ui,
+                                                    "Uncategorized",
+                                                    Color32::from_gray(165),
+                                                    fallback_uncategorized_cards.len(),
+                                                );
+                                                if response.clicked() {
+                                                    let ids: Vec<String> =
+                                                        fallback_uncategorized_cards
+                                                            .iter()
+                                                            .map(|card| card.0.clone())
+                                                            .collect();
+                                                    let all_selected = ids.iter().all(|id| {
+                                                        selected_mods_snapshot.contains(id)
+                                                    });
+                                                    section_select_changes
+                                                        .push((ids, !all_selected));
+                                                }
+                                                render_cards(ui, fallback_uncategorized_cards);
+                                            }
                                         }
                                     }
                                 }
@@ -4347,6 +4820,10 @@ impl HestiaApp {
                                     }
                                 }
                             }
+                        }
+                        if let Some(category_folder_id) = pending_category_folder_id {
+                            self.selected_category_folder_id = category_folder_id;
+                            self.selected_mods.clear();
                         }
                     });
                 });

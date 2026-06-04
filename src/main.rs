@@ -31,9 +31,7 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
 ];
 
 pub(crate) const WHATS_NEW_DATE: &str = "xx June 2026";
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "see changelog",
-];
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &["see changelog"];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[

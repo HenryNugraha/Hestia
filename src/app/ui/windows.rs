@@ -2260,6 +2260,34 @@ impl HestiaApp {
                                 ui.vertical(|ui| {
                                     if matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
                                         ui.add_space(-10.0);
+                                        let category_display_mode =
+                                            self.state.library_category_display_mode;
+                                        ui.horizontal(|ui| {
+                                            static_label(ui, "Category display:");
+                                            egui::ComboBox::from_id_salt("library_category_display_mode")
+                                                .selected_text(match self.state.library_category_display_mode {
+                                                    LibraryCategoryDisplayMode::GroupedSections => "Grouped sections",
+                                                    LibraryCategoryDisplayMode::Folders => "Folders",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut self.state.library_category_display_mode,
+                                                        LibraryCategoryDisplayMode::GroupedSections,
+                                                        "Grouped sections",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut self.state.library_category_display_mode,
+                                                        LibraryCategoryDisplayMode::Folders,
+                                                        "Folders",
+                                                    );
+                                                });
+                                        });
+                                        if self.state.library_category_display_mode
+                                            != category_display_mode
+                                        {
+                                            should_save = true;
+                                        }
+                                        ui.add_space(-4.0);
                                         if ui
                                             .checkbox(
                                                 &mut self.state.library_uncategorized_first,
