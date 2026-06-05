@@ -1910,18 +1910,29 @@ impl HestiaApp {
                                                 .desired_width(178.0)
                                                 .margin(egui::Margin::same(4)),
                                             );
-                                            input.request_focus();
-                                            let save_rename = input.has_focus()
-                                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                            let cancel_rename = input.has_focus()
-                                                && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                            self.request_category_rename_focus(
+                                                ui.ctx(),
+                                                &input,
+                                                &category.id,
+                                            );
+                                            let save_rename = ui.input_mut(|i| {
+                                                i.consume_key(
+                                                    egui::Modifiers::NONE,
+                                                    egui::Key::Enter,
+                                                )
+                                            });
+                                            let cancel_rename = ui.input_mut(|i| {
+                                                i.consume_key(
+                                                    egui::Modifiers::NONE,
+                                                    egui::Key::Escape,
+                                                )
+                                            });
                                             if save_rename {
                                                 let draft = self.category_rename_name.clone();
                                                 self.rename_category(&category.id, &draft);
                                             }
                                             if cancel_rename {
-                                                self.category_rename_target_id = None;
-                                                self.category_rename_name.clear();
+                                                self.clear_category_rename();
                                             }
                                             if ui
                                                 .add(
@@ -1999,9 +2010,10 @@ impl HestiaApp {
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                 .clicked()
                                             {
-                                                self.category_rename_target_id =
-                                                    Some(category.id.clone());
-                                                self.category_rename_name = category.name.clone();
+                                                self.start_category_rename(
+                                                    category.id.clone(),
+                                                    category.name.clone(),
+                                                );
                                             }
                                             let delete_response = ui.allocate_response(
                                                 egui::vec2(18.0, 20.0),

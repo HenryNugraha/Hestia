@@ -197,7 +197,7 @@ impl HestiaApp {
 
     fn open_linked_mod_in_browse(&mut self, mod_id: u64) {
         self.current_view = ViewMode::Browse;
-        self.mod_detail_editing = false;
+        self.clear_mod_detail_rename();
         self.pending_browse_open_mod_id = Some(mod_id);
     }
 

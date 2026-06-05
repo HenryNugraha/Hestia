@@ -1111,8 +1111,7 @@ impl HestiaApp {
             name,
             order,
         });
-        self.category_rename_target_id = Some(id.clone());
-        self.category_rename_name = self
+        let rename_name = self
             .state
             .categories
             .iter()
@@ -1120,7 +1119,66 @@ impl HestiaApp {
             .map(|category| category.name.clone())
             .unwrap_or_default();
         self.save_state();
+        self.start_category_rename(id.clone(), rename_name);
         id
+    }
+
+    fn start_category_rename(&mut self, category_id: String, name: String) {
+        self.category_rename_focus_target_id = Some(category_id.clone());
+        self.category_rename_target_id = Some(category_id);
+        self.category_rename_name = name;
+    }
+
+    fn clear_mod_detail_rename(&mut self) {
+        self.mod_detail_editing = false;
+        self.mod_detail_edit_target_id = None;
+        self.mod_detail_rename_focus_target_id = None;
+        self.mod_detail_edit_name.clear();
+    }
+
+    fn clear_category_rename(&mut self) {
+        self.category_rename_target_id = None;
+        self.category_rename_focus_target_id = None;
+        self.category_rename_name.clear();
+    }
+
+    fn select_all_text_edit(ctx: &egui::Context, input: &egui::Response, text: &str) {
+        let mut state = TextEdit::load_state(ctx, input.id).unwrap_or_default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::default(),
+            egui::text::CCursor::new(text.chars().count()),
+        )));
+        state.store(ctx, input.id);
+    }
+
+    fn request_focus_select_all(ctx: &egui::Context, input: &egui::Response, text: &str) {
+        input.request_focus();
+        Self::select_all_text_edit(ctx, input, text);
+        ctx.request_repaint();
+    }
+
+    fn request_category_rename_focus(
+        &mut self,
+        ctx: &egui::Context,
+        input: &egui::Response,
+        category_id: &str,
+    ) {
+        if self.category_rename_focus_target_id.as_deref() == Some(category_id) {
+            Self::request_focus_select_all(ctx, input, &self.category_rename_name);
+            self.category_rename_focus_target_id = None;
+        }
+    }
+
+    fn request_mod_detail_rename_focus(
+        &mut self,
+        ctx: &egui::Context,
+        input: &egui::Response,
+        mod_id: &str,
+    ) {
+        if self.mod_detail_rename_focus_target_id.as_deref() == Some(mod_id) {
+            Self::request_focus_select_all(ctx, input, &self.mod_detail_edit_name);
+            self.mod_detail_rename_focus_target_id = None;
+        }
     }
 
     fn rename_category(&mut self, category_id: &str, name: &str) {
@@ -1146,8 +1204,7 @@ impl HestiaApp {
             mod_entry.metadata.user.category = trimmed.to_string();
             let _ = xxmi::save_mod_metadata(mod_entry);
         }
-        self.category_rename_target_id = None;
-        self.category_rename_name.clear();
+        self.clear_category_rename();
         self.save_state();
     }
 
@@ -1241,8 +1298,7 @@ impl HestiaApp {
             .as_deref()
             .is_some_and(|category_id| deleting.contains(category_id))
         {
-            self.category_rename_target_id = None;
-            self.category_rename_name.clear();
+            self.clear_category_rename();
         }
         self.selected_category_ids
             .retain(|category_id| !deleting.contains(category_id.as_str()));
@@ -1342,18 +1398,23 @@ impl HestiaApp {
                                                 .desired_width(CATEGORY_TEXT_WIDTH)
                                                 .margin(egui::Margin::same(4)),
                                         );
-                                        input.request_focus();
-                                        let save_rename = input.has_focus()
-                                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                        let cancel_rename = input.has_focus()
-                                            && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                        self.request_category_rename_focus(
+                                            ui.ctx(),
+                                            &input,
+                                            &category.id,
+                                        );
+                                        let save_rename = ui.input_mut(|i| {
+                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                        });
+                                        let cancel_rename = ui.input_mut(|i| {
+                                            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                                        });
                                         if save_rename {
                                             let draft = self.category_rename_name.clone();
                                             self.rename_category(&category.id, &draft);
                                         }
                                         if cancel_rename {
-                                            self.category_rename_target_id = None;
-                                            self.category_rename_name.clear();
+                                            self.clear_category_rename();
                                         }
                                         if ui
                                             .add(
@@ -1482,9 +1543,10 @@ impl HestiaApp {
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                 .clicked()
                                             {
-                                                self.category_rename_target_id =
-                                                    Some(category.id.clone());
-                                                self.category_rename_name = category.name.clone();
+                                                self.start_category_rename(
+                                                    category.id.clone(),
+                                                    category.name.clone(),
+                                                );
                                             }
                                             if ui
                                                 .button(icon_text_sized(
@@ -1548,8 +1610,7 @@ impl HestiaApp {
         let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         if was_popup_open && !is_popup_open {
             self.finish_category_drag();
-            self.category_rename_target_id = None;
-            self.category_rename_name.clear();
+            self.clear_category_rename();
         } else if self.dragging_category_id.is_some()
             && !ui.ctx().input(|input| input.pointer.primary_down())
         {
@@ -3442,6 +3503,9 @@ impl HestiaApp {
                         let dragging_mod_ids = self.dragging_mod_ids.clone();
                         let category_rename_target_id =
                             self.category_rename_target_id.clone();
+                        let category_rename_focus_target_id =
+                            self.category_rename_focus_target_id.clone();
+                        let mut category_rename_focus_consumed = false;
                         let mut category_rename_name_draft =
                             self.category_rename_name.clone();
                         let library_filter_active = !self.mods_search_query.trim().is_empty()
@@ -5101,22 +5165,37 @@ impl HestiaApp {
                                                             TextEdit::singleline(
                                                                 &mut category_rename_name_draft,
                                                             )
+                                                            .id_source((
+                                                                "category_folder_rename_input",
+                                                                &tile.id,
+                                                            ))
                                                             .desired_width(edit_rect.width())
                                                             .margin(egui::Margin::same(4)),
                                                         );
-                                                        input.request_focus();
+                                                        if category_rename_focus_target_id.as_deref()
+                                                            == Some(tile.id.as_str())
+                                                        {
+                                                            Self::request_focus_select_all(
+                                                                ui.ctx(),
+                                                                &input,
+                                                                &category_rename_name_draft,
+                                                            );
+                                                            category_rename_focus_consumed = true;
+                                                        }
                                                         pending_folder_rename_name_update =
                                                             Some(category_rename_name_draft.clone());
-                                                        let save_rename = input.has_focus()
-                                                            && edit_ui.input(|input| {
-                                                                input
-                                                                    .key_pressed(egui::Key::Enter)
-                                                            });
-                                                        let cancel_rename = input.has_focus()
-                                                            && edit_ui.input(|input| {
-                                                                input
-                                                                    .key_pressed(egui::Key::Escape)
-                                                            });
+                                                        let save_rename = ui.input_mut(|input| {
+                                                            input.consume_key(
+                                                                egui::Modifiers::NONE,
+                                                                egui::Key::Enter,
+                                                            )
+                                                        });
+                                                        let cancel_rename = ui.input_mut(|input| {
+                                                            input.consume_key(
+                                                                egui::Modifiers::NONE,
+                                                                egui::Key::Escape,
+                                                            )
+                                                        });
                                                         if save_rename {
                                                             pending_folder_rename_save = Some((
                                                                 tile.id.clone(),
@@ -5518,9 +5597,11 @@ impl HestiaApp {
                                 }
                             }
                         }
+                        if category_rename_focus_consumed {
+                            self.category_rename_focus_target_id = None;
+                        }
                         if let Some((category_id, category_name)) = pending_folder_rename {
-                            self.category_rename_target_id = Some(category_id);
-                            self.category_rename_name = category_name;
+                            self.start_category_rename(category_id, category_name);
                         }
                         if let Some(category_name) = pending_folder_rename_name_update {
                             self.category_rename_name = category_name;
@@ -5529,8 +5610,7 @@ impl HestiaApp {
                             self.rename_category(&category_id, &category_name);
                         }
                         if pending_folder_rename_cancel {
-                            self.category_rename_target_id = None;
-                            self.category_rename_name.clear();
+                            self.clear_category_rename();
                         }
                         if let Some((category_id, category_name)) = pending_folder_delete_only {
                             self.delete_category(&category_id);
@@ -5743,16 +5823,16 @@ impl HestiaApp {
                                         .frame(false)
                                 )
                             }).inner;
-                        resp.request_focus();
+                        self.request_mod_detail_rename_focus(ui.ctx(), &resp, &selected.id);
                         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                            self.mod_detail_editing = false;
+                            self.clear_mod_detail_rename();
                         }
                         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                             self.perform_mod_rename(selected.id.clone());
                         }
                         let cancel_btn = ui.add(egui::Button::new(icon_rich(Icon::X, 14.0, Color32::from_rgba_unmultiplied(160,160,160,160))).frame(false));
                         if cancel_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.mod_detail_editing = false;
+                            self.clear_mod_detail_rename();
                         }
                         ui.add_space(-10.0);
                         let save_btn = ui.add(egui::Button::new(icon_rich(Icon::Check, 16.0, Color32::from_rgb(110, 194, 132))).frame(false));

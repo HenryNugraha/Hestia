@@ -172,12 +172,14 @@ impl HestiaApp {
             browse_detail_focus_requested: false,
             mod_detail_editing: false,
             mod_detail_edit_target_id: None,
+            mod_detail_rename_focus_target_id: None,
             mod_detail_edit_name: String::new(),
             personal_note_edit_target_id: None,
             personal_note_edit_text: String::new(),
             #[cfg(windows)]
             clipboard_image_paste_held: false,
             category_rename_target_id: None,
+            category_rename_focus_target_id: None,
             category_rename_name: String::new(),
             dragging_category_id: None,
             dragging_category_target_index: None,
@@ -1371,7 +1373,7 @@ impl HestiaApp {
             ViewMode::Library => ViewMode::Browse,
             ViewMode::Browse => ViewMode::Library,
         };
-        self.mod_detail_editing = false;
+        self.clear_mod_detail_rename();
     }
 
     fn focus_active_search(&mut self, ctx: &egui::Context) {
@@ -1403,6 +1405,7 @@ impl HestiaApp {
             return;
         };
         self.mod_detail_editing = true;
+        self.mod_detail_rename_focus_target_id = Some(mod_id.clone());
         self.mod_detail_edit_target_id = Some(mod_id);
         self.mod_detail_edit_name = title;
     }
@@ -1608,9 +1611,7 @@ impl HestiaApp {
 
         // self.selected_mod_id = mod_id;
         self.selected_mod_id = mod_id.clone();
-        self.mod_detail_editing = false;
-        self.mod_detail_edit_target_id = None;
-        self.mod_detail_edit_name.clear();
+        self.clear_mod_detail_rename();
         self.my_mod_overlay_images.clear();
         self.browse_state.screenshot_overlay = None;
         if let Some(id) = mod_id {

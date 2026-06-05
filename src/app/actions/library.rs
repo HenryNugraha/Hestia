@@ -366,12 +366,12 @@ impl HestiaApp {
     fn perform_mod_rename(&mut self, mod_id: String) {
         let raw = self.mod_detail_edit_name.trim().to_string();
         if raw.is_empty() {
-            self.mod_detail_editing = false;
+            self.clear_mod_detail_rename();
             return;
         }
         let sanitized = sanitize_folder_name(&raw);
         if sanitized == "Imported Mod" || sanitized.chars().all(|c| c == '_') {
-            self.mod_detail_editing = false;
+            self.clear_mod_detail_rename();
             return;
         }
         if let Err(err) = self.rename_mod_folder(&mod_id, &sanitized) {
@@ -380,7 +380,7 @@ impl HestiaApp {
             self.set_message_ok(format!("Renamed to: {sanitized}"));
             self.log_action("Renamed", &sanitized);
         }
-        self.mod_detail_editing = false;
+        self.clear_mod_detail_rename();
         self.refresh();
     }
 

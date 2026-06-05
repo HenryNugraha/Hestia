@@ -674,7 +674,7 @@ impl HestiaApp {
                         "Browse",
                     );
                     if self.current_view != old_view {
-                        self.mod_detail_editing = false;
+                        self.clear_mod_detail_rename();
                     }
                     let bottom_height = 348.0;
                     let spacer = (ui.available_height() - bottom_height).max(8.0);
