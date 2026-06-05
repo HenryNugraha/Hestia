@@ -1472,6 +1472,21 @@ impl HestiaApp {
         if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::F))) {
             self.focus_active_search(ctx);
         }
+        let app_window_focused = ctx.input(|input| {
+            input.focused && input.viewport().focused.unwrap_or(input.focused)
+        });
+        if app_window_focused
+            && !text_input_active
+            && self.settings_open
+            && self.settings_tab == SettingsTab::Categories
+            && ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::N))
+            })
+        {
+            if let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) {
+                self.create_category_for_game(&game_id);
+            }
+        }
 
         if self.current_view == ViewMode::Library {
             if !text_input_active

@@ -1727,6 +1727,7 @@ impl HestiaApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .button(icon_text_sized(Icon::Plus, "New", 13.0, 13.0))
+                        .on_hover_text("New category (Ctrl+N)")
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
