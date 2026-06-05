@@ -159,6 +159,7 @@ impl HestiaApp {
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
             selected_category_folder_id: None,
+            dragging_mod_ids: Vec::new(),
             current_view: ViewMode::Library,
             settings_open: false,
             mod_detail_open: false,

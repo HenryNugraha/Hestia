@@ -31,6 +31,7 @@ struct CategoryFolderTile {
     archived_count: usize,
     has_update: bool,
     representative_mod_id: Option<String>,
+    representative_cover_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -1152,6 +1153,62 @@ impl HestiaApp {
 
     fn delete_category(&mut self, category_id: &str) {
         self.delete_categories(&[category_id.to_string()]);
+    }
+
+    fn delete_category_and_mods(&mut self, category_id: &str) {
+        let category_name = self
+            .state
+            .categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .map(|category| category.name.clone())
+            .unwrap_or_else(|| "Category".to_string());
+        let mods_to_delete: Vec<ModEntry> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| {
+                mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
+            })
+            .cloned()
+            .collect();
+        let mut deleted_count = 0;
+        let mut last_err: Option<anyhow::Error> = None;
+        for mod_entry in mods_to_delete {
+            match self.delete_mod_entry(&mod_entry) {
+                Ok(_) => {
+                    deleted_count += 1;
+                    self.selected_mods.remove(&mod_entry.id);
+                    if self.selected_mod_id.as_deref() == Some(mod_entry.id.as_str()) {
+                        self.set_selected_mod_id(None);
+                    }
+                }
+                Err(err) => last_err = Some(err),
+            }
+        }
+        if let Some(err) = last_err {
+            if deleted_count > 0 {
+                let action = match self.state.delete_behavior {
+                    DeleteBehavior::RecycleBin => "Recycled",
+                    DeleteBehavior::Permanent => "Deleted",
+                };
+                self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
+                self.set_message_ok(format!("{action} {deleted_count} mod(s)"));
+                self.save_state();
+                self.refresh();
+            }
+            self.report_error(err, Some("Delete failed"));
+            return;
+        }
+
+        self.delete_category(category_id);
+        let action = match self.state.delete_behavior {
+            DeleteBehavior::RecycleBin => "Recycled",
+            DeleteBehavior::Permanent => "Deleted",
+        };
+        self.log_action(action, &format!("{category_name} folder and {deleted_count} mod(s)"));
+        self.set_message_ok(format!("{action} {category_name} and {deleted_count} mod(s)"));
+        self.refresh();
     }
 
     fn delete_categories(&mut self, category_ids: &[String]) {
@@ -2874,7 +2931,7 @@ impl HestiaApp {
                             let edit_resp = child_ui.add(
                                 TextEdit::singleline(&mut self.mods_search_query)
                                     .id_source(MODS_SEARCH_INPUT_ID)
-                                    .hint_text(if how_expanded > 0.8 { "Filter mods..." } else { "" })
+                                    .hint_text(if how_expanded > 0.8 { "Filter mod's name..." } else { "" })
                                     .frame(false)
                                     .desired_width(input_rect.width())
                             );
@@ -3360,6 +3417,8 @@ impl HestiaApp {
                             .unwrap_or_default();
                         let category_sections = self
                             .categories_for_game(&selected_game_id);
+                        let category_sort_mode =
+                            self.category_sort_mode_for_game(&selected_game_id);
                         let selected_mods_snapshot = self.selected_mods.clone();
                         let sections = [
                             (ModStatus::Active, "Active", status_color(&ModStatus::Active)),
@@ -3377,6 +3436,14 @@ impl HestiaApp {
                             self.selected_category_folder_id.is_some()
                                 && selected_category_folder_id.is_none();
                         let modified_update_behavior = self.state.modified_update_behavior;
+                        let dragging_category_id = self.dragging_category_id.clone();
+                        let dragging_category_target_index =
+                            self.dragging_category_target_index;
+                        let dragging_mod_ids = self.dragging_mod_ids.clone();
+                        let category_rename_target_id =
+                            self.category_rename_target_id.clone();
+                        let mut category_rename_name_draft =
+                            self.category_rename_name.clone();
                         let library_filter_active = !self.mods_search_query.trim().is_empty()
                             || !self.show_enabled_mods
                             || self.state.hide_disabled
@@ -3422,7 +3489,7 @@ impl HestiaApp {
                                                 != ModifiedUpdateBehavior::HideButton
                                                 && card.10)
                                     });
-                                    let representative_mod_id = section_cards
+                                    let representative_card = section_cards
                                         .iter()
                                         .find(|card| {
                                             card.5 == ModStatus::Active
@@ -3448,8 +3515,16 @@ impl HestiaApp {
                                                         .as_deref()
                                                         .is_some_and(|cover| !cover.trim().is_empty())
                                             })
-                                        })
-                                        .map(|card| card.0.clone());
+                                        });
+                                    let representative_mod_id =
+                                        representative_card.map(|card| card.0.clone());
+                                    let representative_cover_path =
+                                        representative_card.and_then(|card| {
+                                            card.3
+                                                .as_deref()
+                                                .filter(|cover| !cover.trim().is_empty())
+                                                .map(|cover| card.4.join(cover))
+                                        });
 
                                     Some(CategoryFolderTile {
                                         id: category.id.clone(),
@@ -3460,6 +3535,7 @@ impl HestiaApp {
                                         archived_count,
                                         has_update,
                                         representative_mod_id,
+                                        representative_cover_path,
                                     })
                                 })
                                 .collect()
@@ -3470,17 +3546,31 @@ impl HestiaApp {
                             folder_tiles
                                 .iter()
                                 .map(|tile| {
-                                    let texture = tile
-                                        .representative_mod_id
-                                        .as_deref()
-                                        .and_then(|mod_id| {
-                                            if !self.mod_cover_textures.contains_key(mod_id) {
-                                                self.queue_mod_card_thumb_load_with_priority(
-                                                    mod_id, 20,
+                                    let texture = tile.representative_mod_id.as_deref().and_then(
+                                        |mod_id| {
+                                            if let Some(texture) =
+                                                self.get_mod_full_texture(mod_id, 2).cloned()
+                                            {
+                                                return Some(texture);
+                                            }
+
+                                            if let Some(path) = tile.representative_cover_path.clone()
+                                            {
+                                                self.queue_mod_image_full_load(
+                                                    mod_id.to_string(),
+                                                    path,
+                                                    25,
                                                 );
                                             }
-                                            self.get_mod_thumb_texture(mod_id, 2).cloned()
-                                        });
+
+                                            if !self.mod_cover_textures.contains_key(mod_id) {
+                                                self.queue_mod_card_thumb_load_with_priority(
+                                                    mod_id, 40,
+                                                );
+                                            }
+                                            self.get_mod_thumb_texture(mod_id, 1).cloned()
+                                        },
+                                    );
                                     (tile.id.clone(), texture)
                                 })
                                 .collect();
@@ -3649,7 +3739,7 @@ impl HestiaApp {
                                                 ui.vertical(|ui| {
                                                     let (rect, response) = ui.allocate_exact_size(
                                                         Vec2::new(CARD_WIDTH, 130.0),
-                                                        Sense::click(),
+                                                        Sense::click_and_drag(),
                                                     );
 
                                                     if response.gained_focus() && !response.clicked() {
@@ -3658,6 +3748,19 @@ impl HestiaApp {
 
                                                     if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space)) {
                                                         self.toggle_mod_selection(mod_id, !checked);
+                                                        response.request_focus();
+                                                    }
+                                                    if response.drag_started() {
+                                                        if self.selected_mods.contains(mod_id) {
+                                                            self.dragging_mod_ids = self
+                                                                .selected_mods
+                                                                .iter()
+                                                                .cloned()
+                                                                .collect();
+                                                        } else {
+                                                            self.dragging_mod_ids =
+                                                                vec![mod_id.clone()];
+                                                        }
                                                         response.request_focus();
                                                     }
 
@@ -4376,16 +4479,37 @@ impl HestiaApp {
                                 let tile_height = 176.0;
                                 let (rect, response) = ui.allocate_exact_size(
                                     Vec2::new(CARD_WIDTH, tile_height),
-                                    Sense::click(),
+                                    Sense::click_and_drag(),
                                 );
-                                let selected = selected_category_folder_id.as_deref()
-                                    == Some(tile.id.as_str());
-                                let fill = if response.hovered() || selected {
+                                let selected =
+                                    selected_category_folder_id.as_deref() == Some(tile.id.as_str());
+                                let dragging_self =
+                                    dragging_category_id.as_deref() == Some(tile.id.as_str());
+                                let pointer_over_tile = ui
+                                    .ctx()
+                                    .pointer_latest_pos()
+                                    .is_some_and(|pointer_pos| rect.contains(pointer_pos));
+                                let mod_drop_targeted =
+                                    !dragging_mod_ids.is_empty() && pointer_over_tile;
+                                let drag_targeted = (!dragging_mod_ids.is_empty()
+                                    || dragging_category_id.as_deref().is_some_and(|dragging_id| {
+                                        dragging_id != tile.id.as_str()
+                                    }))
+                                    && pointer_over_tile;
+                                let fill = if dragging_self {
+                                    Color32::from_rgba_premultiplied(28, 31, 36, 150)
+                                } else if mod_drop_targeted {
+                                    Color32::from_rgba_premultiplied(57, 38, 31, 242)
+                                } else if response.hovered() || selected {
                                     Color32::from_rgba_premultiplied(42, 45, 50, 242)
                                 } else {
                                     Color32::from_rgba_premultiplied(33, 35, 39, 242)
                                 };
-                                let stroke = if response.hovered() || selected {
+                                let stroke = if dragging_self {
+                                    Color32::from_rgba_premultiplied(214, 104, 58, 170)
+                                } else if drag_targeted {
+                                    Color32::from_rgb(214, 104, 58)
+                                } else if response.hovered() || selected {
                                     Color32::from_rgb(186, 84, 43)
                                 } else {
                                     Color32::from_rgb(60, 64, 70)
@@ -4435,35 +4559,57 @@ impl HestiaApp {
                                         },
                                         Color32::from_rgba_premultiplied(15, 18, 22, 72),
                                     );
+                                    let folder_badge_rect = egui::Rect::from_min_size(
+                                        thumb_rect.left_top() + egui::vec2(8.0, 8.0),
+                                        Vec2::new(30.0, 26.0),
+                                    );
+                                    ui.painter().rect_filled(
+                                        folder_badge_rect,
+                                        6.0,
+                                        Color32::from_rgba_premultiplied(20, 22, 26, 185),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        folder_badge_rect,
+                                        6.0,
+                                        egui::Stroke::new(
+                                            1.0,
+                                            Color32::from_rgba_premultiplied(236, 218, 176, 95),
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                    ui.painter().text(
+                                        folder_badge_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        icon_char(Icon::FolderOpen),
+                                        egui::FontId::new(
+                                            16.0,
+                                            FontFamily::Name(LUCIDE_FAMILY.into()),
+                                        ),
+                                        Color32::from_rgb(236, 218, 176),
+                                    );
+                                } else {
+                                    let placeholder_rect = thumb_rect.shrink2(egui::vec2(1.0, 1.0));
+                                    ui.painter().rect_filled(
+                                        placeholder_rect,
+                                        egui::CornerRadius {
+                                            nw: 8,
+                                            ne: 8,
+                                            sw: 0,
+                                            se: 0,
+                                        },
+                                        Color32::from_rgba_premultiplied(45, 48, 53, 242),
+                                    );
+                                    ui.painter().text(
+                                        placeholder_rect.center() + egui::vec2(0.0, 2.0),
+                                        egui::Align2::CENTER_CENTER,
+                                        icon_char(Icon::FolderOpen),
+                                        egui::FontId::new(
+                                            42.0,
+                                            FontFamily::Name(LUCIDE_FAMILY.into()),
+                                        ),
+                                        Color32::from_rgba_premultiplied(205, 213, 220, 78),
+                                    );
                                 }
-                                let folder_badge_rect = egui::Rect::from_min_size(
-                                    thumb_rect.left_top() + egui::vec2(8.0, 8.0),
-                                    Vec2::new(30.0, 26.0),
-                                );
-                                ui.painter().rect_filled(
-                                    folder_badge_rect,
-                                    6.0,
-                                    Color32::from_rgba_premultiplied(20, 22, 26, 185),
-                                );
-                                ui.painter().rect_stroke(
-                                    folder_badge_rect,
-                                    6.0,
-                                    egui::Stroke::new(
-                                        1.0,
-                                        Color32::from_rgba_premultiplied(236, 218, 176, 95),
-                                    ),
-                                    egui::StrokeKind::Inside,
-                                );
-                                ui.painter().text(
-                                    folder_badge_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    icon_char(Icon::FolderOpen),
-                                    egui::FontId::new(
-                                        16.0,
-                                        FontFamily::Name(LUCIDE_FAMILY.into()),
-                                    ),
-                                    Color32::from_rgb(236, 218, 176),
-                                );
 
                                 if tile.has_update {
                                     let badge_rect = egui::Rect::from_min_size(
@@ -4486,11 +4632,19 @@ impl HestiaApp {
 
                                 let text_left = rect.left() + 10.0;
                                 let text_right = rect.right() - 10.0;
-                                ui.painter().text(
-                                    egui::pos2(text_left, thumb_rect.bottom() + 9.0),
-                                    egui::Align2::LEFT_TOP,
-                                    clamp_category_card_label(&tile.name),
+                                let title_pos = egui::pos2(text_left, thumb_rect.bottom() + 9.0);
+                                let title_galley = ui.painter().layout_no_wrap(
+                                    tile.name.clone(),
                                     egui::FontId::proportional(13.5),
+                                    Color32::from_rgb(232, 235, 238),
+                                );
+                                let title_clip_rect = egui::Rect::from_min_max(
+                                    title_pos,
+                                    egui::pos2(text_right, thumb_rect.bottom() + 27.0),
+                                );
+                                ui.painter().with_clip_rect(title_clip_rect).galley(
+                                    title_pos,
+                                    title_galley,
                                     Color32::from_rgb(232, 235, 238),
                                 );
                                 ui.painter().text(
@@ -4518,12 +4672,240 @@ impl HestiaApp {
                                     .with_clip_rect(clip_rect)
                                     .galley(galley_pos, galley, Color32::from_gray(145));
 
+                                if dragging_self {
+                                    ui.painter().rect_filled(
+                                        rect.shrink(1.0),
+                                        egui::CornerRadius::same(8),
+                                        Color32::from_rgba_premultiplied(15, 17, 20, 112),
+                                    );
+                                    ui.painter().text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "Moving",
+                                        egui::FontId::proportional(13.0),
+                                        Color32::from_rgb(238, 224, 201),
+                                    );
+                                } else if mod_drop_targeted {
+                                    let badge_rect = egui::Rect::from_center_size(
+                                        thumb_rect.center(),
+                                        Vec2::new(112.0, 30.0),
+                                    );
+                                    ui.painter().rect_filled(
+                                        badge_rect,
+                                        egui::CornerRadius::same(7),
+                                        Color32::from_rgba_premultiplied(24, 27, 31, 224),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        badge_rect,
+                                        egui::CornerRadius::same(7),
+                                        egui::Stroke::new(
+                                            1.0,
+                                            Color32::from_rgb(214, 104, 58),
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                    ui.painter().text(
+                                        badge_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "Move here",
+                                        egui::FontId::proportional(12.5),
+                                        Color32::from_rgb(238, 224, 201),
+                                    );
+                                }
+
                                 response
                                     .on_hover_text(format!("Open {}", tile.name))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                             };
+                        let paint_folder_drag_indicator =
+                            |ui: &mut Ui, tile_rects: &[egui::Rect], target_index: usize| {
+                                if tile_rects.is_empty() {
+                                    return;
+                                }
+                                let clamped = target_index.min(tile_rects.len());
+                                let (x, y1, y2) = if clamped >= tile_rects.len() {
+                                    let rect = tile_rects[tile_rects.len() - 1];
+                                    (rect.right() + card_spacing * 0.5, rect.top(), rect.bottom())
+                                } else {
+                                    let rect = tile_rects[clamped];
+                                    (rect.left() - card_spacing * 0.5, rect.top(), rect.bottom())
+                                };
+                                let painter = ui.painter();
+                                let dash = 4.0;
+                                let gap = 3.0;
+                                let mut y = y1 + 8.0;
+                                let bottom = y2 - 8.0;
+                                while y < bottom {
+                                    let y_next = (y + dash).min(bottom);
+                                    painter.line_segment(
+                                        [egui::pos2(x, y), egui::pos2(x, y_next)],
+                                        egui::Stroke::new(
+                                            1.25,
+                                            Color32::from_rgba_premultiplied(232, 153, 118, 170),
+                                        ),
+                                    );
+                                    y += dash + gap;
+                                }
+                            };
+                        let paint_library_drag_ghost = |ui: &mut Ui| {
+                            let Some(pointer_pos) = ui.ctx().pointer_latest_pos() else {
+                                return;
+                            };
+                            let (icon, label, subtitle, ghost_size) = if !dragging_mod_ids.is_empty()
+                            {
+                                let label = if dragging_mod_ids.len() == 1 {
+                                    cards
+                                        .iter()
+                                        .find(|card| card.0 == dragging_mod_ids[0])
+                                        .map(|card| {
+                                            card.2
+                                                .as_deref()
+                                                .filter(|title| !title.trim().is_empty())
+                                                .unwrap_or(&card.1)
+                                                .to_string()
+                                        })
+                                        .unwrap_or_else(|| "1 mod".to_string())
+                                } else {
+                                    format!("{} mods", dragging_mod_ids.len())
+                                };
+                                (
+                                    Icon::Package,
+                                    label,
+                                    "Drop on a category".to_string(),
+                                    Vec2::new(198.0, 58.0),
+                                )
+                            } else if let Some(category_id) = dragging_category_id.as_deref() {
+                                let tile = folder_tiles
+                                    .iter()
+                                    .find(|tile| tile.id == category_id);
+                                let label = tile
+                                    .map(|tile| tile.name.clone())
+                                    .or_else(|| {
+                                        category_sections
+                                            .iter()
+                                            .find(|category| category.id == category_id)
+                                            .map(|category| category.name.clone())
+                                    })
+                                    .unwrap_or_else(|| "Category".to_string());
+                                let subtitle = tile
+                                    .map(|tile| format!("{} mods", tile.total_count))
+                                    .unwrap_or_else(|| "Reorder folder".to_string());
+                                (Icon::FolderOpen, label, subtitle, Vec2::new(198.0, 64.0))
+                            } else {
+                                return;
+                            };
+                            let ghost_rect = egui::Rect::from_min_size(
+                                pointer_pos + egui::vec2(14.0, 14.0),
+                                ghost_size,
+                            );
+                            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                                egui::Order::Tooltip,
+                                ui.id().with("library_drag_ghost"),
+                            ));
+                            painter.rect(
+                                ghost_rect,
+                                egui::CornerRadius::same(7),
+                                Color32::from_rgba_premultiplied(38, 41, 46, 230),
+                                egui::Stroke::new(1.5, Color32::from_rgb(214, 104, 58)),
+                                egui::StrokeKind::Inside,
+                            );
+                            let icon_rect = egui::Rect::from_center_size(
+                                ghost_rect.left_center() + egui::vec2(26.0, 0.0),
+                                Vec2::new(34.0, 34.0),
+                            );
+                            painter.rect_filled(
+                                icon_rect,
+                                egui::CornerRadius::same(7),
+                                Color32::from_rgba_premultiplied(55, 59, 65, 230),
+                            );
+                            painter.text(
+                                icon_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                icon_char(icon),
+                                egui::FontId::new(17.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                Color32::from_rgb(236, 218, 176),
+                            );
+                            painter.text(
+                                ghost_rect.left_top() + egui::vec2(50.0, 13.0),
+                                egui::Align2::LEFT_TOP,
+                                clamp_category_label(&label),
+                                egui::FontId::proportional(13.0),
+                                Color32::from_rgb(232, 235, 238),
+                            );
+                            painter.text(
+                                ghost_rect.left_top() + egui::vec2(50.0, 33.0),
+                                egui::Align2::LEFT_TOP,
+                                subtitle,
+                                egui::FontId::proportional(11.5),
+                                Color32::from_gray(165),
+                            );
+                        };
+                        let folder_drop_slot_at_pointer =
+                            |pointer_pos: egui::Pos2,
+                             tile_rects: &[egui::Rect],
+                             columns: usize|
+                             -> Option<usize> {
+                                if tile_rects.is_empty() || columns == 0 {
+                                    return None;
+                                }
+
+                                let first_row_top = tile_rects[0].top();
+                                let last_row_bottom = tile_rects[tile_rects.len() - 1].bottom();
+                                if pointer_pos.y < first_row_top - card_spacing {
+                                    return Some(0);
+                                }
+                                if pointer_pos.y > last_row_bottom + card_spacing {
+                                    return Some(tile_rects.len());
+                                }
+
+                                let mut best_row_start = 0;
+                                let mut best_row_rects = &tile_rects[0..tile_rects.len().min(columns)];
+                                let mut best_y_distance = f32::INFINITY;
+                                for (row_index, row) in tile_rects.chunks(columns).enumerate() {
+                                    let row_top = row
+                                        .iter()
+                                        .map(|rect| rect.top())
+                                        .fold(f32::INFINITY, f32::min);
+                                    let row_bottom = row
+                                        .iter()
+                                        .map(|rect| rect.bottom())
+                                        .fold(f32::NEG_INFINITY, f32::max);
+                                    let y_distance = if pointer_pos.y < row_top {
+                                        row_top - pointer_pos.y
+                                    } else if pointer_pos.y > row_bottom {
+                                        pointer_pos.y - row_bottom
+                                    } else {
+                                        0.0
+                                    };
+                                    if y_distance < best_y_distance {
+                                        best_y_distance = y_distance;
+                                        best_row_start = row_index * columns;
+                                        best_row_rects = row;
+                                    }
+                                }
+
+                                let mut slot = best_row_start + best_row_rects.len();
+                                for (column_index, rect) in best_row_rects.iter().enumerate() {
+                                    if pointer_pos.x < rect.center().x {
+                                        slot = best_row_start + column_index;
+                                        break;
+                                    }
+                                }
+                                Some(slot.min(tile_rects.len()))
+                            };
                         let mut section_select_changes: Vec<(Vec<String>, bool)> = Vec::new();
                         let mut pending_category_folder_id: Option<Option<String>> = None;
+                        let mut pending_mod_category_assignment: Option<(Vec<String>, String)> =
+                            None;
+                        let mut pending_folder_drag_start: Option<(String, usize)> = None;
+                        let mut pending_folder_drag_target_index: Option<usize> = None;
+                        let mut pending_folder_rename: Option<(String, String)> = None;
+                        let mut pending_folder_rename_name_update: Option<String> = None;
+                        let mut pending_folder_rename_save: Option<(String, String)> = None;
+                        let mut pending_folder_rename_cancel = false;
+                        let mut pending_folder_delete_only: Option<(String, String)> = None;
+                        let mut pending_folder_delete_with_mods: Option<String> = None;
+                        let mut pending_finish_folder_drag = false;
                         match library_group_mode {
                             LibraryGroupMode::None => {
                                 render_cards(ui, cards.iter().collect());
@@ -4669,22 +5051,337 @@ impl HestiaApp {
                                                     .size(11.5)
                                                     .color(Color32::from_gray(155)),
                                                 );
+                                                if dragging_category_id.is_some()
+                                                    && category_sort_mode
+                                                        != ModCategorySortMode::Manual
+                                                {
+                                                    ui.add_space(-2.0);
+                                                    static_label(
+                                                        ui,
+                                                        RichText::new("Drop switches to Manual order")
+                                                            .size(11.0)
+                                                            .color(Color32::from_rgb(238, 189, 151)),
+                                                    );
+                                                }
                                             });
                                         });
                                         ui.add_space(8.0);
 
-                                        for row in folder_tiles.chunks(columns) {
+                                        let mut folder_tile_rects = Vec::with_capacity(folder_tiles.len());
+                                        for (row_index, row) in folder_tiles.chunks(columns).enumerate() {
                                             ui.horizontal_top(|ui| {
                                                 ui.add_space(left_padding);
-                                                for tile in row {
+                                                for (column_index, tile) in row.iter().enumerate() {
+                                                    let tile_index = row_index * columns + column_index;
                                                     let response = render_category_folder_tile(ui, tile);
+                                                    folder_tile_rects.push(response.rect);
+                                                    if category_rename_target_id.as_deref()
+                                                        == Some(tile.id.as_str())
+                                                    {
+                                                        let edit_rect = egui::Rect::from_min_size(
+                                                            egui::pos2(
+                                                                response.rect.left() + 8.0,
+                                                                response.rect.top() + 116.0,
+                                                            ),
+                                                            Vec2::new(
+                                                                response.rect.width() - 16.0,
+                                                                25.0,
+                                                            ),
+                                                        );
+                                                        let mut edit_ui = ui.new_child(
+                                                            egui::UiBuilder::new()
+                                                                .max_rect(edit_rect)
+                                                                .layout(
+                                                                    egui::Layout::left_to_right(
+                                                                        egui::Align::Center,
+                                                                    ),
+                                                                ),
+                                                        );
+                                                        let input = edit_ui.add(
+                                                            TextEdit::singleline(
+                                                                &mut category_rename_name_draft,
+                                                            )
+                                                            .desired_width(edit_rect.width())
+                                                            .margin(egui::Margin::same(4)),
+                                                        );
+                                                        input.request_focus();
+                                                        pending_folder_rename_name_update =
+                                                            Some(category_rename_name_draft.clone());
+                                                        let save_rename = input.has_focus()
+                                                            && edit_ui.input(|input| {
+                                                                input
+                                                                    .key_pressed(egui::Key::Enter)
+                                                            });
+                                                        let cancel_rename = input.has_focus()
+                                                            && edit_ui.input(|input| {
+                                                                input
+                                                                    .key_pressed(egui::Key::Escape)
+                                                            });
+                                                        if save_rename {
+                                                            pending_folder_rename_save = Some((
+                                                                tile.id.clone(),
+                                                                category_rename_name_draft.clone(),
+                                                            ));
+                                                        }
+                                                        if cancel_rename {
+                                                            pending_folder_rename_cancel = true;
+                                                        }
+                                                    }
+                                                    let folder_popup_id = ui.id().with((
+                                                        "category_folder_context_menu_popup",
+                                                        &tile.id,
+                                                    ));
+                                                    let open_folder_context_menu =
+                                                        ui.ctx().input(|input| {
+                                                            input.pointer.secondary_clicked()
+                                                                && input.pointer.hover_pos().is_some_and(
+                                                                    |pos| {
+                                                                        response.rect.contains(pos)
+                                                                            && !titlebar_context_block_rect
+                                                                                .is_some_and(|rect| {
+                                                                                    rect.contains(pos)
+                                                                                })
+                                                                    },
+                                                                )
+                                                        });
+                                                    egui::Popup::new(
+                                                        folder_popup_id,
+                                                        ui.ctx().clone(),
+                                                        egui::PopupAnchor::PointerFixed,
+                                                        response.layer_id,
+                                                    )
+                                                    .kind(egui::PopupKind::Menu)
+                                                    .layout(egui::Layout::top_down_justified(
+                                                        egui::Align::Min,
+                                                    ))
+                                                    .width(156.0)
+                                                    .gap(0.0)
+                                                    .close_behavior(
+                                                        egui::PopupCloseBehavior::CloseOnClickOutside,
+                                                    )
+                                                    .frame(
+                                                        egui::Frame::menu(ui.style())
+                                                            .fill({
+                                                                let fill =
+                                                                    ui.style().visuals.window_fill();
+                                                                Color32::from_rgba_premultiplied(
+                                                                    fill.r(),
+                                                                    fill.g(),
+                                                                    fill.b(),
+                                                                    ((fill.a() as f32) * 0.9)
+                                                                        .round()
+                                                                        as u8,
+                                                                )
+                                                            })
+                                                            .inner_margin(egui::Margin::same(12)),
+                                                    )
+                                                    .open_memory(open_folder_context_menu.then_some(
+                                                        egui::SetOpenCommand::Bool(true),
+                                                    ))
+                                                    .show(|ui| {
+                                                        ui.set_min_width(156.0);
+                                                        let radius = egui::CornerRadius::same(3);
+                                                        ui.style_mut()
+                                                            .visuals
+                                                            .widgets
+                                                            .inactive
+                                                            .corner_radius = radius;
+                                                        ui.style_mut()
+                                                            .visuals
+                                                            .widgets
+                                                            .hovered
+                                                            .corner_radius = radius;
+                                                        ui.style_mut()
+                                                            .visuals
+                                                            .widgets
+                                                            .active
+                                                            .corner_radius = radius;
+                                                        ui.style_mut()
+                                                            .visuals
+                                                            .widgets
+                                                            .open
+                                                            .corner_radius = radius;
+                                                        ui.add_sized(
+                                                            [ui.available_width(), 0.0],
+                                                            egui::Label::new(
+                                                                RichText::new(&tile.name)
+                                                                    .size(12.5)
+                                                                    .strong()
+                                                                    .color(Color32::from_rgb(
+                                                                        228, 231, 235,
+                                                                    )),
+                                                            )
+                                                            .halign(egui::Align::Min)
+                                                            .wrap()
+                                                            .selectable(false),
+                                                        )
+                                                        .on_hover_cursor(
+                                                            egui::CursorIcon::Default,
+                                                        );
+                                                        ui.add_space(-2.0);
+                                                        ui.separator();
+                                                        ui.add_space(-2.0);
+                                                        if ui
+                                                            .button(icon_text_sized(
+                                                                Icon::FolderOpen,
+                                                                "Open",
+                                                                12.0,
+                                                                12.0,
+                                                            ))
+                                                            .on_hover_cursor(
+                                                                egui::CursorIcon::PointingHand,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            pending_category_folder_id =
+                                                                Some(Some(tile.id.clone()));
+                                                            ui.close();
+                                                        }
+                                                        if ui
+                                                            .button(icon_text_sized(
+                                                                Icon::Pencil,
+                                                                "Rename",
+                                                                12.0,
+                                                                12.0,
+                                                            ))
+                                                            .on_hover_cursor(
+                                                                egui::CursorIcon::PointingHand,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            pending_folder_rename = Some((
+                                                                tile.id.clone(),
+                                                                tile.name.clone(),
+                                                            ));
+                                                            ui.close();
+                                                        }
+                                                        ui.menu_button(
+                                                            icon_text_sized(
+                                                                Icon::Trash2,
+                                                                "Delete",
+                                                                12.0,
+                                                                12.0,
+                                                            ),
+                                                            |ui| {
+                                                                if ui
+                                                                    .button(icon_text_sized(
+                                                                        Icon::FolderOpen,
+                                                                        "Folder only, move mods outside",
+                                                                        12.0,
+                                                                        12.0,
+                                                                    ))
+                                                                    .on_hover_cursor(
+                                                                        egui::CursorIcon::PointingHand,
+                                                                    )
+                                                                    .clicked()
+                                                                {
+                                                                    pending_folder_delete_only =
+                                                                        Some((
+                                                                            tile.id.clone(),
+                                                                            tile.name.clone(),
+                                                                        ));
+                                                                    ui.close();
+                                                                }
+                                                                if ui
+                                                                    .button(icon_text_sized(
+                                                                        Icon::Trash2,
+                                                                        "Folder and mods inside",
+                                                                        12.0,
+                                                                        12.0,
+                                                                    ))
+                                                                    .on_hover_cursor(
+                                                                        egui::CursorIcon::PointingHand,
+                                                                    )
+                                                                    .clicked()
+                                                                {
+                                                                    pending_folder_delete_with_mods =
+                                                                        Some(tile.id.clone());
+                                                                    ui.close();
+                                                                }
+                                                            },
+                                                        )
+                                                        .response
+                                                        .on_hover_cursor(
+                                                            egui::CursorIcon::PointingHand,
+                                                        );
+                                                    });
                                                     if response.clicked() {
                                                         pending_category_folder_id =
                                                             Some(Some(tile.id.clone()));
                                                     }
+                                                    if !library_filter_active {
+                                                        if response.drag_started() {
+                                                            pending_folder_drag_start =
+                                                                Some((tile.id.clone(), tile_index));
+                                                        }
+                                                        if response.drag_stopped()
+                                                            && dragging_category_id
+                                                                .as_deref()
+                                                                .is_some_and(|dragging_id| {
+                                                                    dragging_id == tile.id.as_str()
+                                                                })
+                                                        {
+                                                            pending_finish_folder_drag = true;
+                                                        }
+                                                    }
+                                                    let pointer_over_folder = ui
+                                                        .ctx()
+                                                        .pointer_latest_pos()
+                                                        .is_some_and(|pointer_pos| {
+                                                            response.rect.contains(pointer_pos)
+                                                        });
+                                                    if !dragging_mod_ids.is_empty()
+                                                        && pointer_over_folder
+                                                        && ui.input(|input| {
+                                                            input.pointer.any_released()
+                                                        })
+                                                    {
+                                                        pending_mod_category_assignment =
+                                                            Some((
+                                                                dragging_mod_ids.clone(),
+                                                                tile.id.clone(),
+                                                            ));
+                                                    }
                                                 }
                                             });
                                             ui.add_space(10.0);
+                                        }
+                                        let folder_drag_active = dragging_category_id.is_some()
+                                            || pending_folder_drag_start.is_some();
+                                        if folder_drag_active && !library_filter_active {
+                                            let pointer_pos = ui.ctx().pointer_latest_pos();
+                                            let pointer_active = ui.input(|input| {
+                                                input.pointer.primary_down()
+                                                    || input.pointer.any_released()
+                                            });
+                                            if pointer_active {
+                                                if let Some(slot_index) = pointer_pos.and_then(|pos| {
+                                                    folder_drop_slot_at_pointer(
+                                                        pos,
+                                                        &folder_tile_rects,
+                                                        columns,
+                                                    )
+                                                }) {
+                                                    pending_folder_drag_target_index =
+                                                        Some(slot_index);
+                                                }
+                                            }
+                                            if ui.input(|input| input.pointer.any_released()) {
+                                                pending_finish_folder_drag = true;
+                                            }
+                                        }
+                                        let target_index = pending_folder_drag_target_index
+                                            .or(dragging_category_target_index);
+                                        if folder_drag_active
+                                            && ui.input(|input| input.pointer.primary_down())
+                                        {
+                                            if let Some(target_index) = target_index {
+                                                paint_folder_drag_indicator(
+                                                    ui,
+                                                    &folder_tile_rects,
+                                                    target_index,
+                                                );
+                                            }
                                         }
 
                                         if !uncategorized_cards.is_empty() {
@@ -4741,7 +5438,7 @@ impl HestiaApp {
                                             }
                                             render_cards(ui, uncategorized_cards.clone());
                                         }
-                                        for category in category_sections {
+                                        for category in &category_sections {
                                             let section_cards: Vec<_> = cards
                                                 .iter()
                                                 .filter(|card| {
@@ -4821,9 +5518,74 @@ impl HestiaApp {
                                 }
                             }
                         }
+                        if let Some((category_id, category_name)) = pending_folder_rename {
+                            self.category_rename_target_id = Some(category_id);
+                            self.category_rename_name = category_name;
+                        }
+                        if let Some(category_name) = pending_folder_rename_name_update {
+                            self.category_rename_name = category_name;
+                        }
+                        if let Some((category_id, category_name)) = pending_folder_rename_save {
+                            self.rename_category(&category_id, &category_name);
+                        }
+                        if pending_folder_rename_cancel {
+                            self.category_rename_target_id = None;
+                            self.category_rename_name.clear();
+                        }
+                        if let Some((category_id, category_name)) = pending_folder_delete_only {
+                            self.delete_category(&category_id);
+                            self.set_message_ok(format!("Deleted folder: {category_name}"));
+                        }
+                        if let Some(category_id) = pending_folder_delete_with_mods {
+                            self.delete_category_and_mods(&category_id);
+                        }
+                        if !dragging_mod_ids.is_empty()
+                            || dragging_category_id.is_some()
+                                && ui.ctx().input(|input| input.pointer.primary_down())
+                        {
+                            paint_library_drag_ghost(ui);
+                        }
+                        if let Some((category_id, target_index)) = pending_folder_drag_start {
+                            self.dragging_category_id = Some(category_id);
+                            self.dragging_category_target_index = Some(target_index);
+                        }
+                        if let Some(target_index) = pending_folder_drag_target_index {
+                            self.dragging_category_target_index = Some(target_index);
+                        }
+                        if pending_finish_folder_drag
+                            || (self.dragging_category_id.is_some()
+                                && !ui.ctx().input(|input| input.pointer.primary_down()))
+                        {
+                            self.finish_category_drag();
+                        }
+                        if let Some((mod_ids, category_id)) = pending_mod_category_assignment {
+                            let moved_selected_mod =
+                                self.selected_mod_id.as_ref().is_some_and(|selected_id| {
+                                    mod_ids.iter().any(|mod_id| mod_id == selected_id)
+                                });
+                            for mod_id in &mod_ids {
+                                self.assign_mod_category(mod_id, Some(category_id.clone()));
+                                self.selected_mods.remove(mod_id);
+                            }
+                            if moved_selected_mod {
+                                self.set_selected_mod_id(None);
+                            }
+                            self.dragging_mod_ids.clear();
+                        } else if !self.dragging_mod_ids.is_empty()
+                            && !ui.ctx().input(|input| input.pointer.primary_down())
+                        {
+                            self.dragging_mod_ids.clear();
+                        }
                         if let Some(category_folder_id) = pending_category_folder_id {
                             self.selected_category_folder_id = category_folder_id;
                             self.selected_mods.clear();
+                        }
+                        if !self.dragging_mod_ids.is_empty()
+                            || self.dragging_category_id.is_some()
+                                && ui.ctx().input(|input| input.pointer.primary_down())
+                        {
+                            ui.ctx()
+                                .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
                         }
                     });
                 });
