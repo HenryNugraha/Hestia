@@ -644,8 +644,8 @@ pub enum LibraryGroupMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum LibraryCategoryDisplayMode {
-    #[default]
     GroupedSections,
+    #[default]
     Folders,
 }
 

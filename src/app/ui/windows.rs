@@ -2180,7 +2180,13 @@ impl HestiaApp {
                         ui.style_mut().visuals.widgets.active.corner_radius = radius;
                         ui.style_mut().visuals.widgets.open.corner_radius = radius;
 
-                        static_label(ui, bold("Interface").underline().size(16.0));
+                        let setting_block = |ui: &mut Ui, label: &str, add_control: &mut dyn FnMut(&mut Ui)| {
+                            static_label(ui, label);
+                            ui.add_space(-4.0);
+                            add_control(ui);
+                        };
+
+                        static_label(ui, bold("Appearance").underline().size(16.0));
                         ui.indent("setting_general_interface", |ui| {
                             if classic_font_style_available() {
                                 static_label(ui, "Font Style:");
@@ -2207,111 +2213,158 @@ impl HestiaApp {
                                 }
                                 ui.add_space(8.0);
                             }
-                            static_label(ui, "When launching a game:");
-                            ui.add_space(-4.0);
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
+
+                        static_label(ui, bold("Behavior").underline().size(16.0));
+                        ui.indent("setting_general_behavior", |ui| {
                             let launch_behavior = self.state.launch_behavior;
-                            egui::ComboBox::from_id_salt("launch_behavior")
-                                .selected_text(match launch_behavior {
-                                    LaunchBehavior::DoNothing => "Do Nothing",
-                                    LaunchBehavior::Minimize => "Minimize Hestia",
-                                    LaunchBehavior::Exit => "Exit Hestia",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
-                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
-                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
-                            });
-                            if self.state.launch_behavior != launch_behavior { should_save = true; }
-                            ui.add_space(8.0);
-                            static_label(ui, "When launching a tool:");
-                            ui.add_space(-4.0);
                             let tool_launch_behavior = self.state.tool_launch_behavior;
-                            egui::ComboBox::from_id_salt("tool_launch_behavior")
-                                .selected_text(match tool_launch_behavior {
-                                    LaunchBehavior::DoNothing => "Do Nothing",
-                                    LaunchBehavior::Minimize => "Minimize Hestia",
-                                    LaunchBehavior::Exit => "Exit Hestia",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
-                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
-                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
-                                });
-                            if self.state.tool_launch_behavior != tool_launch_behavior { should_save = true; }
-                            ui.add_space(8.0);
-                            static_label(ui, "After installing a mod:");
-                            ui.add_space(-4.0);
                             let after_install = self.state.after_install_behavior;
-                            egui::ComboBox::from_id_salt("after_install_behavior")
-                                .selected_text(match after_install {
-                                    AfterInstallBehavior::DoNothing => "Do Nothing",
-                                    AfterInstallBehavior::AddToSelection => "Add to Selection",
-                                    AfterInstallBehavior::OpenModDetail => "Open Mod Detail",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::DoNothing, "Do Nothing");
-                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::AddToSelection, "Add to Selection");
-                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::OpenModDetail, "Open Mod Detail");
-                            });
-                            if self.state.after_install_behavior != after_install { should_save = true; }
-                            ui.add_space(8.0);
-                            static_label(ui, "Group list by:");
-                            ui.add_space(-4.0);
-                            let group_mode = self.state.library_group_mode;
-                            ui.horizontal(|ui| {
-                                egui::ComboBox::from_id_salt("library_group_mode")
-                                    .selected_text(match group_mode {
-                                        LibraryGroupMode::Category => "Category",
-                                        LibraryGroupMode::Status => "Status",
-                                        LibraryGroupMode::None => "None",
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Category, "Category");
-                                        ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Status, "Status");
-                                        ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::None, "None");
-                                    });
+                            let meta_vis = self.state.metadata_visibility;
+                            let left_column_width = ui.available_width() * 0.32;
+                            ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
-                                    if matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
-                                        ui.add_space(-10.0);
-                                        let category_display_mode =
-                                            self.state.library_category_display_mode;
-                                        ui.horizontal(|ui| {
-                                            static_label(ui, "Category display:");
-                                            egui::ComboBox::from_id_salt("library_category_display_mode")
-                                                .selected_text(match self.state.library_category_display_mode {
-                                                    LibraryCategoryDisplayMode::GroupedSections => "Grouped sections",
-                                                    LibraryCategoryDisplayMode::Folders => "Folders",
+                                    ui.set_width(left_column_width);
+                                    setting_block(
+                                        ui,
+                                        "When launching a game:",
+                                        &mut |ui| {
+                                            egui::ComboBox::from_id_salt("launch_behavior")
+                                                .selected_text(match self.state.launch_behavior {
+                                                    LaunchBehavior::DoNothing => "Do Nothing",
+                                                    LaunchBehavior::Minimize => "Minimize Hestia",
+                                                    LaunchBehavior::Exit => "Exit Hestia",
                                                 })
                                                 .show_ui(ui, |ui| {
-                                                    ui.selectable_value(
-                                                        &mut self.state.library_category_display_mode,
-                                                        LibraryCategoryDisplayMode::GroupedSections,
-                                                        "Grouped sections",
-                                                    );
-                                                    ui.selectable_value(
-                                                        &mut self.state.library_category_display_mode,
-                                                        LibraryCategoryDisplayMode::Folders,
-                                                        "Folders",
-                                                    );
+                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
+                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
+                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
                                                 });
-                                        });
-                                        if self.state.library_category_display_mode
-                                            != category_display_mode
-                                        {
-                                            should_save = true;
-                                        }
-                                        ui.add_space(-4.0);
-                                        if ui
-                                            .checkbox(
-                                                &mut self.state.library_uncategorized_first,
-                                                "Show uncategorized mods first",
-                                            )
-                                            .changed()
-                                        {
-                                            should_save = true;
-                                        }
-                                        ui.add_space(-4.0);
-                                    }
+                                        },
+                                    );
+                                    ui.add_space(8.0);
+                                    setting_block(
+                                        ui,
+                                        "After installing a mod:",
+                                        &mut |ui| {
+                                            egui::ComboBox::from_id_salt("after_install_behavior")
+                                                .selected_text(match self.state.after_install_behavior {
+                                                    AfterInstallBehavior::DoNothing => "Do Nothing",
+                                                    AfterInstallBehavior::AddToSelection => "Add to Selection",
+                                                    AfterInstallBehavior::OpenModDetail => "Open Mod Detail",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::DoNothing, "Do Nothing");
+                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::AddToSelection, "Add to Selection");
+                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::OpenModDetail, "Open Mod Detail");
+                                                });
+                                        },
+                                    );
+                                });
+                                ui.vertical(|ui| {
+                                    setting_block(
+                                        ui,
+                                        "When launching a tool:",
+                                        &mut |ui| {
+                                            egui::ComboBox::from_id_salt("tool_launch_behavior")
+                                                .selected_text(match self.state.tool_launch_behavior {
+                                                    LaunchBehavior::DoNothing => "Do Nothing",
+                                                    LaunchBehavior::Minimize => "Minimize Hestia",
+                                                    LaunchBehavior::Exit => "Exit Hestia",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::DoNothing, "Do Nothing");
+                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Minimize, "Minimize Hestia");
+                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Exit, "Exit Hestia");
+                                                });
+                                        },
+                                    );
+                                    ui.add_space(8.0);
+                                    setting_block(ui, "Mod detail metadata:", &mut |ui| {
+                                        egui::ComboBox::from_id_salt("metadata_visibility")
+                                            .selected_text(match self.state.metadata_visibility {
+                                                MetadataVisibility::Never => "Never show",
+                                                MetadataVisibility::OnlyIfNoDescription => {
+                                                    "Show if no description"
+                                                }
+                                                MetadataVisibility::Always => "Always show",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Never, "Never show");
+                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::OnlyIfNoDescription, "Show if no description");
+                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Always, "Always show");
+                                            });
+                                    });
+                                });
+                            });
+                            if self.state.launch_behavior != launch_behavior {
+                                should_save = true;
+                            }
+                            if self.state.tool_launch_behavior != tool_launch_behavior {
+                                should_save = true;
+                            }
+                            if self.state.after_install_behavior != after_install {
+                                should_save = true;
+                            }
+                            if self.state.metadata_visibility != meta_vis {
+                                should_save = true;
+                            }
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
+
+                        static_label(ui, bold("Installed Mods List").underline().size(16.0));
+                        ui.indent("setting_general_installed_mods_list", |ui| {
+                            let group_mode = self.state.library_group_mode;
+                            let category_display_mode = self.state.library_category_display_mode;
+                            let mut show_disabled = !self.state.hide_disabled;
+                            let mut show_archived = !self.state.hide_archived;
+                            let left_column_width = ui.available_width() * 0.32;
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(left_column_width);
+                                    setting_block(ui, "Group list by:", &mut |ui| {
+                                        egui::ComboBox::from_id_salt("library_group_mode")
+                                            .selected_text(match self.state.library_group_mode {
+                                                LibraryGroupMode::Category => "Category",
+                                                LibraryGroupMode::Status => "Status",
+                                                LibraryGroupMode::None => "None",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Category, "Category");
+                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Status, "Status");
+                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::None, "None");
+                                            });
+                                    });
+                                    ui.add_space(8.0);
+                                    setting_block(ui, "Display format:", &mut |ui| {
+                                        ui.add_enabled_ui(
+                                            matches!(self.state.library_group_mode, LibraryGroupMode::Category),
+                                            |ui| {
+                                                egui::ComboBox::from_id_salt("library_category_display_mode")
+                                                    .selected_text(match self.state.library_category_display_mode {
+                                                        LibraryCategoryDisplayMode::GroupedSections => "List",
+                                                        LibraryCategoryDisplayMode::Folders => "Folders",
+                                                    })
+                                                    .show_ui(ui, |ui| {
+                                                        ui.selectable_value(
+                                                            &mut self.state.library_category_display_mode,
+                                                            LibraryCategoryDisplayMode::GroupedSections,
+                                                            "List",
+                                                        );
+                                                        ui.selectable_value(
+                                                            &mut self.state.library_category_display_mode,
+                                                            LibraryCategoryDisplayMode::Folders,
+                                                            "Folders",
+                                                        );
+                                                    });
+                                            },
+                                        );
+                                    });
+                                });
+                                ui.vertical(|ui| {
                                     let checkbox_changed = match self.state.library_group_mode {
                                         LibraryGroupMode::Status => {
                                             let response = ui.checkbox(
@@ -2337,54 +2390,59 @@ impl HestiaApp {
                                     if checkbox_changed {
                                         should_save = true;
                                     }
+                                    let show_card_detail_response = if matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                                        ui.checkbox(
+                                            &mut self.state.library_category_group_show_status,
+                                            "Show mod status on card",
+                                        )
+                                    } else {
+                                        let response = ui.checkbox(
+                                            &mut self.state.library_status_group_show_category,
+                                            "Show category on card",
+                                        );
+                                        response
+                                            .clone()
+                                            .on_hover_text("Mod state is still shown by the colored status dot.");
+                                        response
+                                    };
+                                    if show_card_detail_response.changed() {
+                                        should_save = true;
+                                    }
+                                    if ui
+                                        .checkbox(&mut show_disabled, "Show disabled mods")
+                                        .changed()
+                                    {
+                                        self.state.hide_disabled = !show_disabled;
+                                        should_save = true;
+                                    }
+                                    if ui
+                                        .checkbox(&mut show_archived, "Show archived mods")
+                                        .changed()
+                                    {
+                                        self.state.hide_archived = !show_archived;
+                                        should_save = true;
+                                    }
+                                    if matches!(
+                                        self.state.library_category_display_mode,
+                                        LibraryCategoryDisplayMode::GroupedSections
+                                    ) && matches!(self.state.library_group_mode, LibraryGroupMode::Category)
+                                        && ui
+                                            .checkbox(
+                                                &mut self.state.library_uncategorized_first,
+                                                "Show uncategorized mods first",
+                                            )
+                                            .changed()
+                                    {
+                                        should_save = true;
+                                    }
                                 });
                             });
-                            if self.state.library_group_mode != group_mode { should_save = true; }
-                            ui.add_space(8.0);
-                            let show_card_detail_response = if matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
-                                ui.checkbox(
-                                    &mut self.state.library_category_group_show_status,
-                                    "Show mod status on card",
-                                )
-                            } else {
-                                let response = ui.checkbox(
-                                    &mut self.state.library_status_group_show_category,
-                                    "Show category on card",
-                                );
-                                response
-                                    .clone()
-                                    .on_hover_text("Mod state is still shown by the colored status dot.");
-                                response
-                            };
-                            if show_card_detail_response.changed() {
+                            if self.state.library_group_mode != group_mode {
                                 should_save = true;
                             }
-                            let mut show_disabled = !self.state.hide_disabled;
-                            if ui.checkbox(&mut show_disabled, "Show disabled mods").changed() {
-                                self.state.hide_disabled = !show_disabled;
+                            if self.state.library_category_display_mode != category_display_mode {
                                 should_save = true;
                             }
-                            let mut show_archived = !self.state.hide_archived;
-                            if ui.checkbox(&mut show_archived, "Show archived mods").changed() {
-                                self.state.hide_archived = !show_archived;
-                                should_save = true;
-                            }
-                            ui.add_space(8.0);
-                            static_label(ui, "Metadata:");
-                            ui.add_space(-4.0);
-                            let meta_vis = self.state.metadata_visibility;
-                            egui::ComboBox::from_id_salt("metadata_visibility")
-                                .selected_text(match meta_vis {
-                                    MetadataVisibility::Never => "Never show",
-                                    MetadataVisibility::OnlyIfNoDescription => "Show if no description",
-                                    MetadataVisibility::Always => "Always show",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Never, "Never show");
-                                    ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::OnlyIfNoDescription, "Show if no description");
-                                    ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Always, "Always show");
-                                });
-                            if self.state.metadata_visibility != meta_vis { should_save = true; }
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
@@ -2497,47 +2555,60 @@ impl HestiaApp {
 
                         static_label(ui, bold("Tasks").underline().size(16.0));
                         ui.indent("setting_general_tasks", |ui| {
-                            static_label(ui, "Tasks layout:");
-                            ui.add_space(-4.0);
                             let tasks_layout = self.state.tasks_layout;
-                            egui::ComboBox::from_id_salt("tasks_layout")
-                                .selected_text(match tasks_layout {
-                                    TasksLayout::Sections => "Sections",
-                                    TasksLayout::Tabbed => "Tabbed",
-                                    TasksLayout::SingleList => "Single List",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::Sections, "Sections");
-                                    ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::Tabbed, "Tabbed");
-                                    ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::SingleList, "Single List");
-                                });
-                            if self.state.tasks_layout != tasks_layout { should_save = true; }
-                            ui.add_space(8.0);
-                            static_label(ui, "Task order:");
-                            ui.add_space(-4.0);
                             let tasks_order = self.state.tasks_order;
-                            egui::ComboBox::from_id_salt("tasks_order")
-                                .selected_text(match tasks_order {
-                                    TasksOrder::OldestFirst => "Oldest → Newest",
-                                    TasksOrder::NewestFirst => "Newest → Oldest",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.tasks_order, TasksOrder::OldestFirst, "Oldest → Newest");
-                                    ui.selectable_value(&mut self.state.tasks_order, TasksOrder::NewestFirst, "Newest → Oldest");
+                            let left_column_width = ui.available_width() * 0.32;
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(left_column_width);
+                                    setting_block(ui, "Tasks layout:", &mut |ui| {
+                                        egui::ComboBox::from_id_salt("tasks_layout")
+                                            .selected_text(match self.state.tasks_layout {
+                                                TasksLayout::Sections => "Sections",
+                                                TasksLayout::Tabbed => "Tabbed",
+                                                TasksLayout::SingleList => "Single List",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::Sections, "Sections");
+                                                ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::Tabbed, "Tabbed");
+                                                ui.selectable_value(&mut self.state.tasks_layout, TasksLayout::SingleList, "Single List");
+                                            });
+                                    });
+                                    ui.add_space(8.0);
+                                    setting_block(ui, "Clear completed tasks:", &mut |ui| {
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Trash2,
+                                                "Clear Tasks",
+                                                14.5,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            self.clear_completed_tasks();
+                                        }
+                                    });
                                 });
-                            if self.state.tasks_order != tasks_order { should_save = true; }
-                            ui.add_space(8.0);
-                            static_label(ui, "Clear completed tasks:");
-                            ui.add_space(-4.0);
-                            // if ui.button("Clear").clicked() {
-                            //     self.clear_completed_tasks();
-                            // }
-                            if ui
-                                .button(icon_text_sized(Icon::Trash2, "Clear Tasks", 14.5, 13.0))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                self.clear_completed_tasks();
+                                ui.vertical(|ui| {
+                                    setting_block(ui, "Task order:", &mut |ui| {
+                                        egui::ComboBox::from_id_salt("tasks_order")
+                                            .selected_text(match self.state.tasks_order {
+                                                TasksOrder::OldestFirst => "Oldest → Newest",
+                                                TasksOrder::NewestFirst => "Newest → Oldest",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.state.tasks_order, TasksOrder::OldestFirst, "Oldest → Newest");
+                                                ui.selectable_value(&mut self.state.tasks_order, TasksOrder::NewestFirst, "Newest → Oldest");
+                                            });
+                                    });
+                                });
+                            });
+                            if self.state.tasks_layout != tasks_layout {
+                                should_save = true;
+                            }
+                            if self.state.tasks_order != tasks_order {
+                                should_save = true;
                             }
                             ui.add_space(1.0);
                         });
