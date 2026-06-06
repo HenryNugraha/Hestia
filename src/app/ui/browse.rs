@@ -383,7 +383,7 @@ impl HestiaApp {
                                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                     }
                                                     if install_response.clicked() {
-                                                        self.queue_install_for_browse_mod(card.id);
+                                                        self.queue_install_for_browse_mod(card.id, false);
                                                     }
                                                 });
                                                 ui.add_space(24.0);
@@ -519,10 +519,41 @@ impl HestiaApp {
                                     .on_hover_text_at_pointer("Game is not installed or configured.")
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             } else {
-                                install_response.clone().on_hover_text_at_pointer(install_disabled_reason);
+                                install_response
+                                    .clone()
+                                    .on_hover_text_at_pointer(install_disabled_reason.clone());
                             }
                             if install_response.clicked() {
-                                self.queue_install_for_browse_mod(card.id);
+                                self.queue_install_for_browse_mod(card.id, false);
+                                ui.close();
+                            }
+
+                            let install_disabled_response = ui.add_enabled(
+                                !install_blocked && selected_game_ready,
+                                egui::Button::new(icon_text_sized(
+                                    Icon::PackagePlus,
+                                    "Install & Disable",
+                                    13.0,
+                                    13.0,
+                                ))
+                                .corner_radius(radius),
+                            );
+                            if !selected_game_ready {
+                                install_disabled_response
+                                    .clone()
+                                    .on_hover_text_at_pointer("Game is not installed or configured.")
+                                    .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                            } else if install_blocked {
+                                install_disabled_response
+                                    .clone()
+                                    .on_hover_text_at_pointer(install_disabled_reason.clone());
+                            } else {
+                                install_disabled_response
+                                    .clone()
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            }
+                            if install_disabled_response.clicked() {
+                                self.queue_install_for_browse_mod(card.id, true);
                                 ui.close();
                             }
 
@@ -720,7 +751,7 @@ impl HestiaApp {
                         } else if install_blocked {
                             install_response
                                 .clone()
-                                .on_hover_text_at_pointer(install_disabled_reason);
+                                .on_hover_text_at_pointer(install_disabled_reason.clone());
                         }
                         let install_response = if selected_game_ready && !install_blocked {
                             install_response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -728,8 +759,55 @@ impl HestiaApp {
                             install_response
                         };
                         if install_response.clicked() {
-                            self.queue_install_for_browse_mod(mod_id);
+                            self.queue_install_for_browse_mod(mod_id, false);
                         }
+                        install_response.context_menu(|ui| {
+                            if ui
+                                .add_enabled(
+                                    selected_game_ready && !install_blocked,
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::PackagePlus,
+                                        "Install",
+                                        13.0,
+                                        13.0,
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                self.queue_install_for_browse_mod(mod_id, false);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(
+                                    selected_game_ready && !install_blocked,
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::PackagePlus,
+                                        "Install & Disable",
+                                        13.0,
+                                        13.0,
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                self.queue_install_for_browse_mod(mod_id, true);
+                                ui.close();
+                            }
+                            if !selected_game_ready {
+                                static_label(
+                                    ui,
+                                    RichText::new("Game is not installed or configured.")
+                                        .size(12.0)
+                                        .color(Color32::from_gray(170)),
+                                );
+                            } else if install_blocked {
+                                static_label(
+                                    ui,
+                                    RichText::new(&install_disabled_reason)
+                                        .size(12.0)
+                                        .color(Color32::from_gray(170)),
+                                );
+                            }
+                        });
                         ui.add_space(-2.0);
                         if ui.add(
                                 egui::Button::new(icon_text_sized(Icon::Globe, "Open in Browser", 13.0, 13.0))
@@ -1362,6 +1440,7 @@ impl HestiaApp {
                                     .unwrap_or(false),
                                 None,
                                 None,
+                                false,
                                 None,
                             );
                         }

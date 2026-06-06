@@ -194,6 +194,50 @@ impl HestiaApp {
                                         self.enqueue_install_sources(sources);
                                     }
                                 }
+                                response.context_menu(|ui| {
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::PackagePlus,
+                                            "Install",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        if let Some(paths) = FileDialog::new()
+                                            .add_filter("Archives", &["zip", "rar", "7z"])
+                                            .pick_files()
+                                        {
+                                            let sources = paths
+                                                .into_iter()
+                                                .map(ImportSource::Archive)
+                                                .collect::<Vec<_>>();
+                                            self.enqueue_install_sources(sources);
+                                        }
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::PackagePlus,
+                                            "Install & Disable",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        if let Some(paths) = FileDialog::new()
+                                            .add_filter("Archives", &["zip", "rar", "7z"])
+                                            .pick_files()
+                                        {
+                                            let sources = paths
+                                                .into_iter()
+                                                .map(ImportSource::Archive)
+                                                .collect::<Vec<_>>();
+                                            self.enqueue_install_sources_with_disabled(sources, true);
+                                        }
+                                        ui.close();
+                                    }
+                                });
                             });
                             ui.add_enabled_ui(selected_game_ready, |ui| {
                                 let response = titlebar_action_button(
@@ -216,6 +260,39 @@ impl HestiaApp {
                                         self.enqueue_install_sources(vec![ImportSource::Folder(path)]);
                                     }
                                 }
+                                response.context_menu(|ui| {
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FolderPlus,
+                                            "Install",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        if let Some(path) = FileDialog::new().pick_folder() {
+                                            self.enqueue_install_sources(vec![ImportSource::Folder(path)]);
+                                        }
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FolderPlus,
+                                            "Install & Disable",
+                                            14.0,
+                                            13.0,
+                                        ))
+                                        .clicked()
+                                    {
+                                        if let Some(path) = FileDialog::new().pick_folder() {
+                                            self.enqueue_install_sources_with_disabled(
+                                                vec![ImportSource::Folder(path)],
+                                                true,
+                                            );
+                                        }
+                                        ui.close();
+                                    }
+                                });
                             });
                             ui.add_enabled_ui(selected_game_ready, |ui| {
                                 let now = ui.input(|i| i.time);

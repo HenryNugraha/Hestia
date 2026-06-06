@@ -1163,6 +1163,7 @@ impl HestiaApp {
             rel_paths,
             pending_meta,
             pending_unsafe,
+            install_disabled: local_install_disabled,
         } = payload;
         let post_install_rename = pending_meta
             .as_ref()
@@ -1195,7 +1196,31 @@ impl HestiaApp {
             }
         }
 
-        if pending_meta
+        let install_disabled = pending_meta
+            .as_ref()
+            .is_some_and(|meta| meta.install_disabled)
+            || local_install_disabled;
+        if install_disabled {
+            for mod_id in &newly_installed_ids {
+                let (result, name) = if let Some(mod_entry) = self
+                    .state
+                    .mods
+                    .iter_mut()
+                    .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
+                {
+                    let name = mod_entry.folder_name.clone();
+                    (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                } else {
+                    (None, None)
+                };
+                if let (Some(Err(err)), Some(name)) = (result, name) {
+                    self.report_error_message(
+                        format!("installed mod could not be disabled for {name}: {err:#}"),
+                        Some("Could not disable installed mod"),
+                    );
+                }
+            }
+        } else if pending_meta
             .as_ref()
             .is_some_and(|meta| meta.update_target_was_disabled)
         {
@@ -1667,6 +1692,7 @@ impl HestiaApp {
             mod_id,
             game_id,
             update_target_id: Some(mod_entry_id.to_string()),
+            install_disabled: false,
         });
     }
 

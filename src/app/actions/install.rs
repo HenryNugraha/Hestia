@@ -45,6 +45,10 @@ impl HestiaApp {
                         .pending_browse_install_safety
                         .remove(&job_id)
                         .unwrap_or(false);
+                    let install_disabled = self
+                        .install_inflight
+                        .get(&job_id)
+                        .is_some_and(|job| job.install_disabled);
                     self.apply_pending_update_source_metadata_before_refresh(
                         pending_meta.as_ref(),
                         gb_profile.as_deref(),
@@ -68,6 +72,7 @@ impl HestiaApp {
                             rel_paths,
                             pending_meta,
                             pending_unsafe,
+                            install_disabled,
                         },
                     );
                     if self.install_batch_active {
@@ -177,6 +182,14 @@ impl HestiaApp {
     }
 
     fn enqueue_install_sources(&mut self, sources: Vec<ImportSource>) {
+        self.enqueue_install_sources_with_disabled(sources, false);
+    }
+
+    fn enqueue_install_sources_with_disabled(
+        &mut self,
+        sources: Vec<ImportSource>,
+        install_disabled: bool,
+    ) {
         if sources.is_empty() {
             return;
         }
@@ -216,6 +229,7 @@ impl HestiaApp {
                 source,
                 title: None,
                 reuse_existing_task: false,
+                install_disabled,
             };
             self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
             self.install_queue.push_back(job.clone());
@@ -256,6 +270,7 @@ impl HestiaApp {
             source,
             title: Some(title),
             reuse_existing_task: true,
+            install_disabled: false,
         };
         self.install_queue.push_back(job.clone());
         self.add_install_task(&job);

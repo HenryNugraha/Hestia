@@ -281,6 +281,7 @@ struct PendingInstallFinalize {
     rel_paths: Vec<String>,
     pending_meta: Option<PendingBrowseInstallMeta>,
     pending_unsafe: bool,
+    install_disabled: bool,
 }
 
 #[derive(Clone)]
@@ -290,6 +291,7 @@ struct InstallJob {
     source: ImportSource,
     title: Option<String>,
     reuse_existing_task: bool,
+    install_disabled: bool,
 }
 
 #[derive(Default)]
@@ -354,6 +356,7 @@ struct PendingBrowseInstall {
     mod_id: u64,
     game_id: String,
     update_target_id: Option<String>,
+    install_disabled: bool,
 }
 
 #[derive(Clone)]
@@ -364,6 +367,7 @@ struct PendingBrowseInstallMeta {
     update_folder_name: Option<String>,
     update_target_mod_id: Option<String>,
     update_target_was_disabled: bool,
+    install_disabled: bool,
     post_install_rename_to: Option<String>,
 }
 
@@ -389,6 +393,7 @@ struct BrowseFilePrompt {
     update_folder_name: Option<String>,
     update_target_mod_id: Option<String>,
     post_install_rename_to: Option<String>,
+    install_disabled: bool,
 }
 
 #[derive(Clone, serde::Deserialize)]

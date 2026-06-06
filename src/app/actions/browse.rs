@@ -880,6 +880,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         unsafe_content: bool,
         update_folder_name: Option<String>,
         update_target_mod_id: Option<String>,
+        install_disabled: bool,
         post_install_rename_to: Option<String>,
     ) {
         if !self.game_is_installed_or_configured(&game_id) {
@@ -933,6 +934,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 update_folder_name,
                 update_target_mod_id,
                 update_target_was_disabled,
+                install_disabled,
                 post_install_rename_to,
             },
         );
@@ -1182,6 +1184,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         detail.unsafe_content,
                         update_folder_name,
                         pending.update_target_id.clone(),
+                        pending.install_disabled,
                         post_install_rename_to.clone(),
                     );
                 } else {
@@ -1199,6 +1202,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         update_folder_name,
                         update_target_mod_id: pending.update_target_id.clone(),
                         post_install_rename_to: post_install_rename_to.clone(),
+                        install_disabled: pending.install_disabled,
                     });
                 }
                 return;
@@ -1234,6 +1238,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                                 detail.unsafe_content,
                                 update_folder_name.clone(),
                                 pending.update_target_id.clone(),
+                                pending.install_disabled,
                                 post_install_rename_to.clone(),
                             );
                         }
@@ -1252,6 +1257,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                             update_folder_name,
                             update_target_mod_id: pending.update_target_id.clone(),
                             post_install_rename_to: post_install_rename_to.clone(),
+                            install_disabled: pending.install_disabled,
                         });
                     }
                     return;
@@ -1275,6 +1281,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     detail.unsafe_content,
                     update_folder_name,
                     pending.update_target_id,
+                    pending.install_disabled,
                     post_install_rename_to,
                 );
             }
@@ -1293,12 +1300,13 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     update_folder_name,
                     update_target_mod_id: pending.update_target_id,
                     post_install_rename_to,
+                    install_disabled: pending.install_disabled,
                 });
             }
         }
     }
 
-    fn queue_install_for_browse_mod(&mut self, mod_id: u64) {
+    fn queue_install_for_browse_mod(&mut self, mod_id: u64, install_disabled: bool) {
         let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
             return;
         };
@@ -1345,6 +1353,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             mod_id,
             game_id,
             update_target_id: None,
+            install_disabled,
         });
         self.set_message_ok(format!("Resolving download: {title}"));
     }
@@ -1380,6 +1389,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 unsafe_content,
                 prompt.update_folder_name.clone(),
                 prompt.update_target_mod_id.clone(),
+                prompt.install_disabled,
                 prompt.post_install_rename_to.clone(),
             );
         }
