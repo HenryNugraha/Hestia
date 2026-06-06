@@ -30,39 +30,45 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "xx June 2026";
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &["see changelog"];
+pub(crate) const WHATS_NEW_DATE: &str = "7 June 2026";
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
+    "New folder-style category layout",
+    "Supports filtering mods by specific character in Browse tab",
+    "Various interface improvements"
+];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[
     SurveyQuestion {
-        id: "new_category_in_settings",
-        prompt: "Did you find the new Category settings useful?",
+        id: "light_theme_demand",
+        prompt: "Would you like a white/light app theme?",
         answers: &[
             SurveyAnswer {
                 id: 1,
                 label: "Yes",
             },
-            SurveyAnswer { id: 2, label: "No" },
             SurveyAnswer {
-                id: 3,
-                label: "Haven't used it",
+                id: 2,
+                label: "I don't care",
             },
         ],
     },
     SurveyQuestion {
-        id: "path_detection",
-        prompt: "Have you ever had an issue with Hestia detecting paths?",
+        id: "translation_demand",
+        prompt: "Would you like a non-English translation?",
         answers: &[
             SurveyAnswer {
                 id: 1,
                 label: "Yes",
             },
-            SurveyAnswer { id: 2, label: "No" },
+            SurveyAnswer {
+                id: 2,
+                label: "I don't care",
+            },
         ],
     },
 ];
-pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: &str = "Anything you'd like to say?";
+pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: &str = "What language? Or, anything else?";
 
 fn main() -> anyhow::Result<()> {
     let log_filter = EnvFilter::from_default_env().add_directive(

@@ -1,9 +1,32 @@
 # Changelog
 
-## [1.5.0-alpha] - 2026-06-xx
+## [1.5.0-alpha] - 2026-06-07
 
-### WIP
-Work in progress...
+### Added
+- New folder-style category layout.
+- Filtering mods by specific character in Browse tab.
+- Added hotkey CTRL+N to create new category when Settings > Category is currently open.
+- Added new option to download a mod and install it in disabled state.
+- Added a folder icon next to the mod's name on mod detail to open it in File Explorer.
+
+### Changed
+- Added more option to the sort button's menu.
+- Disabled mods now stay disabled when updated.
+- Improved illegal file name handling when installing mods from a zip or folder.
+- Further improved download fails handling.
+- Further improved path handling when auto-detecting paths.
+- Further improved checkboxes selection logic.
+- Now auto selects the whole text when creating and renaming a category or mod's name.
+- Added more details into survey's privacy policy.
+- Delayed survey window more when dismissed.
+- Reorganized settings menu.
+
+### Fixed
+- Fixed context menu on mod cards still showing even when right clicking on header or title area.
+- Fixed losing focus when renaming a category on mod detail window.
+- Fixed JSON handling when searching for mods on Browse tab.
+- Fixed updates redownloading non-stop, maybe.
+- Fixed black screen on first time launch.
 
 ## [1.4.1] - 2026-05-15
 

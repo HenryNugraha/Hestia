@@ -263,13 +263,11 @@ impl HestiaApp {
                 ui.separator();
                 static_label(
                     ui,
-                    RichText::new(format!(
-                        concat!(
-                            "Only the following data payload will be sent to the survey server.\n",
-                            "• Client: Sha256 hash of randomly generated UUID in hestia.toml file\n",
-                            "• Server URL: {}"
-                        ),
-                        FEEDBACK_SURVEY_SERVER_URL
+                    RichText::new(concat!(
+                        "Feedback is submitted anonymously.\n",
+                        "There is no way to identify or even contact submitters.\n",
+                        "Votes may be published publicly, but messages are private.\n",
+                        "Only the following data payload will be sent to the survey server:"
                     ))
                         .size(11.0)
                         .color(Color32::from_gray(180)),
@@ -282,6 +280,55 @@ impl HestiaApp {
                         .code_editor()
                         .interactive(true),
                 );
+                ui.add_space(-4.0);
+                static_label(
+                    ui,
+                    RichText::new(format!(
+                        concat!(
+                            "• Client: Sha256 hash of randomly generated UUID in hestia.toml file\n",
+                            "• Server & Database URL: {}\n",
+                            "• Server Geolocation: Asia Pacific"
+                        ),
+                        FEEDBACK_SURVEY_SERVER_URL
+                    ))
+                        .size(11.0)
+                        .color(Color32::from_gray(180)),
+                );
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("See survey results here:")
+                            .size(11.0)
+                            .color(Color32::from_gray(180)),
+                    );
+                    ui.add_space(-10.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("• Ongoing: ")
+                                .size(11.0)
+                                .color(Color32::from_gray(180)),
+                        );
+                        ui.add_space(-10.0);
+                        ui.hyperlink_to(
+                            RichText::new("hestia-survey.hnawc.com/ongoing")
+                                .size(11.0),
+                            "https://hestia-survey.hnawc.com/ongoing",
+                        );
+                    });
+                    ui.add_space(-14.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("• Previous: ")
+                                .size(11.0)
+                                .color(Color32::from_gray(180)),
+                        );
+                        ui.add_space(-10.0);
+                        ui.hyperlink_to(
+                            RichText::new("hestia-survey.hnawc.com/previous")
+                                .size(11.0),
+                            "https://hestia-survey.hnawc.com/previous",
+                        );
+                    });
+                });
             }
         });
 
@@ -2314,7 +2361,7 @@ impl HestiaApp {
                                             });
                                     });
                                     ui.add_space(8.0);
-                                    setting_block(ui, "Display format:", &mut |ui| {
+                                    setting_block(ui, "Category Layout:", &mut |ui| {
                                         ui.add_enabled_ui(
                                             matches!(self.state.library_group_mode, LibraryGroupMode::Category),
                                             |ui| {
