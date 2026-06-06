@@ -1985,6 +1985,54 @@ impl HestiaApp {
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
+    fn render_mod_card_open_submenu(&mut self, ui: &mut Ui, mod_id: &str, root_path: &Path) {
+        let gamebanana_id = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_id)
+            .and_then(|mod_entry| mod_entry.source.as_ref())
+            .and_then(|source| source.gamebanana.as_ref())
+            .map(|link| link.mod_id)
+            .filter(|id| *id > 0);
+
+        ui.menu_button(icon_text_sized(Icon::FolderOpen, "Open", 12.0, 12.0), |ui| {
+            ui.set_min_width(156.0);
+            if ui
+                .button(icon_text_sized(
+                    Icon::FolderOpen,
+                    "File Explorer",
+                    12.0,
+                    12.0,
+                ))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                let _ = open_in_explorer(root_path);
+                ui.close();
+            }
+
+            let gamebanana_response = ui.add_enabled(
+                gamebanana_id.is_some(),
+                egui::Button::new(icon_text_sized(Icon::Globe, "GameBanana", 12.0, 12.0)),
+            );
+            let gamebanana_response = if gamebanana_id.is_some() {
+                gamebanana_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+            } else {
+                gamebanana_response
+                    .on_disabled_hover_text("No GameBanana source is linked for this mod.")
+            };
+            if gamebanana_response.clicked() {
+                if let Some(mod_id) = gamebanana_id {
+                    self.open_linked_mod_in_browse(mod_id);
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+
     fn render_selected_mods_category_submenu(&mut self, ui: &mut Ui, game_id: &str) {
         let selected_category_ids: Vec<Option<String>> = self
             .state
@@ -3912,7 +3960,7 @@ impl HestiaApp {
                                             folder_name,
                                             user_title,
                                             cover_image,
-                                            _root_path,
+                                            root_path,
                                             status,
                                             updated_at,
                                             unsafe_content,
@@ -4510,6 +4558,7 @@ impl HestiaApp {
                                                     &selected_game_id,
                                                 );
                                             }
+                                            self.render_mod_card_open_submenu(ui, mod_id, root_path);
                                             if (has_active || has_disabled)
                                                 && ui
                                                     .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
@@ -4637,6 +4686,7 @@ impl HestiaApp {
                                                         category_id.as_deref(),
                                                         category_label,
                                                     );
+                                                    self.render_mod_card_open_submenu(ui, mod_id, root_path);
                                                     if ui
                                                         .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -4662,6 +4712,7 @@ impl HestiaApp {
                                                         category_id.as_deref(),
                                                         category_label,
                                                     );
+                                                    self.render_mod_card_open_submenu(ui, mod_id, root_path);
                                                     if ui
                                                         .button(icon_text_sized(Icon::Archive, "Archive", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -4679,6 +4730,7 @@ impl HestiaApp {
                                                         category_id.as_deref(),
                                                         category_label,
                                                     );
+                                                    self.render_mod_card_open_submenu(ui, mod_id, root_path);
                                                     if ui
                                                         .button(icon_text_sized(Icon::ArchiveRestore, "Restore", 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -5990,11 +6042,43 @@ impl HestiaApp {
                     } else {
                         ui.heading(&title);
                         ui.add_space(-4.0);
-                        let edit_btn = ui.add(egui::Button::new(icon_rich(Icon::Pencil, 9.0, Color32::from_gray(160))).frame(false));
-                        edit_btn.clone().on_hover_text("Rename (F2)");
-                        if edit_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.start_selected_mod_rename();
-                        }
+                        ui.scope(|ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(0.0, 0.0);
+                            ui.spacing_mut().item_spacing.x = 4.0;
+
+                            let edit_btn = ui.add(
+                                egui::Button::new(icon_rich(
+                                    Icon::Pencil,
+                                    9.0,
+                                    Color32::from_gray(160),
+                                ))
+                                .frame(false),
+                            );
+                            edit_btn.clone().on_hover_text("Rename (F2)");
+                            if edit_btn
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                self.start_selected_mod_rename();
+                            }
+                            let open_folder_btn = ui.add(
+                                egui::Button::new(icon_rich(
+                                    Icon::FolderOpen,
+                                    9.0,
+                                    Color32::from_gray(160),
+                                ))
+                                .frame(false),
+                            );
+                            open_folder_btn
+                                .clone()
+                                .on_hover_text("Open in File Explorer");
+                            if open_folder_btn
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                let _ = open_in_explorer(&selected.root_path);
+                            }
+                        });
                     }
                 });
                 let linked = selected.source.as_ref().and_then(|s| s.gamebanana.as_ref()).is_some();
