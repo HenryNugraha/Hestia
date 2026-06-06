@@ -64,6 +64,13 @@ enum ModDetailTab {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum CategoryRenameSurface {
+    LibraryPopup,
+    LibraryFolder,
+    Settings,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum AppUpdateButtonState {
     Check,
     Checking,
@@ -113,6 +120,7 @@ pub struct HestiaApp {
     clipboard_image_paste_held: bool,
     category_rename_target_id: Option<String>,
     category_rename_focus_target_id: Option<String>,
+    category_rename_surface: Option<CategoryRenameSurface>,
     category_rename_name: String,
     dragging_category_id: Option<String>,
     dragging_category_target_index: Option<usize>,

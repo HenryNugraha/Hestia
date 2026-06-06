@@ -1731,7 +1731,10 @@ impl HestiaApp {
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
-                        self.create_category_for_game(&game_id);
+                        self.create_category_for_game(
+                            &game_id,
+                            CategoryRenameSurface::Settings,
+                        );
                     }
                     ui.add_space(-6.0);
                     if has_selected_categories
@@ -1901,8 +1904,10 @@ impl HestiaApp {
                                             }
                                         }
 
-                                        if self.category_rename_target_id.as_deref()
-                                            == Some(category.id.as_str())
+                                        if self.category_rename_matches(
+                                            &category.id,
+                                            CategoryRenameSurface::Settings,
+                                        )
                                         {
                                             let input = ui.add(
                                                 TextEdit::singleline(
@@ -2014,6 +2019,7 @@ impl HestiaApp {
                                                 self.start_category_rename(
                                                     category.id.clone(),
                                                     category.name.clone(),
+                                                    CategoryRenameSurface::Settings,
                                                 );
                                             }
                                             let delete_response = ui.allocate_response(

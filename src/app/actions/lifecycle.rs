@@ -180,6 +180,7 @@ impl HestiaApp {
             clipboard_image_paste_held: false,
             category_rename_target_id: None,
             category_rename_focus_target_id: None,
+            category_rename_surface: None,
             category_rename_name: String::new(),
             dragging_category_id: None,
             dragging_category_target_index: None,
@@ -1493,7 +1494,7 @@ impl HestiaApp {
             })
         {
             if let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) {
-                self.create_category_for_game(&game_id);
+                self.create_category_for_game(&game_id, CategoryRenameSurface::Settings);
             }
         }
 

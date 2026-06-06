@@ -1530,7 +1530,11 @@ impl HestiaApp {
         );
     }
 
-    fn create_category_for_game(&mut self, game_id: &str) -> String {
+    fn create_category_for_game(
+        &mut self,
+        game_id: &str,
+        rename_surface: CategoryRenameSurface,
+    ) -> String {
         let mut index = 1;
         let name = loop {
             let candidate = if index == 1 {
@@ -1572,13 +1576,19 @@ impl HestiaApp {
             .map(|category| category.name.clone())
             .unwrap_or_default();
         self.save_state();
-        self.start_category_rename(id.clone(), rename_name);
+        self.start_category_rename(id.clone(), rename_name, rename_surface);
         id
     }
 
-    fn start_category_rename(&mut self, category_id: String, name: String) {
+    fn start_category_rename(
+        &mut self,
+        category_id: String,
+        name: String,
+        surface: CategoryRenameSurface,
+    ) {
         self.category_rename_focus_target_id = Some(category_id.clone());
         self.category_rename_target_id = Some(category_id);
+        self.category_rename_surface = Some(surface);
         self.category_rename_name = name;
     }
 
@@ -1592,6 +1602,7 @@ impl HestiaApp {
     fn clear_category_rename(&mut self) {
         self.category_rename_target_id = None;
         self.category_rename_focus_target_id = None;
+        self.category_rename_surface = None;
         self.category_rename_name.clear();
     }
 
@@ -1620,6 +1631,11 @@ impl HestiaApp {
             Self::request_focus_select_all(ctx, input, &self.category_rename_name);
             self.category_rename_focus_target_id = None;
         }
+    }
+
+    fn category_rename_matches(&self, category_id: &str, surface: CategoryRenameSurface) -> bool {
+        self.category_rename_target_id.as_deref() == Some(category_id)
+            && self.category_rename_surface == Some(surface)
     }
 
     fn request_mod_detail_rename_focus(
@@ -1839,8 +1855,10 @@ impl HestiaApp {
                         .show(ui, |ui| {
                             for category in categories.clone() {
                                 ui.horizontal(|ui| {
-                                    if self.category_rename_target_id.as_deref()
-                                        == Some(category.id.as_str())
+                                    if self.category_rename_matches(
+                                        &category.id,
+                                        CategoryRenameSurface::LibraryPopup,
+                                    )
                                     {
                                         ui.add_sized(
                                             [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
@@ -1999,6 +2017,7 @@ impl HestiaApp {
                                                 self.start_category_rename(
                                                     category.id.clone(),
                                                     category.name.clone(),
+                                                    CategoryRenameSurface::LibraryPopup,
                                                 );
                                             }
                                             if ui
@@ -2050,7 +2069,10 @@ impl HestiaApp {
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                     {
-                        self.create_category_for_game(game_id);
+                        self.create_category_for_game(
+                            game_id,
+                            CategoryRenameSurface::LibraryPopup,
+                        );
                     }
                 });
 
@@ -4083,6 +4105,7 @@ impl HestiaApp {
                         let dragging_mod_ids = self.dragging_mod_ids.clone();
                         let category_rename_target_id =
                             self.category_rename_target_id.clone();
+                        let category_rename_surface = self.category_rename_surface;
                         let category_rename_focus_target_id =
                             self.category_rename_focus_target_id.clone();
                         let mut category_rename_focus_consumed = false;
@@ -5750,6 +5773,10 @@ impl HestiaApp {
                                                     folder_tile_rects.push(response.rect);
                                                     if category_rename_target_id.as_deref()
                                                         == Some(tile.id.as_str())
+                                                        && category_rename_surface
+                                                            == Some(
+                                                                CategoryRenameSurface::LibraryFolder,
+                                                            )
                                                     {
                                                         let edit_rect = egui::Rect::from_min_size(
                                                             egui::pos2(
@@ -6220,7 +6247,11 @@ impl HestiaApp {
                             self.category_rename_focus_target_id = None;
                         }
                         if let Some((category_id, category_name)) = pending_folder_rename {
-                            self.start_category_rename(category_id, category_name);
+                            self.start_category_rename(
+                                category_id,
+                                category_name,
+                                CategoryRenameSurface::LibraryFolder,
+                            );
                         }
                         if let Some(category_name) = pending_folder_rename_name_update {
                             self.category_rename_name = category_name;
