@@ -5282,6 +5282,15 @@ impl HestiaApp {
                                         5.0,
                                         Color32::from_rgba_premultiplied(186, 84, 43, 235),
                                     );
+                                    ui.painter().rect_stroke(
+                                        badge_rect,
+                                        5.0,
+                                        egui::Stroke::new(
+                                            1.0,
+                                            Color32::from_rgba_premultiplied(122, 74, 54, 225),
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
                                     ui.painter().text(
                                         badge_rect.center(),
                                         egui::Align2::CENTER_CENTER,
