@@ -476,6 +476,7 @@ impl HestiaApp {
         let file_name = match profile {
             ThumbnailProfile::Card => "card_thumb.png",
             ThumbnailProfile::Rail => "rail_thumb.png",
+            ThumbnailProfile::Icon => "icon_thumb.png",
         };
         mod_root.join(MOD_META_DIR).join(file_name)
     }
@@ -556,6 +557,7 @@ impl HestiaApp {
                 user.rail_thumb_source_mtime,
                 user.rail_thumb_source_size,
             ),
+            ThumbnailProfile::Icon => return false,
         };
         let matches_meta = source_kind == Some(expected.kind.as_str())
             && source_id == Some(expected.id.as_str())
@@ -583,6 +585,7 @@ impl HestiaApp {
                 mod_entry.metadata.user.rail_thumb_source_size = expected.size;
                 mod_entry.metadata.user.rail_thumb_generated_at = Some(Utc::now());
             }
+            ThumbnailProfile::Icon => return,
         }
         let _ = xxmi::save_mod_metadata(mod_entry);
     }

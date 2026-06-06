@@ -57,6 +57,7 @@ impl HestiaApp {
     fn reset_browse_for_game(&mut self, game_id: &str) {
         self.browse_state.active_game_id = Some(game_id.to_string());
         self.browse_state.active_query = None;
+        self.browse_state.active_character_category_id = None;
         self.browse_state.cards.clear();
         self.browse_state.total_count = None;
         self.browse_state.next_page = 1;
@@ -64,6 +65,10 @@ impl HestiaApp {
         self.browse_state.loading_page = false;
         self.browse_state.refresh_page_cache_for_session = false;
         self.browse_state.selected_mod_id = None;
+        self.browse_state.character_categories_game_id = None;
+        self.browse_state.character_categories.clear();
+        self.browse_state.character_categories_loading = false;
+        self.browse_state.selected_character_category = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
         self.cancel_browse_full_image_requests();
@@ -125,6 +130,11 @@ impl HestiaApp {
             generation: self.browse_page_generation,
             game_id: game.definition.id.clone(),
             query: self.current_browse_query(),
+            character_category_id: self
+                .browse_state
+                .selected_character_category
+                .as_ref()
+                .map(|category| category.id),
             page,
             browse_sort: self.state.browse_sort,
             search_sort: self.state.search_sort,
@@ -137,9 +147,102 @@ impl HestiaApp {
         let Some(game) = self.selected_game().cloned() else {
             return;
         };
-        self.reset_browse_for_game(&game.definition.id);
+        self.browse_state.active_game_id = Some(game.definition.id);
         self.browse_state.refresh_page_cache_for_session = true;
         self.browse_state.active_query = self.current_browse_query();
+        self.browse_state.active_character_category_id = self
+            .browse_state
+            .selected_character_category
+            .as_ref()
+            .map(|category| category.id);
+        self.browse_state.cards.clear();
+        self.browse_state.total_count = None;
+        self.browse_state.next_page = 1;
+        self.browse_state.has_more = true;
+        self.browse_state.loading_page = false;
+        self.browse_state.selected_mod_id = None;
+        self.browse_detail_open = false;
+        self.browse_state.file_prompt = None;
+        self.cancel_browse_full_image_requests();
+        self.request_browse_page_with_mode(1, true);
+    }
+
+    fn request_browse_character_categories(&mut self, force_refresh: bool) {
+        let Some(game) = self.selected_game().cloned() else {
+            return;
+        };
+        let Some(super_category_id) =
+            gamebanana::character_super_category_id_for_hestia(&game.definition.id)
+        else {
+            self.report_warn(
+                "This game has no configured GameBanana character category list.",
+                Some("Characters unavailable"),
+            );
+            return;
+        };
+        if self.browse_state.character_categories_loading {
+            return;
+        }
+        if !force_refresh
+            && self.browse_state.character_categories_game_id.as_deref()
+                == Some(game.definition.id.as_str())
+            && !self.browse_state.character_categories.is_empty()
+        {
+            return;
+        }
+        self.browse_state.character_categories_game_id = Some(game.definition.id.clone());
+        self.browse_state.character_categories_loading = true;
+        self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
+        let _ = self
+            .browse_request_tx
+            .send(BrowseRequest::FetchCharacterCategories {
+                nonce: self.browse_request_nonce,
+                game_id: game.definition.id,
+                super_category_id,
+                force_refresh,
+            });
+    }
+
+    fn select_browse_character_category(&mut self, category: BrowseCharacterCategory) {
+        let Some(game) = self.selected_game().cloned() else {
+            return;
+        };
+        self.browse_query.clear();
+        self.browse_state.active_game_id = Some(game.definition.id);
+        self.browse_state.active_query = None;
+        self.browse_state.active_character_category_id = Some(category.id);
+        self.browse_state.selected_character_category = Some(category);
+        self.browse_state.cards.clear();
+        self.browse_state.total_count = None;
+        self.browse_state.next_page = 1;
+        self.browse_state.has_more = true;
+        self.browse_state.loading_page = false;
+        self.browse_state.selected_mod_id = None;
+        self.browse_detail_open = false;
+        self.browse_state.file_prompt = None;
+        self.browse_state.refresh_page_cache_for_session = true;
+        self.cancel_browse_full_image_requests();
+        self.request_browse_page_with_mode(1, true);
+    }
+
+    fn clear_browse_character_category(&mut self) {
+        let Some(game) = self.selected_game().cloned() else {
+            return;
+        };
+        self.browse_state.active_game_id = Some(game.definition.id);
+        self.browse_state.active_query = None;
+        self.browse_state.active_character_category_id = None;
+        self.browse_state.selected_character_category = None;
+        self.browse_state.cards.clear();
+        self.browse_state.total_count = None;
+        self.browse_state.next_page = 1;
+        self.browse_state.has_more = true;
+        self.browse_state.loading_page = false;
+        self.browse_state.selected_mod_id = None;
+        self.browse_detail_open = false;
+        self.browse_state.file_prompt = None;
+        self.browse_state.refresh_page_cache_for_session = true;
+        self.cancel_browse_full_image_requests();
         self.request_browse_page_with_mode(1, true);
     }
 
@@ -492,6 +595,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     generation,
                     game_id,
                     query,
+                    character_category_id,
                     page,
                     payload,
                 } => {
@@ -501,11 +605,21 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     if self.browse_state.active_game_id.as_deref() != Some(game_id.as_str()) {
                         continue;
                     }
+                    if self
+                        .browse_state
+                        .selected_character_category
+                        .as_ref()
+                        .map(|category| category.id)
+                        != character_category_id
+                    {
+                        continue;
+                    }
                     if self.current_browse_query() != query {
                         continue;
                     }
                     self.browse_state.loading_page = false;
                     self.browse_state.active_query = query.clone();
+                    self.browse_state.active_character_category_id = character_category_id;
                     self.browse_state.total_count = Some(payload.metadata.record_count);
                     self.browse_state.has_more =
                         !payload.metadata.is_complete && !payload.records.is_empty();
@@ -575,6 +689,52 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     self.report_error_message(
                         format!("browse page failed: {error}"),
                         Some("Browse failed"),
+                    );
+                }
+                BrowseEvent::CharacterCategoriesLoaded {
+                    game_id,
+                    categories,
+                    ..
+                } => {
+                    if self.browse_state.active_game_id.as_deref() != Some(game_id.as_str()) {
+                        continue;
+                    }
+                    self.browse_state.character_categories_loading = false;
+                    self.browse_state.character_categories_game_id = Some(game_id);
+                    self.browse_state.character_categories = categories
+                        .into_iter()
+                        .filter(|category| !category.is_obsolete)
+                        .map(|category| BrowseCharacterCategory {
+                            id: category.id,
+                            name: category.name,
+                            item_count: category.item_count,
+                            icon_url: category
+                                .icon_url
+                                .filter(|url| !url.trim().is_empty()),
+                        })
+                        .collect();
+                }
+                BrowseEvent::CharacterCategoriesWarning {
+                    game_id, warning, ..
+                } => {
+                    if self.browse_state.active_game_id.as_deref() != Some(game_id.as_str()) {
+                        continue;
+                    }
+                    self.report_warn(
+                        format!(
+                            "character category refresh failed; using cached results: {warning}"
+                        ),
+                        Some("Connection failed"),
+                    );
+                }
+                BrowseEvent::CharacterCategoriesFailed { game_id, error, .. } => {
+                    if self.browse_state.active_game_id.as_deref() != Some(game_id.as_str()) {
+                        continue;
+                    }
+                    self.browse_state.character_categories_loading = false;
+                    self.report_error_message(
+                        format!("character categories failed: {error}"),
+                        Some("Characters failed"),
                     );
                 }
                 BrowseEvent::DetailLoaded { mod_id, profile, .. } => {

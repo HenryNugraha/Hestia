@@ -14,6 +14,7 @@ fn spawn_browse_worker(
                     generation,
                     game_id,
                     query,
+                    character_category_id,
                     page,
                     browse_sort,
                     search_sort,
@@ -29,11 +30,26 @@ fn spawn_browse_worker(
                         continue;
                     };
                     let _permit = json_limiter.acquire().await.ok();
-                    let cache_key = match query.as_deref() {
-                        Some(query) if !query.trim().is_empty() => {
-                            gamebanana::search_page_cache_key(&game_id, query, page, search_sort)
+                    let cache_key = if let Some(category_id) = character_category_id {
+                        gamebanana::character_browse_page_cache_key(
+                            &game_id,
+                            category_id,
+                            query.as_deref(),
+                            page,
+                            browse_sort,
+                        )
+                    } else {
+                        match query.as_deref() {
+                            Some(query) if !query.trim().is_empty() => {
+                                gamebanana::search_page_cache_key(
+                                    &game_id,
+                                    query,
+                                    page,
+                                    search_sort,
+                                )
+                            }
+                            _ => gamebanana::browse_page_cache_key(&game_id, page, browse_sort),
                         }
-                        _ => gamebanana::browse_page_cache_key(&game_id, page, browse_sort),
                     };
                     let result = load_browse_page_with_cache(
                         &portable,
@@ -41,6 +57,7 @@ fn spawn_browse_worker(
                         gamebanana_id,
                         &game_id,
                         query.as_deref(),
+                        character_category_id,
                         page,
                         browse_sort,
                         search_sort,
@@ -62,6 +79,7 @@ fn spawn_browse_worker(
                                 generation,
                                 game_id,
                                 query,
+                                character_category_id,
                                 page,
                                 payload,
                             });
@@ -71,6 +89,47 @@ fn spawn_browse_worker(
                                 _nonce: nonce,
                                 generation,
                                 page,
+                                error: format!("{err:#}"),
+                            });
+                        }
+                    }
+                }
+                BrowseRequest::FetchCharacterCategories {
+                    nonce,
+                    game_id,
+                    super_category_id,
+                    force_refresh,
+                } => {
+                    let _permit = json_limiter.acquire().await.ok();
+                    let cache_key =
+                        gamebanana::character_categories_cache_key(&game_id, super_category_id);
+                    match load_character_categories_with_cache(
+                        &portable,
+                        &client,
+                        super_category_id,
+                        force_refresh,
+                        &cache_key,
+                    )
+                    .await
+                    {
+                        Ok((categories, used_cache_fallback)) => {
+                            if used_cache_fallback {
+                                let _ = tx.send(BrowseEvent::CharacterCategoriesWarning {
+                                    _nonce: nonce,
+                                    game_id: game_id.clone(),
+                                    warning: "Connection failed".to_string(),
+                                });
+                            }
+                            let _ = tx.send(BrowseEvent::CharacterCategoriesLoaded {
+                                _nonce: nonce,
+                                game_id,
+                                categories,
+                            });
+                        }
+                        Err(err) => {
+                            let _ = tx.send(BrowseEvent::CharacterCategoriesFailed {
+                                _nonce: nonce,
+                                game_id,
                                 error: format!("{err:#}"),
                             });
                         }
@@ -155,6 +214,7 @@ async fn load_browse_page_with_cache(
     gamebanana_id: u64,
     _game_id: &str,
     query: Option<&str>,
+    character_category_id: Option<u64>,
     page: usize,
     browse_sort: BrowseSort,
     search_sort: SearchSort,
@@ -169,11 +229,17 @@ async fn load_browse_page_with_cache(
         }
     }
 
-    let fetch_result = match query {
-        Some(query) if !query.trim().is_empty() => {
-            gamebanana::fetch_search_page_async(client, gamebanana_id, query, page, search_sort).await
+    let fetch_result = if let Some(category_id) = character_category_id {
+        gamebanana::fetch_character_browse_page_async(client, category_id, query, page, browse_sort)
+            .await
+    } else {
+        match query {
+            Some(query) if !query.trim().is_empty() => {
+                gamebanana::fetch_search_page_async(client, gamebanana_id, query, page, search_sort)
+                    .await
+            }
+            _ => gamebanana::fetch_browse_page_async(client, gamebanana_id, page, browse_sort).await,
         }
-        _ => gamebanana::fetch_browse_page_async(client, gamebanana_id, page, browse_sort).await,
     };
 
     match fetch_result {
@@ -193,6 +259,44 @@ async fn load_browse_page_with_cache(
             if let Some(cached) = persistence::cache_get(portable, cache_key)? {
                 if let Ok(payload) = serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::BrowseRecord>>(&cached) {
                     return Ok((payload, true));
+                }
+            }
+            Err(err)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn load_character_categories_with_cache(
+    portable: &PortablePaths,
+    client: &ClientWithMiddleware,
+    super_category_id: u64,
+    force_refresh: bool,
+    cache_key: &str,
+) -> Result<(Vec<gamebanana::CharacterCategory>, bool)> {
+    if !force_refresh {
+        if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+            if let Ok(categories) =
+                serde_json::from_slice::<Vec<gamebanana::CharacterCategory>>(&cached)
+            {
+                return Ok((categories, false));
+            }
+        }
+    }
+
+    match gamebanana::fetch_character_categories_async(client, super_category_id).await {
+        Ok(categories) => {
+            if let Ok(bytes) = serde_json::to_vec(&categories) {
+                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
+            }
+            Ok((categories, false))
+        }
+        Err(err) if force_refresh => {
+            if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+                if let Ok(categories) =
+                    serde_json::from_slice::<Vec<gamebanana::CharacterCategory>>(&cached)
+                {
+                    return Ok((categories, true));
                 }
             }
             Err(err)

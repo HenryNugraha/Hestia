@@ -32,6 +32,20 @@ pub struct ApiMetadata {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CharacterCategory {
+    #[serde(rename = "_idRow")]
+    pub id: u64,
+    #[serde(rename = "_sName")]
+    pub name: String,
+    #[serde(rename = "_nItemCount", default)]
+    pub item_count: u64,
+    #[serde(rename = "_sIconUrl")]
+    pub icon_url: Option<String>,
+    #[serde(rename = "_bIsObsolete", default)]
+    pub is_obsolete: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubmissionAuthor {
     #[serde(rename = "_idRow")]
     pub id: u64,
@@ -379,6 +393,18 @@ pub fn game_id_for_hestia(game_id: &str) -> Option<u64> {
     }
 }
 
+pub fn character_super_category_id_for_hestia(game_id: &str) -> Option<u64> {
+    match game_id {
+        "endfield" => Some(42770),
+        "wuwa" => Some(29524),
+        "genshin" => Some(18140),
+        "starrail" => Some(22832),
+        "honkai-impact" => Some(23620),
+        "zzz" => Some(30305),
+        _ => None,
+    }
+}
+
 pub fn fetch_browse_page(
     game_id: u64,
     page: usize,
@@ -432,6 +458,64 @@ pub async fn fetch_browse_page_async(
         .json()
         .await
         .context("failed to parse GameBanana browse page")
+}
+
+pub async fn fetch_character_categories_async(
+    client: &ClientWithMiddleware,
+    super_category_id: u64,
+) -> Result<Vec<CharacterCategory>> {
+    let url = "https://gamebanana.com/apiv12/Mod/Categories";
+    let response = client
+        .get(url)
+        .query(&[
+            ("_idCategoryRow", super_category_id.to_string()),
+            ("_sSort", "a_to_z".to_string()),
+            ("_bShowEmpty", "true".to_string()),
+        ])
+        .send()
+        .await
+        .context("failed to fetch GameBanana character categories")?;
+    response
+        .error_for_status()
+        .context("GameBanana character categories returned an error")?
+        .json()
+        .await
+        .context("failed to parse GameBanana character categories")
+}
+
+pub async fn fetch_character_browse_page_async(
+    client: &ClientWithMiddleware,
+    category_id: u64,
+    query: Option<&str>,
+    page: usize,
+    sort: crate::model::BrowseSort,
+) -> Result<ApiEnvelope<BrowseRecord>> {
+    let url = "https://gamebanana.com/apiv12/Mod/Index";
+    let sort = match sort {
+        crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
+        crate::model::BrowseSort::RecentUpdated => "Generic_Newest",
+    };
+    let mut queries = vec![
+        ("_nPerpage", BROWSE_PAGE_SIZE.to_string()),
+        ("_nPage", page.to_string()),
+        ("_aFilters[Generic_Category]", category_id.to_string()),
+        ("_sSort", sort.to_string()),
+    ];
+    if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
+        queries.push(("_aFilters[Generic_Name]", format!("contains,{query}")));
+    }
+    let response = client
+        .get(url)
+        .query(&queries)
+        .send()
+        .await
+        .context("failed to fetch GameBanana character browse page")?;
+    response
+        .error_for_status()
+        .context("GameBanana character browse page returned an error")?
+        .json()
+        .await
+        .context("failed to parse GameBanana character browse page")
 }
 
 pub fn fetch_search_page(
@@ -614,6 +698,33 @@ pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::Bro
     let mut tags = HashMap::new();
     tags.insert("kind", "browse".to_string());
     tags.insert("game", game_id.to_string());
+    tags.insert("page", page.to_string());
+    tags.insert("sort", format!("{sort:?}"));
+    let serialized = serde_json::to_string(&tags).unwrap_or_default();
+    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+}
+
+pub fn character_categories_cache_key(game_id: &str, super_category_id: u64) -> String {
+    let mut tags = HashMap::new();
+    tags.insert("kind", "character-categories".to_string());
+    tags.insert("game", game_id.to_string());
+    tags.insert("super_category", super_category_id.to_string());
+    let serialized = serde_json::to_string(&tags).unwrap_or_default();
+    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+}
+
+pub fn character_browse_page_cache_key(
+    game_id: &str,
+    category_id: u64,
+    query: Option<&str>,
+    page: usize,
+    sort: crate::model::BrowseSort,
+) -> String {
+    let mut tags = HashMap::new();
+    tags.insert("kind", "character-browse".to_string());
+    tags.insert("game", game_id.to_string());
+    tags.insert("category", category_id.to_string());
+    tags.insert("query", query.unwrap_or_default().trim().to_string());
     tags.insert("page", page.to_string());
     tags.insert("sort", format!("{sort:?}"));
     let serialized = serde_json::to_string(&tags).unwrap_or_default();

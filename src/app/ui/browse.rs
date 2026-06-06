@@ -153,6 +153,34 @@ impl HestiaApp {
                     }
 
                     ui.add_space(-1.0);
+                    ui.scope(|ui| {
+                        let radius = egui::CornerRadius::same(3);
+                        ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                        let response = ui
+                            .add(
+                                egui::Button::new(icon_text_sized(
+                                    Icon::Users,
+                                    "Characters",
+                                    12.0,
+                                    12.0,
+                                ))
+                                .corner_radius(radius),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        egui::Popup::from_toggle_button_response(&response)
+                            .kind(egui::PopupKind::Menu)
+                            .layout(egui::Layout::top_down(egui::Align::Min))
+                            .width(BROWSE_CHARACTER_PICKER_WIDTH)
+                            .gap(0.0)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .frame(egui::Frame::popup(ui.style()))
+                            .show(|ui| self.render_browse_character_picker(ui));
+                    });
+
+                    ui.add_space(-1.0);
                     let mut sort_changed = false;
                     ui.scope(|ui| {
                         ui.add_space(5.0);
@@ -169,7 +197,10 @@ impl HestiaApp {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = -2.0;
                             ui.add_space(2.0);
-                            if is_empty {
+                            if self.browse_state.selected_character_category.is_some() {
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new("Popular").size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new("Recent Updated").size(11.0)).changed();
+                            } else if is_empty {
                                 sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new("Popular").size(11.0)).changed();
                                 sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new("Recent Updated").size(11.0)).changed();
                             } else {
@@ -217,6 +248,86 @@ impl HestiaApp {
         ui.add_space(8.0);
         ScrollArea::vertical().show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
+            if let Some(category) = self.browse_state.selected_character_category.clone() {
+                ui.horizontal(|ui| {
+                    ui.add_space(left_padding);
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_premultiplied(33, 35, 39, 242))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(70, 75, 82)))
+                        .inner_margin(egui::Margin {
+                            left: 8,
+                            right: 8,
+                            top: 6,
+                            bottom: 6,
+                        })
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if let Some(url) = category.icon_url.as_ref() {
+                                    let key = Self::browse_thumb_texture_key(
+                                        url,
+                                        ThumbnailProfile::Icon,
+                                    );
+                                    self.queue_browse_image_with_profile(
+                                        url.clone(),
+                                        None,
+                                        false,
+                                        ThumbnailProfile::Icon,
+                                        2,
+                                    );
+                                    let (rect, _) =
+                                        ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
+                                    if let Some(texture) = self.get_browse_thumb_texture(&key, 1) {
+                                        paint_thumbnail_image(
+                                            ui,
+                                            rect,
+                                            texture,
+                                            ThumbnailFit::Contain,
+                                            Color32::WHITE,
+                                            egui::CornerRadius::same(4),
+                                        );
+                                    } else {
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            4.0,
+                                            Color32::from_rgba_premultiplied(45, 48, 53, 242),
+                                        );
+                                    }
+                                }
+                                static_label(
+                                    ui,
+                                    RichText::new(category.name.clone())
+                                        .size(13.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(247, 222, 204)),
+                                );
+                                static_label(
+                                    ui,
+                                    RichText::new(format!("{} mods", category.item_count))
+                                        .size(12.0)
+                                        .color(Color32::from_gray(155)),
+                                );
+                                if ui
+                                    .add_sized(
+                                        [24.0, 24.0],
+                                        egui::Button::new(icon_rich(
+                                            Icon::X,
+                                            12.0,
+                                            Color32::from_gray(190),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(3)),
+                                    )
+                                    .on_hover_text("Show all mods")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    self.clear_browse_character_category();
+                                }
+                            });
+                        });
+                });
+                ui.add_space(8.0);
+            }
             let available = ui.available_width().max(BROWSE_PANEL_CARD_WIDTH + left_padding);
             let max_card_width = (available - left_padding).max(BROWSE_PANEL_CARD_WIDTH);
             let columns = ((max_card_width + 8.0) / (BROWSE_PANEL_CARD_WIDTH + 8.0))
@@ -602,6 +713,382 @@ impl HestiaApp {
                 self.request_browse_page(self.browse_state.next_page);
             }
         });
+    }
+
+    fn render_browse_character_picker(&mut self, ui: &mut Ui) {
+        ui.set_width(BROWSE_CHARACTER_PICKER_WIDTH);
+        ui.set_min_height(BROWSE_CHARACTER_PICKER_HEIGHT);
+        ui.add_space(4.0);
+
+        if self.selected_game().is_none_or(|game| {
+            gamebanana::character_super_category_id_for_hestia(&game.definition.id).is_none()
+        }) {
+            ui.allocate_ui_with_layout(
+                Vec2::new(
+                    BROWSE_CHARACTER_PICKER_WIDTH - 8.0,
+                    BROWSE_CHARACTER_PICKER_HEIGHT - 8.0,
+                ),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    static_label(
+                        ui,
+                        RichText::new("No character list is configured for this game.")
+                            .size(12.5)
+                            .color(Color32::from_gray(170)),
+                    );
+                },
+            );
+            return;
+        }
+
+        if self.browse_state.character_categories.is_empty()
+            && !self.browse_state.character_categories_loading
+        {
+            self.request_browse_character_categories(false);
+        }
+
+        let category_count = self.browse_state.character_categories.len();
+        let selected_category_name = self
+            .browse_state
+            .selected_character_category
+            .as_ref()
+            .map(|category| category.name.clone());
+        let header_width = BROWSE_CHARACTER_PICKER_WIDTH - 8.0;
+        let header_response =
+            ui.allocate_response(Vec2::new(header_width, BROWSE_CHARACTER_PICKER_HEADER_HEIGHT), Sense::hover());
+        let header_rect = header_response.rect;
+        let title_font = egui::FontId::new(14.0, FontFamily::Name(BOLD_FONT_FAMILY.into()));
+        let title_pos = egui::pos2(header_rect.center().x, header_rect.top() + 14.0);
+        ui.painter().text(
+            title_pos,
+            egui::Align2::CENTER_CENTER,
+            "Characters",
+            title_font,
+            Color32::from_rgb(228, 231, 235),
+        );
+        let underline_y = title_pos.y + 9.0;
+        ui.painter().line_segment(
+            [
+                egui::pos2(title_pos.x - 34.0, underline_y),
+                egui::pos2(title_pos.x + 34.0, underline_y),
+            ],
+            egui::Stroke::new(1.0, Color32::from_rgb(228, 231, 235)),
+        );
+        let header_icon_size = 24.0;
+        let header_icon_gap = -4.0;
+        let refresh_rect = egui::Rect::from_center_size(
+            egui::pos2(title_pos.x + 54.0, header_rect.center().y),
+            Vec2::splat(header_icon_size),
+        );
+        let refresh_response = ui
+            .interact(
+                refresh_rect,
+                ui.id().with("browse_character_refresh"),
+                Sense::click(),
+            )
+            .on_hover_text("Refresh characters")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        ui.painter().text(
+            refresh_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icon_char(Icon::RotateCw),
+            egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            if refresh_response.hovered() {
+                Color32::WHITE
+            } else {
+                Color32::from_gray(185)
+            },
+        );
+        if refresh_response.clicked() {
+            self.request_browse_character_categories(true);
+        }
+        if self.browse_state.selected_character_category.is_some() {
+            let clear_rect = egui::Rect::from_center_size(
+                egui::pos2(
+                    refresh_rect.right() + header_icon_gap + header_icon_size / 2.0,
+                    header_rect.center().y,
+                ),
+                Vec2::splat(header_icon_size),
+            );
+            let clear_response = ui
+                .interact(
+                    clear_rect,
+                    ui.id().with("browse_character_clear"),
+                    Sense::click(),
+                )
+                .on_hover_text("Clear this filter")
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            ui.painter().text(
+                clear_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon_char(Icon::CircleX),
+                egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                if clear_response.hovered() {
+                    Color32::WHITE
+                } else {
+                    Color32::from_gray(185)
+                },
+            );
+            if clear_response.clicked() {
+                self.clear_browse_character_category();
+                ui.close();
+            }
+        }
+        ui.separator();
+        let status = if self.browse_state.character_categories_loading {
+            "Loading...".to_string()
+        } else if let Some(name) = selected_category_name.as_deref() {
+            format!("Selected: {}", Self::take_label_chunk(name, 30, true))
+        } else if category_count > 0 {
+            format!("{category_count} characters")
+        } else {
+            "Waiting".to_string()
+        };
+        ui.painter().text(
+            egui::pos2(header_rect.center().x, header_rect.top() + 35.0),
+            egui::Align2::CENTER_CENTER,
+            status,
+            egui::FontId::proportional(11.5),
+            Color32::from_gray(150),
+        );
+
+        let grid_width = BROWSE_CHARACTER_PICKER_WIDTH - 8.0;
+        let grid_height =
+            BROWSE_CHARACTER_PICKER_HEIGHT - BROWSE_CHARACTER_PICKER_HEADER_HEIGHT - 18.0;
+        if self.browse_state.character_categories_loading {
+            ui.allocate_ui_with_layout(
+                Vec2::new(grid_width, grid_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new("Loading…")
+                            .size(12.5)
+                            .color(Color32::from_gray(170)),
+                    );
+                },
+            );
+            ui.ctx().request_repaint();
+            return;
+        }
+
+        if self.browse_state.character_categories.is_empty() {
+            ui.allocate_ui_with_layout(
+                Vec2::new(grid_width, grid_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new("No characters returned by GameBanana.")
+                            .size(12.5)
+                            .color(Color32::from_gray(170)),
+                    );
+                },
+            );
+            return;
+        }
+
+        let categories = self.browse_state.character_categories.clone();
+        let columns = 3;
+        ScrollArea::vertical()
+            .max_height(grid_height)
+            .min_scrolled_height(grid_height)
+            .auto_shrink([false, false])
+            .id_salt("browse_character_picker_scroll")
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                let selected_id = self
+                    .browse_state
+                    .selected_character_category
+                    .as_ref()
+                    .map(|category| category.id);
+                for row in categories.chunks(columns) {
+                    ui.horizontal_top(|ui| {
+                        for category in row {
+                            let selected = selected_id == Some(category.id);
+                            let response =
+                                self.render_browse_character_tile(ui, category, selected);
+                            if response.clicked() {
+                                self.select_browse_character_category(category.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            });
+    }
+
+    fn render_browse_character_tile(
+        &mut self,
+        ui: &mut Ui,
+        category: &BrowseCharacterCategory,
+        selected: bool,
+    ) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(BROWSE_CHARACTER_TILE_WIDTH, BROWSE_CHARACTER_TILE_HEIGHT),
+            Sense::click(),
+        );
+        let hovered = response.hovered();
+        let fill = if selected {
+            Color32::from_rgba_premultiplied(74, 50, 39, 242)
+        } else if hovered {
+            Color32::from_rgba_premultiplied(49, 54, 61, 242)
+        } else {
+            Color32::from_rgba_premultiplied(34, 37, 42, 242)
+        };
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(3), fill);
+        if selected || hovered {
+            let accent_rect = egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.right(), rect.top() + 2.0),
+            );
+            ui.painter().rect_filled(
+                accent_rect,
+                egui::CornerRadius::same(3),
+                if selected {
+                    Color32::from_rgb(214, 104, 58)
+                } else {
+                    Color32::from_rgb(108, 122, 160)
+                },
+            );
+        }
+        ui.painter().rect_stroke(
+            rect,
+            egui::CornerRadius::same(3),
+            egui::Stroke::new(
+                1.0,
+                if selected {
+                    Color32::from_rgb(180, 78, 35)
+                } else if hovered {
+                    Color32::from_rgb(108, 122, 160)
+                } else {
+                    Color32::from_rgb(60, 64, 70)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+
+        let mut child_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(Vec2::new(6.0, 5.0)))
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        let icon_rect = child_ui
+            .allocate_exact_size(Vec2::splat(40.0), Sense::hover())
+            .0;
+        child_ui.painter().rect_filled(
+            icon_rect,
+            egui::CornerRadius::same(3),
+            if selected {
+                Color32::from_rgba_premultiplied(92, 61, 46, 242)
+            } else if hovered {
+                Color32::from_rgba_premultiplied(60, 65, 72, 242)
+            } else {
+                Color32::from_rgba_premultiplied(45, 48, 53, 242)
+            },
+        );
+        child_ui.painter().rect_stroke(
+            icon_rect,
+            egui::CornerRadius::same(3),
+            egui::Stroke::new(
+                1.0,
+                if selected {
+                    Color32::from_rgb(180, 78, 35)
+                } else {
+                    Color32::from_rgb(68, 73, 80)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        if let Some(url) = category.icon_url.as_ref() {
+            let key = Self::browse_thumb_texture_key(url, ThumbnailProfile::Icon);
+            self.queue_browse_image_with_profile(
+                url.clone(),
+                None,
+                false,
+                ThumbnailProfile::Icon,
+                3,
+            );
+            if let Some(texture) = self.get_browse_thumb_texture(&key, 2) {
+                paint_thumbnail_image(
+                    &mut child_ui,
+                    icon_rect,
+                    texture,
+                    ThumbnailFit::Contain,
+                    Color32::WHITE,
+                    egui::CornerRadius::same(3),
+                );
+            }
+        }
+
+        child_ui.add_space(1.0);
+        let (line_1, line_2) =
+            Self::browse_character_label_lines(&category.name, category.item_count);
+        let color = if selected {
+            Color32::from_rgb(247, 222, 204)
+        } else if hovered {
+            Color32::from_rgb(236, 239, 244)
+        } else {
+            Color32::from_rgb(218, 222, 228)
+        };
+        static_label(
+            &mut child_ui,
+            RichText::new(line_1).size(11.5).color(color),
+        );
+        if let Some(line_2) = line_2 {
+            child_ui.add_space(-6.0);
+            static_label(
+                &mut child_ui,
+                RichText::new(line_2).size(11.5).color(color),
+            );
+        }
+
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
+    fn browse_character_label_lines(name: &str, item_count: u64) -> (String, Option<String>) {
+        let suffix = format!(" ({item_count})");
+        let name = name.trim();
+        let one_line_limit = BROWSE_CHARACTER_LABEL_CHARS_PER_LINE;
+        if name.chars().count() + suffix.chars().count() <= one_line_limit {
+            return (format!("{name}{suffix}"), None);
+        }
+
+        let first_limit = one_line_limit;
+        let first = Self::take_label_chunk(name, first_limit, false);
+        let remaining_owned = name.chars().skip(first.chars().count()).collect::<String>();
+        let remaining = remaining_owned.trim_start();
+        let second_name_limit = one_line_limit.saturating_sub(suffix.chars().count()).max(1);
+        let second_name = Self::take_label_chunk(remaining, second_name_limit, true);
+        (first, Some(format!("{second_name}{suffix}")))
+    }
+
+    fn take_label_chunk(value: &str, limit: usize, ellipsize: bool) -> String {
+        if value.chars().count() <= limit {
+            return value.to_string();
+        }
+        let mut end_byte = value.len();
+        for (count, (idx, _)) in value.char_indices().enumerate() {
+            if count == limit {
+                end_byte = idx;
+                break;
+            }
+        }
+        let candidate = &value[..end_byte];
+        let trimmed = candidate
+            .rfind(char::is_whitespace)
+            .filter(|idx| *idx >= limit / 2)
+            .map(|idx| &candidate[..idx])
+            .unwrap_or(candidate)
+            .trim_end();
+        if ellipsize {
+            format!("{}…", trimmed.trim_end_matches('…'))
+        } else {
+            trimmed.to_string()
+        }
     }
 
     fn render_browse_detail_window(&mut self, ctx: &egui::Context, pane_rect: egui::Rect) {

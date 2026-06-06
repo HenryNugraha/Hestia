@@ -298,6 +298,7 @@ struct InstallJob {
 struct BrowseState {
     active_game_id: Option<String>,
     active_query: Option<String>,
+    active_character_category_id: Option<u64>,
     cards: Vec<BrowseCard>,
     total_count: Option<usize>,
     next_page: usize,
@@ -305,11 +306,23 @@ struct BrowseState {
     loading_page: bool,
     refresh_page_cache_for_session: bool,
     selected_mod_id: Option<u64>,
+    character_categories_game_id: Option<String>,
+    character_categories: Vec<BrowseCharacterCategory>,
+    character_categories_loading: bool,
+    selected_character_category: Option<BrowseCharacterCategory>,
     details: HashMap<u64, BrowseDetailCache>,
     loading_details: HashSet<u64>,
     pending_installs: Vec<PendingBrowseInstall>,
     file_prompt: Option<BrowseFilePrompt>,
     screenshot_overlay: Option<BrowseOverlayImage>,
+}
+
+#[derive(Clone)]
+struct BrowseCharacterCategory {
+    id: u64,
+    name: String,
+    item_count: u64,
+    icon_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -508,9 +521,16 @@ enum BrowseRequest {
         generation: u64,
         game_id: String,
         query: Option<String>,
+        character_category_id: Option<u64>,
         page: usize,
         browse_sort: BrowseSort,
         search_sort: SearchSort,
+        force_refresh: bool,
+    },
+    FetchCharacterCategories {
+        nonce: u64,
+        game_id: String,
+        super_category_id: u64,
         force_refresh: bool,
     },
     FetchDetail {
@@ -570,6 +590,7 @@ enum BrowseEvent {
         generation: u64,
         game_id: String,
         query: Option<String>,
+        character_category_id: Option<u64>,
         page: usize,
         payload: gamebanana::ApiEnvelope<gamebanana::BrowseRecord>,
     },
@@ -582,6 +603,21 @@ enum BrowseEvent {
         _nonce: u64,
         generation: u64,
         page: usize,
+        error: String,
+    },
+    CharacterCategoriesLoaded {
+        _nonce: u64,
+        game_id: String,
+        categories: Vec<gamebanana::CharacterCategory>,
+    },
+    CharacterCategoriesWarning {
+        _nonce: u64,
+        game_id: String,
+        warning: String,
+    },
+    CharacterCategoriesFailed {
+        _nonce: u64,
+        game_id: String,
         error: String,
     },
     DetailLoaded {
@@ -845,6 +881,7 @@ struct CardThumbMeta {
 enum ThumbnailProfile {
     Card,
     Rail,
+    Icon,
 }
 
 impl ThumbnailProfile {
@@ -852,6 +889,7 @@ impl ThumbnailProfile {
         match self {
             Self::Card => (CARD_THUMBNAIL_WIDTH, CARD_THUMBNAIL_HEIGHT),
             Self::Rail => (RAIL_THUMBNAIL_WIDTH, RAIL_THUMBNAIL_HEIGHT),
+            Self::Icon => (40, 40),
         }
     }
 
@@ -859,6 +897,7 @@ impl ThumbnailProfile {
         match self {
             Self::Card => "card",
             Self::Rail => "rail",
+            Self::Icon => "icon",
         }
     }
 }

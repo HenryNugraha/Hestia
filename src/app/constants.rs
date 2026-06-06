@@ -61,6 +61,12 @@ const MOD_DETAIL_RENAME_INPUT_ID: &str = "mod_detail_rename_input";
 const BROWSE_PANEL_CARD_WIDTH: f32 = 220.0;
 const BROWSE_THUMBNAIL_HEIGHT: f32 = 130.0;
 const BROWSE_DETAIL_SIZE: egui::Vec2 = egui::vec2(420.0, 560.0);
+const BROWSE_CHARACTER_PICKER_WIDTH: f32 = 400.0;
+const BROWSE_CHARACTER_PICKER_HEIGHT: f32 = 452.0;
+const BROWSE_CHARACTER_PICKER_HEADER_HEIGHT: f32 = 52.0;
+const BROWSE_CHARACTER_TILE_WIDTH: f32 = 124.0;
+const BROWSE_CHARACTER_TILE_HEIGHT: f32 = 86.0;
+const BROWSE_CHARACTER_LABEL_CHARS_PER_LINE: usize = 18;
 
 // Batch action bar layout.
 const MAX_OPERATIONAL_BUTTONS_PER_ROW: usize = 6; // exceeding will go to next row
