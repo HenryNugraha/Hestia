@@ -3412,6 +3412,112 @@ impl HestiaApp {
         let left_padding = 12.0;
         let desired_right_gap = 4.0;
         let card_spacing = 8.0;
+        let library_group_mode = self.state.library_group_mode;
+        let uncategorized_first = self.state.library_uncategorized_first;
+        let selected_game_id = self
+            .selected_game()
+            .map(|game| game.definition.id.clone())
+            .unwrap_or_default();
+        let category_sections = self.categories_for_game(&selected_game_id);
+        let category_sort_mode = self.category_sort_mode_for_game(&selected_game_id);
+        let category_display_mode = self.state.library_category_display_mode;
+        let mut selected_category_folder_id =
+            self.selected_category_folder_id
+                .clone()
+                .filter(|selected_id| {
+                    category_sections
+                        .iter()
+                        .any(|category| category.id == *selected_id)
+                });
+        let category_folder_selection_stale =
+            self.selected_category_folder_id.is_some() && selected_category_folder_id.is_none();
+
+        if matches!(library_group_mode, LibraryGroupMode::Category)
+            && matches!(category_display_mode, LibraryCategoryDisplayMode::Folders)
+        {
+            let selected_category = selected_category_folder_id
+                .as_deref()
+                .and_then(|selected_id| {
+                    category_sections
+                        .iter()
+                        .find(|category| category.id == selected_id)
+                })
+                .cloned();
+            if let Some(category) = selected_category {
+                let section_cards: Vec<_> = cards
+                    .iter()
+                    .filter(|card| card.13.as_deref() == Some(category.id.as_str()))
+                    .collect();
+                let active_count = section_cards
+                    .iter()
+                    .filter(|card| card.5 == ModStatus::Active)
+                    .count();
+                let disabled_count = section_cards
+                    .iter()
+                    .filter(|card| card.5 == ModStatus::Disabled)
+                    .count();
+                let archived_count = section_cards
+                    .iter()
+                    .filter(|card| card.5 == ModStatus::Archived)
+                    .count();
+
+                ui.horizontal(|ui| {
+                    ui.add_space(left_padding);
+                    let back_response = ui
+                        .vertical(|ui| {
+                            ui.add_space(4.0);
+                            ui.button(icon_text_sized(
+                                Icon::ChevronLeft,
+                                "Back",
+                                13.0,
+                                12.0,
+                            ))
+                        })
+                        .inner
+                        .on_hover_text("Back to category folders")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if back_response.clicked() {
+                        self.selected_category_folder_id = None;
+                        self.selected_mods.clear();
+                        selected_category_folder_id = None;
+                    }
+                    ui.add_space(2.0);
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            static_label(
+                                ui,
+                                RichText::new(&category.name)
+                                    .size(16.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(232, 235, 238)),
+                            );
+                            let mod_count_label = if section_cards.len() == 1 {
+                                "1 mod".to_string()
+                            } else {
+                                format!("{} mods", section_cards.len())
+                            };
+                            static_label(
+                                ui,
+                                RichText::new(mod_count_label)
+                                    .size(13.0)
+                                    .color(Color32::from_gray(155)),
+                            );
+                        });
+                        ui.add_space(-8.0);
+                        static_label(
+                            ui,
+                            RichText::new(format!(
+                                "{} active \u{2022} {} disabled \u{2022} {} archived",
+                                active_count, disabled_count, archived_count
+                            ))
+                            .size(11.5)
+                            .color(Color32::from_gray(155)),
+                        );
+                    });
+                });
+                ui.add_space(8.0);
+            }
+        }
 
         ui.allocate_ui_with_layout(
             Vec2::new(ui.available_width(), ui.available_height()),
@@ -3426,7 +3532,12 @@ impl HestiaApp {
                         scroll.bar_inner_margin = desired_right_gap;
                     }
 
-                    ScrollArea::vertical().show(ui, |ui| {
+                    let mut scroll_area =
+                        ScrollArea::vertical().id_salt("library_main_mod_grid_scroll");
+                    if let Some(category_id) = selected_category_folder_id.as_deref() {
+                        scroll_area = scroll_area.id_salt(("library_category_folder_scroll", category_id));
+                    }
+                    scroll_area.show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = card_spacing; // Gap between cards horizontally
                         ui.add_space(0.0);
 
@@ -3470,32 +3581,12 @@ impl HestiaApp {
                                 response.on_hover_cursor(egui::CursorIcon::PointingHand)
                             };
 
-                        let library_group_mode = self.state.library_group_mode;
-                        let uncategorized_first = self.state.library_uncategorized_first;
-                        let selected_game_id = self
-                            .selected_game()
-                            .map(|game| game.definition.id.clone())
-                            .unwrap_or_default();
-                        let category_sections = self
-                            .categories_for_game(&selected_game_id);
-                        let category_sort_mode =
-                            self.category_sort_mode_for_game(&selected_game_id);
                         let selected_mods_snapshot = self.selected_mods.clone();
                         let sections = [
                             (ModStatus::Active, "Active", status_color(&ModStatus::Active)),
                             (ModStatus::Disabled, "Disabled", status_color(&ModStatus::Disabled)),
                             (ModStatus::Archived, "Archived", status_color(&ModStatus::Archived)),
                         ];
-                        let category_display_mode = self.state.library_category_display_mode;
-                        let selected_category_folder_id =
-                            self.selected_category_folder_id.clone().filter(|selected_id| {
-                                category_sections
-                                    .iter()
-                                    .any(|category| category.id == *selected_id)
-                            });
-                        let category_folder_selection_stale =
-                            self.selected_category_folder_id.is_some()
-                                && selected_category_folder_id.is_none();
                         let modified_update_behavior = self.state.modified_update_behavior;
                         let dragging_category_id = self.dragging_category_id.clone();
                         let dragging_category_target_index =
@@ -3635,6 +3726,11 @@ impl HestiaApp {
                                             self.get_mod_thumb_texture(mod_id, 1).cloned()
                                         },
                                     );
+                                    if texture.is_none() && tile.representative_mod_id.is_some() {
+                                        ui.ctx().request_repaint_after(
+                                            std::time::Duration::from_millis(16),
+                                        );
+                                    }
                                     (tile.id.clone(), texture)
                                 })
                                 .collect();
@@ -4623,34 +4719,6 @@ impl HestiaApp {
                                         },
                                         Color32::from_rgba_premultiplied(15, 18, 22, 72),
                                     );
-                                    let folder_badge_rect = egui::Rect::from_min_size(
-                                        thumb_rect.left_top() + egui::vec2(8.0, 8.0),
-                                        Vec2::new(30.0, 26.0),
-                                    );
-                                    ui.painter().rect_filled(
-                                        folder_badge_rect,
-                                        6.0,
-                                        Color32::from_rgba_premultiplied(20, 22, 26, 185),
-                                    );
-                                    ui.painter().rect_stroke(
-                                        folder_badge_rect,
-                                        6.0,
-                                        egui::Stroke::new(
-                                            1.0,
-                                            Color32::from_rgba_premultiplied(236, 218, 176, 95),
-                                        ),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                    ui.painter().text(
-                                        folder_badge_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        icon_char(Icon::FolderOpen),
-                                        egui::FontId::new(
-                                            16.0,
-                                            FontFamily::Name(LUCIDE_FAMILY.into()),
-                                        ),
-                                        Color32::from_rgb(236, 218, 176),
-                                    );
                                 } else {
                                     let placeholder_rect = thumb_rect.shrink2(egui::vec2(1.0, 1.0));
                                     ui.painter().rect_filled(
@@ -4711,30 +4779,85 @@ impl HestiaApp {
                                     title_galley,
                                     Color32::from_rgb(232, 235, 238),
                                 );
-                                ui.painter().text(
-                                    egui::pos2(text_left, thumb_rect.bottom() + 31.0),
-                                    egui::Align2::LEFT_TOP,
-                                    format!("{} mods", tile.total_count),
-                                    egui::FontId::proportional(12.0),
-                                    Color32::from_gray(165),
+                                let count_row_y = thumb_rect.bottom() + 31.0;
+                                let metadata_clip_rect = egui::Rect::from_min_max(
+                                    egui::pos2(text_left, count_row_y - 1.0),
+                                    egui::pos2(text_right, count_row_y + 17.0),
                                 );
-                                let status_text = format!(
-                                    "{} active / {} disabled / {} archived",
-                                    tile.active_count, tile.disabled_count, tile.archived_count
+                                let paint_metadata =
+                                    |metadata_x: &mut f32, text: String, color: Color32, size: f32| {
+                                    let galley = ui.painter().layout_no_wrap(
+                                        text,
+                                        egui::FontId::proportional(size),
+                                        color,
+                                    );
+                                    ui.painter().with_clip_rect(metadata_clip_rect).galley(
+                                        egui::pos2(*metadata_x, count_row_y),
+                                        galley.clone(),
+                                        color,
+                                    );
+                                    *metadata_x += galley.size().x;
+                                };
+                                let mut metadata_x = text_left;
+                                let folder_icon = ui.painter().layout_no_wrap(
+                                    icon_char(Icon::FolderOpen).to_string(),
+                                    egui::FontId::new(
+                                        12.5,
+                                        FontFamily::Name(LUCIDE_FAMILY.into()),
+                                    ),
+                                    Color32::from_rgb(236, 218, 176),
                                 );
-                                let galley = ui.painter().layout_no_wrap(
-                                    status_text,
-                                    egui::FontId::proportional(10.5),
-                                    Color32::from_gray(145),
+                                ui.painter().with_clip_rect(metadata_clip_rect).galley(
+                                    egui::pos2(metadata_x, count_row_y),
+                                    folder_icon.clone(),
+                                    Color32::from_rgb(236, 218, 176),
                                 );
-                                let galley_pos = egui::pos2(text_left, rect.bottom() - 20.0);
-                                let clip_rect = egui::Rect::from_min_max(
-                                    galley_pos,
-                                    egui::pos2(text_right, rect.bottom() - 4.0),
-                                );
-                                ui.painter()
-                                    .with_clip_rect(clip_rect)
-                                    .galley(galley_pos, galley, Color32::from_gray(145));
+                                metadata_x += folder_icon.size().x + 5.0;
+
+                                if tile.total_count == 0 {
+                                    paint_metadata(
+                                        &mut metadata_x,
+                                        "Empty".to_owned(),
+                                        Color32::from_gray(165),
+                                        12.0,
+                                    );
+                                } else {
+                                    paint_metadata(
+                                        &mut metadata_x,
+                                        format!("{} mods", tile.total_count),
+                                        Color32::from_gray(165),
+                                        12.0,
+                                    );
+                                    let mut status_parts = Vec::new();
+                                    if tile.active_count > 0 {
+                                        status_parts.push((
+                                            format!("{} active", tile.active_count),
+                                            status_color(&ModStatus::Active),
+                                        ));
+                                    } else {
+                                        if tile.disabled_count > 0 {
+                                            status_parts.push((
+                                                format!("{} disabled", tile.disabled_count),
+                                                status_color(&ModStatus::Disabled),
+                                            ));
+                                        }
+                                        if tile.archived_count > 0 {
+                                            status_parts.push((
+                                                format!("{} archived", tile.archived_count),
+                                                status_color(&ModStatus::Archived),
+                                            ));
+                                        }
+                                    }
+                                    for (status_text, color) in status_parts {
+                                        paint_metadata(
+                                            &mut metadata_x,
+                                            " \u{2022} ".to_owned(),
+                                            Color32::from_gray(98),
+                                            12.0,
+                                        );
+                                        paint_metadata(&mut metadata_x, status_text, color, 12.0);
+                                    }
+                                }
 
                                 if dragging_self {
                                     ui.painter().rect_filled(
@@ -5026,58 +5149,6 @@ impl HestiaApp {
                                                 card.13.as_deref() == Some(category.id.as_str())
                                             })
                                             .collect();
-                                        let active_count = section_cards
-                                            .iter()
-                                            .filter(|card| card.5 == ModStatus::Active)
-                                            .count();
-                                        let disabled_count = section_cards
-                                            .iter()
-                                            .filter(|card| card.5 == ModStatus::Disabled)
-                                            .count();
-                                        let archived_count = section_cards
-                                            .iter()
-                                            .filter(|card| card.5 == ModStatus::Archived)
-                                            .count();
-
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(left_padding);
-                                            let back_response = ui
-                                                .button(icon_text_sized(
-                                                    Icon::ChevronLeft,
-                                                    "Categories",
-                                                    13.0,
-                                                    12.0,
-                                                ))
-                                                .on_hover_text("Back to category folders")
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                            if back_response.clicked() {
-                                                pending_category_folder_id = Some(None);
-                                            }
-                                            ui.add_space(8.0);
-                                            ui.vertical(|ui| {
-                                                static_label(
-                                                    ui,
-                                                    RichText::new(&category.name)
-                                                        .size(16.0)
-                                                        .strong()
-                                                        .color(Color32::from_rgb(232, 235, 238)),
-                                                );
-                                                ui.add_space(-3.0);
-                                                static_label(
-                                                    ui,
-                                                    RichText::new(format!(
-                                                        "{} mods / {} active / {} disabled / {} archived",
-                                                        section_cards.len(),
-                                                        active_count,
-                                                        disabled_count,
-                                                        archived_count
-                                                    ))
-                                                    .size(11.5)
-                                                    .color(Color32::from_gray(155)),
-                                                );
-                                            });
-                                        });
-                                        ui.add_space(8.0);
                                         render_cards(ui, section_cards);
                                     } else {
                                         let categorized_ids: HashSet<&str> = category_sections

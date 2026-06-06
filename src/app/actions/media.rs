@@ -1111,10 +1111,12 @@ impl HestiaApp {
         } else {
             (TEXTURE_UPLOADS_PER_FRAME + thumb_count.min(48)).min(96)
         };
+        let mut uploaded_any = false;
         for _ in 0..budget {
             let Some(item) = self.pending_texture_uploads.pop_front() else {
                 break;
             };
+            uploaded_any = true;
             match item {
                 PendingTextureUpload::ModThumb { texture_key, image } => {
                     let texture = ctx.load_texture(
@@ -1149,6 +1151,9 @@ impl HestiaApp {
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
                 }
             }
+        }
+        if uploaded_any || !self.pending_texture_uploads.is_empty() {
+            ctx.request_repaint();
         }
         self.evict_textures_to_budget(ctx.input(|i| i.time));
     }

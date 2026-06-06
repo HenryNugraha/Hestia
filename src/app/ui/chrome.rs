@@ -658,13 +658,16 @@ impl HestiaApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
                     let old_view = self.current_view;
-                    mode_icon_button(
+                    let my_mods_clicked = mode_icon_button(
                         ui,
                         &mut self.current_view,
                         ViewMode::Library,
                         Icon::LibraryBig,
                         "My Mods",
                     );
+                    if my_mods_clicked && old_view == ViewMode::Library {
+                        self.leave_category_folder_view();
+                    }
                     ui.add_space(8.0);
                     mode_icon_button(
                         ui,

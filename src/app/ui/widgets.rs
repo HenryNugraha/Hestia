@@ -4,9 +4,9 @@ fn mode_icon_button(
     target: ViewMode,
     icon: Icon,
     label: &str,
-) {
+) -> bool {
     let selected = *current == target;
-    if nav_rail_button(
+    let clicked = nav_rail_button(
         ui,
         icon,
         label,
@@ -16,9 +16,11 @@ fn mode_icon_button(
         Color32::from_rgb(214, 104, 58),
         Color32::from_rgb(69, 74, 81),
         None,
-    ) {
+    );
+    if clicked {
         *current = target;
     }
+    clicked
 }
 
 fn action_icon_button(

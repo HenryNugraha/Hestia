@@ -1376,6 +1376,15 @@ impl HestiaApp {
         self.clear_mod_detail_rename();
     }
 
+    fn leave_category_folder_view(&mut self) -> bool {
+        if self.selected_category_folder_id.is_none() {
+            return false;
+        }
+        self.selected_category_folder_id = None;
+        self.selected_mods.clear();
+        true
+    }
+
     fn focus_active_search(&mut self, ctx: &egui::Context) {
         match self.current_view {
             ViewMode::Library => {
@@ -1489,6 +1498,26 @@ impl HestiaApp {
         }
 
         if self.current_view == ViewMode::Library {
+            let alt = egui::Modifiers {
+                alt: true,
+                ..Default::default()
+            };
+            let folder_back_requested = !text_input_active
+                && self.selected_category_folder_id.is_some()
+                && (ctx.input_mut(|input| {
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(
+                        alt,
+                        egui::Key::ArrowLeft,
+                    )) || input.consume_shortcut(&egui::KeyboardShortcut::new(
+                        alt,
+                        egui::Key::ArrowUp,
+                    )) || input.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)
+                }) || ctx.input(|input| {
+                    input.pointer.button_clicked(egui::PointerButton::Extra1)
+                }));
+            if folder_back_requested {
+                self.leave_category_folder_view();
+            }
             if !text_input_active
                 && self.delete_shortcut_has_mod_context()
                 && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
