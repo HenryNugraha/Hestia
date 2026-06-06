@@ -14,11 +14,28 @@ impl HestiaApp {
                 let screen_rect = ctx.viewport_rect();
                 ui.set_min_size(screen_rect.size());
                 ui.painter()
-                    .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(24, 26, 29));
+                    .rect_filled(screen_rect, 0.0, Color32::from_rgb(24, 26, 29));
+
+                let header_rect = egui::Rect::from_min_size(
+                    screen_rect.min + Vec2::new(22.0, 18.0),
+                    Vec2::new(screen_rect.width().min(520.0), 34.0),
+                );
+                let mut header_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(header_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                header_ui.add(egui::Spinner::new().size(16.0));
+                static_label(
+                    &mut header_ui,
+                    RichText::new("Scanning paths...")
+                        .size(14.0)
+                        .color(Color32::from_gray(210)),
+                );
 
                 let content_rect = egui::Rect::from_center_size(
-                    ui.max_rect().center(),
-                    Vec2::new(620.0, ui.max_rect().height().min(720.0)),
+                    screen_rect.center(),
+                    Vec2::new(620.0, screen_rect.height().min(720.0)),
                 );
                 let mut content_ui = ui.new_child(
                     egui::UiBuilder::new()
@@ -108,6 +125,7 @@ impl HestiaApp {
             });
 
         ctx.request_repaint();
+        ctx.request_repaint_after(Duration::from_millis(250));
     }
 
     fn render_startup_path_status_row(

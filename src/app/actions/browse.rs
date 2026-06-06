@@ -2,6 +2,7 @@ use tokio::io::AsyncWriteExt as _;
 
 const BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+const BROWSE_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
 
 impl HestiaApp {
     fn sanitized_preferred_browse_title_name(&self, raw_title: Option<&str>) -> Option<String> {
@@ -559,11 +560,18 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         Some("Connection failed"),
                     );
                 }
-                BrowseEvent::PageFailed { generation, error, .. } => {
+                BrowseEvent::PageFailed { generation, page, error, .. } => {
                     if generation != self.browse_page_generation {
                         continue;
                     }
                     self.browse_state.loading_page = false;
+                    if page > 1 {
+                        self.browse_state.has_more = false;
+                        self.log_warn(format!(
+                            "browse page {page} failed; stopped loading more results: {error}"
+                        ));
+                        continue;
+                    }
                     self.report_error_message(
                         format!("browse page failed: {error}"),
                         Some("Browse failed"),
@@ -1388,7 +1396,8 @@ async fn download_browse_file_to_cache_with_retries(
     handle: tokio::runtime::Handle,
 ) -> Result<u64> {
     let mut retry_delay = BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY;
-    loop {
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 1..=BROWSE_DOWNLOAD_MAX_ATTEMPTS {
         if cancel.load(Ordering::Relaxed) {
             bail!(importing::CANCELLED_ERROR);
         }
@@ -1405,7 +1414,11 @@ async fn download_browse_file_to_cache_with_retries(
         {
             Ok(byte_size) => return Ok(byte_size),
             Err(err) if err.to_string() == importing::CANCELLED_ERROR => return Err(err),
-            Err(_) => {
+            Err(err) => {
+                last_error = Some(err);
+                if attempt >= BROWSE_DOWNLOAD_MAX_ATTEMPTS {
+                    break;
+                }
                 if let Ok(mut guard) = progress.write() {
                     guard.speed = 0.0;
                     guard.bytes_since_last = 0;
@@ -1416,6 +1429,10 @@ async fn download_browse_file_to_cache_with_retries(
             }
         }
     }
+    let err = last_error
+        .map(|err| err.context(format!("download failed after {BROWSE_DOWNLOAD_MAX_ATTEMPTS} attempts")))
+        .unwrap_or_else(|| anyhow!("download failed after {BROWSE_DOWNLOAD_MAX_ATTEMPTS} attempts"));
+    Err(err)
 }
 
 async fn download_browse_file_to_cache_once(

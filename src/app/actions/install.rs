@@ -45,6 +45,10 @@ impl HestiaApp {
                         .pending_browse_install_safety
                         .remove(&job_id)
                         .unwrap_or(false);
+                    self.apply_pending_update_source_metadata_before_refresh(
+                        pending_meta.as_ref(),
+                        gb_profile.as_deref(),
+                    );
                     if let Some(task) = self.state.tasks.iter_mut().find(|t| t.id == job_id) {
                         task.total_size = self.install_inflight.get(&job_id).and_then(|job| match &job.source {
                             ImportSource::Archive(path) => fs::metadata(path).ok().map(|m| m.len()),

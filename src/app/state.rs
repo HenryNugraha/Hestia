@@ -576,6 +576,7 @@ enum BrowseEvent {
     PageFailed {
         _nonce: u64,
         generation: u64,
+        page: usize,
         error: String,
     },
     DetailLoaded {

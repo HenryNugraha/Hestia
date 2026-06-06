@@ -606,6 +606,8 @@ impl HestiaApp {
                 let mut mod_updated = false;
                 let mut should_sync_images = false;
                 let mut sync_profile: Option<Box<gamebanana::ProfileResponse>> = None;
+                let has_pending_update_finalization =
+                    self.pending_update_finalization_for_mod(&mod_id);
                 let fetch_failed = err.is_some()
                     && snapshot.is_none()
                     && raw_json.is_none()
@@ -678,6 +680,7 @@ impl HestiaApp {
                             && modified_update_available);
                     let should_auto_apply = !fetch_failed
                         && auto_update_allowed
+                        && !has_pending_update_finalization
                         && Self::status_target_enabled(&mod_entry.status, self.state.auto_update_statuses)
                         && !active_update_tasks.contains(&(
                             format!(
@@ -749,6 +752,16 @@ impl HestiaApp {
         matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally)
     }
 
+    fn pending_update_finalization_for_mod(&self, mod_entry_id: &str) -> bool {
+        self.pending_install_finalize.values().any(|pending| {
+            pending
+                .pending_meta
+                .as_ref()
+                .and_then(|meta| meta.update_target_mod_id.as_deref())
+                == Some(mod_entry_id)
+        })
+    }
+
     fn should_auto_replace_update(&self, job_id: u64) -> bool {
         if self.state.always_replace_on_update {
             return true;
@@ -804,6 +817,7 @@ impl HestiaApp {
             saw_event = true;
             match event {
                 StartupPathScanEvent::Found { kind, path } => {
+                    let mut should_save_found_path = false;
                     if let Some(scan) = self.startup_path_scan.as_mut() {
                         if let Some(status) =
                             scan.statuses.iter_mut().find(|status| status.kind == kind)
@@ -811,7 +825,14 @@ impl HestiaApp {
                             if !status.candidates.iter().any(|candidate| candidate == &path) {
                                 status.candidates.push(path);
                             }
+                            if status.selected_candidate.is_none() {
+                                status.selected_candidate = status.candidates.first().cloned();
+                                should_save_found_path = true;
+                            }
                         }
+                    }
+                    if should_save_found_path && self.apply_startup_found_path_if_missing(ctx, &kind) {
+                        self.save_state();
                     }
                 }
                 StartupPathScanEvent::Finished { stopped } => {
@@ -840,6 +861,98 @@ impl HestiaApp {
             return false;
         };
         scan.stopped || scan.statuses.iter().any(|status| status.candidates.is_empty())
+    }
+
+    fn apply_startup_found_path_if_missing(
+        &mut self,
+        ctx: &egui::Context,
+        kind: &StartupPathTargetKind,
+    ) -> bool {
+        let Some(path) = self
+            .startup_path_scan
+            .as_ref()
+            .and_then(|scan| {
+                scan.statuses
+                    .iter()
+                    .find(|status| &status.kind == kind)
+                    .and_then(|status| status.selected_candidate.clone())
+            })
+        else {
+            return false;
+        };
+
+        let mut changed = false;
+        match kind {
+            StartupPathTargetKind::Xxmi => {
+                if self
+                    .state
+                    .modded_launcher_path_override
+                    .as_ref()
+                    .is_none_or(|path| !path.is_file())
+                {
+                    self.state.modded_launcher_path_override = Some(path.clone());
+                    changed = true;
+                }
+                for game in &mut self.state.games {
+                    if game
+                        .modded_exe_path_override
+                        .as_ref()
+                        .is_none_or(|path| !path.is_file())
+                    {
+                        game.modded_exe_path_override = Some(path.clone());
+                        changed = true;
+                    }
+                    if game
+                        .mods_path_override
+                        .as_ref()
+                        .is_none_or(|path| !path.is_dir())
+                    {
+                        if let Some(mods_path) =
+                            default_mods_path_from_launcher(&path, &game.definition.xxmi_code)
+                        {
+                            game.mods_path_override = Some(mods_path);
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    ctx.data_mut(|data| {
+                        data.remove::<String>(egui::Id::new("launcher_path_input"));
+                        for game in &self.state.games {
+                            data.remove::<String>(egui::Id::new((
+                                "settings_mods_path",
+                                game.definition.id.as_str(),
+                            )));
+                        }
+                    });
+                }
+            }
+            StartupPathTargetKind::Game(game_id) => {
+                if let Some(game) = self
+                    .state
+                    .games
+                    .iter_mut()
+                    .find(|game| game.definition.id == *game_id)
+                {
+                    if game
+                        .vanilla_exe_path_override
+                        .as_ref()
+                        .is_none_or(|path| !path.is_file())
+                    {
+                        game.vanilla_exe_path_override = Some(path);
+                        game.enabled = true;
+                        changed = true;
+                        ctx.data_mut(|data| {
+                            data.remove::<String>(egui::Id::new((
+                                "settings_vanilla_path",
+                                game.definition.id.as_str(),
+                            )));
+                        });
+                    }
+                }
+            }
+        }
+        changed
     }
 
     fn finish_startup_path_scan(&mut self, ctx: &egui::Context) {
@@ -1022,7 +1135,7 @@ impl HestiaApp {
         let mut finalized_any = false;
         let job_ids: Vec<u64> = self.pending_install_finalize.keys().copied().collect();
         for job_id in job_ids {
-            let Some(payload) = self.pending_install_finalize.remove(&job_id) else {
+            let Some(payload) = self.pending_install_finalize.get(&job_id).cloned() else {
                 continue;
             };
             let belongs_to_game = payload.installed_paths.iter().any(|path| {
@@ -1035,6 +1148,7 @@ impl HestiaApp {
             if !belongs_to_game {
                 continue;
             }
+            let _ = self.pending_install_finalize.remove(&job_id);
             self.finalize_install_after_refresh(job_id, payload);
             finalized_any = true;
         }
@@ -1320,6 +1434,59 @@ impl HestiaApp {
             let _ = xxmi::save_mod_metadata(mod_entry);
             self.log_category_change(&mod_name, &old_category, &category_name);
         }
+        self.save_state();
+    }
+
+    fn apply_pending_update_source_metadata_before_refresh(
+        &mut self,
+        pending_meta: Option<&PendingBrowseInstallMeta>,
+        gb_profile: Option<&gamebanana::ProfileResponse>,
+    ) {
+        let Some(meta) = pending_meta else { return; };
+        let Some(target_mod_id) = meta.update_target_mod_id.as_deref() else { return; };
+        let Some(mod_entry) = self
+            .state
+            .mods
+            .iter_mut()
+            .find(|mod_entry| mod_entry.id == target_mod_id && mod_entry.game_id == meta.game_id)
+        else {
+            return;
+        };
+
+        let now = Utc::now();
+        let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
+        source.gamebanana = Some(GameBananaLink {
+            mod_id: meta.mod_id,
+            url: gamebanana::browser_url(meta.mod_id),
+        });
+        source.file_set = FileSetRecipe {
+            selected_file_ids: meta.selected_files.iter().map(|file| file.id).collect(),
+            selected_file_names: meta
+                .selected_files
+                .iter()
+                .map(|file| file.file_name.clone())
+                .collect(),
+            selected_files_meta: meta
+                .selected_files
+                .iter()
+                .map(tracked_file_meta_from_mod_file)
+                .collect(),
+            selected_candidate_labels: Vec::new(),
+        };
+        source.history.downloaded_at = Some(now);
+        source.history.updated_at = Some(now);
+        source.ignored_update_signature = None;
+        if let Some(profile) = gb_profile {
+            source.snapshot = Some(profile_to_snapshot(profile));
+            source.raw_profile_json = serde_json::to_string(profile).ok();
+            let local_sync_ts = selected_file_baseline_ts(&source.file_set)
+                .or(profile.date_updated.or(Some(profile.date_modified)));
+            let raw_state = determine_file_set_update_state(&source.file_set, local_sync_ts, profile);
+            mod_entry.update_state = apply_ignored_update_override(source, raw_state, Some(profile));
+        } else {
+            mod_entry.update_state = ModUpdateState::UpToDate;
+        }
+        let _ = xxmi::save_mod_metadata(mod_entry);
         self.save_state();
     }
 

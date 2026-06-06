@@ -243,6 +243,8 @@ pub struct FeedbackSurveyVersionState {
     #[serde(default)]
     pub next_prompt_launch: u32,
     #[serde(default)]
+    pub later_deferrals: u32,
+    #[serde(default)]
     pub submitted: bool,
     #[serde(default)]
     pub skipped: bool,
@@ -334,9 +336,12 @@ impl AppState {
     pub fn defer_feedback_survey(&mut self, survey: &SurveyDefinition) {
         let key = survey.key();
         let survey_state = self.feedback_survey.surveys.entry(key).or_default();
-        survey_state.next_prompt_launch = survey_state
-            .launches_seen
-            .saturating_add(survey.later_delay.max(1));
+        survey_state.later_deferrals = survey_state.later_deferrals.saturating_add(1);
+        let defer_delay = survey
+            .later_delay
+            .max(1)
+            .saturating_mul(survey_state.later_deferrals.max(1));
+        survey_state.next_prompt_launch = survey_state.launches_seen.saturating_add(defer_delay);
         self.show_feedback_survey = false;
     }
 
@@ -1680,7 +1685,7 @@ mod feedback_survey_tests {
     }
 
     #[test]
-    fn feedback_survey_maybe_later_delays_three_launches() {
+    fn feedback_survey_maybe_later_delay_increases_by_base_delay() {
         let mut state = AppState::default();
         for _ in 0..5 {
             state.prepare_feedback_survey_on_launch(Some(&SURVEY));
@@ -1688,7 +1693,54 @@ mod feedback_survey_tests {
 
         state.defer_feedback_survey(&SURVEY);
         assert!(!state.show_feedback_survey);
+        assert_eq!(
+            state
+                .feedback_survey
+                .surveys
+                .get(&SURVEY.key())
+                .unwrap()
+                .later_deferrals,
+            1
+        );
         for _ in 0..2 {
+            state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+            assert!(!state.show_feedback_survey);
+        }
+
+        state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        assert!(state.show_feedback_survey);
+
+        state.defer_feedback_survey(&SURVEY);
+        assert!(!state.show_feedback_survey);
+        assert_eq!(
+            state
+                .feedback_survey
+                .surveys
+                .get(&SURVEY.key())
+                .unwrap()
+                .later_deferrals,
+            2
+        );
+        for _ in 0..5 {
+            state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+            assert!(!state.show_feedback_survey);
+        }
+
+        state.prepare_feedback_survey_on_launch(Some(&SURVEY));
+        assert!(state.show_feedback_survey);
+
+        state.defer_feedback_survey(&SURVEY);
+        assert!(!state.show_feedback_survey);
+        assert_eq!(
+            state
+                .feedback_survey
+                .surveys
+                .get(&SURVEY.key())
+                .unwrap()
+                .later_deferrals,
+            3
+        );
+        for _ in 0..8 {
             state.prepare_feedback_survey_on_launch(Some(&SURVEY));
             assert!(!state.show_feedback_survey);
         }

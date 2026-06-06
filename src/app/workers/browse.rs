@@ -23,6 +23,7 @@ fn spawn_browse_worker(
                         let _ = tx.send(BrowseEvent::PageFailed {
                             _nonce: nonce,
                             generation,
+                            page,
                             error: format!("unsupported game id: {game_id}"),
                         });
                         continue;
@@ -69,6 +70,7 @@ fn spawn_browse_worker(
                             let _ = tx.send(BrowseEvent::PageFailed {
                                 _nonce: nonce,
                                 generation,
+                                page,
                                 error: format!("{err:#}"),
                             });
                         }

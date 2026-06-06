@@ -338,6 +338,25 @@ fn select_mod_card_visible_range(
     }
 }
 
+fn toggle_mod_card_selection(
+    selected_mods: &mut HashSet<String>,
+    focused_mod_id: Option<&str>,
+    current_id: &str,
+    checked: bool,
+    include_focused_when_empty: bool,
+) {
+    if checked && include_focused_when_empty && selected_mods.is_empty() {
+        if let Some(focused_mod_id) = focused_mod_id {
+            selected_mods.insert(focused_mod_id.to_string());
+        }
+    }
+    if checked {
+        selected_mods.insert(current_id.to_string());
+    } else {
+        selected_mods.remove(current_id);
+    }
+}
+
 #[cfg(test)]
 mod library_selection_tests {
     use super::*;
@@ -386,6 +405,39 @@ mod library_selection_tests {
             &visible_card_ids,
         ));
         assert!(selected_mods.is_empty());
+    }
+
+    #[test]
+    fn ctrl_selection_from_empty_batch_includes_focused_card() {
+        let mut selected_mods = HashSet::new();
+
+        toggle_mod_card_selection(&mut selected_mods, Some("focused"), "clicked", true, true);
+
+        assert!(selected_mods.contains("focused"));
+        assert!(selected_mods.contains("clicked"));
+        assert_eq!(selected_mods.len(), 2);
+    }
+
+    #[test]
+    fn ctrl_selection_does_not_reseed_existing_batch() {
+        let mut selected_mods = HashSet::from(["already".to_string()]);
+
+        toggle_mod_card_selection(&mut selected_mods, Some("focused"), "clicked", true, true);
+
+        assert!(selected_mods.contains("already"));
+        assert!(selected_mods.contains("clicked"));
+        assert!(!selected_mods.contains("focused"));
+    }
+
+    #[test]
+    fn plain_selection_does_not_include_focused_card() {
+        let mut selected_mods = HashSet::new();
+
+        toggle_mod_card_selection(&mut selected_mods, Some("focused"), "clicked", true, false);
+
+        assert!(!selected_mods.contains("focused"));
+        assert!(selected_mods.contains("clicked"));
+        assert_eq!(selected_mods.len(), 1);
     }
 }
 
@@ -4041,8 +4093,22 @@ impl HestiaApp {
                                                                 self.selected_mods.insert(mod_id.clone());
                                                             }
                                                             self.set_selected_mod_id(Some(mod_id.clone()));
+                                                        } else if modifiers.command || modifiers.ctrl {
+                                                            toggle_mod_card_selection(
+                                                                &mut self.selected_mods,
+                                                                self.selected_mod_id.as_deref(),
+                                                                mod_id,
+                                                                !checked,
+                                                                true,
+                                                            );
                                                         } else {
-                                                            self.toggle_mod_selection(mod_id, !checked);
+                                                            toggle_mod_card_selection(
+                                                                &mut self.selected_mods,
+                                                                self.selected_mod_id.as_deref(),
+                                                                mod_id,
+                                                                !checked,
+                                                                false,
+                                                            );
                                                         }
                                                         response.request_focus();
                                                     }
@@ -4053,8 +4119,13 @@ impl HestiaApp {
                                                         if !is_space {
                                                             let modifiers = ui.input(|i| i.modifiers);
                                                             if modifiers.command || modifiers.ctrl {
-                                                                // Individual toggle
-                                                                self.toggle_mod_selection(mod_id, !checked);
+                                                                toggle_mod_card_selection(
+                                                                    &mut self.selected_mods,
+                                                                    self.selected_mod_id.as_deref(),
+                                                                    mod_id,
+                                                                    !checked,
+                                                                    true,
+                                                                );
                                                             } else if modifiers.shift {
                                                                 // Range selection using the active mod as anchor
                                                                 if !select_mod_card_visible_range(
@@ -4107,7 +4178,13 @@ impl HestiaApp {
                                                                     response.request_focus();
                                                                     let modifiers = ui.input(|i| i.modifiers);
                                                                     if modifiers.command || modifiers.ctrl {
-                                                                        self.toggle_mod_selection(mod_id, !checked);
+                                                                        toggle_mod_card_selection(
+                                                                            &mut self.selected_mods,
+                                                                            self.selected_mod_id.as_deref(),
+                                                                            mod_id,
+                                                                            !checked,
+                                                                            true,
+                                                                        );
                                                                     } else if modifiers.shift {
                                                                         if !select_mod_card_visible_range(
                                                                             &mut self.selected_mods,
