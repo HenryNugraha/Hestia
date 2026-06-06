@@ -3169,8 +3169,9 @@ impl HestiaApp {
         }
 
         let mut suppress_mod_card_context_menu = false;
+        let mut mod_card_context_block_rects = Vec::new();
 
-        egui::Frame::new()
+        let header_frame_response = egui::Frame::new()
             .fill(Color32::from_rgba_premultiplied(36, 38, 42, 242))
             .corner_radius(egui::CornerRadius::same(0))
             .inner_margin(egui::Margin::same(18))
@@ -3197,6 +3198,7 @@ impl HestiaApp {
 
                         // Allocate the space for the whole widget
                         let (rect, _area_resp) = ui.allocate_exact_size(Vec2::new(current_width, 41.0), Sense::hover());
+                        mod_card_context_block_rects.push(rect);
                         if ui.ctx().input(|i| {
                             i.pointer.secondary_clicked()
                                 && i.pointer
@@ -3222,6 +3224,13 @@ impl HestiaApp {
                         let icon_pos = rect.left_center() + egui::vec2(20.5, 0.0);
                         let icon_area = egui::Rect::from_center_size(icon_pos, egui::Vec2::splat(28.0));
                         let icon_resp = ui.interact(icon_area, ui.id().with("search_toggle"), Sense::click());
+                        mod_card_context_block_rects.push(icon_area);
+                        let filter_context_menu_open = ui.ctx().input(|i| {
+                            i.pointer.secondary_clicked()
+                                && i.pointer
+                                    .hover_pos()
+                                    .is_some_and(|pos| icon_area.contains(pos))
+                        });
                         let visibility_filtered = !self.show_enabled_mods
                             || self.state.hide_disabled
                             || self.state.hide_archived
@@ -3252,8 +3261,24 @@ impl HestiaApp {
                         if icon_resp.clicked() {
                             self.mods_search_expanded = !self.mods_search_expanded;
                         }
-                        egui::Popup::context_menu(&icon_resp)
-                            .id(ui.id().with("mods_status_filter_popup"))
+                        let filter_popup_command = if filter_context_menu_open {
+                            Some(egui::SetOpenCommand::Bool(true))
+                        } else if icon_resp.clicked() {
+                            Some(egui::SetOpenCommand::Bool(false))
+                        } else {
+                            None
+                        };
+                        egui::Popup::new(
+                            ui.id().with("mods_status_filter_popup"),
+                            ui.ctx().clone(),
+                            egui::PopupAnchor::PointerFixed,
+                            icon_resp.layer_id,
+                        )
+                            .kind(egui::PopupKind::Menu)
+                            .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                            .width(170.0)
+                            .gap(0.0)
+                            .open_memory(filter_popup_command)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .frame(
                                 egui::Frame::popup(ui.style())
@@ -3855,7 +3880,17 @@ impl HestiaApp {
                 }) {
                     suppress_mod_card_context_menu = true;
                 }
+                mod_card_context_block_rects.push(header_response.response.rect);
             });
+        if ui.ctx().input(|i| {
+            i.pointer.secondary_clicked()
+                && i.pointer
+                    .hover_pos()
+                    .is_some_and(|pos| header_frame_response.response.rect.contains(pos))
+        }) {
+            suppress_mod_card_context_menu = true;
+        }
+        mod_card_context_block_rects.push(header_frame_response.response.rect);
 
         ui.add_space(8.0);
 
@@ -3987,7 +4022,11 @@ impl HestiaApp {
                     if let Some(category_id) = selected_category_folder_id.as_deref() {
                         scroll_area = scroll_area.id_salt(("library_category_folder_scroll", category_id));
                     }
-                    scroll_area.show(ui, |ui| {
+                    scroll_area.show_viewport(ui, |ui, viewport| {
+                        let scroll_viewport_rect = egui::Rect::from_min_max(
+                            ui.max_rect().min + viewport.min.to_vec2(),
+                            ui.max_rect().min + viewport.max.to_vec2(),
+                        );
                         ui.spacing_mut().item_spacing.x = card_spacing; // Gap between cards horizontally
                         ui.add_space(0.0);
 
@@ -4769,13 +4808,24 @@ impl HestiaApp {
                                             });
                                         let popup_id =
                                             ui.id().with(("mod_card_context_menu_popup", mod_id));
+                                        let visible_card_rect = card_frame
+                                            .response
+                                            .rect
+                                            .intersect(scroll_viewport_rect)
+                                            .intersect(ui.clip_rect());
+                                        let pointer_on_visible_card =
+                                            ui.rect_contains_pointer(visible_card_rect);
                                         let open_context_menu = ui.ctx().input(|i| {
                                             !suppress_mod_card_context_menu
                                                 && i.pointer.secondary_clicked()
+                                                && pointer_on_visible_card
                                                 && i.pointer
                                                     .hover_pos()
                                                     .is_some_and(|pos| {
-                                                        card_frame.response.rect.contains(pos)
+                                                        visible_card_rect.contains(pos)
+                                                            && !mod_card_context_block_rects
+                                                                .iter()
+                                                                .any(|rect| rect.contains(pos))
                                                             && !titlebar_context_block_rect
                                                                 .is_some_and(|rect| {
                                                                     rect.contains(pos)
@@ -5760,12 +5810,22 @@ impl HestiaApp {
                                                         "category_folder_context_menu_popup",
                                                         &tile.id,
                                                     ));
+                                                    let visible_folder_rect = response
+                                                        .rect
+                                                        .intersect(scroll_viewport_rect)
+                                                        .intersect(ui.clip_rect());
+                                                    let pointer_on_visible_folder =
+                                                        ui.rect_contains_pointer(visible_folder_rect);
                                                     let open_folder_context_menu =
                                                         ui.ctx().input(|input| {
                                                             input.pointer.secondary_clicked()
+                                                                && pointer_on_visible_folder
                                                                 && input.pointer.hover_pos().is_some_and(
                                                                     |pos| {
-                                                                        response.rect.contains(pos)
+                                                                        visible_folder_rect.contains(pos)
+                                                                            && !mod_card_context_block_rects
+                                                                                .iter()
+                                                                                .any(|rect| rect.contains(pos))
                                                                             && !titlebar_context_block_rect
                                                                                 .is_some_and(|rect| {
                                                                                     rect.contains(pos)
