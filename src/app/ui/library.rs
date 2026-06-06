@@ -592,6 +592,407 @@ enum CategoryPickerTarget<'a> {
 }
 
 impl HestiaApp {
+    fn library_sort_label(sort: LibrarySort) -> &'static str {
+        match sort {
+            LibrarySort::NameAsc => "Name A-Z",
+            LibrarySort::NameDesc => "Name Z-A",
+            LibrarySort::DateDesc => "Newest → Oldest",
+            LibrarySort::DateAsc => "Oldest → Newest",
+        }
+    }
+
+    fn sort_menu_heading(ui: &mut Ui, text: &str) {
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), 18.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add(
+                    egui::Label::new(
+                        bold(text)
+                            .size(12.5)
+                            .underline()
+                            .color(Color32::from_rgb(228, 231, 235)),
+                    )
+                    .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+            },
+        );
+    }
+
+    fn sort_menu_radio<T: Copy + PartialEq>(
+        ui: &mut Ui,
+        current: &mut T,
+        value: T,
+        label: &str,
+        tooltip: Option<&str>,
+    ) -> bool {
+        let mut response = ui
+            .radio_value(current, value, label)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if let Some(tooltip) = tooltip {
+            response = response.on_hover_text(tooltip);
+        }
+        response.changed()
+    }
+
+    fn render_library_sort_menu_button(&mut self, ui: &mut Ui, alpha: u8, width: f32) {
+        let button_label = Self::library_sort_label(self.state.library_sort);
+        let mut button_job = LayoutJob::default();
+        button_job.append(
+            &icon_char(Icon::ArrowDownNarrowWide).to_string(),
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                ..Default::default()
+            },
+        );
+        button_job.append(
+            "  ",
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(13.0),
+                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                ..Default::default()
+            },
+        );
+        button_job.append(
+            button_label,
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::proportional(13.0),
+                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                ..Default::default()
+            },
+        );
+
+        let button_id = ui.make_persistent_id("library_sort_combo");
+        let popup_id = button_id.with("popup");
+        let is_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let (slot_rect, _) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::hover());
+
+        let margin = ui.spacing().button_padding;
+        let icon_spacing = ui.spacing().icon_spacing;
+        let icon_size = Vec2::splat(ui.spacing().icon_width);
+        let galley = ui.painter().layout_job(button_job);
+        let minimum_width = width - 2.0 * margin.x;
+        let actual_width = (galley.size().x + icon_spacing + icon_size.x).max(minimum_width);
+        let actual_height = galley.size().y.max(icon_size.y);
+        let content_rect =
+            egui::Rect::from_min_size(slot_rect.min + margin, Vec2::new(actual_width, actual_height));
+        let mut button_rect = content_rect.expand2(margin);
+        button_rect.set_height(button_rect.height().max(ui.spacing().interact_size.y));
+        let response = ui.interact(button_rect, button_id, Sense::click());
+        let visuals = if is_popup_open {
+            &ui.visuals().widgets.open
+        } else {
+            ui.style().interact(&response)
+        };
+
+        if ui.is_rect_visible(button_rect) {
+            ui.painter().rect(
+                button_rect.expand(visuals.expansion),
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+
+            let icon_rect = egui::Align2::RIGHT_CENTER
+                .align_size_within_rect(icon_size, content_rect)
+                .expand(visuals.expansion);
+            let triangle_rect = egui::Rect::from_center_size(
+                icon_rect.center(),
+                egui::vec2(icon_rect.width() * 0.7, icon_rect.height() * 0.45),
+            );
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![
+                    triangle_rect.left_top(),
+                    triangle_rect.right_top(),
+                    triangle_rect.center_bottom(),
+                ],
+                visuals.fg_stroke.color,
+                egui::Stroke::NONE,
+            ));
+
+            let text_rect =
+                egui::Align2::LEFT_CENTER.align_size_within_rect(galley.size(), content_rect);
+            ui.painter()
+                .galley(text_rect.min, galley, visuals.text_color());
+        }
+
+        let response = response
+            .on_hover_text("Sort, group, and layout installed mods")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        egui::Popup::menu(&response)
+            .id(popup_id)
+            .width(244.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .frame(
+                egui::Frame::popup(ui.style())
+                    .fill({
+                        let fill = ui.style().visuals.window_fill();
+                        Color32::from_rgba_premultiplied(
+                            fill.r(),
+                            fill.g(),
+                            fill.b(),
+                            ((fill.a() as f32) * 0.94).round() as u8,
+                        )
+                    })
+                    .inner_margin(egui::Margin::same(12)),
+            )
+            .show(|ui| {
+                ui.set_min_width(220.0);
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.spacing_mut().item_spacing.y = 4.0;
+
+                let mut should_save = false;
+
+                Self::sort_menu_heading(ui, "Sort Mods");
+                ui.add_space(-2.0);
+                let mut selected_sort = self.state.library_sort;
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::NameAsc,
+                    "Name A-Z",
+                    Some("Sorts by mod title, falling back to folder name."),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::NameDesc,
+                    "Name Z-A",
+                    Some("Sorts by mod title, falling back to folder name."),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::DateDesc,
+                    "Newest to Oldest",
+                    Some("Uses the newest known install, content, or refresh timestamp."),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::DateAsc,
+                    "Oldest to Newest",
+                    Some("Uses the oldest known install, content, or refresh timestamp first."),
+                );
+                if selected_sort != self.state.library_sort {
+                    self.state.library_sort = selected_sort;
+                }
+
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(-1.0);
+
+                Self::sort_menu_heading(ui, "Group Mods");
+                ui.add_space(-2.0);
+                let mut group_mode = self.state.library_group_mode;
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut group_mode,
+                    LibraryGroupMode::Category,
+                    "Category",
+                    Some("Groups mods by your per-game categories."),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut group_mode,
+                    LibraryGroupMode::Status,
+                    "Status",
+                    Some("Groups mods into Active, Disabled, and Archived sections."),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut group_mode,
+                    LibraryGroupMode::None,
+                    "None",
+                    Some("Shows one continuous sorted mod list."),
+                );
+                if group_mode != self.state.library_group_mode {
+                    self.state.library_group_mode = group_mode;
+                }
+
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(-1.0);
+
+                Self::sort_menu_heading(ui, "Category Layout");
+                ui.add_space(-2.0);
+                if !matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                    static_label(
+                        ui,
+                        RichText::new("Available when grouped by category.")
+                            .size(11.0)
+                            .italics()
+                            .color(Color32::from_gray(135)),
+                    );
+                    ui.add_space(-1.0);
+                }
+                ui.add_enabled_ui(
+                    matches!(self.state.library_group_mode, LibraryGroupMode::Category),
+                    |ui| {
+                        let mut display_mode = self.state.library_category_display_mode;
+                        should_save |= Self::sort_menu_radio(
+                            ui,
+                            &mut display_mode,
+                            LibraryCategoryDisplayMode::Folders,
+                            "Folders",
+                            Some("Shows category tiles first, then opens one category at a time."),
+                        );
+                        should_save |= Self::sort_menu_radio(
+                            ui,
+                            &mut display_mode,
+                            LibraryCategoryDisplayMode::GroupedSections,
+                            "List",
+                            Some("Shows every category as a section in the mod list."),
+                        );
+                        if display_mode != self.state.library_category_display_mode {
+                            self.state.library_category_display_mode = display_mode;
+                        }
+                    },
+                );
+
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(-1.0);
+
+                Self::sort_menu_heading(ui, "Sort Categories");
+                ui.add_space(-2.0);
+                let selected_game_id = self
+                    .selected_game()
+                    .map(|game| game.definition.id.clone());
+                if !matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                    static_label(
+                        ui,
+                        RichText::new("Available when grouped by category.")
+                            .size(11.0)
+                            .italics()
+                            .color(Color32::from_gray(135)),
+                    );
+                    ui.add_space(-1.0);
+                }
+                ui.add_enabled_ui(
+                    matches!(self.state.library_group_mode, LibraryGroupMode::Category)
+                        && selected_game_id.is_some(),
+                    |ui| {
+                        if let Some(game_id) = selected_game_id.as_deref() {
+                            let mut category_sort_mode =
+                                self.category_sort_mode_for_game(game_id);
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::Manual,
+                                Self::category_sort_mode_label(ModCategorySortMode::Manual),
+                                Some("Uses your manual category order."),
+                            );
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::ByNameAsc,
+                                Self::category_sort_mode_label(ModCategorySortMode::ByNameAsc),
+                                Some("Sorts category folders and sections by category name."),
+                            );
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::ByModCountDesc,
+                                Self::category_sort_mode_label(
+                                    ModCategorySortMode::ByModCountDesc,
+                                ),
+                                Some("Shows categories with the most mods first."),
+                            );
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::ByModCountAsc,
+                                Self::category_sort_mode_label(
+                                    ModCategorySortMode::ByModCountAsc,
+                                ),
+                                Some("Shows categories with the fewest mods first."),
+                            );
+                            if category_sort_mode != self.category_sort_mode_for_game(game_id) {
+                                self.set_category_sort_mode_for_game(
+                                    game_id,
+                                    category_sort_mode,
+                                );
+                            }
+                        }
+                    },
+                );
+
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(-1.0);
+
+                Self::sort_menu_heading(ui, "Miscellaneous");
+                ui.add_space(-2.0);
+                let detail_changed = match self.state.library_group_mode {
+                    LibraryGroupMode::Status => ui
+                        .checkbox(&mut self.state.library_sort_category_first, "Sort by category first")
+                        .on_hover_text("Within status groups, follows category order before the selected sort.")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .changed(),
+                    LibraryGroupMode::Category | LibraryGroupMode::None => ui
+                        .checkbox(&mut self.state.library_sort_status_first, "Sort by status first")
+                        .on_hover_text("Places Active mods first, then Disabled, then Archived before the selected sort.")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .changed(),
+                };
+                should_save |= detail_changed;
+
+                let card_detail_changed = if matches!(
+                    self.state.library_group_mode,
+                    LibraryGroupMode::Category
+                ) {
+                    ui.checkbox(
+                        &mut self.state.library_category_group_show_status,
+                        "Show mod status on card",
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .changed()
+                } else {
+                    ui.checkbox(
+                        &mut self.state.library_status_group_show_category,
+                        "Show category on card",
+                    )
+                    .on_hover_text("Mod state still appears as the colored status dot.")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .changed()
+                };
+                should_save |= card_detail_changed;
+
+                ui.add_enabled_ui(
+                    matches!(
+                        self.state.library_group_mode,
+                        LibraryGroupMode::Category
+                    ) && matches!(
+                        self.state.library_category_display_mode,
+                        LibraryCategoryDisplayMode::GroupedSections
+                    ),
+                    |ui| {
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.state.library_uncategorized_first,
+                                "Show uncategorized mods first",
+                            )
+                            .on_hover_text("Available when grouped by category in list layout.")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .changed();
+                    },
+                );
+
+                if should_save {
+                    self.selected_mods.clear();
+                    self.save_state();
+                }
+            });
+    }
+
     fn paint_category_popup_hover(ui: &mut Ui, response: &egui::Response) {
         if response.hovered() {
             let fill = ui.visuals().widgets.hovered.bg_fill;
@@ -3157,7 +3558,7 @@ impl HestiaApp {
                         let combo_rect = egui::Rect::from_min_size(
                             egui::pos2(
                                 content_origin.x + 128.0,
-                                unit_rect.top(),
+                                unit_rect.top() + 6.0,
                             ),
                             egui::vec2(148.0, 30.0),
                         );
@@ -3188,58 +3589,7 @@ impl HestiaApp {
                             egui::CornerRadius::same(6);
                         combo_ui.spacing_mut().icon_spacing = 4.0;
 
-                        let mut selected_sort = self.state.library_sort;
-                        let selected_text = match selected_sort {
-                            LibrarySort::NameAsc => "Name A-Z",
-                            LibrarySort::NameDesc => "Name Z-A",
-                            LibrarySort::DateDesc => "Newest → Oldest",
-                            LibrarySort::DateAsc => "Oldest → Newest",
-                        };
-                        let mut selected_job = LayoutJob::default();
-                        selected_job.append(
-                            &icon_char(Icon::ArrowDownNarrowWide).to_string(),
-                            0.0,
-                            TextFormat {
-                                font_id: egui::FontId::new(
-                                    13.0,
-                                    FontFamily::Name(LUCIDE_FAMILY.into()),
-                                ),
-                                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
-                                ..Default::default()
-                            },
-                        );
-                        selected_job.append(
-                            "  ",
-                            0.0,
-                            TextFormat {
-                                font_id: egui::FontId::proportional(13.0),
-                                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
-                                ..Default::default()
-                            },
-                        );
-                        selected_job.append(
-                            selected_text,
-                            0.0,
-                            TextFormat {
-                                font_id: egui::FontId::proportional(13.0),
-                                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
-                                ..Default::default()
-                            },
-                        );
-                        egui::ComboBox::from_id_salt("library_sort_combo")
-                            .selected_text(selected_job)
-                            .width(combo_rect.width())
-                            .show_ui(&mut combo_ui, |ui| {
-                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                                ui.selectable_value(&mut selected_sort, LibrarySort::NameAsc, "Name A-Z");
-                                ui.selectable_value(&mut selected_sort, LibrarySort::NameDesc, "Name Z-A");
-                                ui.selectable_value(&mut selected_sort, LibrarySort::DateDesc, "Newest → Oldest");
-                                ui.selectable_value(&mut selected_sort, LibrarySort::DateAsc, "Oldest → Newest");
-                            });
-                        if selected_sort != self.state.library_sort {
-                            self.state.library_sort = selected_sort;
-                            self.save_state();
-                        }
+                        self.render_library_sort_menu_button(&mut combo_ui, alpha, combo_rect.width());
                     }
 
                     if selection_anim > 0.01 {
