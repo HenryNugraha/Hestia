@@ -214,10 +214,16 @@ pub(crate) const fn l10n(en_us: &'static str, id_id: &'static str, zh_cn: &'stat
 
 impl L10n {
     pub(crate) fn get(&self, language: AppLanguage) -> &'static str {
-        match language {
+        let localized = match language {
             AppLanguage::Indonesian => self.id_id,
             AppLanguage::ChineseSimplified => self.zh_cn,
             AppLanguage::English => self.en_us,
+        };
+
+        if localized.trim().is_empty() {
+            self.en_us
+        } else {
+            localized
         }
     }
 }
@@ -1063,6 +1069,52 @@ pub struct TaskEntry {
     pub total_size: Option<u64>,
     #[serde(default)]
     pub unsafe_content: bool,
+    #[serde(default)]
+    pub retry_payload: Option<TaskRetryPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TaskRetryPayload {
+    BrowseDownload(BrowseDownloadTaskPayload),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseDownloadTaskPayload {
+    pub game_id: String,
+    pub mod_id: u64,
+    pub file: BrowseDownloadTaskFile,
+    #[serde(default)]
+    pub selected_files: Vec<BrowseDownloadTaskFile>,
+    #[serde(default)]
+    pub unsafe_content: bool,
+    #[serde(default)]
+    pub update_folder_name: Option<String>,
+    #[serde(default)]
+    pub update_target_mod_id: Option<String>,
+    #[serde(default)]
+    pub install_disabled: bool,
+    #[serde(default)]
+    pub post_install_rename_to: Option<String>,
+    #[serde(default)]
+    pub profile_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseDownloadTaskFile {
+    pub id: u64,
+    pub file_name: String,
+    pub file_size: u64,
+    pub date_added: i64,
+    #[serde(default)]
+    pub download_count: u64,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub is_archived: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

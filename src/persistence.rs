@@ -20,7 +20,7 @@ use crate::model::{
     LibraryCategoryDisplayMode, LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE,
     MetadataVisibility, ModCategory, ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior,
     OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
-    TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
+    TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
 };
 
 #[derive(Debug, Clone)]
@@ -636,8 +636,8 @@ pub fn replace_task(paths: &PortablePaths, task: &TaskEntry) -> Result<()> {
     let conn = open_history_db(paths)?;
     conn.execute(
         "INSERT OR REPLACE INTO task_history
-        (id, kind, status, title, game_id, created_at, updated_at, total_size, unsafe_content)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        (id, kind, status, title, game_id, created_at, updated_at, total_size, unsafe_content, retry_payload)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             task.id as i64,
             task_kind_to_str(task.kind),
@@ -648,6 +648,7 @@ pub fn replace_task(paths: &PortablePaths, task: &TaskEntry) -> Result<()> {
             task.updated_at.to_rfc3339(),
             task.total_size.map(|value| value as i64),
             if task.unsafe_content { 1_i64 } else { 0_i64 },
+            serialize_task_retry_payload(task.retry_payload.as_ref())?,
         ],
     )?;
     prune_task_history(&conn)?;
@@ -691,7 +692,8 @@ fn init_history_store(paths: &PortablePaths) -> Result<()> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             total_size INTEGER NULL,
-            unsafe_content INTEGER NOT NULL DEFAULT 0
+            unsafe_content INTEGER NOT NULL DEFAULT 0,
+            retry_payload TEXT NULL
         );",
     )?;
     ensure_task_history_schema(&conn)?;
@@ -716,6 +718,12 @@ fn ensure_task_history_schema(conn: &Connection) -> Result<()> {
     if !table_has_column(conn, "task_history", "unsafe_content")? {
         conn.execute(
             "ALTER TABLE task_history ADD COLUMN unsafe_content INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !table_has_column(conn, "task_history", "retry_payload")? {
+        conn.execute(
+            "ALTER TABLE task_history ADD COLUMN retry_payload TEXT NULL",
             [],
         )?;
     }
@@ -770,7 +778,7 @@ fn load_operation_logs_from_conn(conn: &Connection) -> Result<Vec<OperationLogEn
 
 fn load_task_history_from_conn(conn: &Connection) -> Result<Vec<TaskEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, kind, status, title, game_id, created_at, updated_at, total_size, unsafe_content
+        "SELECT id, kind, status, title, game_id, created_at, updated_at, total_size, unsafe_content, retry_payload
         FROM task_history
         ORDER BY created_at ASC, id ASC",
     )?;
@@ -778,6 +786,7 @@ fn load_task_history_from_conn(conn: &Connection) -> Result<Vec<TaskEntry>> {
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
         let total_size_raw: Option<i64> = row.get(7)?;
+        let retry_payload_raw: Option<String> = row.get(9)?;
         items.push(TaskEntry {
             id: row.get::<_, i64>(0)? as u64,
             kind: parse_task_kind(&row.get::<_, String>(1)?)?,
@@ -788,9 +797,25 @@ fn load_task_history_from_conn(conn: &Connection) -> Result<Vec<TaskEntry>> {
             updated_at: parse_rfc3339_utc(&row.get::<_, String>(6)?)?,
             total_size: total_size_raw.map(|value| value as u64),
             unsafe_content: row.get::<_, i64>(8).unwrap_or(0) != 0,
+            retry_payload: parse_task_retry_payload(retry_payload_raw.as_deref()),
         });
     }
     Ok(items)
+}
+
+fn serialize_task_retry_payload(payload: Option<&TaskRetryPayload>) -> Result<Option<String>> {
+    payload
+        .map(serde_json::to_string)
+        .transpose()
+        .context("failed to serialize task retry payload")
+}
+
+fn parse_task_retry_payload(raw: Option<&str>) -> Option<TaskRetryPayload> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    serde_json::from_str(raw).ok()
 }
 
 fn normalize_interrupted_tasks(conn: &Connection) -> Result<()> {

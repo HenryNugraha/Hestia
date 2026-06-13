@@ -46,6 +46,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "已取消", // TasksStatusCanceled
     "正在取消…", // TasksCanceling
     "取消", // TasksCancel
+    "重试", // TasksRetry
+    "继续", // TasksResume
     "正在启动下载…", // TasksStartingDownload
     "已排队…", // TasksQueuedProgress
     "正在安装 Mod 文件…", // TasksInstallingModFiles

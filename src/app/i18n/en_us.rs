@@ -46,6 +46,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Canceled", // TasksStatusCanceled
     "Canceling…", // TasksCanceling
     "Cancel", // TasksCancel
+    "Retry", // TasksRetry
+    "Resume", // TasksResume
     "Starting download…", // TasksStartingDownload
     "Queued…", // TasksQueuedProgress
     "Installing mod files…", // TasksInstallingModFiles

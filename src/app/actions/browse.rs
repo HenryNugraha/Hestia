@@ -91,6 +91,208 @@ impl HestiaApp {
         format!("dl:{mod_id}:{safe_name}:{file_size}")
     }
 
+    fn browse_download_task_file_from_mod_file(
+        file: &gamebanana::ModFile,
+    ) -> BrowseDownloadTaskFile {
+        BrowseDownloadTaskFile {
+            id: file.id,
+            file_name: file.file_name.clone(),
+            file_size: file.file_size,
+            date_added: file.date_added,
+            download_count: file.download_count,
+            description: file.description.clone(),
+            version: file.version.clone(),
+            download_url: file.download_url.clone(),
+            is_archived: file.is_archived,
+        }
+    }
+
+    fn browse_download_mod_file_from_task_file(
+        file: &BrowseDownloadTaskFile,
+    ) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id: file.id,
+            file_name: file.file_name.clone(),
+            file_size: file.file_size,
+            date_added: file.date_added,
+            download_count: file.download_count,
+            description: file.description.clone(),
+            version: file.version.clone(),
+            download_url: file.download_url.clone(),
+            is_archived: file.is_archived,
+        }
+    }
+
+    fn browse_download_retry_payload(
+        &self,
+        game_id: String,
+        mod_id: u64,
+        file: &gamebanana::ModFile,
+        selected_files: &[gamebanana::ModFile],
+        unsafe_content: bool,
+        update_folder_name: Option<String>,
+        update_target_mod_id: Option<String>,
+        install_disabled: bool,
+        post_install_rename_to: Option<String>,
+    ) -> BrowseDownloadTaskPayload {
+        let selected_files = if selected_files.is_empty() {
+            vec![Self::browse_download_task_file_from_mod_file(file)]
+        } else {
+            selected_files
+                .iter()
+                .map(Self::browse_download_task_file_from_mod_file)
+                .collect()
+        };
+        BrowseDownloadTaskPayload {
+            game_id,
+            mod_id,
+            file: Self::browse_download_task_file_from_mod_file(file),
+            selected_files,
+            unsafe_content,
+            update_folder_name,
+            update_target_mod_id,
+            install_disabled,
+            post_install_rename_to,
+            profile_json: self
+                .browse_state
+                .details
+                .get(&mod_id)
+                .and_then(|detail| serde_json::to_string(&detail.profile).ok()),
+        }
+    }
+
+    fn browse_download_job_from_retry_payload(
+        task_id: u64,
+        payload: &BrowseDownloadTaskPayload,
+        cache_limit_bytes: u64,
+    ) -> BrowseDownloadJob {
+        BrowseDownloadJob {
+            task_id,
+            title: payload.file.file_name.clone(),
+            url: payload.file.download_url.clone().unwrap_or_default(),
+            cache_key: Self::browse_download_cache_key(
+                payload.mod_id,
+                &payload.file.file_name,
+                payload.file.file_size,
+            ),
+            file_name: payload.file.file_name.clone(),
+            cache_limit_bytes,
+            total_size: Some(payload.file.file_size),
+        }
+    }
+
+    fn pending_browse_install_meta_from_retry_payload(
+        &self,
+        payload: &BrowseDownloadTaskPayload,
+    ) -> PendingBrowseInstallMeta {
+        let update_target_was_disabled = payload
+            .update_target_mod_id
+            .as_deref()
+            .and_then(|target_id| self.state.mods.iter().find(|m| m.id == target_id))
+            .is_some_and(|mod_entry| mod_entry.status == ModStatus::Disabled);
+        PendingBrowseInstallMeta {
+            mod_id: payload.mod_id,
+            game_id: payload.game_id.clone(),
+            selected_files: payload
+                .selected_files
+                .iter()
+                .map(Self::browse_download_mod_file_from_task_file)
+                .collect(),
+            update_folder_name: payload.update_folder_name.clone(),
+            update_target_mod_id: payload.update_target_mod_id.clone(),
+            update_target_was_disabled,
+            install_disabled: payload.install_disabled,
+            post_install_rename_to: payload.post_install_rename_to.clone(),
+        }
+    }
+
+    fn retry_profile_for_task(&self, task_id: u64) -> Option<Box<gamebanana::ProfileResponse>> {
+        self.state
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .and_then(|task| match task.retry_payload.as_ref()? {
+                TaskRetryPayload::BrowseDownload(payload) => payload.profile_json.as_deref(),
+            })
+            .and_then(|raw| serde_json::from_str::<gamebanana::ProfileResponse>(raw).ok())
+            .map(Box::new)
+    }
+
+    fn browse_download_retry_payload_for_task(
+        task: &TaskEntry,
+    ) -> Option<&BrowseDownloadTaskPayload> {
+        match task.retry_payload.as_ref()? {
+            TaskRetryPayload::BrowseDownload(payload) => Some(payload),
+        }
+    }
+
+    fn browse_download_partial_path_for_payload(
+        payload: &BrowseDownloadTaskPayload,
+    ) -> PathBuf {
+        let cache_key = Self::browse_download_cache_key(
+            payload.mod_id,
+            &payload.file.file_name,
+            payload.file.file_size,
+        );
+        persistence::runtime_temp_downloads_partial_dir()
+            .join(format!("{}.partial", hash64_hex(cache_key.as_bytes())))
+    }
+
+    fn task_has_resumable_browse_download(&self, task: &TaskEntry) -> bool {
+        let Some(payload) = Self::browse_download_retry_payload_for_task(task) else {
+            return false;
+        };
+        Self::browse_download_partial_path_for_payload(payload)
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() > 0)
+    }
+
+    fn retry_browse_download_task(&mut self, task_id: u64) -> bool {
+        let Some(task) = self.state.tasks.iter().find(|task| task.id == task_id) else {
+            return false;
+        };
+        if task.kind != TaskKind::Download
+            || !matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
+        {
+            return false;
+        }
+        let Some(payload) = Self::browse_download_retry_payload_for_task(task).cloned() else {
+            return false;
+        };
+        if self
+            .browse_download_queue
+            .iter()
+            .any(|job| job.task_id == task_id)
+            || self.browse_download_inflight.contains_key(&task_id)
+            || self.install_queue.iter().any(|job| job.id == task_id)
+            || self.install_inflight.contains_key(&task_id)
+        {
+            return true;
+        }
+        if !self.game_is_installed_or_configured(&payload.game_id) {
+            self.report_warn(
+                self.text().game_not_installed(),
+                Some(self.text().install_unavailable()),
+            );
+            return true;
+        }
+
+        self.pending_browse_install_safety
+            .insert(task_id, payload.unsafe_content);
+        self.pending_browse_install_meta.insert(
+            task_id,
+            self.pending_browse_install_meta_from_retry_payload(&payload),
+        );
+        self.browse_download_queue.push_back(Self::browse_download_job_from_retry_payload(
+            task_id,
+            &payload,
+            self.cache_limit_bytes.load(Ordering::Relaxed),
+        ));
+        self.update_task_status(task_id, TaskStatus::Queued);
+        self.set_message_ok(self.text().download_queued());
+        true
+    }
+
     fn ensure_browse_bootstrap(&mut self) {
         if self.current_view != ViewMode::Browse || !self.has_enabled_games() {
             return;
@@ -1063,7 +1265,17 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         let task_id = task_id.unwrap_or_else(|| self.next_background_job_id());
         let title = file.file_name.clone();
         let size = Some(file.file_size);
-        let cache_key = Self::browse_download_cache_key(mod_id, &file.file_name, file.file_size);
+        let retry_payload = self.browse_download_retry_payload(
+            game_id.clone(),
+            mod_id,
+            &file,
+            &selected_files,
+            unsafe_content,
+            update_folder_name,
+            update_target_mod_id,
+            install_disabled,
+            post_install_rename_to,
+        );
         if task_id == self.install_next_job_id {
             self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
         }
@@ -1086,34 +1298,21 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             }
             self.update_task_status(task_id, TaskStatus::Queued);
         }
+        self.update_task_retry_payload(
+            task_id,
+            Some(TaskRetryPayload::BrowseDownload(retry_payload.clone())),
+        );
         self.pending_browse_install_safety
             .insert(task_id, unsafe_content);
-        let update_target_was_disabled = update_target_mod_id
-            .as_deref()
-            .and_then(|target_id| self.state.mods.iter().find(|m| m.id == target_id))
-            .is_some_and(|mod_entry| mod_entry.status == ModStatus::Disabled);
         self.pending_browse_install_meta.insert(
             task_id,
-            PendingBrowseInstallMeta {
-                mod_id,
-                game_id: game_id.clone(),
-                selected_files,
-                update_folder_name,
-                update_target_mod_id,
-                update_target_was_disabled,
-                install_disabled,
-                post_install_rename_to,
-            },
+            self.pending_browse_install_meta_from_retry_payload(&retry_payload),
         );
-        self.browse_download_queue.push_back(BrowseDownloadJob {
+        self.browse_download_queue.push_back(Self::browse_download_job_from_retry_payload(
             task_id,
-            title,
-            url: file.download_url.unwrap_or_default(),
-            cache_key,
-            file_name: file.file_name,
-            cache_limit_bytes: self.cache_limit_bytes.load(Ordering::Relaxed),
-            total_size: Some(file.file_size),
-        });
+            &retry_payload,
+            self.cache_limit_bytes.load(Ordering::Relaxed),
+        ));
     }
 
     fn process_browse_download_queue(&mut self) {
@@ -1226,7 +1425,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         self.browse_state.details.get(&meta.mod_id).map(|d| Box::new(d.profile.clone()))
                     } else {
                         None
-                    };
+                    }
+                    .or_else(|| self.retry_profile_for_task(task_id));
                     match self.write_cached_download_to_temp_archive(task_id, &cache_key, &file_name)
                     {
                         Ok(temp_archive) => {

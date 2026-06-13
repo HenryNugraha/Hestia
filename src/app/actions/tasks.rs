@@ -78,6 +78,7 @@ impl HestiaApp {
             updated_at: now,
             total_size,
             unsafe_content,
+            retry_payload: None,
         };
         self.state.tasks.push(task.clone());
         if let Err(err) = persistence::replace_task(&self.portable, &task) {
@@ -159,6 +160,22 @@ impl HestiaApp {
             }
         }
         self.save_state();
+    }
+
+    fn update_task_retry_payload(&mut self, job_id: u64, retry_payload: Option<TaskRetryPayload>) {
+        let mut snapshot = None;
+        if let Some(task) = self.state.tasks.iter_mut().find(|task| task.id == job_id) {
+            task.retry_payload = retry_payload;
+            snapshot = Some(task.clone());
+        }
+        if let Some(task) = snapshot {
+            if let Err(err) = persistence::replace_task(&self.portable, &task) {
+                self.report_error_message(
+                    format!("failed to persist task history: {err:#}"),
+                    Some(self.text().could_not_save_data()),
+                );
+            }
+        }
     }
 
     fn remove_task(&mut self, job_id: u64) {
@@ -314,7 +331,28 @@ impl HestiaApp {
         }
     }
 
+    fn task_display_title(title: &str) -> (String, bool) {
+        const TASK_TITLE_MAX_CHARS: usize = 38;
+        const TASK_TITLE_PREFIX_CHARS: usize = 35;
+
+        if title.chars().count() <= TASK_TITLE_MAX_CHARS {
+            (title.to_string(), false)
+        } else {
+            (
+                format!(
+                    "{}...",
+                    title
+                        .chars()
+                        .take(TASK_TITLE_PREFIX_CHARS)
+                        .collect::<String>()
+                ),
+                true,
+            )
+        }
+    }
+
     fn render_task_row(&mut self, ui: &mut Ui, task: &TaskEntry) {
+        const TASK_BADGE_ACTION_GAP: f32 = -9.0;
         let text = self.text();
         let status_label = text.task_status_label(task.status);
         let status_color = Self::task_status_color(task.status);
@@ -359,7 +397,11 @@ impl HestiaApp {
                 }
                 ui.add_space(-2.0);
                 ui.vertical(|ui| {
-                    ui.label(bold(task.title.clone()));
+                    let (display_title, title_clamped) = Self::task_display_title(&task.title);
+                    let title_response = ui.label(bold(display_title));
+                    if title_clamped {
+                        title_response.on_hover_text(&task.title);
+                    }
                     ui.add_space(-6.0);
                     let time_str = format_exact_local_timestamp(task.created_at.timestamp());
                     if matches!(task.status, TaskStatus::Completed) && task.total_size.is_some() {
@@ -385,29 +427,102 @@ impl HestiaApp {
                             | TaskStatus::Downloading
                             | TaskStatus::Canceling
                     );
-                    if cancellable {
-                        let cancel_label = if task.status == TaskStatus::Canceling {
-                            text.task_canceling()
-                        } else {
-                            text.task_cancel()
-                        };
-                        let enabled = task.status != TaskStatus::Canceling;
-                        let response = ui.add_enabled(enabled, egui::Button::new(cancel_label));
-                        if response.clicked() {
-                            self.cancel_task(task.id);
-                        }
-                    }
-                    let badge = egui::Frame::new()
-                        .fill(status_color)
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(8, 4));
-                    badge.show(ui, |ui| {
-                        ui.label(
-                            RichText::new(status_label)
-                                .color(Color32::WHITE)
-                                .size(11.0),
-                        );
-                    });
+                    let retryable_browse_download = matches!(
+                        task.status,
+                        TaskStatus::Failed | TaskStatus::Canceled
+                    ) && Self::browse_download_retry_payload_for_task(task).is_some();
+                    let has_badge_action = cancellable || retryable_browse_download;
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(92.0, 42.0),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            let badge = egui::Frame::new()
+                                .fill(status_color)
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(egui::Margin {
+                                    left: 8,
+                                    right: 8,
+                                    top: 3,
+                                    bottom: 6,
+                                });
+                            badge.show(ui, |ui| {
+                                ui.set_min_width(62.0);
+                                if has_badge_action {
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            bold(status_label).color(Color32::WHITE).size(12.0),
+                                        );
+                                        ui.add_space(TASK_BADGE_ACTION_GAP);
+                                        if cancellable {
+                                            let (cancel_label, enabled) =
+                                                if task.status == TaskStatus::Canceling {
+                                                    (text.task_canceling(), false)
+                                                } else {
+                                                    (text.task_cancel(), true)
+                                                };
+                                            let label = RichText::new(cancel_label)
+                                                .size(9.5)
+                                                .underline()
+                                                .color(if enabled {
+                                                    Color32::WHITE
+                                                } else {
+                                                    Color32::from_gray(210)
+                                                });
+                                            let response = ui.add_enabled(
+                                                enabled,
+                                                egui::Label::new(label)
+                                                    .selectable(false)
+                                                    .sense(Sense::click()),
+                                            );
+                                            if enabled {
+                                                let response = response
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                if response.clicked() {
+                                                    self.cancel_task(task.id);
+                                                }
+                                            }
+                                        } else if retryable_browse_download {
+                                            let retry_label =
+                                                if self.task_has_resumable_browse_download(task) {
+                                                    text.task_resume()
+                                                } else {
+                                                    text.task_retry()
+                                                };
+                                            let response = ui
+                                                .add(
+                                                    egui::Label::new(
+                                                        RichText::new(retry_label)
+                                                            .size(9.5)
+                                                            .underline()
+                                                            .color(Color32::WHITE),
+                                                    )
+                                                    .selectable(false)
+                                                    .sense(Sense::click()),
+                                                )
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            if response.clicked() {
+                                                self.retry_task(task.id);
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(ui.available_width(), 24.0),
+                                        egui::Layout::centered_and_justified(
+                                            egui::Direction::TopDown,
+                                        ),
+                                        |ui| {
+                                            ui.label(
+                                                bold(status_label)
+                                                    .color(Color32::WHITE)
+                                                    .size(12.0),
+                                            );
+                                        },
+                                    );
+                                }
+                            });
+                        },
+                    );
                 });
             });
 
@@ -548,6 +663,12 @@ impl HestiaApp {
                     .install_request_tx
                     .send(InstallRequest::Cancel { job_id });
             }
+        }
+    }
+
+    fn retry_task(&mut self, job_id: u64) {
+        if self.retry_browse_download_task(job_id) {
+            return;
         }
     }
 

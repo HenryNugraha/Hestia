@@ -1,13 +1,19 @@
 use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 
 // l10n order: English, Bahasa Indonesia, Simplified Chinese.
+// Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n("xx June 2026", "xx Juni 2026", "2026年 6月 xx日");
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
         "Added app translation to Bahasa Indonesia & Chinese",
         "Menambahkan terjemahan aplikasi ke Bahasa Indonesia & Mandarin",
-        "新增 Bahasa Indonesia 和简体中文翻译",
+        "新增印度尼西亚语和简体中文翻译",
+    ),
+    l10n(
+        "Added support for resuming downloads",
+        "Menambahkan dukungan untuk melanjutkan unduhan",
+        "新增支持断点续传功能",
     ),
 ];
 
@@ -17,32 +23,36 @@ pub(crate) const FEEDBACK_SURVEY_TITLE: L10n =
     l10n("Quick Feedback", "Masukan Singkat", "快速反馈");
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
-        "light_theme_demand",
+        "language_indonesia_quality",
         l10n(
-            "Would you like a white/light app theme?",
-            "Apakah Anda ingin tema aplikasi putih/terang?",
-            "你想要白色/浅色应用主题吗？",
+            "[If using BAHASA INDONESIA] How do you like it?",
+            "[Jika pakai BAHASA INDONESIA] Bagaimana menurutmu?",
+            "[如果你用印度尼西亚语] 你觉得怎么样？",
         ),
         &[
-            a(1, l10n("Yes", "Ya", "是")),
-            a(2, l10n("I don't care", "Tidak masalah", "无所谓")),
+            a(1, l10n("Great", "Bagus", "很好")),
+            a(2, l10n("Okay", "Biasa", "还行")),
+            a(3, l10n("Poor", "Buruk", "不好")),
+            a(4, l10n("Not using it", "Tidak pakai", "没在用")),
         ],
     ),
     q(
-        "translation_demand",
+        "language_chinese_quality",
         l10n(
-            "Would you like a non-English translation?",
-            "Apakah Anda ingin terjemahan selain bahasa Inggris?",
-            "你想要非英语翻译吗？",
+            "[If using CHINESE localization] How do you like it?",
+            "[Jika pakai MANDARIN] Bagaimana menurutmu?",
+            "[如果你使用中文版] 你觉得怎么样？",
         ),
         &[
-            a(1, l10n("Yes", "Ya", "是")),
-            a(2, l10n("I don't care", "Tidak masalah", "无所谓")),
+            a(1, l10n("Great", "Bagus", "很好")),
+            a(2, l10n("Okay", "Biasa", "还行")),
+            a(3, l10n("Poor", "Buruk", "不好")),
+            a(4, l10n("Not using it", "Tidak pakai", "没在用")),
         ],
     ),
 ];
 pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: L10n = l10n(
-    "What language? Or, anything else?",
-    "Bahasa apa? Atau ada hal lain?",
-    "想要哪种语言？或者还有其他意见吗？",
+    "Feature requests? Issues? Let me know!",
+    "Permintaan fitur? Masalah? Infokan aja!",
+    "有功能建议或遇到了问题？告诉我！（最好用英文）",
 );

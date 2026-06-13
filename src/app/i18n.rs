@@ -51,6 +51,8 @@ enum TextKey {
     TasksStatusCanceled,
     TasksCanceling,
     TasksCancel,
+    TasksRetry,
+    TasksResume,
     TasksStartingDownload,
     TasksQueuedProgress,
     TasksInstallingModFiles,
@@ -765,6 +767,14 @@ impl TextCatalog {
 
     fn task_cancel(self) -> &'static str {
         self.get(TextKey::TasksCancel)
+    }
+
+    fn task_retry(self) -> &'static str {
+        self.get(TextKey::TasksRetry)
+    }
+
+    fn task_resume(self) -> &'static str {
+        self.get(TextKey::TasksResume)
     }
 
     fn task_starting_download(self) -> &'static str {

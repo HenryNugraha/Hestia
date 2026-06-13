@@ -1,6 +1,16 @@
 # Changelog
 
-## [1.5.0-alpha] - 2026-06-07
+## [1.6.0-alpha] - 2026-06-xx
+
+### Added
+- App localization: Bahasa Indonesia
+- App localization: Chinese
+- Added support for resuming downloads.
+
+### Changed
+- Improved icon rendering in filter button's context menu.
+
+## [1.5.0] - 2026-06-07
 
 ### Added
 - New folder-style category layout.

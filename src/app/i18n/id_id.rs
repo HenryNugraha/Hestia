@@ -46,6 +46,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Dibatalkan", // TasksStatusCanceled
     "Membatalkan…", // TasksCanceling
     "Batal", // TasksCancel
+    "Coba Lagi", // TasksRetry
+    "Lanjutkan", // TasksResume
     "Memulai unduhan…", // TasksStartingDownload
     "Dalam antrean…", // TasksQueuedProgress
     "Memasang file mod…", // TasksInstallingModFiles
