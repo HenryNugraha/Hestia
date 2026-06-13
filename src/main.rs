@@ -11,7 +11,6 @@ use anyhow::Context;
 use eframe::icon_data;
 use egui::{pos2, vec2};
 use mimalloc::MiMalloc;
-use model::{SurveyAnswer, SurveyQuestion};
 use std::collections::HashSet;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -29,42 +28,6 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://hestia.hnawc.com/manifest/v1/latest.json",
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
-
-pub(crate) const WHATS_NEW_DATE: &str = "xx June 2026";
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &["Localization"];
-
-pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
-pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[
-    SurveyQuestion {
-        id: "light_theme_demand",
-        prompt: "Would you like a white/light app theme?",
-        answers: &[
-            SurveyAnswer {
-                id: 1,
-                label: "Yes",
-            },
-            SurveyAnswer {
-                id: 2,
-                label: "I don't care",
-            },
-        ],
-    },
-    SurveyQuestion {
-        id: "translation_demand",
-        prompt: "Would you like a non-English translation?",
-        answers: &[
-            SurveyAnswer {
-                id: 1,
-                label: "Yes",
-            },
-            SurveyAnswer {
-                id: 2,
-                label: "I don't care",
-            },
-        ],
-    },
-];
-pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: &str = "What language? Or, anything else?";
 
 fn main() -> anyhow::Result<()> {
     let log_filter = EnvFilter::from_default_env().add_directive(

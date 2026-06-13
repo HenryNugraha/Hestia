@@ -197,28 +197,69 @@ impl Default for AppState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct L10n {
+    pub en_us: &'static str,
+    pub id_id: &'static str,
+    pub zh_cn: &'static str,
+}
+
+pub(crate) const fn l10n(en_us: &'static str, id_id: &'static str, zh_cn: &'static str) -> L10n {
+    L10n {
+        en_us,
+        id_id,
+        zh_cn,
+    }
+}
+
+impl L10n {
+    pub(crate) fn get(&self, language: AppLanguage) -> &'static str {
+        match language {
+            AppLanguage::Indonesian => self.id_id,
+            AppLanguage::ChineseSimplified => self.zh_cn,
+            AppLanguage::English => self.en_us,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContentSurveyQuestion {
+    pub id: &'static str,
+    pub prompt: L10n,
+    pub answers: &'static [ContentSurveyAnswer],
+}
+
+pub(crate) const fn q(
+    id: &'static str,
+    prompt: L10n,
+    answers: &'static [ContentSurveyAnswer],
+) -> ContentSurveyQuestion {
+    ContentSurveyQuestion {
+        id,
+        prompt,
+        answers,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContentSurveyAnswer {
+    pub id: u8,
+    pub label: L10n,
+}
+
+pub(crate) const fn a(id: u8, label: L10n) -> ContentSurveyAnswer {
+    ContentSurveyAnswer { id, label }
+}
+
 #[derive(Debug, Clone)]
 pub struct SurveyDefinition {
     pub id: &'static str,
     pub version: &'static str,
-    pub title: &'static str,
     pub launch_delay: u32,
     pub later_delay: u32,
-    pub questions: &'static [SurveyQuestion],
-    pub message_label: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub struct SurveyQuestion {
-    pub id: &'static str,
-    pub prompt: &'static str,
-    pub answers: &'static [SurveyAnswer],
-}
-
-#[derive(Debug, Clone)]
-pub struct SurveyAnswer {
-    pub id: u8,
-    pub label: &'static str,
+    pub title: &'static L10n,
+    pub questions: &'static [ContentSurveyQuestion],
+    pub message_label: &'static L10n,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -266,18 +307,24 @@ impl SurveyDefinition {
 const FEEDBACK_SURVEY: SurveyDefinition = SurveyDefinition {
     id: "feedback",
     version: env!("CARGO_PKG_VERSION"),
-    title: "Quick Feedback",
-    launch_delay: 5,
-    later_delay: 3,
-    questions: crate::FEEDBACK_SURVEY_QUESTIONS,
-    message_label: crate::FEEDBACK_SURVEY_MESSAGE_LABEL,
+    launch_delay: crate::app::content::FEEDBACK_SURVEY_LAUNCH_DELAY,
+    later_delay: 5,
+    title: &crate::app::content::FEEDBACK_SURVEY_TITLE,
+    questions: crate::app::content::FEEDBACK_SURVEY_QUESTIONS,
+    message_label: &crate::app::content::FEEDBACK_SURVEY_MESSAGE_LABEL,
 };
 
 pub(crate) fn feedback_survey() -> Option<&'static SurveyDefinition> {
-    if !crate::FEEDBACK_SURVEY_ENABLED {
+    if !crate::app::content::FEEDBACK_SURVEY_ENABLED {
         return None;
     }
-    if FEEDBACK_SURVEY.questions.is_empty() && FEEDBACK_SURVEY.message_label.trim().is_empty() {
+    if FEEDBACK_SURVEY.questions.is_empty()
+        && FEEDBACK_SURVEY
+            .message_label
+            .get(AppLanguage::English)
+            .trim()
+            .is_empty()
+    {
         return None;
     }
     Some(&FEEDBACK_SURVEY)
@@ -1698,26 +1745,31 @@ pub fn seeded_games() -> Vec<GameInstall> {
 mod feedback_survey_tests {
     use super::*;
 
-    const ANSWERS: &[SurveyAnswer] = &[
-        SurveyAnswer {
+    const SURVEY_TITLE: L10n = l10n("Survey", "Survey", "Survey");
+    const SURVEY_MESSAGE_LABEL: L10n = l10n("Anything else?", "Anything else?", "Anything else?");
+    const ANSWERS: &[ContentSurveyAnswer] = &[
+        ContentSurveyAnswer {
             id: 1,
-            label: "Yes",
+            label: l10n("Yes", "Yes", "Yes"),
         },
-        SurveyAnswer { id: 2, label: "No" },
+        ContentSurveyAnswer {
+            id: 2,
+            label: l10n("No", "No", "No"),
+        },
     ];
-    const QUESTIONS: &[SurveyQuestion] = &[SurveyQuestion {
+    const QUESTIONS: &[ContentSurveyQuestion] = &[ContentSurveyQuestion {
         id: "q1",
-        prompt: "Question?",
+        prompt: l10n("Question?", "Question?", "Question?"),
         answers: ANSWERS,
     }];
     const SURVEY: SurveyDefinition = SurveyDefinition {
         id: "survey",
         version: "1.2.3",
-        title: "Survey",
         launch_delay: 5,
         later_delay: 3,
+        title: &SURVEY_TITLE,
         questions: QUESTIONS,
-        message_label: "Anything else?",
+        message_label: &SURVEY_MESSAGE_LABEL,
     };
 
     #[test]

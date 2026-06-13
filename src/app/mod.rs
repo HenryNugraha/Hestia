@@ -1,3 +1,5 @@
+pub(crate) mod content;
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
@@ -29,7 +31,6 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
-    WHATS_NEW_DATE, WHATS_NEW_HIGHLIGHTS,
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{
@@ -48,6 +49,8 @@ use crate::{
     },
     persistence::{self, PortablePaths},
 };
+
+use self::content::{WHATS_NEW_DATE, WHATS_NEW_HIGHLIGHTS};
 
 #[cfg(windows)]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};

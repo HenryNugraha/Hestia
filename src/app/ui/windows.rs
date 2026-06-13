@@ -58,9 +58,10 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 ui.vertical(|ui| {
                     ui.add_space(5.0);
+                    let whats_new_date = WHATS_NEW_DATE.get(self.state.language);
                     static_label(
                         ui,
-                        RichText::new(format!("{}", WHATS_NEW_DATE))
+                        RichText::new(whats_new_date)
                             .italics()
                             .size(11.0)
                             .small(),
@@ -68,6 +69,7 @@ impl HestiaApp {
                 });
             });
             for highlight in WHATS_NEW_HIGHLIGHTS {
+                let highlight = highlight.get(self.state.language);
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(12.0, 18.0),
@@ -76,7 +78,7 @@ impl HestiaApp {
                             static_label(ui, "•");
                         },
                     );
-                    ui.add(egui::Label::new(*highlight).wrap().selectable(false))
+                    ui.add(egui::Label::new(highlight).wrap().selectable(false))
                         .on_hover_cursor(egui::CursorIcon::Default);
                 });
             }
@@ -101,17 +103,18 @@ impl HestiaApp {
         let mut survey_open = self.state.show_feedback_survey;
         let force_default_pos = self.feedback_survey_force_default_pos;
         let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let survey_title = survey.title.get(self.state.language);
         let mut window =
-            egui::Window::new(icon_text_sized(Icon::ClipboardList, survey.title, 14.0, 14.0))
-            .id(egui::Id::new((
-                "feedback_survey_window",
-                self.feedback_survey_window_nonce,
-            )))
-            .open(&mut survey_open)
-            .title_bar(true)
-            .resizable(false)
-            .collapsible(true)
-            .frame(window_frame);
+            egui::Window::new(icon_text_sized(Icon::ClipboardList, survey_title, 14.0, 14.0))
+                .id(egui::Id::new((
+                    "feedback_survey_window",
+                    self.feedback_survey_window_nonce,
+                )))
+                .open(&mut survey_open)
+                .title_bar(true)
+                .resizable(false)
+                .collapsible(true)
+                .frame(window_frame);
 
         let window_size = egui::vec2(420.0, 420.0);
 
@@ -152,23 +155,28 @@ impl HestiaApp {
                         .show(ui, |ui| {
                             for question in survey.questions {
                                 ui.indent(("feedback_survey_question", question.id), |ui| {
-                                    ui.label(question.prompt);
+                                    ui.label(question.prompt.get(self.state.language));
                                     ui.horizontal_wrapped(|ui| {
                                         let selected = self
                                             .feedback_survey_answers
                                             .entry(question.id.to_string())
                                             .or_insert(0);
                                         for answer in question.answers {
-                                            ui.radio_value(selected, answer.id, answer.label)
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            ui.radio_value(
+                                                selected,
+                                                answer.id,
+                                                answer.label.get(self.state.language),
+                                            )
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
                                         }
                                     });
                                 });
                                 ui.add_space(6.0);
                             }
 
-                            if !survey.message_label.trim().is_empty() {
-                                ui.label(survey.message_label);
+                            let message_label = survey.message_label.get(self.state.language);
+                            if !message_label.trim().is_empty() {
+                                ui.label(message_label);
                                 ui.add(
                                     TextEdit::multiline(&mut self.feedback_survey_message)
                                         .desired_rows(5)
