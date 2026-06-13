@@ -20,7 +20,7 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;
 pub(crate) const FEEDBACK_SURVEY_TITLE: L10n =
-    l10n("Quick Feedback", "Masukan Singkat", "快速反馈");
+    l10n("Quick Feedback", "Survey Singkat", "小调查");
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
         "language_indonesia_quality",
