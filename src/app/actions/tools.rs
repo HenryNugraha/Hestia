@@ -263,7 +263,7 @@ impl HestiaApp {
                 .file_stem()
                 .or_else(|| path.file_name())
                 .and_then(|name| name.to_str())
-                .unwrap_or("Tool")
+                .unwrap_or(self.text().tool_fallback_label())
                 .to_string();
             by_key.insert(
                 key,
@@ -385,7 +385,10 @@ impl HestiaApp {
 
     fn add_manual_tool_for_selected_game(&mut self, path: PathBuf) {
         let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
-            self.report_warn("No game selected for tool add", Some("No game selected"));
+            self.report_warn(
+                self.text().no_game_selected_for_tool_add(),
+                Some(self.text().no_game_selected()),
+            );
             return;
         };
         let key = Self::normalize_tool_path_key(&path);
@@ -395,7 +398,7 @@ impl HestiaApp {
             .iter()
             .any(|tool| tool.game_id == game_id && Self::normalize_tool_path_key(&tool.path) == key)
         {
-            self.report_warn("Tool already exists for this game", Some("Tool already added"));
+            self.report_warn(self.text().tool_already_added(), Some(self.text().tool_already_added()));
             return;
         }
         if let Some(items) = self.state.tool_blacklist.get_mut(&game_id) {
@@ -408,7 +411,7 @@ impl HestiaApp {
             .file_stem()
             .or_else(|| path.file_name())
             .and_then(|name| name.to_str())
-            .unwrap_or("Tool")
+            .unwrap_or(self.text().tool_fallback_label())
             .to_string();
         self.state.tools.push(ToolEntry {
             id: Uuid::new_v4().to_string(),
@@ -424,8 +427,8 @@ impl HestiaApp {
             created_at: Utc::now(),
         });
         self.save_state();
-        self.log_action("Tool Added", &label);
-        self.set_message_ok("Tool added");
+        self.log_action(self.text().tool_action_added(), &label);
+        self.set_message_ok(self.text().tool_added());
     }
 
     fn remove_tool(&mut self, tool_id: &str) {
@@ -446,8 +449,8 @@ impl HestiaApp {
         self.compact_tool_window_order_for_game(&tool.game_id);
         self.compact_tool_titlebar_order_for_game(&tool.game_id);
         self.save_state();
-        self.log_action("Tool Removed", &tool.label);
-        self.set_message_ok("Tool removed");
+        self.log_action(self.text().tool_action_removed(), &tool.label);
+        self.set_message_ok(self.text().tool_removed());
     }
 
     fn toggle_tool_titlebar_pin(&mut self, tool_id: &str, value: bool) {
@@ -466,8 +469,8 @@ impl HestiaApp {
                 >= 4
         {
             self.report_warn(
-                "Only up to 4 tools can be shown in the titlebar for one game",
-                Some("Titlebar tool limit reached"),
+                self.text().titlebar_tool_limit(),
+                Some(self.text().titlebar_tool_limit_reached()),
             );
             return;
         }
@@ -496,20 +499,20 @@ impl HestiaApp {
         };
         if !tool.path.is_file() {
             self.report_warn(
-                format!("Tool not found: {}", tool.path.display()),
-                Some("Tool executable is missing"),
+                self.text().tool_not_found(&tool.path.display().to_string()),
+                Some(self.text().tool_executable_missing()),
             );
             return;
         }
         match xxmi::launch_path_with_raw_args(&tool.path, &tool.launch_args) {
             Ok(_) => {
-                self.log_action("Tool Launched", &tool.label);
-                self.set_message_ok(format!("Launched tool: {}", tool.label));
+                self.log_action(self.text().tool_action_launched(), &tool.label);
+                self.set_message_ok(self.text().launched_tool(&tool.label));
                 Self::apply_launch_behavior(ctx, self.state.tool_launch_behavior);
             }
             Err(err) => self.report_error_message(
                 format!("failed to launch tool {}: {err}", tool.path.display()),
-                Some("Could not launch tool"),
+                Some(self.text().could_not_launch_tool()),
             ),
         }
     }
@@ -528,7 +531,7 @@ impl HestiaApp {
         if let Err(err) = open_in_explorer(&target) {
             self.report_error_message(
                 format!("failed to open tool location {}: {err:#}", target.display()),
-                Some("Could not open location"),
+                Some(self.text().could_not_open_location()),
             );
         }
     }
@@ -561,6 +564,6 @@ impl HestiaApp {
         };
         tool.launch_args = prompt.launch_args;
         self.save_state();
-        self.set_message_ok("Tool launch options saved");
+        self.set_message_ok(self.text().tool_launch_options_saved());
     }
 }

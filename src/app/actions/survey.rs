@@ -6,7 +6,7 @@ impl HestiaApp {
         if FEEDBACK_SURVEY_SERVER_URL.trim().is_empty() {
             self.report_error_message(
                 "feedback survey server URL is not configured".to_string(),
-                Some("Could not submit feedback"),
+                Some(self.text().could_not_submit_feedback()),
             );
             return;
         }
@@ -15,7 +15,7 @@ impl HestiaApp {
         if let Err(err) = persistence::write_atomic_bytes(&pending_path, payload_json.as_bytes()) {
             self.report_error_message(
                 format!("failed to save pending survey payload: {err:#}"),
-                Some("Could not submit feedback"),
+                Some(self.text().could_not_submit_feedback()),
             );
             return;
         }
@@ -59,9 +59,10 @@ impl HestiaApp {
         let payload_json = match fs::read_to_string(&pending_path) {
             Ok(payload_json) => payload_json,
             Err(err) => {
+                let text = self.text();
                 self.log_action(
-                    "Survey",
-                    &format!("discarded unreadable pending feedback payload: {err:#}"),
+                    text.survey_action(),
+                    &text.survey_discarded_unreadable_pending_feedback_payload(&format!("{err:#}")),
                 );
                 let _ = fs::remove_file(&pending_path);
                 self.state.discard_pending_feedback_survey(survey);
@@ -79,7 +80,11 @@ impl HestiaApp {
             pending_path,
             discard_on_failure: true,
         });
-        self.log_action("Survey", "retrying pending feedback payload");
+        let text = self.text();
+        self.log_action(
+            text.survey_action(),
+            text.survey_retrying_pending_feedback_payload(),
+        );
     }
 
     fn consume_feedback_survey_events(&mut self) {
@@ -95,8 +100,9 @@ impl HestiaApp {
                         self.state.mark_feedback_survey_submitted(survey);
                     }
                     self.save_state();
-                    self.log_action("Survey", &format!("submitted feedback for {version}"));
-                    self.set_message_ok("Feedback submitted");
+                    let text = self.text();
+                    self.log_action(text.survey_action(), &text.survey_submitted_feedback(&version));
+                    self.set_message_ok(self.text().feedback_submitted());
                 }
                 FeedbackSurveySubmitEvent::Failed {
                     version,
@@ -104,9 +110,10 @@ impl HestiaApp {
                     error,
                     discard_on_failure,
                 } => {
+                    let text = self.text();
                     self.log_action(
-                        "Survey",
-                        &format!("feedback submit failed for {version}: {error}"),
+                        text.survey_action(),
+                        &text.survey_feedback_submit_failed(&version, &error),
                     );
                     if discard_on_failure {
                         let _ = fs::remove_file(&pending_path);
@@ -116,9 +123,10 @@ impl HestiaApp {
                             self.state.discard_pending_feedback_survey(survey);
                         }
                         self.save_state();
+                        let text = self.text();
                         self.log_action(
-                            "Survey",
-                            &format!("discarded pending feedback payload for {version}"),
+                            text.survey_action(),
+                            &text.survey_discarded_pending_feedback_payload(&version),
                         );
                     }
                 }

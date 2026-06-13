@@ -15,7 +15,7 @@ impl HestiaApp {
         if let Err(err) = persistence::append_operation_log(&self.portable, &entry) {
             self.report_error_message(
                 format!("failed to persist log history: {err:#}"),
-                Some("Could not save data"),
+                Some(self.text().could_not_save_data()),
             );
         }
         if self.state.show_log {
@@ -83,7 +83,7 @@ impl HestiaApp {
         if let Err(err) = persistence::replace_task(&self.portable, &task) {
             self.report_error_message(
                 format!("failed to persist task history: {err:#}"),
-                Some("Could not save data"),
+                Some(self.text().could_not_save_data()),
             );
         }
         self.tasks_scroll_to_edge = true;
@@ -124,7 +124,7 @@ impl HestiaApp {
                 if let Err(err) = persistence::replace_task(&self.portable, &task_snapshot) {
                     self.report_error_message(
                         format!("failed to persist task history: {err:#}"),
-                        Some("Could not save data"),
+                        Some(self.text().could_not_save_data()),
                     );
                 }
             }
@@ -154,7 +154,7 @@ impl HestiaApp {
             if let Err(err) = persistence::replace_task(&self.portable, &task) {
                 self.report_error_message(
                     format!("failed to persist task history: {err:#}"),
-                    Some("Could not save data"),
+                    Some(self.text().could_not_save_data()),
                 );
             }
         }
@@ -166,7 +166,7 @@ impl HestiaApp {
         if let Err(err) = persistence::remove_task(&self.portable, job_id) {
             self.report_error_message(
                 format!("failed to persist task history: {err:#}"),
-                Some("Could not save data"),
+                Some(self.text().could_not_save_data()),
             );
         }
         self.save_state();
@@ -177,7 +177,7 @@ impl HestiaApp {
         if let Err(err) = persistence::clear_finished_tasks(&self.portable) {
             self.report_error_message(
                 format!("failed to persist task history: {err:#}"),
-                Some("Could not save data"),
+                Some(self.text().could_not_save_data()),
             );
         }
         self.save_state();
@@ -303,18 +303,6 @@ impl HestiaApp {
         items
     }
 
-    fn task_status_label(status: TaskStatus) -> &'static str {
-        match status {
-            TaskStatus::Queued => "Queued",
-            TaskStatus::Installing => "Installing",
-            TaskStatus::Downloading => "Downloading",
-            TaskStatus::Canceling => "Canceling",
-            TaskStatus::Completed => "Completed",
-            TaskStatus::Failed => "Failed",
-            TaskStatus::Canceled => "Canceled",
-        }
-    }
-
     fn task_status_color(status: TaskStatus) -> Color32 {
         match status {
             TaskStatus::Completed => Color32::from_rgb(96, 179, 123),
@@ -327,7 +315,8 @@ impl HestiaApp {
     }
 
     fn render_task_row(&mut self, ui: &mut Ui, task: &TaskEntry) {
-        let status_label = Self::task_status_label(task.status);
+        let text = self.text();
+        let status_label = text.task_status_label(task.status);
         let status_color = Self::task_status_color(task.status);
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
@@ -398,9 +387,9 @@ impl HestiaApp {
                     );
                     if cancellable {
                         let cancel_label = if task.status == TaskStatus::Canceling {
-                            "Canceling…"
+                            text.task_canceling()
                         } else {
-                            "Cancel"
+                            text.task_cancel()
                         };
                         let enabled = task.status != TaskStatus::Canceling;
                         let response = ui.add_enabled(enabled, egui::Button::new(cancel_label));
@@ -458,13 +447,13 @@ impl HestiaApp {
                         } else { format_file_size(progress.downloaded) };
                         text_right = format!("↓ {}", format_speed(progress.speed));
                     } else {
-                        text_left = "Starting download…".to_string();
+                        text_left = text.task_starting_download().to_string();
                     }
                 } else {
                     text_left = match task.status {
-                        TaskStatus::Queued => "Queued…".to_string(),
-                        TaskStatus::Installing => "Installing mod files…".to_string(),
-                        TaskStatus::Canceling => "Canceling task…".to_string(),
+                        TaskStatus::Queued => text.task_queued_progress().to_string(),
+                        TaskStatus::Installing => text.task_installing_mod_files().to_string(),
+                        TaskStatus::Canceling => text.task_canceling_task().to_string(),
                         _ => "".to_string(),
                     };
                     if let Some(size) = task.total_size {
@@ -509,7 +498,7 @@ impl HestiaApp {
             let title = self.browse_download_queue[index].title.clone();
             self.browse_download_queue.remove(index);
             self.update_task_status(job_id, TaskStatus::Canceled);
-            self.set_message_ok(format!("Download canceled: {title}"));
+            self.set_message_ok(self.text().download_canceled(&title));
             return;
         }
 
@@ -529,7 +518,7 @@ impl HestiaApp {
                 self.install_batch_stats.skipped += 1;
             }
             let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
-            self.set_message_ok("Install canceled");
+            self.set_message_ok(self.text().install_canceled_label());
             return;
         }
 
@@ -552,7 +541,7 @@ impl HestiaApp {
                 }
                 self.update_task_status(job_id, TaskStatus::Canceled);
                 let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
-                self.set_message_ok("Install canceled");
+                self.set_message_ok(self.text().install_canceled_label());
             } else {
                 self.update_task_status(job_id, TaskStatus::Canceling);
                 let _ = self

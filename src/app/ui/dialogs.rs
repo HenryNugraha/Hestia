@@ -6,6 +6,7 @@ impl HestiaApp {
         if self.startup_path_scan.is_none() {
             return;
         }
+        let text = self.text();
 
         egui::Area::new(egui::Id::new("startup_path_scan_overlay"))
             .order(egui::Order::Tooltip)
@@ -28,7 +29,7 @@ impl HestiaApp {
                 header_ui.add(egui::Spinner::new().size(16.0));
                 static_label(
                     &mut header_ui,
-                    RichText::new("Scanning paths...")
+                    RichText::new(text.scanning_paths())
                         .size(14.0)
                         .color(Color32::from_gray(210)),
                 );
@@ -49,7 +50,7 @@ impl HestiaApp {
                 ui.vertical_centered(|ui| {
                     static_label(
                         ui,
-                        RichText::new("Finding your XXMI and game paths")
+                        RichText::new(text.finding_paths())
                             .size(34.0)
                             .strong()
                             .color(Color32::WHITE),
@@ -58,7 +59,7 @@ impl HestiaApp {
                     static_label(
                         ui,
                         RichText::new(
-                            "Hestia is now deep scanning accessible drives for XXMI and supported games.",
+                            text.deep_scanning_paths(),
                         )
                         .size(15.0)
                         .color(Color32::from_gray(190)),
@@ -74,7 +75,7 @@ impl HestiaApp {
                     .show(ui, |ui| {
                         static_label(
                             ui,
-                            bold("Scan Results")
+                            bold(text.scan_results())
                                 .size(16.0)
                                 //.underline()
                                 .color(Color32::from_gray(220)),
@@ -84,7 +85,7 @@ impl HestiaApp {
                             let finished = scan.finished;
                             let stopped = scan.stopped;
                             for status in &mut scan.statuses {
-                                Self::render_startup_path_status_row(ui, status, finished, stopped);
+                                Self::render_startup_path_status_row(ui, text, status, finished, stopped);
                             }
                         }
                     });
@@ -97,7 +98,7 @@ impl HestiaApp {
                         .is_some_and(|scan| scan.finished);
                     if finished {
                         let continue_button = egui::Button::new(
-                            bold("Continue").size(15.0),
+                            bold(text.continue_label()).size(15.0),
                         )
                         .fill(Color32::from_rgb(180, 78, 35))
                         .min_size(Vec2::new(140.0, 38.0));
@@ -109,7 +110,7 @@ impl HestiaApp {
                             self.finish_startup_path_scan(ctx);
                         }
                     } else {
-                        let stop_button = egui::Button::new(RichText::new("Stop Scan").size(15.0))
+                        let stop_button = egui::Button::new(RichText::new(text.stop_scan()).size(15.0))
                             .min_size(Vec2::new(140.0, 38.0));
                         if ui
                             .add(stop_button)
@@ -130,6 +131,7 @@ impl HestiaApp {
 
     fn render_startup_path_status_row(
         ui: &mut Ui,
+        text: TextCatalog,
         status: &mut StartupPathScanStatus,
         finished: bool,
         stopped: bool,
@@ -146,7 +148,7 @@ impl HestiaApp {
                 match status.candidates.len() {
                     0 => {
                         if finished {
-                            let label = if stopped { "Stopped" } else { "Not found" };
+                            let label = if stopped { text.stopped() } else { text.not_found() };
                             static_label(
                                 ui,
                                 RichText::new(label).size(13.0).color(Color32::from_gray(145)),
@@ -155,7 +157,7 @@ impl HestiaApp {
                         } else {
                             static_label(
                                 ui,
-                                RichText::new("Searching...")
+                                RichText::new(text.searching())
                                     .size(13.0)
                                     .color(Color32::from_gray(170)),
                             );
@@ -165,7 +167,7 @@ impl HestiaApp {
                     1 => {
                         static_label(
                             ui,
-                            RichText::new("Found")
+                            RichText::new(text.found())
                                 .size(13.0)
                                 .color(Color32::from_rgb(126, 205, 145)),
                         )
@@ -177,7 +179,7 @@ impl HestiaApp {
                     }
                     _ => {
                         if ui
-                            .button("Choose...")
+                            .button(text.choose())
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
@@ -185,7 +187,7 @@ impl HestiaApp {
                         }
                         static_label(
                             ui,
-                            RichText::new("Multiple found")
+                            RichText::new(text.multiple_found())
                                 .size(13.0)
                                 .color(Color32::from_rgb(224, 174, 86)),
                         );
@@ -264,6 +266,7 @@ impl HestiaApp {
         if !self.pending_conflicts.is_empty() {
             return;
         }
+        let text = self.text();
         let Some(pending) = self.pending_imports.front().cloned() else {
             return;
         };
@@ -344,7 +347,7 @@ impl HestiaApp {
             .or_else(|| {
                 self.state.tasks.iter().find(|t| t.id == job_id).map(|t| t.title.clone())
             })
-            .unwrap_or_else(|| "Imported Mod".to_string());
+            .unwrap_or_else(|| text.imported_mod().to_string());
 
         if update_folder_name.is_some() {
             let tracked_labels = pending_meta
@@ -386,7 +389,7 @@ impl HestiaApp {
                         .unwrap_or_default();
                     let preferred = update_folder_name
                         .clone()
-                        .unwrap_or_else(|| "Imported Mod".to_string());
+                        .unwrap_or_else(|| text.imported_mod().to_string());
                     let preferred_names = vec![preferred.clone(); candidate_indices.len()];
                     if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
                         self.pending_imports.pop_front();
@@ -415,7 +418,7 @@ impl HestiaApp {
         }
 
         let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
-        let window = egui::Window::new(icon_text_sized(Icon::Info, "Missing .ini", 14.0, 14.0))
+        let window = egui::Window::new(icon_text_sized(Icon::Info, text.missing_ini_title(), 14.0, 14.0))
             .id(egui::Id::new(("import_review", job_id)))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .default_size(egui::vec2(420.0, 420.0))
@@ -437,7 +440,7 @@ impl HestiaApp {
                     ui.add_space(4.0);
                     static_label(
                         ui,
-                        RichText::new("No recognizable .ini file found in the archive’s parent path, archhive may contains multiple mods.\nSelect which folder(s) to install:")
+                        RichText::new(text.missing_ini_prompt())
                             .size(14.0),
                     );
                 });
@@ -485,27 +488,27 @@ impl HestiaApp {
                     let num_selected = selected_indices.len();
                     
                     if num_selected <= 1 {
-                        if ui.add(egui::Button::new("Install").fill(Color32::from_rgb(180, 78, 35)))
+                        if ui.add(egui::Button::new(text.install_label()).fill(Color32::from_rgb(180, 78, 35)))
                             .clicked() 
                         {
                             commit_intent = Some((selected_indices.clone(), true));
                         }
                     } else {
-                        if ui.add(egui::Button::new("Install Merged").fill(Color32::from_rgb(180, 78, 35)))
-                            .on_hover_text("Install selected folders into the same mod folder and treat them as a single mod")
+                        if ui.add(egui::Button::new(text.install_merged()).fill(Color32::from_rgb(180, 78, 35)))
+                            .on_hover_text(text.install_merged_tooltip())
                             .clicked() 
                         {
                             commit_intent = Some((selected_indices.clone(), true));
                         }
-                        if ui.add(egui::Button::new("Install Separately").fill(Color32::from_rgb(180, 78, 35)))
-                            .on_hover_text("Install selected folders into their own mod folder")
+                        if ui.add(egui::Button::new(text.install_separately()).fill(Color32::from_rgb(180, 78, 35)))
+                            .on_hover_text(text.install_separately_tooltip())
                             .clicked() 
                         {
                             commit_intent = Some((selected_indices.clone(), false));
                         }
                     }
 
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(text.cancel()).clicked() {
                         cancel = true;
                     }
                 });
@@ -515,7 +518,7 @@ impl HestiaApp {
 
         if let Some((indices, merged)) = commit_intent {
             if indices.is_empty() {
-                self.set_message_ok("No folders selected");
+                self.set_message_ok(text.no_folders_selected());
                 return;
             }
             let Some(game) = self.state.games.iter().find(|game| game.definition.id == inspection.game_id).cloned() else {
@@ -533,7 +536,7 @@ impl HestiaApp {
                 let preferred = if let Some(target) = &update_folder_name {
                     target.clone()
                 } else {
-                    self.preferred_browse_folder_name(title_name.as_deref(), "Imported Mod")
+                    self.preferred_browse_folder_name(title_name.as_deref(), text.imported_mod())
                 };
                 let existing_target = target_root.join(&preferred);
                 if existing_target.exists() && update_folder_name.is_none() {
@@ -614,7 +617,7 @@ impl HestiaApp {
                 .candidates
                 .get(0)
                 .map(|candidate| candidate.label.as_str())
-                .unwrap_or("mod");
+                .unwrap_or(text.imported_mod());
             let _ = self.install_request_tx.send(InstallRequest::Drop {
                 job_id,
             });
@@ -626,7 +629,7 @@ impl HestiaApp {
                 Self::cleanup_runtime_temp_for_source(&current.source);
             }
             self.update_task_status(job_id, TaskStatus::Canceled);
-            self.set_message_ok(format!("Install canceled: {}", cancel_name));
+            self.set_message_ok(text.install_canceled(cancel_name));
         }
     }
 
@@ -634,13 +637,14 @@ impl HestiaApp {
         let Some(conflict) = self.pending_conflicts.front().cloned() else {
             return;
         };
+        let text = self.text();
         let conflict_existing_target = conflict.existing_target.clone();
         let conflict_target_root = conflict.target_root.clone();
         let conflict_preferred_name = conflict.preferred_name.clone();
             let mut choice = None;
 
         let warn_color = Color32::from_rgb(214, 96, 34);
-        let mut window = egui::Window::new(icon_text_sized(Icon::TriangleAlert, "Installation Conflict", 14.0, 14.0))
+        let mut window = egui::Window::new(icon_text_sized(Icon::TriangleAlert, text.installation_conflict(), 14.0, 14.0))
             .collapsible(false)
             .order(egui::Order::Foreground)
             .resizable(false)
@@ -671,12 +675,12 @@ impl HestiaApp {
                                 bold(conflict_existing_target
                                     .file_name()
                                     .and_then(|name| name.to_str())
-                                    .unwrap_or("this folder"),
+                                    .unwrap_or(text.this_folder()),
                                 ).underline().size(16.0)
                             )
                             .selectable(false),
                         ).on_hover_cursor(egui::CursorIcon::Default);
-                        ui.add(egui::Label::new("Already exists in:").selectable(false))
+                        ui.add(egui::Label::new(text.already_exists_in()).selectable(false))
                             .on_hover_cursor(egui::CursorIcon::Default);
                         ui.add(
                             egui::Label::new(
@@ -685,16 +689,16 @@ impl HestiaApp {
                             .selectable(false),
                         ).on_hover_cursor(egui::CursorIcon::Default);
                         ui.horizontal(|ui| {
-                            if ui.button("Replace").clicked() {
+                            if ui.button(text.replace()).clicked() {
                                 choice = Some(ConflictChoice::Replace);
                             }
-                            if ui.button("Merge").clicked() {
+                            if ui.button(text.merge()).clicked() {
                                 choice = Some(ConflictChoice::Merge);
                             }
-                            if ui.button("Keep Both").clicked() {
+                            if ui.button(text.keep_both()).clicked() {
                                 choice = Some(ConflictChoice::KeepBoth);
                             }
-                            if ui.button("Cancel").clicked() {
+                            if ui.button(text.cancel()).clicked() {
                                 choice = Some(ConflictChoice::Cancel);
                             }
                         });
@@ -710,20 +714,20 @@ impl HestiaApp {
             let conflict_name = conflict_existing_target
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("mod");
+                .unwrap_or(text.imported_mod());
             match choice {
                 ConflictChoice::Replace => {
-                    self.log_action("Conflict (Replace)", conflict_name);
+                    self.log_action(text.conflict_replace(), conflict_name);
                 }
                 ConflictChoice::Merge => {
-                    self.log_action("Conflict (Merge)", conflict_name);
+                    self.log_action(text.conflict_merge(), conflict_name);
                 }
                 ConflictChoice::KeepBoth => {
-                    self.log_action("Conflict (Keep Both)", conflict_name);
+                    self.log_action(text.conflict_keep_both(), conflict_name);
                 }
                 ConflictChoice::Cancel => {
-                    self.log_action("Conflict (Cancel)", conflict_name);
-                    self.set_message_ok(format!("Install canceled: {}", conflict_name));
+                    self.log_action(text.conflict_cancel(), conflict_name);
+                    self.set_message_ok(text.install_canceled(conflict_name));
                 }
             }
             self.save_state();
@@ -754,6 +758,7 @@ impl HestiaApp {
     }
 
     fn detect_drag_and_drop(&mut self, ctx: &egui::Context) {
+        let text = self.text();
         // Show a visual cue when files are hovered
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
             let painter =
@@ -765,9 +770,9 @@ impl HestiaApp {
                 if display_name.chars().count() < mod_name.chars().count() {
                     display_name.push_str("...");
                 }
-                format!("Drop mods to install them\n\nor\n\ndrop images to add into:\n{display_name}")
+                text.drop_mods_images(&display_name)
             } else {
-                "Drop to install".to_string()
+                text.drop_to_install().to_string()
             };
             painter.text(
                 screen_rect.center(),
@@ -810,34 +815,22 @@ impl HestiaApp {
                         }
                         _ => {
                             self.install_batch_stats.unsupported += 1;
-                            self.set_message_ok(format!(
-                                "Unsupported: {}",
-                                path.file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("file")
-                            ));
-                            self.log_action(
-                                "Unsupported",
-                                &path.file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("file"),
-                            );
+                            let file_name = path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(text.file());
+                            self.set_message_ok(text.unsupported_file(file_name));
+                            self.log_action(text.unsupported(), file_name);
                         }
                     }
                 } else {
                     self.install_batch_stats.unsupported += 1;
-                    self.set_message_ok(format!(
-                        "Unsupported: {}",
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("file")
-                    ));
-                    self.log_action(
-                        "Unsupported",
-                        &path.file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("file"),
-                    );
+                    let file_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(text.file());
+                    self.set_message_ok(text.unsupported_file(file_name));
+                    self.log_action(text.unsupported(), file_name);
                 }
             }
 
@@ -845,19 +838,19 @@ impl HestiaApp {
                 if let Some((mod_id, _)) = self.selected_unlinked_mod_context() {
                     let image_count = image_paths.len();
                     match self.enqueue_add_images_to_unlinked_mod(&mod_id, image_paths) {
-                        Ok(()) => self.set_message_ok(format!("Adding {} image(s)", image_count)),
-                        Err(err) => self.report_error(err, Some("Could not add images")),
+                        Ok(()) => self.set_message_ok(text.adding_images_count(image_count)),
+                        Err(err) => self.report_error(err, Some(text.could_not_add_images())),
                     }
                 } else {
                     self.report_warn(
                         "image files were dropped without an open unlinked mod detail",
-                        Some("Open an unlinked mod detail first"),
+                        Some(text.open_unlinked_mod_detail_first()),
                     );
                 }
             }
             self.enqueue_install_sources(batch_sources);
             if queued_count > 0 {
-                self.set_message_ok(format!("Installing: {} mod(s)", queued_count));
+                self.set_message_ok(text.installing_count(queued_count));
             }
         }
     }

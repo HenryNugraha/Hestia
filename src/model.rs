@@ -73,6 +73,8 @@ pub struct AppState {
     #[serde(default)]
     pub font_style: AppFontStyle,
     #[serde(default)]
+    pub language: AppLanguage,
+    #[serde(default)]
     pub launch_behavior: LaunchBehavior,
     #[serde(default)]
     pub tool_launch_behavior: LaunchBehavior,
@@ -162,6 +164,7 @@ impl Default for AppState {
             metadata_visibility: MetadataVisibility::default(),
             scan_rabbitfx_requirement: false,
             font_style: AppFontStyle::default(),
+            language: AppLanguage::detect_system_supported().unwrap_or_default(),
             launch_behavior: LaunchBehavior::default(),
             tool_launch_behavior: LaunchBehavior::default(),
             after_install_behavior: AfterInstallBehavior::default(),
@@ -487,6 +490,66 @@ pub enum AppFontStyle {
     Classic,
     #[default]
     Modern,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AppLanguage {
+    #[default]
+    English,
+    Indonesian,
+    ChineseSimplified,
+}
+
+impl AppLanguage {
+    pub const ALL: [Self; 3] = [Self::English, Self::Indonesian, Self::ChineseSimplified];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Indonesian => "Indonesian",
+            Self::ChineseSimplified => "Chinese (Simplified)",
+        }
+    }
+
+    pub fn native_label(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Indonesian => "Bahasa Indonesia",
+            Self::ChineseSimplified => "简体中文",
+        }
+    }
+
+    pub fn from_locale_tag(tag: &str) -> Option<Self> {
+        let normalized = tag.trim().replace('_', "-").to_ascii_lowercase();
+        let language = normalized
+            .split(['.', '@'])
+            .next()
+            .unwrap_or(normalized.as_str());
+        if language == "en" || language.starts_with("en-") {
+            return Some(Self::English);
+        }
+        if language == "zh-cn"
+            || language == "zh-hans"
+            || language.starts_with("zh-cn-")
+            || language.starts_with("zh-hans-")
+            || language == "zh-sg"
+            || language.starts_with("zh-sg-")
+        {
+            return Some(Self::ChineseSimplified);
+        }
+        if language == "id"
+            || language.starts_with("id-")
+            || language == "in"
+            || language.starts_with("in-")
+        {
+            return Some(Self::Indonesian);
+        }
+        None
+    }
+
+    pub fn detect_system_supported() -> Option<Self> {
+        sys_locale::get_locales().find_map(|tag| Self::from_locale_tag(&tag))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

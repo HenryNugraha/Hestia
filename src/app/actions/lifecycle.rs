@@ -344,7 +344,7 @@ impl HestiaApp {
         if let Err(err) = persistence::save_app_state(&self.portable, &self.state) {
             self.report_error_message(
                 format!("failed to save app state: {err:#}"),
-                Some("Could not save settings"),
+                Some(self.text().could_not_save_settings()),
             );
         }
     }
@@ -739,14 +739,14 @@ impl HestiaApp {
     fn log_warn(&mut self, detail: impl Into<String>) {
         let detail = sanitize_log_subject(&detail.into());
         if !detail.is_empty() {
-            self.push_log(format!("Warn: {detail}"));
+            self.push_log(self.text().log_warn(&detail));
         }
     }
 
     fn log_error(&mut self, detail: impl Into<String>) {
         let detail = sanitize_log_subject(&detail.into());
         if !detail.is_empty() {
-            self.push_log(format!("Error: {detail}"));
+            self.push_log(self.text().log_error(&detail));
         }
     }
 
@@ -1026,13 +1026,13 @@ impl HestiaApp {
 
     fn launch_selected_game(&mut self, ctx: &egui::Context, modded: bool) {
         let Some(game) = self.selected_game().cloned() else {
-            self.report_error_message("game not selected", Some("Launch failed"));
+            self.report_error_message(self.text().game_not_selected(), Some(self.text().launch_failed()));
             return;
         };
         if !Self::game_install_is_configured(&game) {
             self.report_error_message(
-                "Game is not installed or configured.",
-                Some("Launch failed"),
+                self.text().game_not_installed(),
+                Some(self.text().launch_failed()),
             );
             return;
         }
@@ -1044,17 +1044,18 @@ impl HestiaApp {
         } else {
             game.vanilla_exe_path()
         }) else {
-            let label = if modded { "Play (Modded)" } else { "Play (Vanilla)" };
+            let text = self.text();
+            let label = if modded { text.play_modded() } else { text.play_vanilla() };
             self.report_error_message(
-                format!("{label} path not set for {}", game.definition.name),
-                Some("Launch path not set"),
+                text.launch_path_not_set_for_game(label, &game.definition.name),
+                Some(text.launch_path_not_set()),
             );
             return;
         };
         if !path.is_file() {
             self.report_error_message(
-                "Game is not installed or configured.",
-                Some("Launch failed"),
+                self.text().game_not_installed(),
+                Some(self.text().launch_failed()),
             );
             return;
         }
@@ -1065,11 +1066,12 @@ impl HestiaApp {
         };
         match result {
             Ok(()) => {
-                let label = if modded { "Modded" } else { "Vanilla" };
-                self.set_message_ok(format!("Launched {} ({label})", game.definition.name));
+                let text = self.text();
+                let label = if modded { text.modded() } else { text.vanilla() };
+                self.set_message_ok(text.launched_game_mode(&game.definition.name, label));
                 Self::apply_launch_behavior(ctx, self.state.launch_behavior);
             }
-            Err(err) => self.report_error(err, Some("Launch failed")),
+            Err(err) => self.report_error(err, Some(self.text().launch_failed())),
         }
     }
 
@@ -1361,7 +1363,7 @@ impl HestiaApp {
 
     fn open_feedback_survey_window(&mut self) {
         if feedback_survey().is_none() {
-            self.set_message_ok("No feedback survey is configured for this version.");
+            self.set_message_ok(self.text().no_feedback_survey_configured());
             return;
         }
         self.state.show_feedback_survey = true;
@@ -1552,8 +1554,8 @@ impl HestiaApp {
                 }) || self.poll_windows_ctrl_v_edge(ctx))
             {
                 match self.enqueue_clipboard_image_to_selected_unlinked_mod() {
-                    Ok(()) => self.set_message_ok("Adding clipboard image..."),
-                    Err(err) => self.report_error(err, Some("Could not paste image")),
+                    Ok(()) => self.set_message_ok(self.text().adding_clipboard_image()),
+                    Err(err) => self.report_error(err, Some(self.text().could_not_paste_image())),
                 }
             }
         }
@@ -1742,7 +1744,7 @@ impl HestiaApp {
                 self.queue_update_check_for_linked_mods(game_id.as_deref());
                 self.request_automatic_app_update_check(0.0);
             }
-            Err(err) => self.report_error(err, Some("Could not refresh mods")),
+            Err(err) => self.report_error(err, Some(self.text().could_not_refresh_mods())),
         }
     }
 
@@ -1813,16 +1815,16 @@ impl HestiaApp {
                 self.sync_selection_after_refresh();
                 self.queue_update_check_for_linked_mods(game_id.as_deref());
                 self.request_automatic_app_update_check(0.0);
-                self.push_log(format!(
-                    "Reload: {}",
-                    self.reload_summary_log_text(&summary)
-                ));
+                self.push_log(
+                    self.text()
+                        .reload_action(&self.reload_summary_log_text(&summary)),
+                );
                 for line in &summary.detail_lines {
-                    self.push_log(format!("Reload: {line}"));
+                    self.push_log(self.text().reload_action(&line));
                 }
                 self.set_message_ok(self.reload_summary_toast_text(&summary));
             }
-            Err(err) => self.report_error(err, Some("Could not refresh mods")),
+            Err(err) => self.report_error(err, Some(self.text().could_not_refresh_mods())),
         }
     }
 
@@ -1910,36 +1912,38 @@ impl HestiaApp {
     }
 
     fn reload_summary_log_text(&self, summary: &ReloadSummary) -> String {
+        let text = self.text();
         if summary.added == 0 && summary.removed == 0 && summary.changed == 0 {
-            format!("{} mods scanned, no changes", summary.total_mods)
+            text.mods_scanned_no_changes(summary.total_mods)
         } else {
-            let mut parts = vec![format!("{} mods scanned", summary.total_mods)];
+            let mut parts = vec![text.mods_scanned(summary.total_mods)];
             if summary.added > 0 {
-                parts.push(format!("{} added", summary.added));
+                parts.push(text.reload_added(summary.added));
             }
             if summary.removed > 0 {
-                parts.push(format!("{} removed", summary.removed));
+                parts.push(text.reload_removed(summary.removed));
             }
             if summary.changed > 0 {
-                parts.push(format!("{} changed", summary.changed));
+                parts.push(text.reload_changed(summary.changed));
             }
             parts.join(", ")
         }
     }
 
     fn reload_summary_toast_text(&self, summary: &ReloadSummary) -> String {
+        let text = self.text();
         if summary.added == 0 && summary.removed == 0 && summary.changed == 0 {
-            format!("Reloaded: {} mods, no changes", summary.total_mods)
+            text.reloaded_no_changes(summary.total_mods)
         } else {
-            let mut parts = vec![format!("Reloaded: {} mods", summary.total_mods)];
+            let mut parts = vec![text.reloaded(summary.total_mods)];
             if summary.added > 0 {
-                parts.push(format!("{} added", summary.added));
+                parts.push(text.reload_added(summary.added));
             }
             if summary.removed > 0 {
-                parts.push(format!("{} removed", summary.removed));
+                parts.push(text.reload_removed(summary.removed));
             }
             if summary.changed > 0 {
-                parts.push(format!("{} changed", summary.changed));
+                parts.push(text.reload_changed(summary.changed));
             }
             parts.join(", ")
         }

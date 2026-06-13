@@ -30,12 +30,8 @@ pub(crate) const UPDATE_MANIFEST_URL: &[&str] = &[
     "https://raw.githubusercontent.com/HenryNugraha/Hestia/main/manifest.json",
 ];
 
-pub(crate) const WHATS_NEW_DATE: &str = "7 June 2026";
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &[
-    "New folder-style category layout",
-    "Supports filtering mods by specific character in Browse tab",
-    "Various interface improvements"
-];
+pub(crate) const WHATS_NEW_DATE: &str = "xx June 2026";
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[&str] = &["Localization"];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[SurveyQuestion] = &[

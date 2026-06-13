@@ -602,6 +602,7 @@ impl HestiaApp {
                         .map(|game_id| (task.title.clone(), game_id.clone()))
                 })
                 .collect();
+            let text = self.text();
             for (mod_id, state, snapshot, err, raw_json, profile) in result.states {
                 let mut mod_updated = false;
                 let mut should_sync_images = false;
@@ -683,14 +684,13 @@ impl HestiaApp {
                         && !has_pending_update_finalization
                         && Self::status_target_enabled(&mod_entry.status, self.state.auto_update_statuses)
                         && !active_update_tasks.contains(&(
-                            format!(
-                                "Updating: {}",
+                            text.updating_task(
                                 mod_entry
                                     .metadata
                                     .user
                                     .title
                                     .as_ref()
-                                    .unwrap_or(&mod_entry.folder_name)
+                                    .unwrap_or(&mod_entry.folder_name),
                             ),
                             mod_entry.game_id.clone(),
                         ));
@@ -1028,7 +1028,7 @@ impl HestiaApp {
                     if let Some((mods_path, err)) = mods_dir_error {
                         self.report_error_message(
                             format!("failed to create mod directory: {}: {err}", mods_path.display()),
-                            Some("Could not create mods folder"),
+                            Some(self.text().could_not_create_mods_folder()),
                         );
                     }
                 }
@@ -1120,7 +1120,7 @@ impl HestiaApp {
                     if is_current {
                     self.report_error_message(
                         format!("selected-game refresh failed for {game_id}: {error}"),
-                        Some("Could not refresh mods"),
+                        Some(self.text().could_not_refresh_mods()),
                     );
                 }
                 }
@@ -1216,7 +1216,7 @@ impl HestiaApp {
                 if let (Some(Err(err)), Some(name)) = (result, name) {
                     self.report_error_message(
                         format!("installed mod could not be disabled for {name}: {err:#}"),
-                        Some("Could not disable installed mod"),
+                        Some(self.text().could_not_disable_installed_mod()),
                     );
                 }
             }
@@ -1246,7 +1246,7 @@ impl HestiaApp {
                 if let (Some(Err(err)), Some(name)) = (result, name) {
                     self.report_error_message(
                         format!("updated mod could not be kept disabled for {name}: {err:#}"),
-                        Some("Could not keep mod disabled"),
+                        Some(self.text().could_not_keep_mod_disabled()),
                     );
                 }
             }
@@ -1285,7 +1285,7 @@ impl HestiaApp {
         if let Some((target_mod_id, rename_to)) = post_install_rename {
             match self.rename_mod_folder(&target_mod_id, &rename_to) {
                 Ok(()) => {
-                    self.log_action("Renamed", &rename_to);
+                    self.log_action(self.text().action_renamed(), &rename_to);
                     self.save_state();
                     if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == target_mod_id) {
                         first_mod_name = mod_entry.folder_name.clone();
@@ -1294,7 +1294,7 @@ impl HestiaApp {
                 Err(err) => {
                     self.report_warn(
                         format!("post-install rename failed: {err:#}"),
-                        Some("Rename failed"),
+                        Some(self.text().rename_failed()),
                     );
                 }
             }
@@ -1341,19 +1341,22 @@ impl HestiaApp {
             }
             let count = installed_paths.len();
             if count > 1 {
-                self.log_action("Installed", &format!("{count} mods from archive"));
-                self.set_message_ok(format!("Installed {count} mods"));
+                let text = self.text();
+                self.log_action(text.installed_action(), &text.library_mods_count(count));
+                self.set_message_ok(text.installed_count(count));
             } else if !first_mod_name.is_empty() {
-                self.log_action("Installed", &first_mod_name);
-                self.set_message_ok(format!("Installed: {first_mod_name}"));
+                let text = self.text();
+                self.log_action(text.installed_action(), &first_mod_name);
+                self.set_message_ok(text.installed_name(&first_mod_name));
             }
         } else if let Some(first_path) = installed_paths.first() {
             let fallback_name = first_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("mod");
-            self.log_action("Installed", fallback_name);
-            self.set_message_ok(format!("Installed: {fallback_name}"));
+            let text = self.text();
+            self.log_action(text.installed_action(), fallback_name);
+            self.set_message_ok(text.installed_name(fallback_name));
         }
     }
 
@@ -1410,9 +1413,10 @@ impl HestiaApp {
             .to_string();
 
         let Some(category_name) = gb_profile.and_then(gamebanana::profile_category_name) else {
+            let text = self.text();
             self.log_action(
-                "Category",
-                &format!("{mod_name} has no valid GameBanana category; skipped category creation"),
+                text.category_action(),
+                &text.category_skipped_no_valid_gamebanana_category(&mod_name),
             );
             return;
         };
@@ -1444,7 +1448,8 @@ impl HestiaApp {
                 name: category_name.clone(),
                 order,
             });
-            self.log_action("Category", &format!("Created \"{category_name}\""));
+            let text = self.text();
+            self.log_action(text.category_action(), &text.category_created(&category_name));
             (category_id, category_name)
         };
 
@@ -1656,7 +1661,7 @@ impl HestiaApp {
         self.pending_mod_image_requests
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
         self.rebuild_texture_tracking();
-        self.log_action("Synced", &folder_name);
+        self.log_action(self.text().synced_action(), &folder_name);
     }
 
     fn queue_update_apply(&mut self, mod_entry_id: &str) {
@@ -1668,8 +1673,8 @@ impl HestiaApp {
         let game_id = mod_entry.game_id.clone();
         if !self.game_is_installed_or_configured(&game_id) {
             self.report_warn(
-                "Game is not installed or configured.",
-                Some("Update unavailable"),
+                self.text().game_not_installed(),
+                Some(self.text().update_unavailable()),
             );
             return;
         }
@@ -1680,7 +1685,7 @@ impl HestiaApp {
             task_id,
             TaskKind::Download,
             TaskStatus::Queued,
-            format!("Updating: {title}"),
+            self.text().updating_task(&title),
             Some(game_id.clone()),
             None,
             mod_entry.unsafe_content,
@@ -1704,7 +1709,7 @@ impl HestiaApp {
             .as_ref()
             .unwrap_or(&mod_entry.folder_name)
             .clone();
-        let task_title = format!("Updating: {title}");
+        let task_title = self.text().updating_task(&title);
         let task_ids: Vec<u64> = self
             .state
             .tasks

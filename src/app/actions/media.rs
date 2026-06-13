@@ -289,7 +289,7 @@ impl HestiaApp {
                                     "manual images imported for missing mod {mod_id}: {}",
                                     rel_paths.join(", ")
                                 ),
-                                Some("Could not attach images"),
+                                Some(self.text().could_not_attach_images()),
                             );
                             continue;
                         };
@@ -298,7 +298,7 @@ impl HestiaApp {
                         Self::sync_mod_cover_to_first_screenshot(mod_entry);
                         let cover_changed = old_cover != mod_entry.metadata.user.cover_image;
                         if let Err(err) = xxmi::save_mod_metadata(mod_entry) {
-                            self.report_error(err, Some("Could not save images"));
+                            self.report_error(err, Some(self.text().could_not_save_images()));
                             continue;
                         }
                         cover_changed
@@ -307,13 +307,13 @@ impl HestiaApp {
                         self.clear_mod_card_texture(&mod_id);
                     }
                     self.save_state();
-                    self.log_action("Images Added", &folder_name);
-                    self.set_message_ok(format!("Added {count} image(s)"));
+                    self.log_action(self.text().images_added_action(), &folder_name);
+                    self.set_message_ok(self.text().images_added(count));
                 }
                 ManualImageEvent::Failed { folder_name, error } => {
                     self.report_error_message(
                         format!("manual image import failed for {folder_name}: {error}"),
-                        Some("Could not add images"),
+                        Some(self.text().app_could_not_add_images()),
                     );
                 }
             }
@@ -706,7 +706,7 @@ impl HestiaApp {
                     if let Some(texture) = &self.youtube_icon_texture {
                         ui.add(egui::Image::new(texture).max_height(20.0));
                     }
-                    ui.label(RichText::new("Watch Preview").size(14.0));
+                    ui.label(RichText::new(self.text().watch_preview()).size(14.0));
                 });
             });
 
@@ -717,7 +717,7 @@ impl HestiaApp {
             .clicked()
         {
             if let Err(err) = open_external_url(&url) {
-                self.report_error(err, Some("Could not open browser"));
+                self.report_error(err, Some(self.text().app_could_not_open_browser()));
             }
         }
     }
@@ -910,8 +910,6 @@ impl HestiaApp {
                 GifPreviewEvent::Failed { out_png } => {
                     let out_key = out_png.to_string_lossy().to_string();
                     self.pending_gif_previews.remove(&out_key);
-                    // self.log_action("GIF Preview Failed", &format!("{}: {}", out_png.display(), error));
-                    // self.push_toast_err(format!("Failed to generate GIF preview for {}: {}", out_png.display(), error));
                 }
             }
             ctx.request_repaint();

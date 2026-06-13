@@ -1,7 +1,8 @@
 impl HestiaApp {
     fn render_top_bar(&mut self, ctx: &egui::Context) {
         let current_time = ctx.input(|i| i.time);
-        
+        let text = self.text();
+
         for toast in &mut self.toasts {
             if toast.created_at == 0.0 {
                 toast.created_at = current_time;
@@ -66,7 +67,7 @@ impl HestiaApp {
                         }
                     );
                     job.append(
-                        "\nMod Manager",
+                        text.app_subtitle(),
                         0.0,
                         TextFormat {
                             font_id: egui::FontId::proportional(12.0),
@@ -96,10 +97,10 @@ impl HestiaApp {
                             ui.spacing_mut().item_spacing.x = 1.0;
 
                             let buttons = [
-                                (Icon::Play, "Play"),
-                                (Icon::PackagePlus, "Install\nZip/Rar"),
-                                (Icon::FolderPlus, "Install\nFolder"),
-                                (Icon::RefreshCw, "Reload"),
+                                (Icon::Play, text.play()),
+                                (Icon::PackagePlus, text.install_archive()),
+                                (Icon::FolderPlus, text.install_folder()),
+                                (Icon::RefreshCw, text.reload()),
                             ];
                             let max_lines =
                                 buttons.iter().map(|(_, l)| l.lines().count()).max().unwrap_or(1);
@@ -108,7 +109,7 @@ impl HestiaApp {
                             let play_modded_ready = self.selected_game_can_launch_modded();
                             let play_vanilla_ready = self.selected_game_can_launch_vanilla();
                             let play_ready = play_modded_ready || play_vanilla_ready;
-                            let tooltip = "Game is not installed or configured.";
+                            let tooltip = text.game_not_installed();
                             ui.add_enabled_ui(play_ready, |ui| {
                                 let response = titlebar_action_button(
                                     ui,
@@ -118,9 +119,9 @@ impl HestiaApp {
                                 );
                                 let launch_modded_by_default = play_modded_ready;
                                 response.clone().on_hover_text(if launch_modded_by_default {
-                                    "Launch the game with mods via XXMI"
+                                    text.launch_with_mods_tooltip()
                                 } else {
-                                    "Launch the game without mods"
+                                    text.launch_without_mods_tooltip()
                                 });
                                 if !play_ready {
                                     response
@@ -135,7 +136,7 @@ impl HestiaApp {
                                                 play_modded_ready,
                                                     egui::Button::new(icon_text_sized(
                                                         Icon::Play,
-                                                        "Play with mods",
+                                                        text.play_with_mods(),
                                                         14.0,
                                                         13.0,
                                                     )),
@@ -150,7 +151,7 @@ impl HestiaApp {
                                                 play_vanilla_ready,
                                                     egui::Button::new(icon_text_sized(
                                                         Icon::Play,
-                                                        "Play without mods",
+                                                        text.play_without_mods(),
                                                         14.0,
                                                         13.0,
                                                     )),
@@ -175,7 +176,7 @@ impl HestiaApp {
                                 );
                                 response
                                     .clone()
-                                    .on_hover_text("Install a mod from a zip/rar/7z archive");
+                                    .on_hover_text(text.install_archive_tooltip());
                                 if !selected_game_ready {
                                     response
                                         .clone()
@@ -184,7 +185,7 @@ impl HestiaApp {
                                 }
                                 if response.clicked() {
                                     if let Some(paths) = FileDialog::new()
-                                        .add_filter("Archives", &["zip", "rar", "7z"])
+                                        .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
                                         .pick_files()
                                     {
                                         let sources = paths
@@ -198,14 +199,14 @@ impl HestiaApp {
                                     if ui
                                         .button(icon_text_sized(
                                             Icon::PackagePlus,
-                                            "Install",
+                                            text.install(),
                                             14.0,
                                             13.0,
                                         ))
                                         .clicked()
                                     {
                                         if let Some(paths) = FileDialog::new()
-                                            .add_filter("Archives", &["zip", "rar", "7z"])
+                                            .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
                                             .pick_files()
                                         {
                                             let sources = paths
@@ -219,14 +220,14 @@ impl HestiaApp {
                                     if ui
                                         .button(icon_text_sized(
                                             Icon::PackagePlus,
-                                            "Install & Disable",
+                                            text.install_disabled(),
                                             14.0,
                                             13.0,
                                         ))
                                         .clicked()
                                     {
                                         if let Some(paths) = FileDialog::new()
-                                            .add_filter("Archives", &["zip", "rar", "7z"])
+                                            .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
                                             .pick_files()
                                         {
                                             let sources = paths
@@ -248,7 +249,7 @@ impl HestiaApp {
                                 );
                                 response
                                     .clone()
-                                    .on_hover_text("Install a mod from an already extracted folder");
+                                    .on_hover_text(text.install_folder_tooltip());
                                 if !selected_game_ready {
                                     response
                                         .clone()
@@ -264,7 +265,7 @@ impl HestiaApp {
                                     if ui
                                         .button(icon_text_sized(
                                             Icon::FolderPlus,
-                                            "Install",
+                                            text.install(),
                                             14.0,
                                             13.0,
                                         ))
@@ -278,7 +279,7 @@ impl HestiaApp {
                                     if ui
                                         .button(icon_text_sized(
                                             Icon::FolderPlus,
-                                            "Install & Disable",
+                                            text.install_disabled(),
                                             14.0,
                                             13.0,
                                         ))
@@ -318,10 +319,8 @@ impl HestiaApp {
                                         is_reload_rotating,
                                     );
                                     let reload_tooltip = match self.current_view {
-                                        ViewMode::Library => {
-                                            "Rescan installed mods and check for updates on GameBanana (Ctrl+R)"
-                                        }
-                                        ViewMode::Browse => "Reload the current list (Ctrl+R)",
+                                        ViewMode::Library => text.reload_library_tooltip(),
+                                        ViewMode::Browse => text.reload_browse_tooltip(),
                                     };
                                     response.clone().on_hover_text(reload_tooltip);
                                     if !selected_game_ready {
@@ -379,7 +378,7 @@ impl HestiaApp {
                                                         is_available,
                                                         egui::Button::new(icon_text_sized(
                                                             Icon::Play,
-                                                            "Launch",
+                                                            text.launch(),
                                                             14.0,
                                                             13.0,
                                                         )),
@@ -392,7 +391,7 @@ impl HestiaApp {
                                                 if ui
                                                     .button(icon_text_sized(
                                                         Icon::SquareTerminal,
-                                                        "Set launch options",
+                                                        text.set_launch_options(),
                                                         14.0,
                                                         13.0,
                                                     ))
@@ -405,7 +404,7 @@ impl HestiaApp {
                                                 if ui
                                                     .button(icon_text_sized(
                                                         Icon::FolderOpen,
-                                                        "Open Folder",
+                                                        text.open_folder(),
                                                         14.0,
                                                         13.0,
                                                     ))
@@ -417,7 +416,7 @@ impl HestiaApp {
                                                 if ui
                                                     .button(icon_text_sized(
                                                         Icon::PinOff,
-                                                        "Unpin from Titlebar",
+                                                        text.unpin_from_titlebar(),
                                                         14.0,
                                                         13.0,
                                                     ))
@@ -430,7 +429,7 @@ impl HestiaApp {
                                                 if ui
                                                     .button(icon_text_sized(
                                                         Icon::Trash2,
-                                                        "Remove",
+                                                        text.remove(),
                                                         14.0,
                                                         13.0,
                                                     ))
@@ -601,7 +600,7 @@ impl HestiaApp {
                 );
                 controls_ui.spacing_mut().item_spacing.x = 2.0;
                 controls_ui.horizontal(|ui| {
-                    if titlebar_control_button(ui, Icon::X, "Close").clicked()
+                    if titlebar_control_button(ui, Icon::X, text.close()).clicked()
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -613,13 +612,17 @@ impl HestiaApp {
                         } else {
                             Icon::Square
                         },
-                        if maximized { "Restore" } else { "Maximize" },
+                        if maximized {
+                            text.restore()
+                        } else {
+                            text.maximize()
+                        },
                     )
                     .clicked()
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
-                    if titlebar_control_button(ui, Icon::Minus, "Minimize").clicked() {
+                    if titlebar_control_button(ui, Icon::Minus, text.minimize()).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
                 });
@@ -639,7 +642,7 @@ impl HestiaApp {
                     );
                     let response = restart_ui.add(
                         egui::Label::new(
-                            RichText::new("Restart to Update")
+                            RichText::new(text.app_update_restart_to_update())
                                 .color(Color32::from_rgb(210, 189, 156))
                                 .underline(),
                         )
@@ -711,12 +714,13 @@ impl HestiaApp {
                 }
                 ctx.request_repaint();
             }
-            
+
             window_drag_strip(ui, ctx, 4.0);
         });
     }
 
     fn render_nav_rail(&mut self, ctx: &egui::Context) {
+        let text = self.text();
         egui::SidePanel::left("nav_rail")
             .resizable(false)
             .exact_width(78.0)
@@ -740,7 +744,7 @@ impl HestiaApp {
                         &mut self.current_view,
                         ViewMode::Library,
                         Icon::LibraryBig,
-                        "My Mods",
+                        text.my_mods(),
                     );
                     if my_mods_clicked && old_view == ViewMode::Library {
                         self.leave_category_folder_view();
@@ -751,7 +755,7 @@ impl HestiaApp {
                         &mut self.current_view,
                         ViewMode::Browse,
                         Icon::Compass,
-                        "Browse",
+                        text.browse(),
                     );
                     if self.current_view != old_view {
                         self.clear_mod_detail_rename();
@@ -759,19 +763,43 @@ impl HestiaApp {
                     let bottom_height = 348.0;
                     let spacer = (ui.available_height() - bottom_height).max(8.0);
                     ui.add_space(spacer);
-                    if action_icon_button(ui, Icon::AppWindow, "Tools", self.state.show_tools, Some("Tools (Ctrl+T)")) {
+                    if action_icon_button(
+                        ui,
+                        Icon::AppWindow,
+                        text.tools(),
+                        self.state.show_tools,
+                        Some(text.tools_tooltip()),
+                    ) {
                         self.toggle_tools_window();
                     }
                     ui.add_space(8.0);
-                    if action_icon_button(ui, Icon::ListChecks, "Tasks", self.state.show_tasks, Some("Tasks (Ctrl+J)")) {
+                    if action_icon_button(
+                        ui,
+                        Icon::ListChecks,
+                        text.tasks_window(),
+                        self.state.show_tasks,
+                        Some(text.tasks_tooltip()),
+                    ) {
                         self.toggle_tasks_window();
                     }
                     ui.add_space(8.0);
-                    if action_icon_button(ui, Icon::FileCog, "Log", self.state.show_log, Some("Log (Ctrl+L)")) {
+                    if action_icon_button(
+                        ui,
+                        Icon::FileCog,
+                        text.log(),
+                        self.state.show_log,
+                        Some(text.log_tooltip()),
+                    ) {
                         self.toggle_log_window();
                     }
                     ui.add_space(8.0);
-                    if action_icon_button(ui, Icon::Settings2, "Settings", self.settings_open, Some("Settings (F10)")) {
+                    if action_icon_button(
+                        ui,
+                        Icon::Settings2,
+                        text.settings(),
+                        self.settings_open,
+                        Some(text.settings_tooltip()),
+                    ) {
                         self.settings_open = !self.settings_open;
                     }
                     ui.add_space(16.0);
@@ -780,6 +808,7 @@ impl HestiaApp {
     }
 
     fn render_game_switcher(&mut self, ui: &mut Ui) {
+        let text = self.text();
         let enabled_games = self.enabled_games();
         if let Some(texture) = self.app_icon_texture.as_ref() {
             self.game_icon_textures
@@ -842,11 +871,11 @@ impl HestiaApp {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
                         if enabled_games.is_empty() {
-                            static_label(ui, RichText::new("No games detected or enabled").strong());
+                            static_label(ui, RichText::new(text.no_games_detected()).strong());
                             ui.add_space(-16.0);
                             static_label(
                                 ui,
-                                RichText::new("See Settings → Game & Path")
+                                RichText::new(text.see_settings_game_path())
                                     .color(Color32::from_gray(150)),
                             );
                         } else {

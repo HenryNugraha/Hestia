@@ -1,6 +1,6 @@
 [package]
 name = "hestia"
-version = "1.5.0"
+version = "1.6.0-alpha"
 authors = ["Henry Nugraha"]
 edition = "2024"
 
@@ -73,6 +73,7 @@ pulldown-cmark = "0.13"
 pulldown-cmark-to-cmark = "22.0.0"
 rusqlite = { version = "0.37", features = ["bundled"] }
 sysinfo = "0.38"
+sys-locale = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }

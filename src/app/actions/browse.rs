@@ -5,13 +5,21 @@ const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const BROWSE_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
 
 impl HestiaApp {
+    fn is_imported_mod_placeholder_name(&self, sanitized: &str) -> bool {
+        AppLanguage::ALL
+            .iter()
+            .map(|language| sanitize_folder_name(TextCatalog::new(*language).imported_mod()))
+            .any(|placeholder| sanitized == placeholder)
+    }
+
     fn sanitized_preferred_browse_title_name(&self, raw_title: Option<&str>) -> Option<String> {
         let title = raw_title?.trim();
         if title.is_empty() {
             return None;
         }
         let sanitized = sanitize_folder_name(title);
-        if sanitized == "Imported Mod" || sanitized.chars().all(|c| c == '_') {
+        if self.is_imported_mod_placeholder_name(&sanitized) || sanitized.chars().all(|c| c == '_')
+        {
             None
         } else {
             Some(sanitized)
@@ -175,8 +183,8 @@ impl HestiaApp {
             gamebanana::character_super_category_id_for_hestia(&game.definition.id)
         else {
             self.report_warn(
-                "This game has no configured GameBanana character category list.",
-                Some("Characters unavailable"),
+                self.text().no_configured_character_category_list(),
+                Some(self.text().characters_unavailable()),
             );
             return;
         };
@@ -670,8 +678,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         continue;
                     }
                     self.report_warn(
-                        format!("browse page refresh failed; using cached results: {warning}"),
-                        Some("Connection failed"),
+                        self.text().browse_page_warning(&warning),
+                        Some(self.text().connection_failed()),
                     );
                 }
                 BrowseEvent::PageFailed { generation, page, error, .. } => {
@@ -687,8 +695,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         continue;
                     }
                     self.report_error_message(
-                        format!("browse page failed: {error}"),
-                        Some("Browse failed"),
+                        self.text().browse_page_failed_message(&error),
+                        Some(self.text().browse_failed()),
                     );
                 }
                 BrowseEvent::CharacterCategoriesLoaded {
@@ -721,10 +729,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         continue;
                     }
                     self.report_warn(
-                        format!(
-                            "character category refresh failed; using cached results: {warning}"
-                        ),
-                        Some("Connection failed"),
+                        self.text().character_categories_warning(&warning),
+                        Some(self.text().connection_failed()),
                     );
                 }
                 BrowseEvent::CharacterCategoriesFailed { game_id, error, .. } => {
@@ -733,8 +739,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     }
                     self.browse_state.character_categories_loading = false;
                     self.report_error_message(
-                        format!("character categories failed: {error}"),
-                        Some("Characters failed"),
+                        self.text().character_categories_failed_message(&error),
+                        Some(self.text().characters_failed()),
                     );
                 }
                 BrowseEvent::DetailLoaded { mod_id, profile, .. } => {
@@ -802,12 +808,12 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 BrowseEvent::DetailWarning { mod_id, warning, .. } => {
                     if self.browse_state.selected_mod_id == Some(mod_id) {
                         self.report_warn(
-                            format!("browse detail refresh failed for mod {mod_id}; using cached details: {warning}"),
-                            Some("Connection failed"),
+                            self.text().browse_detail_warning(mod_id, &warning),
+                            Some(self.text().connection_failed()),
                         );
                     } else {
                         self.report_warn(
-                            format!("browse detail refresh failed for mod {mod_id}; using cached details: {warning}"),
+                            self.text().browse_detail_warning(mod_id, &warning),
                             None,
                         );
                     }
@@ -824,8 +830,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         }
                     }
                     self.report_error_message(
-                        format!("browse detail failed for mod {mod_id}: {error}"),
-                        Some("Browse detail failed"),
+                        self.text().browse_detail_failed_message(mod_id, &error),
+                        Some(self.text().browse_detail_failed()),
                     );
                 }
                 BrowseEvent::UpdatesLoaded { mod_id, updates, .. } => {
@@ -869,16 +875,17 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 }
                 BrowseEvent::UpdatesWarning { mod_id, warning, .. } => {
                     self.report_warn(
-                        format!("browse updates refresh failed for mod {mod_id}; using cached updates: {warning}"),
+                        self.text().browse_updates_warning(mod_id, &warning),
                         None,
                     );
                 }
                 BrowseEvent::UpdatesFailed { mod_id, error, .. } => {
+                    let failed_label = self.text().could_not_load_updates().to_string();
                     if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
-                        detail.updates = BrowseUpdatesState::Failed("Could not load updates".to_string());
+                        detail.updates = BrowseUpdatesState::Failed(failed_label);
                     }
                     self.report_error_message(
-                        format!("browse updates failed for mod {mod_id}: {error}"),
+                        self.text().browse_updates_failed_message(mod_id, &error),
                         None,
                     );
                 }
@@ -1048,8 +1055,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 self.update_task_status(task_id, TaskStatus::Failed);
             }
             self.report_warn(
-                "Game is not installed or configured.",
-                Some("Install unavailable"),
+                self.text().game_not_installed(),
+                Some(self.text().install_unavailable()),
             );
             return;
         }
@@ -1210,7 +1217,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         task.total_size = Some(byte_size);
                     }
                     self.update_task_status(task_id, TaskStatus::Installing);
-                    self.set_message_ok(format!("Downloaded: {title}"));
+                    self.set_message_ok(self.text().downloaded(&title));
                     let install_game_id = self
                         .pending_browse_install_meta
                         .get(&task_id)
@@ -1227,7 +1234,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                                 self.update_task_status(task_id, TaskStatus::Failed);
                                 self.report_error_message(
                                     "Missing game context for install".to_string(),
-                                    Some("Could not prepare install"),
+                                    Some(self.text().could_not_prepare_install()),
                                 );
                                 continue;
                             };
@@ -1241,7 +1248,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         }
                         Err(err) => {
                             self.update_task_status(task_id, TaskStatus::Failed);
-                            self.report_error(err, Some("Could not prepare install"));
+                            self.report_error(err, Some(self.text().could_not_prepare_install()));
                         }
                     }
                 }
@@ -1254,15 +1261,15 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     self.mark_usage_counters_dirty();
                     self.update_task_status(task_id, TaskStatus::Failed);
                     self.report_error_message(
-                        format!("download failed for {title}: {error}"),
-                        Some("Download failed"),
+                        self.text().browse_download_failed_message(&title, &error),
+                        Some(self.text().download_failed()),
                     );
                 }
                 BrowseDownloadEvent::Canceled { task_id, title } => {
                     self.browse_download_inflight.remove(&task_id);
                     self.mark_usage_counters_dirty();
                     self.update_task_status(task_id, TaskStatus::Canceled);
-                    self.set_message_ok(format!("Download canceled: {title}"));
+                    self.set_message_ok(self.text().download_canceled(&title));
                 }
             }
         }
@@ -1272,8 +1279,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         if !self.game_is_installed_or_configured(&pending.game_id) {
             self.update_task_status(pending.task_id, TaskStatus::Failed);
             self.report_warn(
-                "Game is not installed or configured.",
-                Some("Install unavailable"),
+                self.text().game_not_installed(),
+                Some(self.text().install_unavailable()),
             );
             return;
         }
@@ -1288,7 +1295,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         if let Some(target_id) = pending.update_target_id.as_deref() {
             let preferred_name = self.preferred_browse_folder_name(
                 self.browse_mod_title_for_install(pending.mod_id, Some(target_id)).as_deref(),
-                update_folder_name.as_deref().unwrap_or("Imported Mod"),
+                update_folder_name.as_deref().unwrap_or(self.text().imported_mod()),
             );
             if update_folder_name.as_deref() != Some(preferred_name.as_str()) {
                 match self.rename_mod_folder(target_id, &preferred_name) {
@@ -1428,7 +1435,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         match selectable.len() {
             0 => {
                 self.update_task_status(pending.task_id, TaskStatus::Failed);
-                self.report_warn("no downloadable files found", Some("No downloadable files found"));
+                self.report_warn(self.text().no_downloadable_files_found(), Some(self.text().no_downloadable_files_found()));
             }
             1 => {
                 let selected_files = vec![selectable[0].clone()];
@@ -1472,8 +1479,8 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         };
         if !self.selected_game_is_installed_or_configured() {
             self.report_warn(
-                "Game is not installed or configured.",
-                Some("Install unavailable"),
+                self.text().game_not_installed(),
+                Some(self.text().install_unavailable()),
             );
             return;
         }
@@ -1515,7 +1522,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             update_target_id: None,
             install_disabled,
         });
-        self.set_message_ok(format!("Resolving download: {title}"));
+        self.set_message_ok(self.text().resolving_download(&title));
     }
 
     fn confirm_browse_file_prompt(&mut self) {
@@ -1529,7 +1536,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             .map(|file| file.file)
             .collect();
         if selected_files.is_empty() {
-            self.set_message_ok("No files selected");
+            self.set_message_ok(self.text().no_files_selected());
             return;
         }
         let selected_set = selected_files.clone();
@@ -1553,7 +1560,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                 prompt.post_install_rename_to.clone(),
             );
         }
-        self.set_message_ok("Download queued");
+        self.set_message_ok(self.text().download_queued());
     }
 }
 

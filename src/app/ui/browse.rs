@@ -1,5 +1,6 @@
 impl HestiaApp {
     fn render_browse_left_pane(&mut self, ui: &mut Ui) {
+        let text = self.text();
         egui::Frame::new()
             .fill(Color32::from_rgba_premultiplied(36, 38, 42, 242))
             .corner_radius(egui::CornerRadius::same(0))
@@ -70,7 +71,7 @@ impl HestiaApp {
                             let edit_resp = child_ui.add(
                                 TextEdit::singleline(&mut self.browse_query)
                                     .id_source(BROWSE_SEARCH_INPUT_ID)
-                                    .hint_text(if how_expanded > 0.8 { "Discover mods on GameBanana..." } else { "" })
+                                    .hint_text(if how_expanded > 0.8 { text.browse_search_hint() } else { "" })
                                     .frame(false)
                                     .desired_width(input_rect.width())
                             );
@@ -146,7 +147,7 @@ impl HestiaApp {
                         ui.painter().with_clip_rect(label_rect).text(
                             text_pos,
                             egui::Align2::LEFT_CENTER,
-                            "GameBanana Mods",
+                            text.browse_mods_title(),
                             egui::FontId::proportional(18.0),
                             Color32::from_rgba_premultiplied(228, 231, 235, (header_visibility * 255.0) as u8),
                         );
@@ -163,7 +164,7 @@ impl HestiaApp {
                             .add(
                                 egui::Button::new(icon_text_sized(
                                     Icon::Users,
-                                    "Characters",
+                                    text.browse_characters(),
                                     12.0,
                                     12.0,
                                 ))
@@ -198,14 +199,14 @@ impl HestiaApp {
                             ui.spacing_mut().item_spacing.y = -2.0;
                             ui.add_space(2.0);
                             if self.browse_state.selected_character_category.is_some() {
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new("Popular").size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new("Recent Updated").size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             } else if is_empty {
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new("Popular").size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new("Recent Updated").size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             } else {
-                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::BestMatch, RichText::new("Best Match").size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::RecentUpdated, RichText::new("Recent Updated").size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::BestMatch, RichText::new(text.browse_best_match()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             }
                         });
                     });
@@ -220,8 +221,8 @@ impl HestiaApp {
                                 let count_label = self
                                     .browse_state
                                     .total_count
-                                    .map(|count| format!("{count} mods"))
-                                    .unwrap_or_else(|| "Loading…".to_string());
+                                    .map(|count| text.browse_mods_count(count))
+                                    .unwrap_or_else(|| text.browse_loading().to_string());
                                 static_label(
                                     ui,
                                     RichText::new(count_label)
@@ -233,7 +234,7 @@ impl HestiaApp {
                                     ui.add_space(-10.0);
                                     static_label(
                                         ui,
-                                        RichText::new(format!("{hidden_count} hidden for NSFW"))
+                                        RichText::new(text.browse_hidden_nsfw_count(hidden_count))
                                             .size(11.0)
                                             .color(Color32::from_rgb(168, 112, 112)),
                                     );
@@ -303,7 +304,11 @@ impl HestiaApp {
                                 );
                                 static_label(
                                     ui,
-                                    RichText::new(format!("{} mods", category.item_count))
+                                    RichText::new(
+                                        text.browse_selected_character_mods_count(
+                                            category.item_count,
+                                        ),
+                                    )
                                         .size(12.0)
                                         .color(Color32::from_gray(155)),
                                 );
@@ -317,7 +322,7 @@ impl HestiaApp {
                                         ))
                                         .corner_radius(egui::CornerRadius::same(3)),
                                     )
-                                    .on_hover_text("Show all mods")
+                                    .on_hover_text(text.browse_show_all_mods())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .clicked()
                                 {
@@ -344,7 +349,7 @@ impl HestiaApp {
                 ui.centered_and_justified(|ui| {
                     static_label(
                         ui,
-                        RichText::new("Fetching mods from GameBanana…")
+                        RichText::new(text.browse_fetching_mods())
                             .size(16.0)
                             .color(Color32::from_gray(180)),
                     );
@@ -467,7 +472,7 @@ impl HestiaApp {
                                                     let install_response = ui.add_enabled(
                                                         card.has_files && selected_game_ready,
                                                         egui::Button::new(
-                                                            RichText::new(if is_installed { "Installed" } else { "Install" })
+                                                            RichText::new(if is_installed { text.installed() } else { text.install() })
                                                                 .size(15.0)
                                                                 .color(if is_installed {
                                                                     Color32::from_rgb(214, 218, 224)
@@ -486,7 +491,7 @@ impl HestiaApp {
                                                     if !selected_game_ready {
                                                         install_response
                                                             .clone()
-                                                            .on_hover_text("Game is not installed or configured.")
+                                                            .on_hover_text(text.game_not_installed())
                                                             .on_hover_cursor(egui::CursorIcon::NotAllowed);
                                                     } else if card.has_files {
                                                         install_response
@@ -595,7 +600,7 @@ impl HestiaApp {
                                 ui.ctx().request_repaint();
                                 static_label(
                                     ui,
-                                    RichText::new("Loading…")
+                                    RichText::new(text.browse_loading())
                                         .size(12.0)
                                         .color(Color32::from_gray(170)),
                                 );
@@ -613,7 +618,7 @@ impl HestiaApp {
                                 !install_blocked && selected_game_ready,
                                 egui::Button::new(icon_text_sized(
                                     Icon::PackagePlus,
-                                    "Install",
+                                    text.install(),
                                     13.0,
                                     13.0,
                                 ))
@@ -627,7 +632,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 install_response
                                     .clone()
-                                    .on_hover_text_at_pointer("Game is not installed or configured.")
+                                    .on_hover_text_at_pointer(text.game_not_installed())
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             } else {
                                 install_response
@@ -643,7 +648,7 @@ impl HestiaApp {
                                 !install_blocked && selected_game_ready,
                                 egui::Button::new(icon_text_sized(
                                     Icon::PackagePlus,
-                                    "Install & Disable",
+                                    text.install_disabled(),
                                     13.0,
                                     13.0,
                                 ))
@@ -652,7 +657,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 install_disabled_response
                                     .clone()
-                                    .on_hover_text_at_pointer("Game is not installed or configured.")
+                                    .on_hover_text_at_pointer(text.game_not_installed())
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             } else if install_blocked {
                                 install_disabled_response
@@ -670,13 +675,13 @@ impl HestiaApp {
 
                             let browser_response = ui.button(icon_text_sized(
                                 Icon::Globe,
-                                "Open in Browser",
+                                text.open_in_browser(),
                                 13.0,
                                 13.0,
                             )).on_hover_cursor(egui::CursorIcon::PointingHand);
                             if browser_response.clicked() {
                                 if let Err(err) = open_external_url(&gamebanana::browser_url(card.id)) {
-                                    self.report_error(err, Some("Could not open browser"));
+                                    self.report_error(err, Some(text.could_not_open_browser()));
                                 }
                                 ui.close();
                             }
@@ -698,7 +703,7 @@ impl HestiaApp {
                 ui.centered_and_justified(|ui| {
                     static_label(
                         ui,
-                        RichText::new("Loading more…")
+                        RichText::new(text.browse_loading_more())
                             .size(12.5)
                             .color(Color32::from_gray(165)),
                     );
@@ -716,6 +721,7 @@ impl HestiaApp {
     }
 
     fn render_browse_character_picker(&mut self, ui: &mut Ui) {
+        let text = self.text();
         ui.set_width(BROWSE_CHARACTER_PICKER_WIDTH);
         ui.set_min_height(BROWSE_CHARACTER_PICKER_HEIGHT);
         ui.add_space(4.0);
@@ -732,7 +738,7 @@ impl HestiaApp {
                 |ui| {
                     static_label(
                         ui,
-                        RichText::new("No character list is configured for this game.")
+                        RichText::new(text.browse_no_character_list())
                             .size(12.5)
                             .color(Color32::from_gray(170)),
                     );
@@ -762,7 +768,7 @@ impl HestiaApp {
         ui.painter().text(
             title_pos,
             egui::Align2::CENTER_CENTER,
-            "Characters",
+            text.browse_characters(),
             title_font,
             Color32::from_rgb(228, 231, 235),
         );
@@ -786,7 +792,7 @@ impl HestiaApp {
                 ui.id().with("browse_character_refresh"),
                 Sense::click(),
             )
-            .on_hover_text("Refresh characters")
+            .on_hover_text(text.browse_refresh_characters())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         ui.painter().text(
             refresh_rect.center(),
@@ -816,7 +822,7 @@ impl HestiaApp {
                     ui.id().with("browse_character_clear"),
                     Sense::click(),
                 )
-                .on_hover_text("Clear this filter")
+                .on_hover_text(text.browse_clear_filter())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             ui.painter().text(
                 clear_rect.center(),
@@ -836,13 +842,13 @@ impl HestiaApp {
         }
         ui.separator();
         let status = if self.browse_state.character_categories_loading {
-            "Loading...".to_string()
+            text.browse_loading().to_string()
         } else if let Some(name) = selected_category_name.as_deref() {
-            format!("Selected: {}", Self::take_label_chunk(name, 30, true))
+            text.browse_selected_character(&Self::take_label_chunk(name, 30, true))
         } else if category_count > 0 {
-            format!("{category_count} characters")
+            text.browse_character_count(category_count)
         } else {
-            "Waiting".to_string()
+            text.browse_waiting().to_string()
         };
         ui.painter().text(
             egui::pos2(header_rect.center().x, header_rect.top() + 35.0),
@@ -863,7 +869,7 @@ impl HestiaApp {
                     ui.add_space(4.0);
                     static_label(
                         ui,
-                        RichText::new("Loading…")
+                        RichText::new(text.browse_loading())
                             .size(12.5)
                             .color(Color32::from_gray(170)),
                     );
@@ -881,7 +887,7 @@ impl HestiaApp {
                     ui.add_space(4.0);
                     static_label(
                         ui,
-                        RichText::new("No characters returned by GameBanana.")
+                        RichText::new(text.browse_no_characters_returned())
                             .size(12.5)
                             .color(Color32::from_gray(170)),
                     );
@@ -1092,6 +1098,7 @@ impl HestiaApp {
     }
 
     fn render_browse_detail_window(&mut self, ctx: &egui::Context, pane_rect: egui::Rect) {
+        let text = self.text();
         let Some(mod_id) = self.browse_state.selected_mod_id else {
             self.render_browse_screenshot_overlay(ctx);
             return;
@@ -1105,7 +1112,7 @@ impl HestiaApp {
         let details_offset = egui::vec2(0.0, 32.0);
         let details_pos = details_rect.min + details_offset;
         let mut browse_detail_open = self.browse_detail_open;
-        let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, "Mod Detail", 14.0, 14.0)) // BROWSE view's mod detail GUI
+        let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, text.browse_mod_detail(), 14.0, 14.0)) // BROWSE view's mod detail GUI
             .id(egui::Id::new(BROWSE_DETAIL_WINDOW_ID))
             .default_pos(details_pos)
             .default_size(BROWSE_DETAIL_SIZE)
@@ -1149,11 +1156,11 @@ impl HestiaApp {
                     );
                     id_response
                         .clone()
-                        .on_hover_text("Copy GameBanana ID")
+                        .on_hover_text(text.copy_gamebanana_id())
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if id_response.clicked() {
                         ui.ctx().copy_text(mod_id.to_string());
-                        self.set_message_ok("GameBanana ID copied");
+                        self.set_message_ok(text.gamebanana_id_copied());
                     }
                 });
                 if let Some(detail) = self.browse_state.details.get(&mod_id).cloned() {
@@ -1173,7 +1180,7 @@ impl HestiaApp {
                                 .as_ref()
                                 .map(|submitter| submitter.name.clone())
                         })
-                        .unwrap_or_else(|| "Unknown".to_string());
+                        .unwrap_or_else(|| text.unknown().to_string());
                     let like_count = card
                         .as_ref()
                         .map(|card| card.like_count)
@@ -1219,7 +1226,11 @@ impl HestiaApp {
                             !install_blocked && selected_game_ready,
                             egui::Button::new(icon_text_sized(
                                 Icon::PackagePlus,
-                                if is_installed { "Installed" } else { "Install" },
+                                if is_installed {
+                                    text.installed()
+                                } else {
+                                    text.install()
+                                },
                                 13.0,
                                 13.0,
                             ))
@@ -1233,7 +1244,7 @@ impl HestiaApp {
                         if !selected_game_ready {
                             install_response
                                 .clone()
-                                .on_hover_text_at_pointer("Game is not installed or configured.")
+                                .on_hover_text_at_pointer(text.game_not_installed())
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         } else if install_blocked {
                             install_response
@@ -1254,7 +1265,7 @@ impl HestiaApp {
                                     selected_game_ready && !install_blocked,
                                     egui::Button::new(icon_text_sized(
                                         Icon::PackagePlus,
-                                        "Install",
+                                        text.install(),
                                         13.0,
                                         13.0,
                                     )),
@@ -1269,7 +1280,7 @@ impl HestiaApp {
                                     selected_game_ready && !install_blocked,
                                     egui::Button::new(icon_text_sized(
                                         Icon::PackagePlus,
-                                        "Install & Disable",
+                                        text.install_disabled(),
                                         13.0,
                                         13.0,
                                     )),
@@ -1282,7 +1293,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 static_label(
                                     ui,
-                                    RichText::new("Game is not installed or configured.")
+                                    RichText::new(text.game_not_installed())
                                         .size(12.0)
                                         .color(Color32::from_gray(170)),
                                 );
@@ -1297,12 +1308,12 @@ impl HestiaApp {
                         });
                         ui.add_space(-2.0);
                         if ui.add(
-                                egui::Button::new(icon_text_sized(Icon::Globe, "Open in Browser", 13.0, 13.0))
+                            egui::Button::new(icon_text_sized(Icon::Globe, text.open_in_browser(), 13.0, 13.0))
                                     .corner_radius(egui::CornerRadius::same(6)),
                             ).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                         {
                             if let Err(err) = open_external_url(&gamebanana::browser_url(mod_id)) {
-                                self.report_error(err, Some("Could not open browser"));
+                                self.report_error(err, Some(text.could_not_open_browser()));
                             }
                         }
                             ui.allocate_ui_with_layout(
@@ -1537,7 +1548,7 @@ impl HestiaApp {
                         match &detail.updates {
                             BrowseUpdatesState::Loaded(entries) if !entries.is_empty() => {
                                 egui::CollapsingHeader::new(
-                                    bold("Updates").size(13.0).underline().color(Color32::from_gray(220)),
+                                    bold(text.browse_updates()).size(13.0).underline().color(Color32::from_gray(220)),
                                 )
                                 .id_salt(("browse_updates_section", self.browse_detail_generation, mod_id))
                                 .default_open(false)
@@ -1582,7 +1593,7 @@ impl HestiaApp {
                             }
                             BrowseUpdatesState::Failed(message) => {
                                 egui::CollapsingHeader::new(
-                                    RichText::new("Updates")
+                                    RichText::new(text.browse_updates())
                                         .size(13.0)
                                         .strong()
                                         .color(Color32::from_gray(220)),
@@ -1611,12 +1622,12 @@ impl HestiaApp {
                                         static_label(ui, icon_rich(Icon::Lock, 16.0, Color32::from_rgb(200, 100, 100)));
                                         static_label(
                                             ui,
-                                            RichText::new("This mod is private.")
+                                            RichText::new(text.browse_private_mod())
                                                 .strong()
                                                 .color(Color32::from_rgb(220, 120, 120))
                                         );
                                     });
-                                    static_label(ui, "Automatic installation is disabled. You may be able to view or download it directly on GameBanana if you are authorized.");
+                                    static_label(ui, text.browse_automatic_install_disabled_authorized());
                                 } else if is_withheld {
                                     ui.add_space(6.0);
                                     ui.horizontal(|ui| {
@@ -1633,7 +1644,7 @@ impl HestiaApp {
                                             ui.set_max_width(ui.available_width());
                                             static_label(
                                                 ui,
-                                                RichText::new("This mod has been withheld")
+                                                RichText::new(text.browse_withheld_mod())
                                                     .strong()
                                                     .color(Color32::from_rgb(220, 120, 120)),
                                             );
@@ -1643,7 +1654,7 @@ impl HestiaApp {
                                             {
                                                 static_label(
                                                     ui,
-                                                    RichText::new("Withheld by")
+                                                    RichText::new(text.browse_withheld_by())
                                                         .size(12.0)
                                                         .color(Color32::from_gray(192)),
                                                 );
@@ -1669,7 +1680,7 @@ impl HestiaApp {
                                                     {
                                                         self.report_error(
                                                             err,
-                                                            Some("Could not open browser"),
+                                                            Some(text.could_not_open_browser()),
                                                         );
                                                     }
                                                 }
@@ -1679,7 +1690,7 @@ impl HestiaApp {
                                     ui.add(
                                         egui::Label::new(
                                             RichText::new(
-                                                "Automatic installation is disabled until the withhold is resolved.",
+                                                text.browse_automatic_install_disabled_withheld(),
                                             ),
                                         )
                                         .wrap()
@@ -1710,7 +1721,7 @@ impl HestiaApp {
                                                     .code
                                                     .as_deref()
                                                     .or(rule.name.as_deref())
-                                                    .unwrap_or("Rule violation");
+                                                    .unwrap_or(text.browse_rule_violation());
                                                 ui.add(
                                                     egui::Label::new(
                                                         RichText::new(format!("• {label}"))
@@ -1738,7 +1749,7 @@ impl HestiaApp {
                                         ui.add_space(-4.0);
                                         static_label(
                                             ui,
-                                            RichText::new("This mod no longer exists.")
+                                            RichText::new(text.browse_deleted_mod_no_longer_exists())
                                                 .strong()
                                                 .color(Color32::from_rgb(220, 120, 120)),
                                         );
@@ -1759,7 +1770,7 @@ impl HestiaApp {
                                                         if let Some(trasher) = trashed_by_owner.as_ref() {
                                                             static_label(
                                                                 ui,
-                                                                RichText::new("This mod has been deleted by")
+                                                                RichText::new(text.browse_deleted_by())
                                                                     .strong()
                                                                     .color(Color32::from_rgb(220, 120, 120))
                                                             );
@@ -1775,13 +1786,13 @@ impl HestiaApp {
                                                             ).on_hover_cursor(egui::CursorIcon::PointingHand);
                                                             if response.clicked() {
                                                                 if let Err(err) = open_external_url(&trasher.profile_url) {
-                                                                    self.report_error(err, Some("Could not open browser"));
+                                                                    self.report_error(err, Some(text.could_not_open_browser()));
                                                                 }
                                                             }
                                                         } else {
                                                             static_label(
                                                                 ui,
-                                                                RichText::new("This mod has been deleted")
+                                                                RichText::new(text.browse_deleted())
                                                                     .strong()
                                                                     .color(Color32::from_rgb(220, 120, 120))
                                                             );
@@ -1823,14 +1834,14 @@ impl HestiaApp {
 
                         if !install_blocked && !detail.profile.files.is_empty() {
                             ui.add_space(12.0);
-                            render_file_section_label(ui, "Files", detail.profile.files.len());
+                            render_file_section_label(ui, text.browse_files(), detail.profile.files.len());
                             for file in &detail.profile.files {
                                 self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
                             }
                         }
                         if !install_blocked && !detail.profile.archived_files.is_empty() {
                             ui.add_space(12.0);
-                            render_file_section_label(ui, "Archived Files", detail.profile.archived_files.len());
+                            render_file_section_label(ui, text.browse_archived_files(), detail.profile.archived_files.len());
                             for file in &detail.profile.archived_files {
                                 self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
                             }
@@ -1841,7 +1852,7 @@ impl HestiaApp {
                     ui.centered_and_justified(|ui| {
                     static_label(
                         ui,
-                        RichText::new("Loading mod details…")
+                        RichText::new(text.browse_loading_details())
                             .size(15.0)
                             .color(Color32::from_gray(175)),
                     );
@@ -1869,6 +1880,7 @@ impl HestiaApp {
         mod_id: u64,
         file: &gamebanana::ModFile,
     ) {
+        let text = self.text();
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -1878,11 +1890,10 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         static_label(
                             ui,
-                            RichText::new(format!(
-                                "{} • {} • {} downloads",
+                            RichText::new(text.browse_file_metadata(
                                 format_file_size(file.file_size),
                                 format_exact_local_timestamp(file.date_added),
-                                file.download_count
+                                file.download_count,
                             ))
                             .size(11.5)
                             .color(Color32::from_gray(155)),
@@ -1900,12 +1911,12 @@ impl HestiaApp {
                         let selected_game_ready = self.game_is_installed_or_configured(&game_id);
                         let install_response = ui.add_enabled(
                             selected_game_ready && file.download_url.is_some(),
-                            egui::Button::new("Install"),
+                            egui::Button::new(text.install()),
                         );
                         if !selected_game_ready {
                             install_response
                                 .clone()
-                                .on_hover_text("Game is not installed or configured.")
+                                .on_hover_text(text.game_not_installed())
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         } else if file.download_url.is_some() {
                             install_response
@@ -1937,6 +1948,7 @@ impl HestiaApp {
     }
 
     fn render_browse_file_prompt(&mut self, ctx: &egui::Context, constrain_rect: egui::Rect) {
+        let text = self.text();
         let Some(prompt_game_id) = self
             .browse_state
             .file_prompt
@@ -1961,7 +1973,7 @@ impl HestiaApp {
         let mut open = true;
         let mut should_cancel = false;
         let mut should_confirm = false;
-        egui::Window::new(icon_text_sized(Icon::Files, "Choose Files", 14.0, 14.0))
+        egui::Window::new(icon_text_sized(Icon::Files, text.browse_choose_files(), 14.0, 14.0))
             .id(egui::Id::new(BROWSE_FILE_PICKER_WINDOW_ID))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .default_size(egui::vec2(420.0, 420.0))
@@ -1983,10 +1995,7 @@ impl HestiaApp {
                         ui.add_space(4.0);
                         static_label(
                             ui,
-                            RichText::new(concat!("This mod has multiple files available.\n",
-                                                "Select file(s) to download and install:"
-                            ))
-                                .size(14.0),
+                            RichText::new(text.browse_multiple_files_prompt()).size(14.0),
                         );
                     });
                 });
@@ -2029,11 +2038,10 @@ impl HestiaApp {
                                                     ui.add_space(-4.0);
                                                     static_label(
                                                         ui,
-                                                        RichText::new(format!(
-                                                            "{} • {} • {} downloads",
+                                                        RichText::new(text.browse_file_metadata(
                                                             format_file_size(file_entry.file.file_size),
                                                             format_exact_local_timestamp(file_entry.file.date_added),
-                                                            file_entry.file.download_count
+                                                            file_entry.file.download_count,
                                                         ))
                                                         .size(11.5)
                                                         .color(Color32::from_gray(155)),
@@ -2055,19 +2063,19 @@ impl HestiaApp {
                         ui.horizontal(|ui| {
                             let install_response = ui.add_enabled(
                                 prompt_game_ready,
-                                egui::Button::new("Install")
+                                egui::Button::new(text.install())
                                     .fill(Color32::from_rgb(180, 78, 35))
                                 );
                             if !prompt_game_ready {
                                 install_response
                                     .clone()
-                                    .on_hover_text("Game is not installed or configured.")
+                                    .on_hover_text(text.game_not_installed())
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             }
                             if install_response.clicked() {
                                 should_confirm = true;
                             }
-                            if ui.button("Cancel").clicked() {
+                            if ui.button(text.cancel()).clicked() {
                                 should_cancel = true;
                             }
                         });

@@ -67,10 +67,10 @@ impl HestiaApp {
                     verified_path,
                 } => {
                     self.app_update_manifest = Some(manifest.clone());
-                    if let Err(message) = ensure_app_update_target_writable() {
+                    if let Err(message) = ensure_app_update_target_writable(Some(self.text())) {
                         self.app_update_verified_path = None;
                         self.app_update_button_state = AppUpdateButtonState::ManualRequired;
-                        self.report_error_message(message, Some("Manual update required"));
+                        self.report_error_message(message, Some(self.text().app_update_manual_required()));
                         continue;
                     }
                     self.app_update_button_state = AppUpdateButtonState::UpdateAvailable;
@@ -103,7 +103,7 @@ impl HestiaApp {
                     }
                     self.update_task_status(task_id, TaskStatus::Completed);
                     self.app_update_button_state = AppUpdateButtonState::UpdateAvailable;
-                    self.set_message_ok("Update ready");
+                    self.set_message_ok(self.text().app_update_ready());
                 }
                 AppUpdateEvent::DownloadFailed { task_id, error } => {
                     self.app_update_download_inflight = None;
@@ -113,7 +113,7 @@ impl HestiaApp {
                     self.app_update_button_state = AppUpdateButtonState::Failed;
                     self.report_error_message(
                         format!("app update download failed: {error}"),
-                        Some("Update failed"),
+                        Some(self.text().app_update_failed()),
                     );
                 }
                 AppUpdateEvent::DownloadCanceled { task_id } => {
@@ -122,7 +122,7 @@ impl HestiaApp {
                     self.app_update_verified_path = None;
                     self.update_task_status(task_id, TaskStatus::Canceled);
                     self.app_update_button_state = AppUpdateButtonState::Check;
-                    self.set_message_ok("Update download canceled");
+                    self.set_message_ok(self.text().app_update_download_canceled());
                 }
             }
         }
@@ -133,11 +133,11 @@ impl HestiaApp {
             self.app_update_button_state = AppUpdateButtonState::UpdateAvailable;
             return;
         }
-        if let Err(message) = ensure_app_update_target_writable() {
+        if let Err(message) = ensure_app_update_target_writable(Some(self.text())) {
             self.app_update_manifest = Some(manifest);
             self.app_update_verified_path = None;
             self.app_update_button_state = AppUpdateButtonState::ManualRequired;
-            self.report_error_message(message, Some("Manual update required"));
+            self.report_error_message(message, Some(self.text().app_update_manual_required()));
             return;
         }
         let destination = app_update_exe_path(&manifest.version);
@@ -256,20 +256,23 @@ impl HestiaApp {
     }
 
     fn app_update_button_label(&self, now: f64) -> &'static str {
+        let text = self.text();
         if self.app_update_verified_path.is_some() {
-            return "Restart to Update";
+            return text.app_update_restart_to_update();
         }
         if self.app_update_button_state == AppUpdateButtonState::Checking
             || now < self.app_update_button_spin_until
         {
-            return "Checking...";
+            return text.app_update_checking();
         }
         match self.app_update_button_state {
-            AppUpdateButtonState::Check | AppUpdateButtonState::Checking => "Check for Update",
-            AppUpdateButtonState::UpToDate => "Up to Date",
-            AppUpdateButtonState::Failed => "Failed to Check",
-            AppUpdateButtonState::ManualRequired => "Manual Update Required",
-            AppUpdateButtonState::UpdateAvailable => "Update Available",
+            AppUpdateButtonState::Check | AppUpdateButtonState::Checking => {
+                text.app_update_check_for_update()
+            }
+            AppUpdateButtonState::UpToDate => text.app_update_up_to_date(),
+            AppUpdateButtonState::Failed => text.app_update_failed_to_check(),
+            AppUpdateButtonState::ManualRequired => text.app_update_manual_required(),
+            AppUpdateButtonState::UpdateAvailable => text.app_update_available(),
         }
     }
 
@@ -292,13 +295,13 @@ impl HestiaApp {
         if self.has_active_mod_tasks() {
             self.report_warn(
                 "update restart blocked while tasks are active",
-                Some("Wait for active tasks before updating"),
+                Some(self.text().app_update_wait_for_active_tasks()),
             );
             return;
         }
-        if let Err(message) = ensure_app_update_target_writable() {
+        if let Err(message) = ensure_app_update_target_writable(Some(self.text())) {
             self.app_update_button_state = AppUpdateButtonState::ManualRequired;
-            self.report_error_message(message, Some("Manual update required"));
+            self.report_error_message(message, Some(self.text().app_update_manual_required()));
             return;
         }
         match self_replace::self_replace(&path) {
@@ -315,7 +318,7 @@ impl HestiaApp {
             }
             Err(err) => self.report_error_message(
                 if err.kind() == std::io::ErrorKind::PermissionDenied {
-                    match build_manual_app_update_message() {
+                    match build_manual_app_update_message(Some(self.text())) {
                         Ok(message) => message,
                         Err(context) => format!("failed to apply app update: {err:#}\n{context}"),
                     }
@@ -323,9 +326,9 @@ impl HestiaApp {
                     format!("failed to apply app update: {err:#}")
                 },
                 Some(if err.kind() == std::io::ErrorKind::PermissionDenied {
-                    "Manual update required"
+                    self.text().app_update_manual_required()
                 } else {
-                    "Could not apply update"
+                    self.text().app_update_could_not_apply()
                 }),
             ),
         }
@@ -380,7 +383,7 @@ pub(crate) fn apply_staged_app_update_before_gui(
         return Ok(false);
     }
 
-    if ensure_app_update_target_writable().is_err() {
+    if ensure_app_update_target_writable(None).is_err() {
         clear_staged_app_update_folder(&staged.path);
         state.staged_app_update = None;
         persistence::save_app_state(portable, state)?;
@@ -408,11 +411,11 @@ pub(crate) fn apply_staged_app_update_before_gui(
     }
 }
 
-fn ensure_app_update_target_writable() -> Result<(), String> {
+fn ensure_app_update_target_writable(text: Option<TextCatalog>) -> Result<(), String> {
     if app_update_target_is_writable()? {
         Ok(())
     } else {
-        Err(build_manual_app_update_message().unwrap_or_else(|err| err))
+        Err(build_manual_app_update_message(text).unwrap_or_else(|err| err))
     }
 }
 
@@ -429,15 +432,20 @@ fn app_update_target_is_writable() -> Result<bool, String> {
     Ok(app_update_dir_allows_replacement(install_dir, exe_stem))
 }
 
-fn build_manual_app_update_message() -> Result<String, String> {
+fn build_manual_app_update_message(text: Option<TextCatalog>) -> Result<String, String> {
     let exe = std::env::current_exe()
         .map_err(|err| format!("failed to resolve current executable path: {err}"))?;
     let install_dir = exe
         .parent()
         .ok_or_else(|| format!("current executable has no parent folder: {}", exe.display()))?;
-    Ok(format!(
-        "Hestia is installed in a folder this process cannot update:\n{}\nMove Hestia to another folder and try again, or update this install from an elevated process.",
-        install_dir.display()
+    let install_dir = install_dir.display().to_string();
+    Ok(text.map_or_else(
+        || {
+            format!(
+                "Hestia is installed in a folder this process cannot update:\n{install_dir}\nMove Hestia to another folder and try again, or update this install from an elevated process."
+            )
+        },
+        |text| text.app_update_manual_install_folder(&install_dir),
     ))
 }
 

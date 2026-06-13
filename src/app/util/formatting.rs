@@ -88,27 +88,6 @@ fn build_log_text(entries: &[OperationLogEntry]) -> String {
     lines.join("\n")
 }
 
-fn status_label(status: &ModStatus) -> &'static str {
-    match status {
-        ModStatus::Active => "Active",
-        ModStatus::Disabled => "Disabled",
-        ModStatus::Archived => "Archived",
-    }
-}
-
-fn mod_update_state_badge(state: ModUpdateState) -> (&'static str, Color32) {
-    match state {
-        ModUpdateState::Unlinked => ("Unlinked", Color32::from_gray(140)),
-        ModUpdateState::UpToDate => ("Up to Date", Color32::from_rgb(140, 174, 138)),
-        ModUpdateState::UpdateAvailable => ("Update Available", Color32::from_rgb(144, 188, 150)),
-        ModUpdateState::CheckSkipped => ("Check Skipped", Color32::from_rgb(142, 153, 168)),
-        ModUpdateState::MissingSource => ("Missing Source", Color32::from_rgb(196, 166, 126)),
-        ModUpdateState::ModifiedLocally => ("Modified Locally", Color32::from_rgb(179, 133, 133)),
-        ModUpdateState::IgnoringUpdateOnce => ("Ignoring Update Once", Color32::from_rgb(181, 153, 196)),
-        ModUpdateState::IgnoringUpdateAlways => ("Ignoring Update Always", Color32::from_rgb(181, 153, 196)),
-    }
-}
-
 fn mod_update_state_tooltip(state: ModUpdateState) -> &'static str {
     match state {
         ModUpdateState::Unlinked => "No GameBanana source is linked for this mod.",

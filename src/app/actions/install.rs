@@ -22,8 +22,8 @@ impl HestiaApp {
                         self.install_batch_stats.failed += 1;
                     }
                     self.report_error_message(
-                        format!("install inspection failed for {name}: {error}"),
-                        Some("Install failed"),
+                        self.text().install_inspection_failed(&name, &error),
+                        Some(self.text().install_failed()),
                     );
                     self.update_task_status(job_id, TaskStatus::Failed);
                 }
@@ -98,8 +98,8 @@ impl HestiaApp {
                         self.install_batch_stats.failed += 1;
                     }
                     self.report_error_message(
-                        format!("install failed for {preferred_name}: {error}"),
-                        Some("Install failed"),
+                        self.text().install_failed_for(&preferred_name, &error),
+                        Some(self.text().install_failed()),
                     );
                     self.update_task_status(job_id, TaskStatus::Failed);
                 }
@@ -118,7 +118,7 @@ impl HestiaApp {
                     }
                     self.pending_browse_install_safety.remove(&job_id);
                     self.update_task_status(job_id, TaskStatus::Canceled);
-                    self.set_message_ok("Install canceled");
+                    self.set_message_ok(self.text().install_canceled_label());
                     if let Some(current) = self.install_inflight.remove(&job_id) {
                         Self::cleanup_runtime_temp_for_source(&current.source);
                         self.mark_usage_counters_dirty();
@@ -171,8 +171,8 @@ impl HestiaApp {
                 self.install_batch_stats.failed += 1;
             }
             self.report_error_message(
-                format!("install dispatch failed for {first_name}"),
-                Some("Install failed"),
+                self.text().install_dispatch_failed(&first_name),
+                Some(self.text().install_failed()),
             );
             self.update_task_status(job_id, TaskStatus::Failed);
             if let Some(current) = self.install_inflight.remove(&job_id) {
@@ -201,13 +201,13 @@ impl HestiaApp {
         let mut added_any = false;
         for source in sources {
             let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
-                self.report_warn("Select a game first.", None);
+                self.report_warn(self.text().select_game_first(), None);
                 return;
             };
             if !self.selected_game_is_installed_or_configured() {
                 self.report_warn(
-                    "Game is not installed or configured.",
-                    Some("Install unavailable"),
+                    self.text().game_not_installed(),
+                    Some(self.text().install_unavailable()),
                 );
                 return;
             }
@@ -258,8 +258,8 @@ impl HestiaApp {
         }
         if !self.game_is_installed_or_configured(&game_id) {
             self.report_warn(
-                "Game is not installed or configured.",
-                Some("Install unavailable"),
+                self.text().game_not_installed(),
+                Some(self.text().install_unavailable()),
             );
             self.update_task_status(task_id, TaskStatus::Failed);
             return;
@@ -291,8 +291,8 @@ impl HestiaApp {
                 Err(err) => {
                     self.install_batch_stats.failed += 1;
                     self.report_error_message(
-                        format!("failed to start install for {path_label}: {err:#}"),
-                        Some("Install failed"),
+                        self.text().install_start_failed(&path_label, &format!("{err:#}")),
+                        Some(self.text().install_failed()),
                     );
                     self.update_task_status(job.id, TaskStatus::Failed);
                     if let Some(current) = self.install_inflight.remove(&job.id) {

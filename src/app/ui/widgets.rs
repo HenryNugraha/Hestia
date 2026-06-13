@@ -110,7 +110,7 @@ fn titlebar_control_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Respon
     let button_size = Vec2::new(32.0, 24.0);
     let (rect, response) = ui.allocate_exact_size(button_size, Sense::click());
     let hovered = response.hovered();
-    let is_close = label == "Close";
+    let is_close = matches!(icon, Icon::X);
 
     if hovered {
         let (bg, border, fg) = if is_close {

@@ -33,14 +33,15 @@ use crate::{
     importing::{self, PreparedImport},
     integrations::{gamebanana, xxmi},
     model::{
-        AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, ConflictChoice,
-        DeleteBehavior, FileSetRecipe, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot,
-        GameInstall, IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource,
-        LaunchBehavior, LibraryCategoryDisplayMode, LibraryGroupMode, LibrarySort, MOD_META_DIR,
-        MetadataVisibility, ModCategory, ModCategorySortMode, ModEntry, ModSourceData, ModStatus,
-        ModStatusTargets, ModUpdateState, ModifiedUpdateBehavior, OperationLogEntry, SearchSort,
-        StagedAppUpdate, TaskEntry, TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry,
-        TrackedFileMeta, UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
+        AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseSort, CacheSizeTier,
+        ConflictChoice, DeleteBehavior, FileSetRecipe, GameBananaFileMeta, GameBananaLink,
+        GameBananaSnapshot, GameInstall, IgnoredUpdateSignature, ImportInspection,
+        ImportResolution, ImportSource, LaunchBehavior, LibraryCategoryDisplayMode,
+        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory,
+        ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
+        ModifiedUpdateBehavior, OperationLogEntry, SearchSort, StagedAppUpdate, TaskEntry,
+        TaskKind, TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta,
+        UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
         default_mods_path_from_launcher, default_vanilla_exe_candidates, feedback_survey,
         registry_modded_exe_candidates, registry_vanilla_exe_candidates,
         shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
@@ -65,6 +66,7 @@ use windows::core::PCWSTR;
 
 include!("constants.rs");
 include!("runtime.rs");
+include!("i18n.rs");
 include!("state.rs");
 include!("actions/mod.rs");
 include!("ui/mod.rs");

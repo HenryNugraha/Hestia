@@ -2122,7 +2122,7 @@ checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
 name = "hestia"
-version = "1.5.0"
+version = "1.6.0-alpha"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2163,6 +2163,7 @@ dependencies = [
  "sevenz-rust",
  "sha2",
  "shlex",
+ "sys-locale",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -4956,6 +4957,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

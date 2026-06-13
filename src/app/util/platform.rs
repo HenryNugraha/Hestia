@@ -26,6 +26,22 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
         .into(),
     );
     fonts.font_data.insert(
+        CJK_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/NotoSansSC-Regular.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
+        CJK_BOLD_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/NotoSansSC-Bold.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
         LUCIDE_FAMILY.to_string(),
         FontData::from_static(LUCIDE_FONT_BYTES).into(),
     );
@@ -54,6 +70,11 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
             .or_default()
             .push(APP_FONT_FAMILY.to_owned());
     }
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .push(CJK_FONT_FAMILY.to_owned());
     fonts.families.insert(
         FontFamily::Name(BOLD_FONT_FAMILY.into()),
         vec![bold_family.to_owned()],
@@ -63,6 +84,12 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
         {
             bold_fonts.push(APP_BOLD_FONT_FAMILY.to_owned());
         }
+    }
+    if let Some(bold_fonts) = fonts
+        .families
+        .get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
+    {
+        bold_fonts.push(CJK_BOLD_FONT_FAMILY.to_owned());
     }
 
     install_system_fallback_fonts(&mut fonts);

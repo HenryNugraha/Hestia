@@ -15,12 +15,12 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::model::{
-    AfterInstallBehavior, AppFontStyle, AppState, BrowseSort, CacheSizeTier, DeleteBehavior,
-    FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior, LibraryCategoryDisplayMode,
-    LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE, MetadataVisibility, ModCategory,
-    ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior, OperationLogEntry,
-    PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskStatus, TasksLayout,
-    TasksOrder, ToolEntry, UnsafeContentMode,
+    AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseSort, CacheSizeTier,
+    DeleteBehavior, FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior,
+    LibraryCategoryDisplayMode, LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE,
+    MetadataVisibility, ModCategory, ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior,
+    OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
+    TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
 };
 
 #[derive(Debug, Clone)]
@@ -80,6 +80,8 @@ struct AppPreferences {
     scan_rabbitfx_requirement: bool,
     #[serde(default)]
     font_style: AppFontStyle,
+    #[serde(default)]
+    language: AppLanguage,
     #[serde(default)]
     launch_behavior: LaunchBehavior,
     #[serde(default)]
@@ -165,6 +167,7 @@ impl From<&AppState> for AppPreferences {
             metadata_visibility: state.metadata_visibility,
             scan_rabbitfx_requirement: state.scan_rabbitfx_requirement,
             font_style: state.font_style,
+            language: state.language,
             launch_behavior: state.launch_behavior,
             tool_launch_behavior: state.tool_launch_behavior,
             after_install_behavior: state.after_install_behavior,
@@ -372,6 +375,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.metadata_visibility = prefs.metadata_visibility;
     state.scan_rabbitfx_requirement = prefs.scan_rabbitfx_requirement;
     state.font_style = prefs.font_style;
+    state.language = prefs.language;
     state.launch_behavior = prefs.launch_behavior;
     state.tool_launch_behavior = prefs.tool_launch_behavior;
     state.after_install_behavior = prefs.after_install_behavior;
