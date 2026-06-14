@@ -3,7 +3,7 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // l10n order: English, Bahasa Indonesia, Simplified Chinese.
 // Add empty string "" to skip a language.
 
-pub(crate) const WHATS_NEW_DATE: L10n = l10n("xx June 2026", "xx Juni 2026", "2026年 6月 xx日");
+pub(crate) const WHATS_NEW_DATE: L10n = l10n("15 June 2026", "15 Juni 2026", "2026年 6月 15日");
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
         concat!(

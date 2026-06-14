@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.6.0-alpha] - 2026-06-xx
+## [1.6.0] - 2026-06-15
 
 ### Added
 - App localization: Bahasa Indonesia (id-ID).
