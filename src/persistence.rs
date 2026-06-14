@@ -81,7 +81,7 @@ struct AppPreferences {
     #[serde(default)]
     font_style: AppFontStyle,
     #[serde(default)]
-    language: AppLanguage,
+    language: Option<AppLanguage>,
     #[serde(default)]
     launch_behavior: LaunchBehavior,
     #[serde(default)]
@@ -167,7 +167,7 @@ impl From<&AppState> for AppPreferences {
             metadata_visibility: state.metadata_visibility,
             scan_rabbitfx_requirement: state.scan_rabbitfx_requirement,
             font_style: state.font_style,
-            language: state.language,
+            language: Some(state.language),
             launch_behavior: state.launch_behavior,
             tool_launch_behavior: state.tool_launch_behavior,
             after_install_behavior: state.after_install_behavior,
@@ -353,6 +353,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let previous_app_version = prefs.app_version.clone();
     let app_version_needs_save =
         app_version_needs_normalization(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
+    let language_needs_save = prefs.language.is_none();
     state.version = prefs.version.max(7);
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
@@ -375,7 +376,9 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.metadata_visibility = prefs.metadata_visibility;
     state.scan_rabbitfx_requirement = prefs.scan_rabbitfx_requirement;
     state.font_style = prefs.font_style;
-    state.language = prefs.language;
+    state.language = prefs.language.unwrap_or_else(|| {
+        AppLanguage::detect_system_supported().unwrap_or_default()
+    });
     state.launch_behavior = prefs.launch_behavior;
     state.tool_launch_behavior = prefs.tool_launch_behavior;
     state.after_install_behavior = prefs.after_install_behavior;
@@ -405,7 +408,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
             prefs.create_downloaded_mod_category_by_game,
         );
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
-    state.preferences_need_save = preferences_need_save || app_version_needs_save;
+    state.preferences_need_save = preferences_need_save || app_version_needs_save || language_needs_save;
     initialize_tool_orders(&mut state, loaded_version);
     state.update_check_statuses = prefs.update_check_statuses;
     state.auto_update_statuses = prefs.auto_update_statuses;

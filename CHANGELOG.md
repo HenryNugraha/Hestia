@@ -3,8 +3,10 @@
 ## [1.6.0-alpha] - 2026-06-xx
 
 ### Added
-- App localization: Bahasa Indonesia
-- App localization: Chinese
+- App localization: Bahasa Indonesia (id-ID).
+- App localization: Simplified Chinese (zh-CN).
+- Auto‑switches language based on detected system locale
+- Added experimental translate button on the mod detail window.
 - Added support for resuming downloads.
 
 ### Changed
