@@ -227,6 +227,10 @@ pub struct HestiaApp {
     browse_page_generation: u64,
     browse_detail_generation: u64,
     image_generation: Arc<AtomicU64>,
+    translation_request_tx: WorkerTx<TranslationRequest>,
+    translation_event_rx: WorkerRx<TranslationEvent>,
+    translation_inflight: HashSet<(u64, String)>,
+    my_mods_translation_state: HashMap<String, MyModTranslationState>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
@@ -353,6 +357,16 @@ struct BrowseDetailCache {
     markdown: String,
     unsafe_content: bool,
     updates: BrowseUpdatesState,
+    translated_profile: Option<gamebanana::ProfileResponse>,
+    translation_lang: Option<String>,
+    translation_loading: bool,
+}
+
+#[derive(Clone)]
+struct MyModTranslationState {
+    translated_profile: Option<gamebanana::ProfileResponse>,
+    translation_lang: Option<String>,
+    translation_loading: bool,
 }
 
 #[derive(Clone)]

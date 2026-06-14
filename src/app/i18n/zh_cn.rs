@@ -609,4 +609,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "Hestia 安装在当前进程无法更新的文件夹中：\n{path}\n请将 Hestia 移动到其他文件夹后重试，或从权限更高的进程更新此安装。", // SettingsAboutUpdateManualInstallFolder
     "来源说明", // SettingsAboutAttributionSection
     "数据来源：GameBanana，API 经授权使用。GameBanana 的 Mod 元数据、媒体和浏览数据均来自 GameBanana。", // SettingsAboutAttributionGameBanana
+
+    // Translation
+    "翻译失败", // TranslationFailed
+    "正在翻译", // TranslationInProgress
 ];

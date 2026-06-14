@@ -609,4 +609,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Hestia is installed in a folder this process cannot update:\n{path}\nMove Hestia to another folder and try again, or update this install from an elevated process.", // SettingsAboutUpdateManualInstallFolder
     "Attribution", // SettingsAboutAttributionSection
     "Data source: GameBanana, API used with permission. GameBanana mod metadata, media, and browse data are sourced from GameBanana.", // SettingsAboutAttributionGameBanana
+
+    // Translation
+    "Translation failed", // TranslationFailed
+    "Translation in progress", // TranslationInProgress
 ];

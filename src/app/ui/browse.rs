@@ -608,8 +608,9 @@ impl HestiaApp {
                             }
 
                             let detail = detail.expect("checked above");
+                            let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
                             let install_disabled_reason =
-                                gamebanana::install_block_reason(&detail.profile)
+                                gamebanana::install_block_reason(profile)
                                     .unwrap_or_default();
                             let install_blocked = !install_disabled_reason.is_empty();
                             let selected_game_ready = self.selected_game_is_installed_or_configured();
@@ -1133,9 +1134,18 @@ impl HestiaApp {
                     .find(|card| card.id == mod_id)
                     .cloned();
                 ui.horizontal_wrapped(|ui| {
-                    let title = card
-                        .as_ref()
-                        .map(|card| card.name.clone())
+                    let title = self.browse_state
+                        .details
+                        .get(&mod_id)
+                        .and_then(|detail| {
+                            // If translation is active, use translated name
+                            if detail.translation_lang.is_some() {
+                                detail.translated_profile.as_ref().map(|p| p.name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| card.as_ref().map(|card| card.name.clone()))
                         .or_else(|| {
                             self.browse_state
                                 .details
@@ -1163,7 +1173,11 @@ impl HestiaApp {
                         self.set_message_ok(text.gamebanana_id_copied());
                     }
                 });
+                
                 if let Some(detail) = self.browse_state.details.get(&mod_id).cloned() {
+                    // Use translated profile if available, otherwise use original
+                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    
                     let browse_game_id = card
                         .as_ref()
                         .map(|card| card.game_id.clone())
@@ -1174,8 +1188,7 @@ impl HestiaApp {
                         .as_ref()
                         .map(|card| card.author_name.clone())
                         .or_else(|| {
-                            detail
-                                .profile
+                            profile
                                 .submitter
                                 .as_ref()
                                 .map(|submitter| submitter.name.clone())
@@ -1184,40 +1197,38 @@ impl HestiaApp {
                     let like_count = card
                         .as_ref()
                         .map(|card| card.like_count)
-                        .unwrap_or(detail.profile.like_count);
+                        .unwrap_or(profile.like_count);
                     let updated_at = card
                         .as_ref()
                         .map(|card| card.updated_at)
                         .unwrap_or_else(|| {
                             timestamp_to_utc(
-                                detail
-                                    .profile
+                                profile
                                     .date_updated
-                                    .unwrap_or(detail.profile.date_modified),
+                                    .unwrap_or(profile.date_modified),
                             )
                         });
                     let fallback_thumbnail_url = card
                         .as_ref()
                         .and_then(|card| card.thumbnail_url.clone())
                         .or_else(|| {
-                            detail
-                                .profile
+                            profile
                                 .preview_media
                                 .as_ref()
                                 .and_then(|preview| preview.images.first())
                                 .and_then(gamebanana::thumbnail_url)
                         });
-                    let trashed_by_owner = gamebanana::trashed_by_owner(&detail.profile).cloned();
-                    let withhold_notice = gamebanana::withheld_notice(&detail.profile).cloned();
+                    let trashed_by_owner = gamebanana::trashed_by_owner(profile).cloned();
+                    let withhold_notice = gamebanana::withheld_notice(profile).cloned();
                     let is_trashed_by_owner = trashed_by_owner.is_some();
-                    let is_private = detail.profile.is_private;
+                    let is_private = profile.is_private;
                     let is_withheld = withhold_notice.is_some();
-                    let is_deleted = detail.profile.is_deleted || detail.profile.id == 0;
+                    let is_deleted = profile.is_deleted || profile.id == 0;
                     let is_installed = card
                         .as_ref()
                         .is_some_and(|card| self.is_browse_mod_installed(card));
                     let install_disabled_reason =
-                        gamebanana::install_block_reason(&detail.profile).unwrap_or_default();
+                        gamebanana::install_block_reason(profile).unwrap_or_default();
                     let install_blocked = !install_disabled_reason.is_empty();
                     let selected_game_ready = self.selected_game_is_installed_or_configured();
                     ui.add_space(-4.0);
@@ -1316,13 +1327,38 @@ impl HestiaApp {
                                 self.report_error(err, Some(text.could_not_open_browser()));
                             }
                         }
-                            ui.allocate_ui_with_layout(
+                        
+                        // Translation button
+                        ui.add_space(-2.0);
+                        if let Some(detail) = self.browse_state.details.get(&mod_id) {
+                            let translation_loading = detail.translation_loading;
+                            let translation_active = detail.translation_lang.is_some();
+                            
+                            let icon_color = if translation_loading {
+                                Color32::from_rgb(245, 158, 11) // Yellow/amber
+                            } else if translation_active {
+                                Color32::from_rgb(34, 197, 94) // Green
+                            } else {
+                                Color32::from_gray(160) // Gray
+                            };
+                            
+                            let translate_btn = ui.add(
+                                egui::Button::new(icon_rich(Icon::Languages, 13.0, icon_color))
+                                    .frame(false),
+                            );
+                            
+                            if translate_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                self.toggle_browse_translation(mod_id);
+                            }
+                        }
+                        
+                        ui.allocate_ui_with_layout(
                             ui.available_size(),
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.add(egui::Label::new(RichText::new(detail.profile.download_count.to_string()).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        ui.add(egui::Label::new(RichText::new(profile.download_count.to_string()).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::Download, 12.0, Color32::from_rgb(131, 214, 247))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(8.0);
@@ -1348,7 +1384,7 @@ impl HestiaApp {
                     });
 
                     ScrollArea::vertical().id_salt("browse_detail_scroll").show(ui, |ui| {
-                        if let Some(preview) = &detail.profile.preview_media {
+                        if let Some(preview) = &profile.preview_media {
                             ui.add_space(10.0);
                             
                             ui.style_mut().spacing.scroll.floating = false;
@@ -1537,7 +1573,7 @@ impl HestiaApp {
                         }
                         ui.add_space(8.0);
 
-                        let youtube_url = detail.profile.embedded_media.iter()
+                        let youtube_url = profile.embedded_media.iter()
                             .find(|url| url.contains("youtube.com") || url.contains("youtu.be"));
 
                         if let Some(url) = youtube_url {
@@ -1832,17 +1868,17 @@ impl HestiaApp {
                             ui.painter().galley(text_rect.min, galley, Color32::WHITE);
                         };
 
-                        if !install_blocked && !detail.profile.files.is_empty() {
+                        if !install_blocked && !profile.files.is_empty() {
                             ui.add_space(12.0);
-                            render_file_section_label(ui, text.browse_files(), detail.profile.files.len());
-                            for file in &detail.profile.files {
+                            render_file_section_label(ui, text.browse_files(), profile.files.len());
+                            for file in &profile.files {
                                 self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
                             }
                         }
-                        if !install_blocked && !detail.profile.archived_files.is_empty() {
+                        if !install_blocked && !profile.archived_files.is_empty() {
                             ui.add_space(12.0);
-                            render_file_section_label(ui, text.browse_archived_files(), detail.profile.archived_files.len());
-                            for file in &detail.profile.archived_files {
+                            render_file_section_label(ui, text.browse_archived_files(), profile.archived_files.len());
+                            for file in &profile.archived_files {
                                 self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
                             }
                         }
@@ -2099,7 +2135,8 @@ impl HestiaApp {
         if self.current_view == ViewMode::Browse {
             if let Some(mod_id) = self.browse_state.selected_mod_id {
                 if let Some(detail) = self.browse_state.details.get(&mod_id) {
-                    if let Some(preview) = &detail.profile.preview_media {
+                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    if let Some(preview) = &profile.preview_media {
                         for image in &preview.images {
                             let full_url = gamebanana::full_image_url(image);
                             let key = hash64_hex(full_url.as_bytes());

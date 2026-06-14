@@ -95,6 +95,7 @@ impl eframe::App for HestiaApp {
         self.consume_update_check_results();
         self.consume_startup_path_scan_events(ctx);
         self.consume_startup_scan_events();
+        self.handle_translation_events();
         self.process_local_mod_image_queue();
         self.process_pending_texture_uploads(ctx);
         self.evict_textures_to_budget(ctx.input(|i| i.time));

@@ -596,10 +596,13 @@ enum TextKey {
     SettingsAboutUpdateManualInstallFolder,
     SettingsAboutAttributionSection,
     SettingsAboutAttributionGameBanana,
+
+    TranslationFailed,
+    TranslationInProgress,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsAboutAttributionGameBanana as usize + 1;
+    const COUNT: usize = Self::TranslationInProgress as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2920,6 +2923,14 @@ impl TextCatalog {
 
     fn attribution_gamebanana(self) -> &'static str {
         self.get(TextKey::SettingsAboutAttributionGameBanana)
+    }
+
+    fn translation_failed(self) -> &'static str {
+        self.get(TextKey::TranslationFailed)
+    }
+
+    fn translation_in_progress(self) -> &'static str {
+        self.get(TextKey::TranslationInProgress)
     }
 }
 

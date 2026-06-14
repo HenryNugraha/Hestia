@@ -374,6 +374,7 @@ impl HestiaApp {
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
         self.cancel_browse_full_image_requests();
+        self.clear_translation_caches();
         self.request_browse_page_with_mode(1, true);
     }
 
@@ -985,6 +986,9 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                         markdown,
                         unsafe_content: !profile.content_ratings.is_empty(),
                         updates: BrowseUpdatesState::Unrequested,
+                        translated_profile: None,
+                        translation_lang: None,
+                        translation_loading: false,
                     };
                     self.browse_state.details.insert(mod_id, cache);
                     if let Some(card) = self.browse_state.cards.iter_mut().find(|card| card.id == mod_id) {

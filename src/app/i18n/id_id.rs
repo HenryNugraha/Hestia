@@ -609,4 +609,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Hestia terpasang di folder yang tidak dapat diperbarui oleh proses ini:\n{path}\nPindahkan Hestia ke folder lain lalu coba lagi, atau perbarui instalasi ini dari proses dengan hak akses lebih tinggi.", // SettingsAboutUpdateManualInstallFolder
     "Atribusi", // SettingsAboutAttributionSection
     "Sumber data: GameBanana, API digunakan dengan izin. Metadata mod, media, dan data jelajah GameBanana bersumber dari GameBanana.", // SettingsAboutAttributionGameBanana
+
+    // Translation
+    "Terjemahan gagal", // TranslationFailed
+    "Sedang menerjemahkan", // TranslationInProgress
 ];

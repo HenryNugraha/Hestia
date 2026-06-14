@@ -6874,6 +6874,37 @@ impl HestiaApp {
                                 self.report_error(err, Some(text.delete_failed()));
                             }
                         }
+                        
+                        // Translation button (only if mod is linked to GameBanana)
+                        if selected.source.as_ref().and_then(|s| s.gamebanana.as_ref()).is_some() {
+                            let translation_state = self.my_mods_translation_state.get(&selected.id);
+                            let is_loading = translation_state.map(|s| s.translation_loading).unwrap_or(false);
+                            let is_active = translation_state.and_then(|s| s.translation_lang.as_ref()).is_some();
+
+                            let icon_color = if is_loading {
+                                Color32::from_rgb(245, 158, 11) // Amber/yellow
+                            } else if is_active {
+                                Color32::from_rgb(34, 197, 94) // Green
+                            } else {
+                                Color32::from_gray(160)
+                            };
+
+                            let translate_btn = ui.add(
+                                egui::Button::new(icon_rich(Icon::Languages, 12.0, icon_color))
+                                    .frame(false),
+                            );
+
+                            if is_loading {
+                                translate_btn.on_hover_text(text.translation_in_progress());
+                            } else {
+                                if translate_btn
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    self.toggle_my_mods_translation(selected.id.clone());
+                                }
+                            }
+                        }
                     });
                     ui.allocate_ui_with_layout(
                         ui.available_size(),
@@ -7541,7 +7572,25 @@ impl HestiaApp {
                             }
                         }
                     }
-                    let markdown = mod_primary_description_markdown(&selected, &self.portable);
+                    let markdown = if let Some(translation_state) = self.my_mods_translation_state.get(&selected.id) {
+                        if let Some(translated_profile) = &translation_state.translated_profile {
+                            // Use translated description
+                            if let Some(html) = translated_profile.html_text.as_deref() {
+                                prepare_markdown_for_display(
+                                    html,
+                                    None,
+                                    Some(parse_gb_id_from_entry(&selected)),
+                                    &self.portable,
+                                )
+                            } else {
+                                mod_primary_description_markdown(&selected, &self.portable)
+                            }
+                        } else {
+                            mod_primary_description_markdown(&selected, &self.portable)
+                        }
+                    } else {
+                        mod_primary_description_markdown(&selected, &self.portable)
+                    };
                     let has_description = markdown != "No description";
                     let extracted_markdown = mod_extracted_description_markdown(&selected);
                     let personal_note_source_path = xxmi::personal_note_relative_path();

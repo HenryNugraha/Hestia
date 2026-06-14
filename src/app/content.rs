@@ -6,9 +6,32 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 pub(crate) const WHATS_NEW_DATE: L10n = l10n("xx June 2026", "xx Juni 2026", "2026年 6月 xx日");
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
-        "Added app translation to Bahasa Indonesia & Chinese",
-        "Menambahkan terjemahan aplikasi ke Bahasa Indonesia & Mandarin",
-        "新增印度尼西亚语和简体中文翻译",
+        concat!(
+            "Added app translation to Bahasa Indonesia & Chinese\n",
+            "▸ Settings > Advanced > Appearance > Languages"
+        ),
+        concat!(
+            "Menambahkan terjemahan aplikasi ke Bahasa Indonesia & Mandarin\n",
+            "▸ Setelan > Lanjutan > Tampilan > Bahasa"
+        ),
+        concat!(
+            "新增印度尼西亚语和简体中文翻译\n",
+            "▸ 设置 > 高级 > 外观 > 语言"
+        ),
+    ),
+    l10n(
+        concat!(
+            "Added experimental translate button for mod title and description\n",
+            "▸ Server is unstable, can be VERY SLOW"
+        ),
+        concat!(
+            "Menambahkan tombol terjemah untuk judul dan deskripsi mod\n",
+            "▸ Server tidak stabil, bisa sangat LAMBAT"
+        ),
+        concat!(
+            "为 mod 标题和描述添加了实验性翻译按钮\n",
+            "▸ 服务器不稳定，速度可能会非常慢"
+        ),
     ),
     l10n(
         "Added support for resuming downloads",
@@ -25,9 +48,9 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
         "language_indonesia_quality",
         l10n(
-            "[If using BAHASA INDONESIA] How do you like it?",
-            "[Jika pakai BAHASA INDONESIA] Bagaimana menurutmu?",
-            "[如果你用印度尼西亚语] 你觉得怎么样？",
+            "If using INDONESIAN localization: How do you like it?",
+            "Jika pakai BAHASA INDONESIA: Bagaimana menurutmu?",
+            "如果你用印度尼西亚语：你觉得怎么样？",
         ),
         &[
             a(1, l10n("Great", "Bagus", "很好")),
@@ -39,9 +62,9 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
         "language_chinese_quality",
         l10n(
-            "[If using CHINESE localization] How do you like it?",
-            "[Jika pakai MANDARIN] Bagaimana menurutmu?",
-            "[如果你使用中文版] 你觉得怎么样？",
+            "If using CHINESE localization: How do you like it?",
+            "Jika pakai MANDARIN: Bagaimana menurutmu?",
+            "如果你使用中文版：你觉得怎么样？",
         ),
         &[
             a(1, l10n("Great", "Bagus", "很好")),

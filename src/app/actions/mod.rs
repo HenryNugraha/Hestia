@@ -6,5 +6,6 @@ include!("media.rs");
 include!("survey.rs");
 include!("tasks.rs");
 include!("tools.rs");
+include!("translation.rs");
 include!("updates.rs");
 include!("app_update.rs");

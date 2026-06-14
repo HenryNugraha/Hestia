@@ -58,6 +58,18 @@ impl HestiaApp {
             feedback_survey_worker_rx,
             feedback_survey_worker_tx,
         );
+        let (translation_request_tx, translation_request_rx) = tokio_mpsc::unbounded_channel::<TranslationRequest>();
+        let (translation_event_tx, translation_event_rx) = tokio_mpsc::unbounded_channel::<TranslationEvent>();
+        let translation_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+            .with(RetryTransientMiddleware::new_with_policy(ExponentialBackoff::builder().build_with_max_retries(3)))
+            .build();
+        spawn_translation_worker(
+            &runtime_services,
+            &portable,
+            translation_client,
+            translation_request_rx,
+            translation_event_tx,
+        );
         let (update_check_tx, update_check_worker_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckRequest>();
         let (update_check_worker_tx, update_check_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckResult>();
         spawn_update_check_worker(
@@ -290,6 +302,10 @@ impl HestiaApp {
             browse_page_generation: 0,
             browse_detail_generation: 0,
             image_generation,
+            translation_request_tx,
+            translation_event_rx,
+            translation_inflight: HashSet::new(),
+            my_mods_translation_state: HashMap::new(),
             update_check_tx,
             update_check_rx,
             update_check_inflight: false,
@@ -1797,6 +1813,7 @@ impl HestiaApp {
 
     fn refresh_with_toast(&mut self) {
         self.mark_usage_counters_dirty();
+        self.clear_translation_caches();
         let old_ts: HashMap<String, DateTime<Utc>> = self.state.mods.iter()
             .map(|m| (m.id.clone(), m.updated_at))
             .collect();
