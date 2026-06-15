@@ -77,9 +77,7 @@ include!("workers/mod.rs");
 include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        paint_window_background(ctx);
-        install_resize_handles(ctx);
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.consume_icon_results(ctx);
         self.consume_mod_image_results();
         self.consume_manual_image_events();
@@ -109,6 +107,13 @@ impl eframe::App for HestiaApp {
         self.process_app_update_download();
         self.process_install_queue();
         self.handle_shortcuts(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx();
+        paint_window_background(ctx);
+        install_resize_handles(ctx);
+        
         self.render_top_bar(ctx);
         self.render_settings_window(ctx);
         self.render_nav_rail(ctx);

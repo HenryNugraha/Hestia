@@ -6,7 +6,7 @@ impl HestiaApp {
         let mut whats_new_open = self.state.show_whats_new;
         let force_default_pos = self.whats_new_force_default_pos;
         let text = self.text();
-        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let window_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
         let mut window = egui::Window::new(icon_text_sized(Icon::Bell, text.whats_new(), 14.0, 14.0))
             .id(egui::Id::new((
                 "whats_new_window",
@@ -102,7 +102,7 @@ impl HestiaApp {
         let text = self.text();
         let mut survey_open = self.state.show_feedback_survey;
         let force_default_pos = self.feedback_survey_force_default_pos;
-        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let window_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
         let survey_title = survey.title.get(self.state.language);
         let mut window =
             egui::Window::new(icon_text_sized(Icon::ClipboardList, survey_title, 14.0, 14.0))
@@ -430,7 +430,7 @@ impl HestiaApp {
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let text = self.text();
-        let log_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let log_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, text.log(), 14.0, 14.0))
             .id(egui::Id::new(("log_window", self.log_window_nonce)))
             .open(&mut log_open)
@@ -522,7 +522,7 @@ impl HestiaApp {
         let just_opened = self.tasks_force_default_pos;
         let force_default_pos = self.tasks_force_default_pos;
         let text = self.text();
-        let tasks_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let tasks_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(
             Icon::ListChecks,
             text.tasks_window(),
@@ -826,7 +826,7 @@ impl HestiaApp {
         let just_opened = self.tools_force_default_pos;
         let force_default_pos = self.tools_force_default_pos;
         let text = self.text();
-        let tools_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let tools_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(
             Icon::AppWindow,
             text.tools(),
@@ -1454,7 +1454,7 @@ impl HestiaApp {
         let text = self.text();
         let constrain_rect = self
             .last_right_pane_rect
-            .unwrap_or_else(|| ctx.available_rect());
+            .unwrap_or_else(|| ctx.viewport_rect());
 
         egui::Window::new(icon_text_sized(
             Icon::Terminal,
@@ -1471,7 +1471,7 @@ impl HestiaApp {
         .constrain_to(constrain_rect)
         .open(&mut open)
         .frame(
-            egui::Frame::window(&ctx.style())
+            egui::Frame::window(&ctx.global_style())
                 .inner_margin(egui::Margin::same(16))
                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
         )
@@ -2189,7 +2189,7 @@ impl HestiaApp {
 
         let text = self.text();
         let mut settings_open = self.settings_open;
-        let settings_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let settings_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
         let mut window =
             egui::Window::new(icon_text_sized(Icon::Settings2, text.settings(), 14.0, 14.0))
                 .open(&mut settings_open)
@@ -2710,7 +2710,7 @@ impl HestiaApp {
                                         .color(Color32::from_gray(165)),
                                 );
                                 if invalid {
-                                    static_label(ui, icon_rich(Icon::TriangleAlert, 13.0, warn_color));
+                                    static_label(ui, icon_rich(Icon::AlertTriangle, 13.0, warn_color));
                                     ui.add_space(-8.0);
                                     static_label(
                                         ui,
@@ -2936,7 +2936,7 @@ impl HestiaApp {
                                                             .color(Color32::from_gray(165)),
                                                     ).on_hover_cursor(egui::CursorIcon::Default);
                                                     if vanilla_invalid {
-                                                        ui.label(icon_rich(Icon::TriangleAlert, 13.0, warn_color))
+                                                        ui.label(icon_rich(Icon::AlertTriangle, 13.0, warn_color))
                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                         ui.add_space(-8.0);
                                                         ui.label(
@@ -3039,7 +3039,7 @@ impl HestiaApp {
                                                             .color(Color32::from_gray(165)),
                                                     ).on_hover_cursor(egui::CursorIcon::Default);
                                                     if mods_invalid {
-                                                        ui.label(icon_rich(Icon::TriangleAlert, 13.0, warn_color))
+                                                        ui.label(icon_rich(Icon::AlertTriangle, 13.0, warn_color))
                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                         ui.add_space(-8.0);
                                                         ui.label(
@@ -3319,7 +3319,7 @@ impl HestiaApp {
                             } else if self.app_update_button_state == AppUpdateButtonState::Checking
                                 || now < self.app_update_button_spin_until
                             {
-                                Icon::LoaderCircle
+                                Icon::Loader2
                             } else {
                                 Icon::RefreshCw
                             };

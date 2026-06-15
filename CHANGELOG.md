@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0-alpha] - 2026-xx-xx
+
+### Added
+- ?
+
+### Changed
+- ?
+
+### Fixed
+- ?
+
+
 ## [1.6.0] - 2026-06-15
 
 ### Added

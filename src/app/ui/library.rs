@@ -3303,7 +3303,7 @@ impl HestiaApp {
                         ui.painter().text(
                             icon_pos,
                             egui::Align2::CENTER_CENTER,
-                            icon_char(Icon::Funnel),
+                            icon_char(Icon::Filter),
                             egui::FontId::new(18.0, FontFamily::Name(LUCIDE_FAMILY.into())),
                             icon_color,
                         );
@@ -3452,7 +3452,7 @@ impl HestiaApp {
                                         ui.painter().text(
                                             show_rect.center(),
                                             egui::Align2::CENTER_CENTER,
-                                            icon_char(Icon::SquareDashedMousePointer),
+                                            icon_char(Icon::MousePointerSquareDashed),
                                             egui::FontId::new(
                                                 13.0,
                                                 FontFamily::Name(LUCIDE_FAMILY.into()),
@@ -3466,7 +3466,7 @@ impl HestiaApp {
                                         ui.painter().text(
                                             hide_rect.center(),
                                             egui::Align2::CENTER_CENTER,
-                                            icon_char(Icon::SquareDashed),
+                                            icon_char(Icon::SquareDashedBottom),
                                             egui::FontId::new(
                                                 13.0,
                                                 FontFamily::Name(LUCIDE_FAMILY.into()),
@@ -3641,7 +3641,7 @@ impl HestiaApp {
                                 TextEdit::singleline(&mut self.mods_search_query)
                                     .id_source(MODS_SEARCH_INPUT_ID)
                                     .hint_text(if how_expanded > 0.8 { text.library_search_hint() } else { "" })
-                                    .frame(false)
+                                    .frame(egui::Frame::NONE)
                                     .desired_width(input_rect.width())
                             );
                             if self.mods_search_focus_pending {
@@ -6579,7 +6579,7 @@ impl HestiaApp {
                                             .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
                                             .max(ui.available_width() / 6.25) // min width of 16% from the whole width
                                         )
-                                        .frame(false)
+                                        .frame(egui::Frame::NONE)
                                 )
                             }).inner;
                         self.request_mod_detail_rename_focus(ui.ctx(), &resp, &selected.id);

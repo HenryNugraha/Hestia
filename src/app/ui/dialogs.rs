@@ -200,7 +200,7 @@ impl HestiaApp {
                             static_label(
                                 ui,
                                 icon_rich(
-                                    Icon::TriangleAlert,
+                                    Icon::AlertTriangle,
                                     14.0,
                                     Color32::from_rgb(224, 174, 86),
                                 )
@@ -417,7 +417,7 @@ impl HestiaApp {
             }
         }
 
-        let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.available_rect());
+        let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.viewport_rect());
         let window = egui::Window::new(icon_text_sized(Icon::Info, text.missing_ini_title(), 14.0, 14.0))
             .id(egui::Id::new(("import_review", job_id)))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
@@ -427,7 +427,7 @@ impl HestiaApp {
             .collapsible(false)
             .constrain_to(constrain_rect)
             .frame(
-                egui::Frame::window(&ctx.style())
+                egui::Frame::window(&ctx.global_style())
                     .inner_margin(egui::Margin::same(16))
                     .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
             );
@@ -644,11 +644,11 @@ impl HestiaApp {
             let mut choice = None;
 
         let warn_color = Color32::from_rgb(214, 96, 34);
-        let mut window = egui::Window::new(icon_text_sized(Icon::TriangleAlert, text.installation_conflict(), 14.0, 14.0))
+        let mut window = egui::Window::new(icon_text_sized(Icon::AlertTriangle, text.installation_conflict(), 14.0, 14.0))
             .collapsible(false)
             .order(egui::Order::Foreground)
             .resizable(false)
-            .frame(egui::Frame::window(&ctx.style()).stroke(egui::Stroke::new(1.0, warn_color)));
+            .frame(egui::Frame::window(&ctx.global_style()).stroke(egui::Stroke::new(1.0, warn_color)));
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -663,7 +663,7 @@ impl HestiaApp {
                     ui.add_space(8.0);
                     ui.add(
                         egui::Label::new(icon_rich(
-                            Icon::TriangleAlert,
+                            Icon::AlertTriangle,
                             96.0,
                             warn_color,
                         ))

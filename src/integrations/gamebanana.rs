@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
+use url::Url;
 use xxhash_rust::xxh3::xxh3_64;
 
 pub const BROWSE_PAGE_SIZE: usize = 30;
@@ -411,18 +412,18 @@ pub fn fetch_browse_page(
     sort: crate::model::BrowseSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
     let client = client()?;
-    let url = "https://gamebanana.com/apiv11/Mod/Index";
-    let mut queries = vec![
-        ("_nPerpage", BROWSE_PAGE_SIZE.to_string()),
-        ("_nPage", page.to_string()),
-        ("_aFilters[Generic_Game]", game_id.to_string()),
-    ];
-    if sort == crate::model::BrowseSort::Popular {
-        queries.push(("_sSort", "Generic_MostDownloaded".to_string()));
+    let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("_nPerpage", &BROWSE_PAGE_SIZE.to_string());
+        query.append_pair("_nPage", &page.to_string());
+        query.append_pair("_aFilters[Generic_Game]", &game_id.to_string());
+        if sort == crate::model::BrowseSort::Popular {
+            query.append_pair("_sSort", "Generic_MostDownloaded");
+        }
     }
     client
-        .get(url)
-        .query(&queries)
+        .get(url.as_str())
         .send()
         .context("failed to fetch GameBanana browse page")?
         .error_for_status()
@@ -437,18 +438,18 @@ pub async fn fetch_browse_page_async(
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let url = "https://gamebanana.com/apiv11/Mod/Index";
-    let mut queries = vec![
-        ("_nPerpage", BROWSE_PAGE_SIZE.to_string()),
-        ("_nPage", page.to_string()),
-        ("_aFilters[Generic_Game]", game_id.to_string()),
-    ];
-    if sort == crate::model::BrowseSort::Popular {
-        queries.push(("_sSort", "Generic_MostDownloaded".to_string()));
+    let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("_nPerpage", &BROWSE_PAGE_SIZE.to_string());
+        query.append_pair("_nPage", &page.to_string());
+        query.append_pair("_aFilters[Generic_Game]", &game_id.to_string());
+        if sort == crate::model::BrowseSort::Popular {
+            query.append_pair("_sSort", "Generic_MostDownloaded");
+        }
     }
     let response = client
-        .get(url)
-        .query(&queries)
+        .get(url.as_str())
         .send()
         .await
         .context("failed to fetch GameBanana browse page")?;
@@ -464,14 +465,15 @@ pub async fn fetch_character_categories_async(
     client: &ClientWithMiddleware,
     super_category_id: u64,
 ) -> Result<Vec<CharacterCategory>> {
-    let url = "https://gamebanana.com/apiv12/Mod/Categories";
+    let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Categories")?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("_idCategoryRow", &super_category_id.to_string());
+        query.append_pair("_sSort", "a_to_z");
+        query.append_pair("_bShowEmpty", "true");
+    }
     let response = client
-        .get(url)
-        .query(&[
-            ("_idCategoryRow", super_category_id.to_string()),
-            ("_sSort", "a_to_z".to_string()),
-            ("_bShowEmpty", "true".to_string()),
-        ])
+        .get(url.as_str())
         .send()
         .await
         .context("failed to fetch GameBanana character categories")?;
@@ -490,23 +492,23 @@ pub async fn fetch_character_browse_page_async(
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let url = "https://gamebanana.com/apiv12/Mod/Index";
+    let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Index")?;
     let sort = match sort {
         crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
         crate::model::BrowseSort::RecentUpdated => "Generic_Newest",
     };
-    let mut queries = vec![
-        ("_nPerpage", BROWSE_PAGE_SIZE.to_string()),
-        ("_nPage", page.to_string()),
-        ("_aFilters[Generic_Category]", category_id.to_string()),
-        ("_sSort", sort.to_string()),
-    ];
-    if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
-        queries.push(("_aFilters[Generic_Name]", format!("contains,{query}")));
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        query_pairs.append_pair("_nPerpage", &BROWSE_PAGE_SIZE.to_string());
+        query_pairs.append_pair("_nPage", &page.to_string());
+        query_pairs.append_pair("_aFilters[Generic_Category]", &category_id.to_string());
+        query_pairs.append_pair("_sSort", sort);
+        if let Some(q) = query.map(str::trim).filter(|q| !q.is_empty()) {
+            query_pairs.append_pair("_aFilters[Generic_Name]", &format!("contains,{}", q));
+        }
     }
     let response = client
-        .get(url)
-        .query(&queries)
+        .get(url.as_str())
         .send()
         .await
         .context("failed to fetch GameBanana character browse page")?;
@@ -525,25 +527,23 @@ pub fn fetch_search_page(
     sort: crate::model::SearchSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
     let client = client()?;
-    let url = "https://gamebanana.com/apiv11/Util/Search/Results";
+    let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
     let order = match sort {
         crate::model::SearchSort::BestMatch => "best_match",
         crate::model::SearchSort::RecentUpdated => "udate",
     };
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        query_pairs.append_pair("_sModelName", "Mod");
+        query_pairs.append_pair("_sOrder", order);
+        query_pairs.append_pair("_idGameRow", &game_id.to_string());
+        query_pairs.append_pair("_sSearchString", query);
+        query_pairs.append_pair("_csvFields", "name,description,article,attribs,studio,owner,credits");
+        query_pairs.append_pair("_nPerpage", &SEARCH_PAGE_SIZE.to_string());
+        query_pairs.append_pair("_nPage", &page.to_string());
+    }
     client
-        .get(url)
-        .query(&[
-            ("_sModelName", "Mod".to_string()),
-            ("_sOrder", order.to_string()),
-            ("_idGameRow", game_id.to_string()),
-            ("_sSearchString", query.to_string()),
-            (
-                "_csvFields",
-                "name,description,article,attribs,studio,owner,credits".to_string(),
-            ),
-            ("_nPerpage", SEARCH_PAGE_SIZE.to_string()),
-            ("_nPage", page.to_string()),
-        ])
+        .get(url.as_str())
         .send()
         .context("failed to fetch GameBanana search results")?
         .error_for_status()
@@ -559,25 +559,23 @@ pub async fn fetch_search_page_async(
     page: usize,
     sort: crate::model::SearchSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let url = "https://gamebanana.com/apiv11/Util/Search/Results";
+    let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
     let order = match sort {
         crate::model::SearchSort::BestMatch => "best_match",
         crate::model::SearchSort::RecentUpdated => "udate",
     };
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        query_pairs.append_pair("_sModelName", "Mod");
+        query_pairs.append_pair("_sOrder", order);
+        query_pairs.append_pair("_idGameRow", &game_id.to_string());
+        query_pairs.append_pair("_sSearchString", query);
+        query_pairs.append_pair("_csvFields", "name,description,article,attribs,studio,owner,credits");
+        query_pairs.append_pair("_nPerpage", &SEARCH_PAGE_SIZE.to_string());
+        query_pairs.append_pair("_nPage", &page.to_string());
+    }
     let response = client
-        .get(url)
-        .query(&[
-            ("_sModelName", "Mod".to_string()),
-            ("_sOrder", order.to_string()),
-            ("_idGameRow", game_id.to_string()),
-            ("_sSearchString", query.to_string()),
-            (
-                "_csvFields",
-                "name,description,article,attribs,studio,owner,credits".to_string(),
-            ),
-            ("_nPerpage", SEARCH_PAGE_SIZE.to_string()),
-            ("_nPage", page.to_string()),
-        ])
+        .get(url.as_str())
         .send()
         .await
         .context("failed to fetch GameBanana search results")?;
@@ -624,10 +622,14 @@ pub async fn fetch_updates_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
 ) -> Result<ApiEnvelope<UpdateRecord>> {
-    let url = format!("https://gamebanana.com/apiv11/Mod/{mod_id}/Updates");
+    let mut url = Url::parse(&format!("https://gamebanana.com/apiv11/Mod/{mod_id}/Updates"))?;
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        query_pairs.append_pair("_nPage", "1");
+        query_pairs.append_pair("_nPerpage", "50");
+    }
     let response = client
-        .get(url)
-        .query(&[("_nPage", "1".to_string()), ("_nPerpage", "50".to_string())])
+        .get(url.as_str())
         .send()
         .await
         .context("failed to fetch GameBanana mod updates")?;

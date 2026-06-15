@@ -504,7 +504,8 @@ fn sha256_file(path: &Path) -> anyhow::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    Ok(digest.iter().map(|b| format!("{:02x}", b)).collect::<String>())
 }
 
 fn display_text(value: &str) -> String {
