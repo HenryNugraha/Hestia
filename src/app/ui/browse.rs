@@ -356,7 +356,29 @@ impl HestiaApp {
                 });
             }
 
+            // Viewport culling for browse cards
+            let viewport = ui.clip_rect();
+            let viewport_top = viewport.top();
+            let viewport_bottom = viewport.bottom();
+            let card_spacing = 8.0;
+            let row_height = BROWSE_CARD_HEIGHT + card_spacing;
+            let buffer_rows = 2; // Render 2 extra rows above/below for smooth scrolling
+
             for row in cards.chunks(columns) {
+                // Calculate row position
+                let row_top = ui.cursor().top();
+                let row_bottom = row_top + row_height;
+                
+                // Check if row is visible (with buffer)
+                let is_visible = row_bottom >= viewport_top - (buffer_rows as f32 * row_height)
+                    && row_top <= viewport_bottom + (buffer_rows as f32 * row_height);
+                
+                if !is_visible {
+                    // Just allocate space for invisible rows
+                    ui.add_space(row_height);
+                    continue;
+                }
+
                 ui.horizontal_top(|ui| {
                     ui.add_space(left_padding);
                     for card in row {
@@ -711,7 +733,7 @@ impl HestiaApp {
                 });
             }
 
-            let sentinel = ui.allocate_response(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+            let sentinel = ui.allocate_response(Vec2::new(ui.available_width(), 400.0), Sense::hover());
             if sentinel.rect.intersects(ui.clip_rect())
                 && !self.browse_state.loading_page
                 && self.browse_state.has_more

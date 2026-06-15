@@ -232,6 +232,7 @@ pub struct HestiaApp {
     translation_event_rx: WorkerRx<TranslationEvent>,
     translation_inflight: HashSet<(u64, String)>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
+    mod_card_display_cache: HashMap<String, ModCardDisplayCache>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
@@ -368,6 +369,15 @@ struct MyModTranslationState {
     translated_profile: Option<gamebanana::ProfileResponse>,
     translation_lang: Option<String>,
     translation_loading: bool,
+}
+
+// Cache for pre-computed card display data to reduce per-frame string operations
+#[derive(Clone)]
+struct ModCardDisplayCache {
+    age_label: String,
+    category_label: String,
+    status_label: String,
+    updated_at: DateTime<Utc>, // Track when data was computed
 }
 
 #[derive(Clone)]

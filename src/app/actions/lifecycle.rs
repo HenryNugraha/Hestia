@@ -307,6 +307,7 @@ impl HestiaApp {
             translation_event_rx,
             translation_inflight: HashSet::new(),
             my_mods_translation_state: HashMap::new(),
+            mod_card_display_cache: HashMap::new(),
             update_check_tx,
             update_check_rx,
             update_check_inflight: false,

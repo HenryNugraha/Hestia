@@ -63,6 +63,7 @@ const MOD_DETAIL_RENAME_INPUT_ID: &str = "mod_detail_rename_input";
 // Browse view card/detail layout sizing.
 const BROWSE_PANEL_CARD_WIDTH: f32 = 220.0;
 const BROWSE_THUMBNAIL_HEIGHT: f32 = 130.0;
+const BROWSE_CARD_HEIGHT: f32 = 260.0; // Approximate total card height for viewport culling
 const BROWSE_DETAIL_SIZE: egui::Vec2 = egui::vec2(420.0, 560.0);
 const BROWSE_CHARACTER_PICKER_WIDTH: f32 = 400.0;
 const BROWSE_CHARACTER_PICKER_HEIGHT: f32 = 452.0;
