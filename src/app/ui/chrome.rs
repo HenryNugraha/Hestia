@@ -1,6 +1,6 @@
 impl HestiaApp {
-    fn render_top_bar(&mut self, ctx: &egui::Context) {
-        let current_time = ctx.input(|i| i.time);
+    fn render_top_bar(&mut self, ui: &mut egui::Ui) {
+        let current_time = ui.input(|i| i.time);
         let text = self.text();
 
         for toast in &mut self.toasts {
@@ -23,7 +23,7 @@ impl HestiaApp {
                         bottom: 0,
                     }),
             )
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 self.last_titlebar_rect = Some(ui.max_rect());
             let titlebar_height = TITLEBAR_GAME_ICON_SIZE + 20.0;
             let (titlebar_rect, titlebar_drag) = ui.allocate_exact_size(
@@ -31,11 +31,11 @@ impl HestiaApp {
                 Sense::click_and_drag(),
             );
             if titlebar_drag.drag_started() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
             if titlebar_drag.double_clicked() {
-                let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                let maximized = ui.ctx().input(|input| input.viewport().maximized.unwrap_or(false));
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
             }
 
             let inner_rect = titlebar_rect.shrink2(Vec2::new(8.0, 6.0));
@@ -602,9 +602,9 @@ impl HestiaApp {
                 controls_ui.horizontal(|ui| {
                     if titlebar_control_button(ui, Icon::X, text.close()).clicked()
                     {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+                    let maximized = ui.ctx().input(|input| input.viewport().maximized.unwrap_or(false));
                     if titlebar_control_button(
                         ui,
                         if maximized {
@@ -620,10 +620,10 @@ impl HestiaApp {
                     )
                     .clicked()
                     {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
                     if titlebar_control_button(ui, Icon::Minus, text.minimize()).clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
                 });
                 if self.app_update_verified_path.is_some() {
@@ -655,9 +655,9 @@ impl HestiaApp {
                     }
                 }
                 if self.dragging_titlebar_tool_id.is_some()
-                    && ctx.input(|input| input.pointer.primary_down())
+                    && ui.ctx().input(|input| input.pointer.primary_down())
                 {
-                    ctx.output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
+                    ui.ctx().output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
                 }
             });
             if !self.toasts.is_empty() {
@@ -693,7 +693,7 @@ impl HestiaApp {
                     let response = egui::Area::new(egui::Id::new(("toast", index)))
                         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, next_y))
                         .fixed_pos(egui::pos2(center_x, panel_rect.top()))
-                        .show(ctx, |ui| {
+                        .show(ui.ctx(), |ui| {
                             ui.set_max_width(TOAST_MAX_WIDTH);
                             let frame = egui::Frame::new()
                                 .fill(bg_color)
@@ -712,14 +712,14 @@ impl HestiaApp {
                         });
                     next_y += response.response.rect.height() + TOAST_SPACING;
                 }
-                ctx.request_repaint();
+                ui.ctx().request_repaint();
             }
 
-            window_drag_strip(ui, ctx, 4.0);
+            window_drag_strip(ui, 4.0);
         });
     }
 
-    fn render_nav_rail(&mut self, ctx: &egui::Context) {
+    fn render_nav_rail(&mut self, ui: &mut egui::Ui) {
         let text = self.text();
         egui::Panel::left("nav_rail")
             .resizable(false)
@@ -735,7 +735,7 @@ impl HestiaApp {
                         bottom: WINDOW_INSET,
                     }),
             )
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
                     let old_view = self.current_view;

@@ -114,9 +114,11 @@ impl eframe::App for HestiaApp {
         paint_window_background(ctx);
         install_resize_handles(ctx);
         
-        self.render_top_bar(ctx);
+        self.render_top_bar(ui);
+        
+        let ctx = ui.ctx();
         self.render_settings_window(ctx);
-        self.render_nav_rail(ctx);
+        self.render_nav_rail(ui);
 
         egui::CentralPanel::default()
             .frame(
@@ -129,8 +131,9 @@ impl eframe::App for HestiaApp {
                         bottom: WINDOW_INSET,
                     }),
             )
-            .show(ctx, |ui| self.render_workspace_view(ui));
+            .show_inside(ui, |ui| self.render_workspace_view(ui));
 
+        let ctx = ui.ctx();
         self.render_tasks_window(ctx);
         self.render_tools_window(ctx);
         self.render_tool_launch_options_prompt(ctx);

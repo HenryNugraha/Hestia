@@ -362,15 +362,15 @@ fn paint_window_background(ctx: &egui::Context) {
     );
 }
 
-fn window_drag_strip(ui: &mut Ui, ctx: &egui::Context, height: f32) {
+fn window_drag_strip(ui: &mut Ui, height: f32) {
     let width = ui.available_width().max(1.0);
     let (_, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
     if response.drag_started() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
     if response.double_clicked() {
-        let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        let maximized = ui.ctx().input(|input| input.viewport().maximized.unwrap_or(false));
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
 }
 
