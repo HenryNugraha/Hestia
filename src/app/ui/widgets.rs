@@ -492,57 +492,16 @@ fn paint_thumbnail_image(
 fn paint_unsafe_overlay(
     ui: &Ui,
     rect: egui::Rect,
-    texture: Option<&egui::TextureHandle>,
     rounding: impl Into<egui::CornerRadius>,
 ) {
-    const UNSAFE_OVERLAY_ZOOM: f32 = 1.4;
-    const UNSAFE_OVERLAY_Y_SHIFT: f32 = -0.05;
     let rounding = rounding.into();
+    
+    // Paint a semi-transparent dark overlay to censor the content
     ui.painter().rect_filled(
         rect,
         rounding,
-        Color32::from_rgba_premultiplied(12, 12, 14, 180),
+        Color32::from_rgba_premultiplied(12, 12, 14, 230),
     );
-    if let Some(texture) = texture {
-        let texture_size = texture.size_vec2();
-        if texture_size.x > 0.0 && texture_size.y > 0.0 {
-            let texture_aspect = texture_size.x / texture_size.y;
-            let rect_aspect = rect.width() / rect.height();
-            let draw_rect = if rect_aspect > texture_aspect {
-                let scaled_width = rect.height() * texture_aspect;
-                let x_offset = (rect.width() - scaled_width) * 0.5;
-                egui::Rect::from_min_size(
-                    rect.min + egui::vec2(x_offset, 0.0),
-                    egui::vec2(scaled_width, rect.height()),
-                )
-            } else {
-                let scaled_height = rect.width() / texture_aspect;
-                let y_offset = (rect.height() - scaled_height) * 0.5;
-                egui::Rect::from_min_size(
-                    rect.min + egui::vec2(0.0, y_offset),
-                    egui::vec2(rect.width(), scaled_height),
-                )
-            };
-            let zoomed_size = draw_rect.size() * UNSAFE_OVERLAY_ZOOM;
-            let zoomed_center = draw_rect.center()
-                + egui::vec2(0.0, -draw_rect.height() * UNSAFE_OVERLAY_Y_SHIFT);
-            let zoomed_rect = egui::Rect::from_center_size(zoomed_center, zoomed_size);
-            ui.painter()
-                .with_clip_rect(rect)
-                .image(
-                    texture.id(),
-                    zoomed_rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::from_white_alpha(180),
-                );
-            ui.painter().rect_stroke(
-                rect,
-                rounding,
-                egui::Stroke::new(0.0, Color32::TRANSPARENT),
-                egui::StrokeKind::Middle,
-            );
-        }
-    }
 }
 
 fn paint_game_icon(

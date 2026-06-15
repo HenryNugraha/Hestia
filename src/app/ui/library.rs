@@ -4707,7 +4707,6 @@ impl HestiaApp {
                                                         paint_unsafe_overlay(
                                                             ui,
                                                             rect,
-                                                            self.mod_thumbnail_placeholder.as_ref(),
                                                             egui::CornerRadius::same(8),
                                                         );
                                                     }
@@ -7339,7 +7338,6 @@ impl HestiaApp {
                                                 paint_unsafe_overlay(
                                                     ui,
                                                     rect,
-                                                    self.mod_thumbnail_placeholder.as_ref(),
                                                     egui::CornerRadius::same(4),
                                                 );
                                             }
