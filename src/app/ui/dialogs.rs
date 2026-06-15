@@ -427,7 +427,7 @@ impl HestiaApp {
             .collapsible(false)
             .constrain_to(constrain_rect)
             .frame(
-                egui::Frame::window(&ctx.global_style())
+                egui::Frame::window(&ctx.style())
                     .inner_margin(egui::Margin::same(16))
                     .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
             );
@@ -648,7 +648,7 @@ impl HestiaApp {
             .collapsible(false)
             .order(egui::Order::Foreground)
             .resizable(false)
-            .frame(egui::Frame::window(&ctx.global_style()).stroke(egui::Stroke::new(1.0, warn_color)));
+            .frame(egui::Frame::window(&ctx.style()).stroke(egui::Stroke::new(1.0, warn_color)));
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -855,3 +855,4 @@ impl HestiaApp {
         }
     }
 }
+

@@ -77,7 +77,7 @@ include!("workers/mod.rs");
 include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.consume_icon_results(ctx);
         self.consume_mod_image_results();
         self.consume_manual_image_events();
@@ -107,45 +107,42 @@ impl eframe::App for HestiaApp {
         self.process_app_update_download();
         self.process_install_queue();
         self.handle_shortcuts(ctx);
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx();
-        paint_window_background(ctx);
-        install_resize_handles(ctx);
         
-        self.render_top_bar(ui);
-        
-        let ctx = ui.ctx();
-        self.render_settings_window(ctx);
-        self.render_nav_rail(ui);
+        // Render UI
+        egui::CentralPanel::default().show(ctx, |ui| {
+            paint_window_background(ctx);
+            install_resize_handles(ctx);
+            
+            self.render_top_bar(ui);
+            self.render_settings_window(ctx);
+            self.render_nav_rail(ui);
 
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))
-                    .outer_margin(egui::Margin {
-                        left: 0,
-                        right: WINDOW_INSET,
-                        top: 0,
-                        bottom: WINDOW_INSET,
-                    }),
-            )
-            .show_inside(ui, |ui| self.render_workspace_view(ui));
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))
+                        .outer_margin(egui::Margin {
+                            left: 0,
+                            right: WINDOW_INSET,
+                            top: 0,
+                            bottom: WINDOW_INSET,
+                        }),
+                )
+                .show_inside(ui, |ui| self.render_workspace_view(ui));
 
-        let ctx = ui.ctx();
-        self.render_tasks_window(ctx);
-        self.render_tools_window(ctx);
-        self.render_tool_launch_options_prompt(ctx);
-        self.render_whats_new_window(ctx);
-        self.render_feedback_survey_window(ctx);
-        self.render_log_panel(ctx);
-        paint_window_frame(ctx);
-        self.render_startup_path_scan_overlay(ctx);
+            self.render_tasks_window(ctx);
+            self.render_tools_window(ctx);
+            self.render_tool_launch_options_prompt(ctx);
+            self.render_whats_new_window(ctx);
+            self.render_feedback_survey_window(ctx);
+            self.render_log_panel(ctx);
+            paint_window_frame(ctx);
+            self.render_startup_path_scan_overlay(ctx);
 
-        self.render_pending_conflict(ctx);
-        self.render_pending_import(ctx);
-        self.update_main_window_state(ctx);
+            self.render_pending_conflict(ctx);
+            self.render_pending_import(ctx);
+            self.update_main_window_state(ctx);
+        });
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

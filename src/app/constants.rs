@@ -10,6 +10,7 @@ const LUCIDE_FAMILY: &str = "lucide";
 
 // Main workspace and reusable card layout sizing.
 const CARD_WIDTH: f32 = 220.0;
+const CARD_HEIGHT: f32 = 220.0;
 const WORKSPACE_LEFT_PANE_RATIO: f32 = 0.515;
 
 // Outer chrome spacing and major titlebar/game art sizing.

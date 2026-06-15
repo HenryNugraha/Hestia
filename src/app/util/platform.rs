@@ -294,7 +294,7 @@ fn system_font_candidates() -> &'static [SystemFontCandidate] {
 fn apply_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
-    let mut style = (*ctx.global_style()).clone();
+    let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::dark();
     style.visuals.override_text_color = Some(Color32::from_rgb(228, 231, 235));
     style.visuals.panel_fill = Color32::from_rgba_premultiplied(24, 26, 29, 242);
@@ -326,7 +326,7 @@ fn apply_theme(ctx: &egui::Context) {
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(12);
     style.visuals.widgets.open.corner_radius = egui::CornerRadius::same(12);
     let visuals = style.visuals.clone();
-    ctx.set_global_style(style);
+    ctx.set_style(style);
     ctx.set_visuals_of(egui::Theme::Dark, visuals.clone());
     ctx.set_visuals_of(egui::Theme::Light, visuals);
 }

@@ -57,6 +57,7 @@ impl HestiaApp {
         self.remove_tracked_texture(TextureKind::ModThumb, mod_id);
         self.remove_tracked_texture(TextureKind::ModFull, mod_id);
         self.pending_mod_image_requests.remove(mod_id);
+        self.pending_image_loads.remove(mod_id);
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != mod_id);
         self.pending_texture_uploads.retain(|item| match item {
@@ -71,6 +72,7 @@ impl HestiaApp {
         self.remove_tracked_texture(TextureKind::ModThumb, &texture_key);
         self.remove_tracked_texture(TextureKind::ModFull, &texture_key);
         self.pending_mod_image_requests.remove(&texture_key);
+        self.pending_image_loads.remove(&texture_key);
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != texture_key);
         self.pending_texture_uploads.retain(|item| match item {
@@ -845,6 +847,7 @@ impl HestiaApp {
         while let Ok(result) = self.mod_image_result_rx.try_recv() {
             if result.done {
                 self.pending_mod_image_requests.remove(&result.texture_key);
+                self.pending_image_loads.remove(&result.texture_key);
             }
             if result.thumb_generated {
                 if let Some(meta) = result.thumb_meta.as_ref() {

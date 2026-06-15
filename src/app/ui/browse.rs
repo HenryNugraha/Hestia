@@ -72,7 +72,7 @@ impl HestiaApp {
                                 TextEdit::singleline(&mut self.browse_query)
                                     .id_source(BROWSE_SEARCH_INPUT_ID)
                                     .hint_text(if how_expanded > 0.8 { text.browse_search_hint() } else { "" })
-                                    .frame(egui::Frame::NONE)
+                                    .frame(false)
                                     .desired_width(input_rect.width())
                             );
                             if self.browse_search_focus_pending {
@@ -1124,7 +1124,7 @@ impl HestiaApp {
             .movable(true)
             .constrain_to(details_rect)
             .frame(
-                egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(18)),
+                egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(18)),
             )
             .show(ctx, |ui| {
                 let card = self
@@ -2019,7 +2019,7 @@ impl HestiaApp {
             .constrain_to(constrain_rect)
             .open(&mut open)
             .frame(
-                egui::Frame::window(&ctx.global_style())
+                egui::Frame::window(&ctx.style())
                     .inner_margin(egui::Margin::same(16))
                     .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
             )
@@ -2183,9 +2183,9 @@ impl HestiaApp {
                     if i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::D) || i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown) {
                         action = Some(NavAction::Next);
                     }
-                    if i.smooth_scroll_delta().y > 0.0 {
+                    if i.smooth_scroll_delta.y > 0.0 {
                         action = Some(NavAction::Prev);
-                    } else if i.smooth_scroll_delta().y < 0.0 {
+                    } else if i.smooth_scroll_delta.y < 0.0 {
                         action = Some(NavAction::Next);
                     }
                 });
@@ -2310,3 +2310,4 @@ impl HestiaApp {
     }
 
 }
+

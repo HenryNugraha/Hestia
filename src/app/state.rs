@@ -187,6 +187,7 @@ pub struct HestiaApp {
     manual_image_imports_pending: usize,
     pending_mod_image_requests: HashSet<String>,
     pending_mod_image_queue: Vec<LocalModImageRequest>,
+    pending_image_loads: HashSet<String>,
     pending_icon_requests: HashSet<String>,
     cover_request_tx: WorkerTx<CoverRequest>,
     cover_result_rx: WorkerRx<CoverResult>,

@@ -262,6 +262,7 @@ impl HestiaApp {
             manual_image_imports_pending: 0,
             pending_mod_image_requests: HashSet::new(),
             pending_mod_image_queue: Vec::new(),
+            pending_image_loads: HashSet::new(),
             pending_icon_requests: HashSet::new(),
             cover_request_tx,
             cover_result_rx,
@@ -1593,6 +1594,8 @@ impl HestiaApp {
         self.mod_full_textures
             .retain(|key, _| key != &cover_key && !key.starts_with(&shot_prefix));
         self.pending_mod_image_requests
+            .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
+        self.pending_image_loads
             .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != cover_key && !req.texture_key.starts_with(&shot_prefix));

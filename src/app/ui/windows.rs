@@ -6,7 +6,7 @@ impl HestiaApp {
         let mut whats_new_open = self.state.show_whats_new;
         let force_default_pos = self.whats_new_force_default_pos;
         let text = self.text();
-        let window_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
+        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
         let mut window = egui::Window::new(icon_text_sized(Icon::Bell, text.whats_new(), 14.0, 14.0))
             .id(egui::Id::new((
                 "whats_new_window",
@@ -102,7 +102,7 @@ impl HestiaApp {
         let text = self.text();
         let mut survey_open = self.state.show_feedback_survey;
         let force_default_pos = self.feedback_survey_force_default_pos;
-        let window_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
+        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
         let survey_title = survey.title.get(self.state.language);
         let mut window =
             egui::Window::new(icon_text_sized(Icon::ClipboardList, survey_title, 14.0, 14.0))
@@ -430,7 +430,7 @@ impl HestiaApp {
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let text = self.text();
-        let log_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
+        let log_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, text.log(), 14.0, 14.0))
             .id(egui::Id::new(("log_window", self.log_window_nonce)))
             .open(&mut log_open)
@@ -522,7 +522,7 @@ impl HestiaApp {
         let just_opened = self.tasks_force_default_pos;
         let force_default_pos = self.tasks_force_default_pos;
         let text = self.text();
-        let tasks_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
+        let tasks_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(
             Icon::ListChecks,
             text.tasks_window(),
@@ -826,7 +826,7 @@ impl HestiaApp {
         let just_opened = self.tools_force_default_pos;
         let force_default_pos = self.tools_force_default_pos;
         let text = self.text();
-        let tools_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(12));
+        let tools_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(
             Icon::AppWindow,
             text.tools(),
@@ -1471,7 +1471,7 @@ impl HestiaApp {
         .constrain_to(constrain_rect)
         .open(&mut open)
         .frame(
-            egui::Frame::window(&ctx.global_style())
+            egui::Frame::window(&ctx.style())
                 .inner_margin(egui::Margin::same(16))
                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
         )
@@ -2189,7 +2189,7 @@ impl HestiaApp {
 
         let text = self.text();
         let mut settings_open = self.settings_open;
-        let settings_frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(16));
+        let settings_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
         let mut window =
             egui::Window::new(icon_text_sized(Icon::Settings2, text.settings(), 14.0, 14.0))
                 .open(&mut settings_open)
@@ -3381,3 +3381,4 @@ impl HestiaApp {
         }
     }
 }
+

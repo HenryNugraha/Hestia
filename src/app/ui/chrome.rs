@@ -11,7 +11,7 @@ impl HestiaApp {
         self.toasts
             .retain(|toast| current_time - toast.created_at <= TOAST_DURATION);
         
-        egui::Panel::top("top_bar")
+        egui::TopBottomPanel::top("top_bar")
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))
@@ -721,9 +721,9 @@ impl HestiaApp {
 
     fn render_nav_rail(&mut self, ui: &mut egui::Ui) {
         let text = self.text();
-        egui::Panel::left("nav_rail")
+        egui::SidePanel::left("nav_rail")
             .resizable(false)
-            .exact_size(78.0)
+            .exact_width(78.0)
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))

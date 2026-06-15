@@ -3641,7 +3641,7 @@ impl HestiaApp {
                                 TextEdit::singleline(&mut self.mods_search_query)
                                     .id_source(MODS_SEARCH_INPUT_ID)
                                     .hint_text(if how_expanded > 0.8 { text.library_search_hint() } else { "" })
-                                    .frame(egui::Frame::NONE)
+                                    .frame(false)
                                     .desired_width(input_rect.width())
                             );
                             if self.mods_search_focus_pending {
@@ -4148,7 +4148,9 @@ impl HestiaApp {
                     }
 
                     let mut scroll_area =
-                        ScrollArea::vertical().id_salt("library_main_mod_grid_scroll");
+                        ScrollArea::vertical()
+                            .id_salt("library_main_mod_grid_scroll")
+                            .auto_shrink([false, false]);
                     if let Some(category_id) = selected_category_folder_id.as_deref() {
                         scroll_area = scroll_area.id_salt(("library_category_folder_scroll", category_id));
                     }
@@ -4451,6 +4453,10 @@ impl HestiaApp {
                         };
 
                         let titlebar_context_block_rect = self.last_titlebar_rect;
+                        
+                        // Viewport culling: calculate row dimensions
+                        let row_height = CARD_HEIGHT + card_spacing;
+                        
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<
                             &(
@@ -4471,8 +4477,28 @@ impl HestiaApp {
                                 String,
                             ),
                         >| {
+                            // Get viewport for culling
+                            let viewport = ui.clip_rect();
+                            let viewport_top = viewport.top();
+                            let viewport_bottom = viewport.bottom();
+                            let buffer_rows = 2; // Render 2 extra rows above/below for smooth scrolling
+                            
                             for row in section_cards.chunks(columns) {
-                                ui.horizontal_top(|ui| {
+                                // Calculate row position
+                                let row_top = ui.cursor().top();
+                                let row_bottom = row_top + row_height;
+                                
+                                // Check if row is visible (with buffer)
+                                let is_visible = row_bottom >= viewport_top - (buffer_rows as f32 * row_height)
+                                    && row_top <= viewport_bottom + (buffer_rows as f32 * row_height);
+                                
+                                if !is_visible {
+                                    // Just allocate space for invisible rows
+                                    ui.add_space(row_height);
+                                    continue;
+                                }
+                                
+                                let _row_response = ui.horizontal_top(|ui| {
                                     ui.add_space(left_padding); // Left padding, matching header
                                     for card in row {
                                         let (
@@ -4558,6 +4584,7 @@ impl HestiaApp {
                                                             if !self
                                                                 .mod_cover_textures
                                                                 .contains_key(mod_id)
+                                                                && !self.pending_image_loads.contains(mod_id)
                                                             {
                                                                 let clip = ui.clip_rect();
                                                                 let is_visible = rect.intersects(clip);
@@ -4573,26 +4600,30 @@ impl HestiaApp {
                                                                     mod_id,
                                                                     priority,
                                                                 );
+                                                                self.pending_image_loads.insert(mod_id.clone());
                                                             }
                                                             self.get_mod_thumb_texture(mod_id, 2)
                                                         } else {
                                                             None
                                                         }
                                                     } else {
-                                                        let clip = ui.clip_rect();
-                                                        let is_visible = rect.intersects(clip);
-                                                        let distance = if is_visible {
-                                                            0.0
-                                                        } else if rect.center().y < clip.top() {
-                                                            clip.top() - rect.center().y
-                                                        } else {
-                                                            rect.center().y - clip.bottom()
-                                                        };
-                                                        let priority = if is_visible { 20 } else { 60 + (distance.max(0.0) as u32 / 100) };
-                                                        self.queue_mod_card_thumb_load_with_priority(
-                                                            mod_id,
-                                                            priority,
-                                                        );
+                                                        if !self.pending_image_loads.contains(mod_id) {
+                                                            let clip = ui.clip_rect();
+                                                            let is_visible = rect.intersects(clip);
+                                                            let distance = if is_visible {
+                                                                0.0
+                                                            } else if rect.center().y < clip.top() {
+                                                                clip.top() - rect.center().y
+                                                            } else {
+                                                                rect.center().y - clip.bottom()
+                                                            };
+                                                            let priority = if is_visible { 20 } else { 60 + (distance.max(0.0) as u32 / 100) };
+                                                            self.queue_mod_card_thumb_load_with_priority(
+                                                                mod_id,
+                                                                priority,
+                                                            );
+                                                            self.pending_image_loads.insert(mod_id.clone());
+                                                        }
                                                         self.get_mod_thumb_texture(mod_id, 2)
                                                     };
                                                     if let Some(texture) = cover_texture {
@@ -6579,7 +6610,7 @@ impl HestiaApp {
                                             .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
                                             .max(ui.available_width() / 6.25) // min width of 16% from the whole width
                                         )
-                                        .frame(egui::Frame::NONE)
+                                        .frame(false)
                                 )
                             }).inner;
                         self.request_mod_detail_rename_focus(ui.ctx(), &resp, &selected.id);
