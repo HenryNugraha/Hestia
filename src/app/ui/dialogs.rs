@@ -788,7 +788,7 @@ impl HestiaApp {
         if !dropped_files.is_empty() {
             let mut batch_sources = Vec::new();
             let mut image_paths = Vec::new();
-            let mut seen_paths = HashSet::new();
+            let mut seen_paths = HashSet::with_capacity(dropped_files.len());
             let mut queued_count = 0;
             for file in dropped_files {
                 let Some(path) = file.path else {

@@ -570,7 +570,7 @@ impl HestiaApp {
 
     fn rebuild_texture_tracking(&mut self) {
         let old_meta = std::mem::take(&mut self.texture_meta);
-        self.texture_meta = HashMap::new();
+        self.texture_meta = HashMap::with_capacity(64);
         self.texture_ram_estimated_bytes = 0;
 
         for (k, t) in &self.mod_cover_textures {
@@ -1638,7 +1638,7 @@ impl HestiaApp {
         source_urls.sort();
         source_urls.dedup();
 
-        let mut source_keys = HashSet::new();
+        let mut source_keys = HashSet::with_capacity(32);
         for url in source_urls {
             source_keys.insert(Self::browse_image_cache_key(&url));
         }

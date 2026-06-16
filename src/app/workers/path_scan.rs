@@ -34,7 +34,7 @@ fn run_startup_path_scan(
         }
     }
 
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::with_capacity(128);
     for root in startup_scan_roots() {
         if cancel.load(Ordering::Relaxed) {
             break;

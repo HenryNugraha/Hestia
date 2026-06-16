@@ -1196,7 +1196,7 @@ mod tests {
     fn downloaded_mod_category_preserves_saved_values() {
         let state = AppState::default();
         let game_id = state.games[0].definition.id.clone();
-        let mut saved = HashMap::new();
+        let mut saved = HashMap::with_capacity(1);
         saved.insert(game_id.clone(), false);
 
         let (prefs, changed) =
@@ -1218,7 +1218,7 @@ mod tests {
             name: "Existing".to_string(),
             order: 0,
         }];
-        let mut saved = HashMap::new();
+        let mut saved = HashMap::with_capacity(1);
         saved.insert(saved_game.clone(), true);
 
         let (prefs, changed) =

@@ -962,7 +962,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     );
                     self.prewarm_markdown_images(&markdown);
 
-                    let mut description_image_keys = HashSet::new();
+                    let mut description_image_keys = HashSet::with_capacity(16);
                     if let Ok(image_regex) = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)") {
                         for cap in image_regex.captures_iter(&markdown) {
                             if let Some(url_match) = cap.get(2) {
@@ -1104,7 +1104,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
         let now = Instant::now();
         self.browse_image_retry_after
             .retain(|_, retry_after| *retry_after > now);
-        let mut allowed_keys = HashSet::new();
+        let mut allowed_keys = HashSet::with_capacity(32);
         let mut focus_mode = false;
 
         if let Some(overlay) = &self.browse_state.screenshot_overlay {

@@ -750,7 +750,7 @@ pub fn search_page_cache_key(
 }
 
 pub fn updates_cache_key(mod_id: u64) -> String {
-    let mut tags = HashMap::new();
+    let mut tags = HashMap::with_capacity(2);
     tags.insert("kind", "updates".to_string());
     tags.insert("mod", mod_id.to_string());
     let serialized = serde_json::to_string(&tags).unwrap_or_default();

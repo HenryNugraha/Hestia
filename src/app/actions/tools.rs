@@ -237,7 +237,7 @@ impl HestiaApp {
     }
 
     fn discover_tools_for_game(&self, game_id: &str, mods_root: &Path) -> Vec<DiscoveredGameTool> {
-        let mut by_key: HashMap<String, DiscoveredGameTool> = HashMap::new();
+        let mut by_key: HashMap<String, DiscoveredGameTool> = HashMap::with_capacity(16);
         for entry in WalkDir::new(mods_root).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file() {
                 continue;
