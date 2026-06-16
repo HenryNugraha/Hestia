@@ -268,6 +268,13 @@ pub struct HestiaApp {
     pending_gif_previews: HashSet<String>,
     pending_gif_animations: HashSet<String>,
     animated_gif_state: HashMap<String, AnimatedGifState>,
+    pending_events: PendingEventsFlags,
+}
+
+#[derive(Default)]
+struct PendingEventsFlags {
+    has_worker_events: bool,
+    has_process_work: bool,
 }
 
 #[derive(Clone)]

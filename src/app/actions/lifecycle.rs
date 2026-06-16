@@ -344,6 +344,7 @@ impl HestiaApp {
             gif_animation_event_rx,
             pending_gif_animations: HashSet::new(),
             animated_gif_state: HashMap::new(),
+            pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
         app.retry_pending_feedback_survey_on_launch();
@@ -2081,5 +2082,47 @@ impl HestiaApp {
         let id = self.install_next_job_id;
         self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
         id
+    }
+
+    fn check_pending_worker_events(&mut self) -> bool {
+        // Check if any worker channels have pending events
+        // This uses try_recv's non-blocking peek behavior
+        let has_events = 
+            !self.icon_result_rx.is_empty()
+            || !self.mod_image_result_rx.is_empty()
+            || !self.manual_image_event_rx.is_empty()
+            || !self.gif_preview_event_rx.is_empty()
+            || !self.gif_animation_event_rx.is_empty()
+            || !self.cover_result_rx.is_empty()
+            || !self.browse_event_rx.is_empty()
+            || !self.browse_image_result_rx.is_empty()
+            || !self.browse_download_event_rx.is_empty()
+            || !self.app_update_event_rx.is_empty()
+            || !self.feedback_survey_submit_rx.is_empty()
+            || !self.update_check_rx.is_empty()
+            || !self.startup_path_scan_rx.is_empty()
+            || !self.startup_scan_rx.is_empty()
+            || !self.translation_event_rx.is_empty()
+            || !self.install_event_rx.is_empty()
+            || !self.refresh_result_rx.is_empty();
+        
+        self.pending_events.has_worker_events = has_events;
+        has_events
+    }
+
+    fn check_pending_process_work(&mut self) -> bool {
+        // Check if any processing queues have work
+        let has_work = 
+            !self.pending_mod_image_queue.is_empty()
+            || !self.pending_texture_uploads.is_empty()
+            || (self.current_view == ViewMode::Browse && self.has_enabled_games() && self.browse_state.cards.is_empty() && !self.browse_state.loading_page)
+            || self.pending_browse_open_mod_id.is_some()
+            || !self.browse_image_queue.is_empty()
+            || !self.browse_download_queue.is_empty()
+            || self.app_update_download_inflight.is_some()
+            || !self.install_queue.is_empty();
+        
+        self.pending_events.has_process_work = has_work;
+        has_work
     }
 }

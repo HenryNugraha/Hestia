@@ -78,35 +78,44 @@ include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.consume_icon_results(ctx);
-        self.consume_mod_image_results();
-        self.consume_manual_image_events();
-        self.consume_gif_preview_events(ctx);
-        self.consume_gif_animation_events(ctx);
+        // Batch worker event consumption - only poll channels when flagged
+        if self.check_pending_worker_events() {
+            self.consume_icon_results(ctx);
+            self.consume_mod_image_results();
+            self.consume_manual_image_events();
+            self.consume_gif_preview_events(ctx);
+            self.consume_gif_animation_events(ctx);
+            self.consume_cover_results(ctx);
+            self.consume_browse_events();
+            self.consume_browse_image_results();
+            self.consume_browse_download_events();
+            self.consume_app_update_events();
+            self.consume_feedback_survey_events();
+            self.consume_update_check_results();
+            self.consume_startup_path_scan_events(ctx);
+            self.consume_startup_scan_events();
+            self.handle_translation_events();
+            self.consume_install_events();
+            self.consume_refresh_events();
+        }
+        
+        // Always run these - they have internal checks or are always needed
         self.update_gif_animations(ctx);
-        self.consume_cover_results(ctx);
-        self.consume_browse_events();
-        self.consume_browse_image_results();
-        self.consume_browse_download_events();
-        self.consume_app_update_events();
-        self.consume_feedback_survey_events();
-        self.consume_update_check_results();
-        self.consume_startup_path_scan_events(ctx);
-        self.consume_startup_scan_events();
-        self.handle_translation_events();
-        self.process_local_mod_image_queue();
-        self.process_pending_texture_uploads(ctx);
         self.evict_textures_to_budget(ctx.input(|i| i.time));
         self.detect_drag_and_drop(ctx);
-        self.consume_install_events();
-        self.consume_refresh_events();
-        self.ensure_browse_bootstrap();
-        self.process_pending_browse_open(ctx);
-        self.process_browse_image_queue();
-        self.process_browse_download_queue();
-        self.process_app_update_download();
-        self.process_install_queue();
         self.handle_shortcuts(ctx);
+        
+        // Process queues - only when there's work
+        if self.check_pending_process_work() {
+            self.process_local_mod_image_queue();
+            self.process_pending_texture_uploads(ctx);
+            self.ensure_browse_bootstrap();
+            self.process_pending_browse_open(ctx);
+            self.process_browse_image_queue();
+            self.process_browse_download_queue();
+            self.process_app_update_download();
+            self.process_install_queue();
+        }
         
         // Render UI
         egui::CentralPanel::default().show(ctx, |ui| {
