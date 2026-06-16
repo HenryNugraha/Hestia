@@ -14,14 +14,19 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+#[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x00000008;
 #[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x08000000;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
+use rayon::prelude::*;
 use uuid::Uuid;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -45,6 +50,25 @@ use crate::{
     },
     persistence,
 };
+
+/// Read file with platform-specific optimizations.
+/// On Windows, hints to the OS that sequential access is expected.
+#[cfg(windows)]
+fn read_file_optimized(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN)
+        .open(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn read_file_optimized(path: &Path) -> Result<Vec<u8>> {
+    Ok(fs::read(path)?)
+}
 
 pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Result<()> {
     let mut newly_scanned = Vec::new();
@@ -686,21 +710,20 @@ fn scan_live_mods(
         return Ok(Vec::new());
     }
 
-    let mut mods = Vec::new();
-    for entry in fs::read_dir(&root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        mods.push(load_mod_entry(
-            game,
-            path,
-            false,
-            scan_rabbitfx_requirement,
-        )?);
-    }
-    Ok(mods)
+    // Collect mod directories first
+    let mod_dirs: Vec<PathBuf> = fs::read_dir(&root)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+
+    // Process each mod directory in parallel
+    let mods: Result<Vec<ModEntry>> = mod_dirs
+        .par_iter()
+        .map(|path| load_mod_entry(game, path.clone(), false, scan_rabbitfx_requirement))
+        .collect();
+
+    mods
 }
 
 fn scan_archived_mods(
@@ -716,16 +739,20 @@ fn scan_archived_mods(
         return Ok(Vec::new());
     }
 
-    let mut mods = Vec::new();
-    for entry in fs::read_dir(&root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        mods.push(load_mod_entry(game, path, true, scan_rabbitfx_requirement)?);
-    }
-    Ok(mods)
+    // Collect mod directories first
+    let mod_dirs: Vec<PathBuf> = fs::read_dir(&root)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+
+    // Process each mod directory in parallel
+    let mods: Result<Vec<ModEntry>> = mod_dirs
+        .par_iter()
+        .map(|path| load_mod_entry(game, path.clone(), true, scan_rabbitfx_requirement))
+        .collect();
+
+    mods
 }
 
 fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> Result<PathBuf> {
@@ -958,7 +985,7 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
             found_ini = true;
             let rel = path.strip_prefix(content_root).unwrap_or(path);
             hasher.update(rel.to_string_lossy().as_bytes());
-            let bytes = fs::read(path)?;
+            let bytes = read_file_optimized(path)?;
             hasher.update(&bytes);
         }
     }
@@ -996,7 +1023,7 @@ fn legacy_disabled_ini_hash(root: &Path) -> Result<Option<String>> {
             found_ini = true;
             let rel = path.strip_prefix(root).unwrap_or(path);
             hasher.update(rel.to_string_lossy().as_bytes());
-            let bytes = fs::read(path)?;
+            let bytes = read_file_optimized(path)?;
             hasher.update(&bytes);
         }
     }
