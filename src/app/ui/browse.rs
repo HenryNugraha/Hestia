@@ -142,14 +142,17 @@ impl HestiaApp {
                         label_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
 
                         let slide_left = 40.0 * (1.0 - header_visibility);
-                        let text_pos = label_rect.left_center() - egui::vec2(slide_left, 0.0);
-
-                        ui.painter().with_clip_rect(label_rect).text(
-                            text_pos,
-                            egui::Align2::LEFT_CENTER,
-                            text.browse_mods_title(),
-                            egui::FontId::proportional(18.0),
-                            Color32::from_rgba_premultiplied(228, 231, 235, (header_visibility * 255.0) as u8),
+                        let text_color = Color32::from_rgba_premultiplied(228, 231, 235, (header_visibility * 255.0) as u8);
+                        let title_text = bold(text.browse_mods_title(), Some(18.0)).color(text_color);
+                        let title_galley = egui::WidgetText::from(title_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default);
+                        let extended_clip_rect = label_rect.expand2(egui::vec2(10.0, 0.0));
+                        ui.painter().with_clip_rect(extended_clip_rect).galley(
+                            egui::Align2::LEFT_CENTER
+                                .align_size_within_rect(title_galley.size(), label_rect)
+                                .min
+                                + egui::vec2(-slide_left - 10.0, 0.0),
+                            title_galley,
+                            text_color,
                         );
                     }
 
@@ -1604,7 +1607,7 @@ impl HestiaApp {
                         match &detail.updates {
                             BrowseUpdatesState::Loaded(entries) if !entries.is_empty() => {
                                 egui::CollapsingHeader::new(
-                                    bold(text.browse_updates()).size(13.0).underline().color(Color32::from_gray(220)),
+                                    bold(text.browse_updates(), Some(13.0)).underline().color(Color32::from_gray(220)),
                                 )
                                 .id_salt(("browse_updates_section", self.browse_detail_generation, mod_id))
                                 .default_open(false)
@@ -1942,7 +1945,7 @@ impl HestiaApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        static_label(ui, bold(&file.file_name));
+                        static_label(ui, bold(&file.file_name, None));
                         ui.add_space(-4.0);
                         static_label(
                             ui,
@@ -2047,7 +2050,7 @@ impl HestiaApp {
                 ui.horizontal(|ui| {
                     static_label(ui, icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)));
                     ui.vertical(|ui| {
-                        static_label(ui, bold(&mod_name).underline().size(16.0));
+                        static_label(ui, bold(&mod_name, Some(16.0)).underline());
                         ui.add_space(4.0);
                         static_label(
                             ui,
@@ -2090,7 +2093,7 @@ impl HestiaApp {
                                             ui.horizontal(|ui| {
                                                 larger_checkbox(ui, file_entry.selected);
                                                 ui.vertical(|ui| {
-                                                    static_label(ui, bold(&file_entry.file.file_name));
+                                                    static_label(ui, bold(&file_entry.file.file_name, None));
                                                     ui.add_space(-4.0);
                                                     static_label(
                                                         ui,

@@ -649,7 +649,7 @@ impl HestiaApp {
             |ui| {
                 ui.add(
                     egui::Label::new(
-                        bold(text)
+                        bold(text, None)
                             .size(12.5)
                             .underline()
                             .color(Color32::from_rgb(228, 231, 235)),
@@ -3139,7 +3139,7 @@ impl HestiaApp {
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.add_space(16.0);
-                    static_label(ui, bold(text.no_games_detected()).underline().size(24.0));
+                    static_label(ui, bold(text.no_games_detected(), Some(24.0)).underline());
                     ui.add_space(-2.0);
                     static_label(
                         ui,
@@ -3169,7 +3169,7 @@ impl HestiaApp {
                     if ui
                         .add_sized(
                             [156.0, 48.0],
-                            egui::Button::new(bold(text.open_settings()).size(16.0)),
+                            egui::Button::new(bold(text.open_settings(), Some(16.0))),
                         )
                         .clicked()
                     {
@@ -3735,18 +3735,15 @@ impl HestiaApp {
                             unit_rect.top(),
                         );
                         let alpha = (header_visibility * 255.0) as u8;
-                        let title_font = egui::FontId::proportional(18.0);
                         let title_color = Color32::from_rgba_premultiplied(228, 231, 235, alpha);
-                        let title_galley = ui.painter().layout_no_wrap(
-                            text.installed_mods().to_string(),
-                            title_font,
-                            title_color,
-                        );
-                        ui.painter().with_clip_rect(unit_rect).galley(
+                        let title_text = bold(text.installed_mods(), Some(18.0)).color(title_color);
+                        let title_galley = egui::WidgetText::from(title_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default);
+                        let extended_clip_rect = unit_rect.expand2(egui::vec2(10.0, 0.0));
+                        ui.painter().with_clip_rect(extended_clip_rect).galley(
                             egui::Align2::LEFT_CENTER
                                 .align_size_within_rect(title_galley.size(), unit_rect)
                                 .min
-                                + egui::vec2(content_origin.x - unit_rect.left(), 0.0),
+                                + egui::vec2(content_origin.x - unit_rect.left() - 10.0, 0.0),
                             title_galley.clone(),
                             title_color,
                         );
@@ -7696,7 +7693,7 @@ impl HestiaApp {
                     if !metadata_as_description {
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            static_label(ui, bold(text.description()).size(14.0).underline().color(Color32::from_gray(195)));
+                            static_label(ui, bold(text.description(), Some(14.0)).underline().color(Color32::from_gray(195)));
                             if selected.metadata.extracted.requires_rabbitfx {
                                 metadata_info_badge(ui, text.requires_rabbitfx());
                             }
@@ -7776,8 +7773,7 @@ impl HestiaApp {
                                         text.description()
                                     } else {
                                         text.metadata()
-                                    })
-                                        .size(14.0)
+                                    }, Some(14.0))
                                         .underline()
                                         .color(Color32::from_gray(195)),
                                 );
@@ -8173,7 +8169,7 @@ impl HestiaApp {
                                 Vec2::new(column_width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                static_label(ui, bold(text.local()).size(14.0).underline().color(Color32::from_gray(195)));
+                                static_label(ui, bold(text.local(), Some(14.0)).underline().color(Color32::from_gray(195)));
                                 ui.group(|ui| {
                                     let path_text = selected.root_path.display().to_string();
                                     egui::Frame::new()
@@ -8224,7 +8220,7 @@ impl HestiaApp {
                                 Vec2::new(column_width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                static_label(ui, bold(text.source()).size(14.0).underline().color(Color32::from_gray(195)));
+                                static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
                                 ui.group(|ui| {
                                     let mut changed = false;
                                     let mut link_and_sync_id: Option<u64> = None;

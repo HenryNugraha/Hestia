@@ -40,7 +40,7 @@ impl HestiaApp {
                 if feedback_survey().is_some() {
                     let version_response = ui
                         .add(
-                            egui::Label::new(bold(format!("Hestia {APP_VERSION}")).underline().size(16.0))
+                            egui::Label::new(bold(format!("Hestia {APP_VERSION}"), Some(16.0)).underline())
                                 .selectable(false)
                                 .sense(Sense::click()),
                         )
@@ -52,7 +52,7 @@ impl HestiaApp {
                 } else {
                     static_label(
                         ui,
-                        bold(format!("Hestia {APP_VERSION}")).underline().size(16.0),
+                        bold(format!("Hestia {APP_VERSION}"), Some(16.0)).underline(),
                     );
                 }
                 ui.add_space(-4.0);
@@ -469,7 +469,7 @@ impl HestiaApp {
                             if last_date.is_some() {
                                 ui.add_space(12.0);
                             }
-                            static_label(ui, bold(date.clone()).underline());
+                            static_label(ui, bold(date.clone(), None).underline());
                             last_date = Some(date);
                             ui.add_space(-4.0);
                         }
@@ -1714,7 +1714,7 @@ impl HestiaApp {
             return;
         };
 
-        static_label(ui, bold(text.category_browse()).underline().size(16.0));
+        static_label(ui, bold(text.category_browse(), Some(16.0)).underline());
         ui.indent("setting_categories_browse", |ui| {
             let game_has_categories = self
                 .state
@@ -1753,7 +1753,7 @@ impl HestiaApp {
         let uncategorized_count =
             self.uncategorized_mod_count_for_game(&game_id, &current_category_ids);
 
-        static_label(ui, bold(text.categories()).underline().size(16.0));
+        static_label(ui, bold(text.categories(), Some(16.0)).underline());
         let categories = self.categories_for_game(&game_id);
         let category_controls_width = (ui.available_width() - 48.0).max(0.0);
         ui.allocate_ui_with_layout(
@@ -2220,27 +2220,27 @@ impl HestiaApp {
                 ui.selectable_value(
                     &mut self.settings_tab,
                     SettingsTab::General,
-                    bold(text.settings_tab_general().to_uppercase()),
+                    bold(text.settings_tab_general().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
                     SettingsTab::Categories,
-                    bold(text.settings_tab_category().to_uppercase()),
+                    bold(text.settings_tab_category().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
                     SettingsTab::Advanced,
-                    bold(text.settings_tab_advanced().to_uppercase()),
+                    bold(text.settings_tab_advanced().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
                     SettingsTab::Path,
-                    bold(text.settings_tab_game_path().to_uppercase()),
+                    bold(text.settings_tab_game_path().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
                     SettingsTab::About,
-                    bold(text.settings_tab_about().to_uppercase()),
+                    bold(text.settings_tab_about().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
             });
 
@@ -2263,7 +2263,7 @@ impl HestiaApp {
                             add_control(ui);
                         };
 
-                        static_label(ui, bold(text.behavior()).underline().size(16.0));
+                        static_label(ui, bold(text.behavior(), Some(16.0)).underline());
                         ui.indent("setting_general_behavior", |ui| {
                             let launch_behavior = self.state.static_prefs.launch_behavior;
                             let tool_launch_behavior = self.state.static_prefs.tool_launch_behavior;
@@ -2343,7 +2343,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.installed_mods_list()).underline().size(16.0));
+                        static_label(ui, bold(text.installed_mods_list(), Some(16.0)).underline());
                         ui.indent("setting_general_installed_mods_list", |ui| {
                             let group_mode = self.state.static_prefs.library_group_mode;
                             let category_display_mode = self.state.static_prefs.library_category_display_mode;
@@ -2468,7 +2468,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.operational()).underline().size(16.0));
+                        static_label(ui, bold(text.operational(), Some(16.0)).underline());
                         ui.indent("setting_general_operational", |ui| {
                             static_label(ui, text.mods_to_check_for_updates());
                             ui.add_space(-4.0);
@@ -2583,7 +2583,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.tasks()).underline().size(16.0));
+                        static_label(ui, bold(text.tasks(), Some(16.0)).underline());
                         ui.indent("setting_general_tasks", |ui| {
                             let tasks_layout = self.state.tasks_layout;
                             let tasks_order = self.state.tasks_order;
@@ -2686,7 +2686,7 @@ impl HestiaApp {
                             });
                     });
                     ui.add_space(16.0);
-                    static_label(ui, bold(text.path_xxmi_section()).underline().size(16.0));
+                    static_label(ui, bold(text.path_xxmi_section(), Some(16.0)).underline());
                     ui.group(|ui| {
                         let warn_color = Color32::from_rgb(124, 45, 58);
                         let err_stroke = egui::Stroke::new(1.0, warn_color);
@@ -2850,7 +2850,7 @@ impl HestiaApp {
                         });
                     });
                     ui.add_space(24.0);
-                    ui.label(bold(text.path_game_section()).underline().size(16.0))
+                    ui.label(bold(text.path_game_section(), Some(16.0)).underline())
                     .on_hover_cursor(egui::CursorIcon::Default);
                     let mut selected_game_was_disabled = false;
                     let mut enabled_game_ids = Vec::new();
@@ -3150,7 +3150,7 @@ impl HestiaApp {
                     }
                     }
                     SettingsTab::Advanced => {
-                        static_label(ui, bold(text.appearance()).underline().size(16.0));
+                        static_label(ui, bold(text.appearance(), Some(16.0)).underline());
                         ui.indent("setting_general_interface", |ui| {
                             static_label(ui, text.language());
                             ui.add_space(-4.0);
@@ -3201,7 +3201,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.content_restriction()).underline().size(16.0));
+                        static_label(ui, bold(text.content_restriction(), Some(16.0)).underline());
                         ui.indent("setting_advanced_nsfw", |ui| {
                             static_label(ui, text.hide_unsafe_contents());
                             ui.add_space(-4.0);
@@ -3219,7 +3219,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.cache_and_archive()).underline().size(16.0));
+                        static_label(ui, bold(text.cache_and_archive(), Some(16.0)).underline());
                         ui.indent("setting_advanced_cache", |ui| {
                             self.refresh_usage_counters_if_needed(ui.input(|i| i.time));
                             static_label(ui, text.cache_size());
@@ -3287,7 +3287,7 @@ impl HestiaApp {
                         ui.add_space(24.0);
                     }
                     SettingsTab::About => {
-                        static_label(ui, bold(APP_NAME).underline().size(16.0));
+                        static_label(ui, bold(APP_NAME, Some(16.0)).underline());
                         ui.indent("setting_about_app", |ui| {
                             ui.add_space(-2.0);
                             static_label(ui, text.about_by(APP_AUTHORS));
@@ -3362,7 +3362,7 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        static_label(ui, bold(text.attribution()).underline().size(16.0));
+                        static_label(ui, bold(text.attribution(), Some(16.0)).underline());
                         ui.indent("setting_about_attributions", |ui| {
                             static_label(ui, text.attribution_gamebanana());
                             ui.add_space(1.0);

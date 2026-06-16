@@ -1,3 +1,19 @@
+static CURRENT_LANGUAGE: AtomicU8 = AtomicU8::new(0);
+
+fn set_current_language(language: AppLanguage) {
+    CURRENT_LANGUAGE.store(language as u8, Ordering::Relaxed);
+}
+
+fn current_language() -> Option<AppLanguage> {
+    match CURRENT_LANGUAGE.load(Ordering::Relaxed) {
+        0 => Some(AppLanguage::English),
+        1 => Some(AppLanguage::Indonesian),
+        2 => Some(AppLanguage::ChineseSimplified),
+        3 => Some(AppLanguage::Russian),
+        _ => None,
+    }
+}
+
 fn parse_gb_id(input: &str) -> Option<u64> {
     let input = input.trim();
     if let Ok(id) = input.parse::<u64>() {
@@ -20,8 +36,14 @@ fn sanitize_folder_name(input: &str) -> String {
     }
 }
 
-fn bold(text: impl Into<String>) -> RichText {
-    RichText::new(text).family(FontFamily::Name(BOLD_FONT_FAMILY.into()))
+fn bold(text: impl Into<String>, size: Option<f32>) -> RichText {
+    let rich_text = RichText::new(text).family(FontFamily::Name(BOLD_FONT_FAMILY.into()));
+    let final_size = size.unwrap_or(12.0);
+    rich_text.size(if current_language() == Some(AppLanguage::Russian) {
+        final_size * 0.75
+    } else {
+        final_size
+    })
 }
 
 fn non_empty(value: String) -> Option<String> {

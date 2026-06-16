@@ -406,7 +406,7 @@ impl HestiaApp {
                 ui.add_space(-2.0);
                 ui.vertical(|ui| {
                     let (display_title, title_clamped) = Self::task_display_title(&task.title);
-                    let title_response = ui.label(bold(display_title));
+                    let title_response = ui.label(bold(display_title, None));
                     if title_clamped {
                         title_response.on_hover_text(&task.title);
                     }
@@ -458,7 +458,7 @@ impl HestiaApp {
                                 if has_badge_action {
                                     ui.vertical_centered(|ui| {
                                         ui.label(
-                                            bold(status_label).color(Color32::WHITE).size(12.0),
+                                            bold(status_label, Some(12.0)).color(Color32::WHITE),
                                         );
                                         ui.add_space(TASK_BADGE_ACTION_GAP);
                                         if cancellable {
@@ -521,9 +521,8 @@ impl HestiaApp {
                                         ),
                                         |ui| {
                                             ui.label(
-                                                bold(status_label)
-                                                    .color(Color32::WHITE)
-                                                    .size(12.0),
+                                                bold(status_label, Some(12.0))
+                                                    .color(Color32::WHITE),
                                             );
                                         },
                                     );

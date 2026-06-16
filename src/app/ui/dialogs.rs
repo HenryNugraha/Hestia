@@ -75,7 +75,7 @@ impl HestiaApp {
                     .show(ui, |ui| {
                         static_label(
                             ui,
-                            bold(text.scan_results())
+                            bold(text.scan_results(), None)
                                 .size(16.0)
                                 //.underline()
                                 .color(Color32::from_gray(220)),
@@ -98,7 +98,7 @@ impl HestiaApp {
                         .is_some_and(|scan| scan.finished);
                     if finished {
                         let continue_button = egui::Button::new(
-                            bold(text.continue_label()).size(15.0),
+                            bold(text.continue_label(), Some(15.0)),
                         )
                         .fill(Color32::from_rgb(180, 78, 35))
                         .min_size(Vec2::new(140.0, 38.0));
@@ -436,7 +436,7 @@ impl HestiaApp {
             ui.horizontal(|ui| {
                 static_label(ui, icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)));
                 ui.vertical(|ui| {
-                    static_label(ui, bold(&mod_name).underline().size(16.0));
+                    static_label(ui, bold(&mod_name, Some(16.0)).underline());
                     ui.add_space(4.0);
                     static_label(
                         ui,
@@ -474,7 +474,7 @@ impl HestiaApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 larger_checkbox(ui, is_selected);
-                                                static_label(ui, bold(&candidate.label));
+                                                static_label(ui, bold(&candidate.label, None));
                                             });
                                         }).response;
                                     if row_response.interact(Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -676,7 +676,8 @@ impl HestiaApp {
                                     .file_name()
                                     .and_then(|name| name.to_str())
                                     .unwrap_or(text.this_folder()),
-                                ).underline().size(16.0)
+                                    Some(16.0)
+                                ).underline()
                             )
                             .selectable(false),
                         ).on_hover_cursor(egui::CursorIcon::Default);

@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant, SystemTime},
 };
@@ -78,6 +78,8 @@ include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        set_current_language(self.state.static_prefs.language);
+
         // Batch worker event consumption - only poll channels when flagged
         if self.check_pending_worker_events() {
             self.consume_icon_results(ctx);
