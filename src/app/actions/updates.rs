@@ -505,11 +505,50 @@ impl HestiaApp {
     }
 
     fn queue_update_check_for_linked_mods(&mut self, target_game_id: Option<&str>) {
+        self.queue_update_check_for_linked_mods_internal(target_game_id, false);
+    }
+
+    fn queue_update_check_for_linked_mods_force(&mut self, target_game_id: Option<&str>) {
+        self.queue_update_check_for_linked_mods_internal(target_game_id, true);
+    }
+
+    fn queue_update_check_for_linked_mods_internal(&mut self, target_game_id: Option<&str>, force: bool) {
         if self.update_check_inflight {
             self.pending_update_check_game = target_game_id.map(|id| id.to_string());
             return;
         }
         self.pending_update_check_game = None;
+        
+        // Check if we should skip due to cooldown (30 minutes = 1800 seconds)
+        if !force {
+            const UPDATE_CHECK_COOLDOWN_SECS: i64 = 1800;
+            
+            let now = chrono::Utc::now();
+            let should_skip_cooldown = self.state.last_update_check_time
+                .and_then(|last_check| {
+                    let elapsed = now.signed_duration_since(last_check).num_seconds();
+                    if elapsed < UPDATE_CHECK_COOLDOWN_SECS {
+                        // Check if we're checking the same game
+                        match (target_game_id, &self.state.last_update_check_game) {
+                            (Some(current), Some(last)) if current == last => Some(true),
+                            (None, None) => Some(true),
+                            _ => Some(false),
+                        }
+                    } else {
+                        Some(false)
+                    }
+                })
+                .unwrap_or(false);
+            
+            if should_skip_cooldown {
+                // Skip the update check, use cached results
+                return;
+            }
+            
+            // Update the timestamp
+            self.state.last_update_check_time = Some(now);
+            self.state.last_update_check_game = target_game_id.map(|id| id.to_string());
+        }
         let mut items = Vec::with_capacity(self.state.mods.len());
         let update_check_statuses = self.state.static_prefs.update_check_statuses;
         let modified_update_behavior = self.state.static_prefs.modified_update_behavior;

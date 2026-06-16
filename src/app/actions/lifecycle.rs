@@ -1821,6 +1821,10 @@ impl HestiaApp {
     }
 
     fn refresh_with_toast(&mut self) {
+        self.refresh_with_toast_internal(true);
+    }
+
+    fn refresh_with_toast_internal(&mut self, force_update_check: bool) {
         self.mark_usage_counters_dirty();
         self.clear_translation_caches();
         let old_ts: HashMap<String, DateTime<Utc>> = self.state.mods.iter()
@@ -1839,7 +1843,11 @@ impl HestiaApp {
                 self.sync_tools_for_selected_game();
                 self.save_state();
                 self.sync_selection_after_refresh();
-                self.queue_update_check_for_linked_mods(game_id.as_deref());
+                if force_update_check {
+                    self.queue_update_check_for_linked_mods_force(game_id.as_deref());
+                } else {
+                    self.queue_update_check_for_linked_mods(game_id.as_deref());
+                }
                 self.request_automatic_app_update_check(0.0);
                 self.push_log(
                     self.text()

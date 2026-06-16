@@ -152,6 +152,36 @@ impl eframe::App for HestiaApp {
             self.render_pending_import(ctx);
             self.update_main_window_state(ctx);
         });
+        
+        // Control repaint behavior to reduce CPU usage on idle
+        // Only request continuous repaints when necessary
+        let needs_continuous_repaint = 
+            !self.animated_gif_state.is_empty()
+            || self.app_update_download_inflight.is_some()
+            || !self.browse_download_inflight.is_empty()
+            || !self.install_inflight.is_empty()
+            || self.reload_spin_until > ctx.input(|i| i.time)
+            || self.app_update_button_spin_until > ctx.input(|i| i.time);
+        
+        if needs_continuous_repaint {
+            ctx.request_repaint();
+        } else {
+            // On idle, only repaint when there's actual interaction INSIDE the window
+            // This prevents repaints from mouse movement outside the window
+            let has_interaction = ctx.input(|i| {
+                i.pointer.any_pressed()
+                    || i.pointer.any_released()
+                    || !i.events.is_empty()
+                    || (i.pointer.is_moving() && i.pointer.hover_pos().is_some())
+            });
+            
+            if !has_interaction {
+                // Check if we have pending work that needs processing
+                if self.pending_events.has_worker_events || self.pending_events.has_process_work {
+                    ctx.request_repaint();
+                }
+            }
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

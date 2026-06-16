@@ -177,6 +177,10 @@ pub struct AppState {
     pub staged_app_update: Option<StagedAppUpdate>,
     #[serde(skip)]
     pub preferences_need_save: bool,
+    #[serde(default)]
+    pub last_update_check_time: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_update_check_game: Option<String>,
     // Static preferences inlined for backward compatibility
     #[serde(flatten)]
     pub static_prefs: StaticPreferences,
@@ -209,6 +213,8 @@ impl Default for AppState {
             auto_game_enable_done: false,
             staged_app_update: None,
             preferences_need_save: false,
+            last_update_check_time: None,
+            last_update_check_game: None,
             static_prefs: StaticPreferences::default(),
         }
     }
