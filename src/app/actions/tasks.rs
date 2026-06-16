@@ -239,18 +239,25 @@ impl HestiaApp {
     }
 
     fn directory_size_bytes(root: &Path) -> u64 {
+        use rayon::prelude::*;
+        
         if !root.exists() {
             return 0;
         }
-        let mut total = 0_u64;
-        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file() {
-                if let Ok(meta) = entry.metadata() {
-                    total = total.saturating_add(meta.len());
-                }
-            }
-        }
-        total
+        
+        // Collect entries first
+        let entries: Vec<_> = WalkDir::new(root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .collect();
+        
+        // Sum in parallel
+        entries
+            .par_iter()
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|meta| meta.len())
+            .sum()
     }
 
     fn clear_archives(&mut self) -> Result<usize> {

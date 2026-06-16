@@ -23,6 +23,9 @@ fn run_startup_path_scan(
     cancel: Arc<AtomicBool>,
     event_tx: WorkerTx<StartupPathScanEvent>,
 ) {
+    use rayon::prelude::*;
+    use std::sync::Mutex;
+
     let mut file_targets: HashMap<String, Vec<StartupPathTargetKind>> =
         HashMap::with_capacity(targets.len());
     for target in targets {
@@ -34,28 +37,37 @@ fn run_startup_path_scan(
         }
     }
 
-    let mut seen = HashSet::with_capacity(128);
+    let seen = Mutex::new(HashSet::with_capacity(128));
+    let file_targets = Arc::new(file_targets);
+    
     for root in startup_scan_roots() {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        for entry in WalkDir::new(root).follow_links(false).into_iter() {
+        
+        // Collect entries first to avoid contention with WalkDir iterator
+        let entries: Vec<_> = WalkDir::new(root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .collect();
+        
+        // Process entries in parallel
+        entries.par_iter().for_each(|entry| {
             if cancel.load(Ordering::Relaxed) {
-                break;
+                return;
             }
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if !entry.file_type().is_file() {
-                continue;
-            }
+            
             let Some(file_name) = entry.file_name().to_str() else {
-                continue;
+                return;
             };
             let Some(kinds) = file_targets.get(&file_name.to_ascii_lowercase()) else {
-                continue;
+                return;
             };
+            
             let path = entry.path().to_path_buf();
+            let mut seen = seen.lock().unwrap();
             for kind in kinds {
                 if seen.insert((kind.clone(), path.clone())) {
                     let _ = event_tx.send(StartupPathScanEvent::Found {
@@ -64,7 +76,7 @@ fn run_startup_path_scan(
                     });
                 }
             }
-        }
+        });
     }
 
     let _ = event_tx.send(StartupPathScanEvent::Finished {

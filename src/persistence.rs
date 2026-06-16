@@ -985,25 +985,36 @@ fn evict_lru_if_needed_path(max_bytes: u64) -> Result<()> {
         return Ok(());
     }
 
-    let mut files = Vec::new();
-    let mut usage: u64 = 0;
-    for entry in WalkDir::new(&cache_root).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path().to_path_buf();
-        let metadata = fs::metadata(&path)?;
-        let size = metadata.len();
-        usage = usage.saturating_add(size);
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        files.push((modified, path, size));
-    }
+    use rayon::prelude::*;
+    
+    // Collect entries first
+    let entries: Vec<_> = WalkDir::new(&cache_root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .collect();
+    
+    // Process in parallel to gather file info
+    let files: Vec<_> = entries
+        .par_iter()
+        .filter_map(|entry| {
+            let path = entry.path().to_path_buf();
+            let metadata = fs::metadata(&path).ok()?;
+            let size = metadata.len();
+            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((modified, path, size))
+        })
+        .collect();
+    
+    let usage: u64 = files.iter().map(|(_, _, size)| size).sum();
 
     if usage <= threshold {
         return Ok(());
     }
 
+    let mut files = files;
     files.sort_by_key(|(modified, _, _)| *modified);
+    let mut usage = usage;
     for (_, path, size) in files {
         let _ = fs::remove_file(&path);
         usage = usage.saturating_sub(size);
@@ -1055,29 +1066,39 @@ fn prune_tmp_files_in_dir(
     active_tmp_paths: &HashSet<PathBuf>,
     min_age: Duration,
 ) -> Result<()> {
+    use rayon::prelude::*;
+    
     if !root.exists() {
         return Ok(());
     }
     let now = SystemTime::now();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file() {
-            continue;
-        }
+    
+    // Collect entries first
+    let entries: Vec<_> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .collect();
+    
+    // Process in parallel
+    entries.par_iter().for_each(|entry| {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("tmp") {
-            continue;
+            return;
         }
         let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if active_tmp_paths.contains(&canonical) {
-            continue;
+            return;
         }
-        let metadata = fs::metadata(path)?;
+        let Ok(metadata) = fs::metadata(path) else {
+            return;
+        };
         let modified = metadata.modified().unwrap_or(now);
         if now.duration_since(modified).unwrap_or_default() < min_age {
-            continue;
+            return;
         }
         let _ = fs::remove_file(path);
-    }
+    });
     Ok(())
 }
 

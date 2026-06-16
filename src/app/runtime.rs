@@ -1,32 +1,22 @@
 #[derive(Clone)]
 
 struct ThumbnailByteCache {
-    inner: Arc<Mutex<ThumbnailByteCacheInner>>,
-}
-
-struct ThumbnailByteCacheInner {
-    entries: HashMap<String, Arc<Vec<u8>>>,
-    order: VecDeque<String>,
+    inner: Arc<Mutex<lru::LruCache<String, Arc<Vec<u8>>>>>,
 }
 
 impl ThumbnailByteCache {
     fn new(capacity: usize) -> Self {
+        use std::num::NonZeroUsize;
         Self {
-            inner: Arc::new(Mutex::new(ThumbnailByteCacheInner {
-                entries: HashMap::with_capacity(capacity),
-                order: VecDeque::with_capacity(capacity),
-            })),
+            inner: Arc::new(Mutex::new(lru::LruCache::new(
+                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap())
+            ))),
         }
     }
 
     fn get(&self, key: &str) -> Option<Arc<Vec<u8>>> {
         let mut inner = self.inner.lock().ok()?;
-        let bytes = inner.entries.get(key)?.clone();
-        if let Some(position) = inner.order.iter().position(|existing| existing == key) {
-            inner.order.remove(position);
-        }
-        inner.order.push_back(key.to_string());
-        Some(bytes)
+        inner.get(key).cloned()
     }
 
     fn insert(&self, key: impl Into<String>, bytes: Vec<u8>) {
@@ -35,20 +25,7 @@ impl ThumbnailByteCache {
             Ok(inner) => inner,
             Err(_) => return,
         };
-        if inner.entries.contains_key(&key) {
-            inner.entries.insert(key.clone(), Arc::new(bytes));
-            if let Some(position) = inner.order.iter().position(|existing| existing == &key) {
-                inner.order.remove(position);
-            }
-            inner.order.push_back(key);
-            return;
-        }
-        while inner.entries.len() >= THUMBNAIL_BYTE_CACHE_CAPACITY {
-            let Some(evicted) = inner.order.pop_front() else { break; };
-            inner.entries.remove(&evicted);
-        }
-        inner.entries.insert(key.clone(), Arc::new(bytes));
-        inner.order.push_back(key);
+        inner.put(key, Arc::new(bytes));
     }
 }
 

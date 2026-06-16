@@ -287,11 +287,14 @@ fn preserve_markdown_spaces(line: &str) -> String {
 }
 
 fn flush_preserved_spaces(output: &mut String, count: usize) {
-    if count == 1 {
-        output.push(' ');
-    } else {
-        for _ in 0..count {
-            output.push_str("&nbsp;");
+    match count {
+        0 => {},
+        1 => output.push(' '),
+        n => {
+            output.reserve(n * 6); // "&nbsp;" is 6 bytes
+            for _ in 0..n {
+                output.push_str("&nbsp;");
+            }
         }
     }
 }

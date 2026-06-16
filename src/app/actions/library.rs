@@ -277,6 +277,7 @@ impl HestiaApp {
     }
 
     fn batch_update_selected(&mut self) {
+        // Single iteration: collect IDs in one pass
         let update_ids: Vec<String> = self.state.mods.iter()
             .filter(|m| {
                 self.selected_mods.contains(&m.id)
@@ -288,8 +289,8 @@ impl HestiaApp {
             .collect();
 
         let count = update_ids.len();
-        for id in update_ids {
-            self.queue_update_apply(&id);
+        for id in &update_ids {
+            self.queue_update_apply(id);
         }
 
         if count > 0 {
@@ -299,14 +300,12 @@ impl HestiaApp {
     }
 
     fn batch_disable_selected(&mut self) {
-        let mods_to_disable: Vec<String> = self.selected_mods.iter().cloned().collect();
         let mut disabled_count = 0;
-        for mod_id in mods_to_disable {
-            if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
-                if mod_entry.status == ModStatus::Active {
-                    if xxmi::disable_mod(mod_entry).is_ok() {
-                        disabled_count += 1;
-                    }
+        // Single iteration: filter selected mods and disable in one pass
+        for mod_entry in self.state.mods.iter_mut() {
+            if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
+                if xxmi::disable_mod(mod_entry).is_ok() {
+                    disabled_count += 1;
                 }
             }
         }
@@ -316,11 +315,11 @@ impl HestiaApp {
 
     fn batch_enable_selected(&mut self) {
         let game = self.selected_game().cloned();
-        let mods_to_enable: Vec<String> = self.selected_mods.iter().cloned().collect();
         let mut enabled_count = 0;
         let mut unarchived_count = 0;
-        for mod_id in mods_to_enable {
-            if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
+        // Single iteration: process all selected mods in one pass
+        for mod_entry in self.state.mods.iter_mut() {
+            if self.selected_mods.contains(&mod_entry.id) {
                 if mod_entry.status == ModStatus::Disabled {
                     if xxmi::enable_mod(mod_entry).is_ok() {
                         enabled_count += 1;
@@ -395,18 +394,26 @@ impl HestiaApp {
 
     fn batch_archive_selected(&mut self) {
         let game = self.selected_game().cloned();
-        let mods_to_archive: Vec<String> = self.selected_mods.iter().cloned().collect();
+        // Collect mod entries to clear image state (need owned data to avoid borrow conflicts)
+        let mods_to_clear: Vec<ModEntry> = self.state.mods
+            .iter()
+            .filter(|m| self.selected_mods.contains(&m.id) 
+                && matches!(m.status, ModStatus::Active | ModStatus::Disabled))
+            .cloned()
+            .collect();
+        
+        // Clear image states
+        for mod_entry in &mods_to_clear {
+            self.clear_mod_image_runtime_state(mod_entry);
+        }
+        
+        // Archive mods in a single iteration
         let mut archived_count = 0;
-        for mod_id in mods_to_archive {
-            if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id).cloned() {
-                self.clear_mod_image_runtime_state(&mod_entry);
-            }
-            if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
-                if matches!(mod_entry.status, ModStatus::Active | ModStatus::Disabled) {
-                    if let Some(game_ref) = game.as_ref() {
-                        if xxmi::archive_mod(mod_entry, game_ref, self.state.use_default_mods_path).is_ok() {
-                            archived_count += 1;
-                        }
+        for mod_entry in self.state.mods.iter_mut() {
+            if mods_to_clear.iter().any(|m| m.id == mod_entry.id) {
+                if let Some(game_ref) = game.as_ref() {
+                    if xxmi::archive_mod(mod_entry, game_ref, self.state.use_default_mods_path).is_ok() {
+                        archived_count += 1;
                     }
                 }
             }
@@ -416,10 +423,11 @@ impl HestiaApp {
     }
 
     fn batch_delete_selected(&mut self) {
-        let mods_to_delete: Vec<ModEntry> = self
-            .selected_mods
+        // Single iteration: collect selected mods to delete in one pass
+        let mods_to_delete: Vec<ModEntry> = self.state.mods
             .iter()
-            .filter_map(|id| self.state.mods.iter().find(|m| &m.id == id).cloned())
+            .filter(|m| self.selected_mods.contains(&m.id))
+            .cloned()
             .collect();
         let mut deleted_count = 0;
         let mut last_err: Option<anyhow::Error> = None;
