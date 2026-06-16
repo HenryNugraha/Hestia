@@ -23,7 +23,8 @@ fn run_startup_path_scan(
     cancel: Arc<AtomicBool>,
     event_tx: WorkerTx<StartupPathScanEvent>,
 ) {
-    let mut file_targets: HashMap<String, Vec<StartupPathTargetKind>> = HashMap::new();
+    let mut file_targets: HashMap<String, Vec<StartupPathTargetKind>> =
+        HashMap::with_capacity(targets.len());
     for target in targets {
         for file_name in target.file_names {
             file_targets

@@ -297,7 +297,7 @@ impl HestiaApp {
                                 }
                                 static_label(
                                     ui,
-                                    RichText::new(category.name.clone())
+                                    RichText::new(&category.name)
                                         .size(13.0)
                                         .strong()
                                         .color(Color32::from_rgb(247, 222, 204)),
@@ -531,7 +531,7 @@ impl HestiaApp {
                                                         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                                                             ui.add(
                                                                 egui::Label::new(
-                                                                    RichText::new(card.author_name.clone())
+                                                                    RichText::new(&card.author_name)
                                                                         .size(11.0)
                                                                         .color(Color32::from_gray(168))
                                                                 )
@@ -1439,7 +1439,7 @@ impl HestiaApp {
 
                             let output = scroll_area.show(ui, |ui| {
                                 let out = ui.horizontal(|ui| {
-                                    let mut rects = Vec::new();
+                                    let mut rects = Vec::with_capacity(preview.images.len());
                                     for (idx, image) in preview.images.iter().enumerate() {
                                         let full_url = gamebanana::full_image_url(image);
                                         let full_key = hash64_hex(full_url.as_bytes());
@@ -2151,7 +2151,19 @@ impl HestiaApp {
         let current_key = overlay.texture_key.clone();
         let current_overlay_caption = overlay.caption.clone();
         
-        let mut images: Vec<(String, Option<String>)> = Vec::new();
+        let capacity = if self.current_view == ViewMode::Browse {
+            self.browse_state
+                .selected_mod_id
+                .and_then(|mod_id| self.browse_state.details.get(&mod_id))
+                .and_then(|detail| {
+                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    profile.preview_media.as_ref().map(|p| p.images.len())
+                })
+                .unwrap_or(0)
+        } else {
+            self.my_mod_overlay_images.len()
+        };
+        let mut images: Vec<(String, Option<String>)> = Vec::with_capacity(capacity);
         if self.current_view == ViewMode::Browse {
             if let Some(mod_id) = self.browse_state.selected_mod_id {
                 if let Some(detail) = self.browse_state.details.get(&mod_id) {

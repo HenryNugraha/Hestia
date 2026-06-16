@@ -412,7 +412,7 @@ fn profile_to_response(snapshot: Option<&GameBananaSnapshot>) -> gamebanana::Pro
 }
 
 fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnapshot {
-    let mut files = Vec::new();
+    let mut files = Vec::with_capacity(profile.files.len() + profile.archived_files.len());
     for file in &profile.files {
         files.push(GameBananaFileMeta {
             file_id: file.id,
@@ -510,7 +510,7 @@ impl HestiaApp {
             return;
         }
         self.pending_update_check_game = None;
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(self.state.mods.len());
         let update_check_statuses = self.state.update_check_statuses;
         let modified_update_behavior = self.state.modified_update_behavior;
         let mut state_changed_without_fetch = false;
@@ -1178,7 +1178,7 @@ impl HestiaApp {
         }
         let mut first_mod_name = String::new();
         let mut primary_id = None;
-        let mut newly_installed_ids = Vec::new();
+        let mut newly_installed_ids = Vec::with_capacity(installed_paths.len());
 
         for (i, path) in installed_paths.iter().enumerate() {
             if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.root_path == *path) {

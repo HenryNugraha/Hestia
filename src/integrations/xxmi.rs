@@ -126,7 +126,7 @@ fn repair_duplicate_scanned_mod_ids(
     state: &AppState,
     target_game_id: Option<&str>,
 ) {
-    let mut indices_by_id: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut indices_by_id: HashMap<String, Vec<usize>> = HashMap::with_capacity(newly_scanned.len());
     for (index, mod_entry) in newly_scanned.iter().enumerate() {
         indices_by_id
             .entry(mod_entry.id.clone())

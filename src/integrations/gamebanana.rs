@@ -697,7 +697,7 @@ fn client() -> Result<&'static Client> {
 }
 
 pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::BrowseSort) -> String {
-    let mut tags = HashMap::new();
+    let mut tags = HashMap::with_capacity(4);
     tags.insert("kind", "browse".to_string());
     tags.insert("game", game_id.to_string());
     tags.insert("page", page.to_string());
@@ -707,7 +707,7 @@ pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::Bro
 }
 
 pub fn character_categories_cache_key(game_id: &str, super_category_id: u64) -> String {
-    let mut tags = HashMap::new();
+    let mut tags = HashMap::with_capacity(3);
     tags.insert("kind", "character-categories".to_string());
     tags.insert("game", game_id.to_string());
     tags.insert("super_category", super_category_id.to_string());
@@ -722,7 +722,7 @@ pub fn character_browse_page_cache_key(
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> String {
-    let mut tags = HashMap::new();
+    let mut tags = HashMap::with_capacity(6);
     tags.insert("kind", "character-browse".to_string());
     tags.insert("game", game_id.to_string());
     tags.insert("category", category_id.to_string());
@@ -739,7 +739,7 @@ pub fn search_page_cache_key(
     page: usize,
     sort: crate::model::SearchSort,
 ) -> String {
-    let mut tags = HashMap::new();
+    let mut tags = HashMap::with_capacity(5);
     tags.insert("kind", "search".to_string());
     tags.insert("game", game_id.to_string());
     tags.insert("query", query.trim().to_string());

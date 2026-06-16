@@ -1,4 +1,27 @@
 impl HestiaApp {
+    fn finish_single_mod_action(&mut self, result: Result<()>, name: &str, action: &str, error_toast: &str) {
+        match result {
+            Ok(()) => {
+                self.log_action(action, name);
+                self.set_message_ok(self.text().action_message(action, name));
+                self.save_state();
+                self.refresh();
+            }
+            Err(err) => self.report_error(err, Some(error_toast)),
+        }
+    }
+
+    fn finish_batch_mod_action(&mut self, count: usize, action: &str) {
+        if count > 0 {
+            let text = self.text();
+            self.log_action(action, &text.library_mods_count(count));
+            self.set_message_ok(text.action_count_message(action, count));
+            self.save_state();
+            self.refresh();
+            self.selected_mods.clear();
+        }
+    }
+
     fn disable_mod_by_id(&mut self, mod_id: &str) {
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
@@ -12,30 +35,22 @@ impl HestiaApp {
         };
 
         if let (Some(result), Some(name)) = (result, name) {
-            match result {
-                Ok(()) => {
-                    let text = self.text();
-                    let action = text.action_disabled();
-                    self.log_action(action, &name);
-                    self.set_message_ok(text.action_message(action, &name));
-                    self.save_state();
-                    self.refresh();
-                }
-                Err(err) => self.report_error(err, Some(self.text().disable_failed())),
-            }
+            let text = self.text();
+            self.finish_single_mod_action(result, &name, text.action_disabled(), text.disable_failed());
         }
     }
 
     fn enable_or_restore_mod_by_id(&mut self, mod_id: &str) {
         let game = self.selected_game().cloned();
         let use_default_path = self.state.use_default_mods_path;
+        let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
                 ModStatus::Disabled => (
                     Some(xxmi::enable_mod(mod_entry)),
                     Some(name),
-                    Some(self.text().action_enabled()),
+                    Some(text.action_enabled()),
                 ),
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
@@ -43,7 +58,7 @@ impl HestiaApp {
                         xxmi::restore_mod(mod_entry, game, use_default_path)?;
                         Ok(())
                     })();
-                    (Some(result), Some(name), Some(self.text().action_unarchived()))
+                    (Some(result), Some(name), Some(text.action_unarchived()))
                 }
                 _ => (None, None, None),
             }
@@ -55,12 +70,11 @@ impl HestiaApp {
             match result {
                 Ok(()) => {
                     self.log_action(action, &name);
-                    self.set_message_ok(self.text().action_message(action, &name));
+                    self.set_message_ok(text.action_message(action, &name));
                     self.save_state();
                     self.refresh();
                 }
                 Err(err) => {
-                    let text = self.text();
                     let toast = if action == text.action_enabled() {
                         text.enable_failed()
                     } else {
@@ -91,17 +105,8 @@ impl HestiaApp {
         };
 
         if let (Some(result), Some(name)) = (result, name) {
-            match result {
-                Ok(()) => {
-                    let text = self.text();
-                    let action = text.action_archived();
-                    self.log_action(action, &name);
-                    self.set_message_ok(text.action_message(action, &name));
-                    self.save_state();
-                    self.refresh();
-                }
-                Err(err) => self.report_error(err, Some(self.text().archive_failed())),
-            }
+            let text = self.text();
+            self.finish_single_mod_action(result, &name, text.action_archived(), text.archive_failed());
         }
     }
 
@@ -174,6 +179,7 @@ impl HestiaApp {
             return;
         }
 
+        let text = self.text();
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             if mod_entry.status == ModStatus::Active {
@@ -186,17 +192,7 @@ impl HestiaApp {
         };
 
         if let (Some(result), Some(name)) = (result, name) {
-            match result {
-                Ok(()) => {
-                    let text = self.text();
-                    let action = text.action_disabled();
-                    self.log_action(action, &name);
-                    self.set_message_ok(text.action_message(action, &name));
-                    self.save_state();
-                    self.refresh();
-                }
-                Err(err) => self.report_error(err, Some(self.text().disable_failed())),
-            }
+            self.finish_single_mod_action(result, &name, text.action_disabled(), text.disable_failed());
         }
     }
 
@@ -208,13 +204,14 @@ impl HestiaApp {
 
         let game = self.selected_game().cloned();
         let use_default_path = self.state.use_default_mods_path;
+        let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
                 ModStatus::Disabled => (
                     Some(xxmi::enable_mod(mod_entry)),
                     Some(name),
-                    Some(self.text().action_enabled()),
+                    Some(text.action_enabled()),
                 ),
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
@@ -222,7 +219,7 @@ impl HestiaApp {
                         xxmi::restore_mod(mod_entry, game, use_default_path)?;
                         Ok(())
                     })();
-                    (Some(result), Some(name), Some(self.text().action_unarchived()))
+                    (Some(result), Some(name), Some(text.action_unarchived()))
                 }
                 _ => (None, None, None),
             }
@@ -234,12 +231,11 @@ impl HestiaApp {
             match result {
                 Ok(()) => {
                     self.log_action(action, &name);
-                    self.set_message_ok(self.text().action_message(action, &name));
+                    self.set_message_ok(text.action_message(action, &name));
                     self.save_state();
                     self.refresh();
                 }
                 Err(err) => {
-                    let text = self.text();
                     let toast = if action == text.action_enabled() {
                         text.enable_failed()
                     } else {
@@ -275,17 +271,8 @@ impl HestiaApp {
         };
 
         if let (Some(result), Some(name)) = (result, name) {
-            match result {
-                Ok(()) => {
-                    let text = self.text();
-                    let action = text.action_archived();
-                    self.log_action(action, &name);
-                    self.set_message_ok(text.action_message(action, &name));
-                    self.save_state();
-                    self.refresh();
-                }
-                Err(err) => self.report_error(err, Some(self.text().archive_failed())),
-            }
+            let text = self.text();
+            self.finish_single_mod_action(result, &name, text.action_archived(), text.archive_failed());
         }
     }
 
@@ -323,15 +310,8 @@ impl HestiaApp {
                 }
             }
         }
-        if disabled_count > 0 {
-            let text = self.text();
-            let action = text.action_disabled();
-            self.log_action(action, &text.library_mods_count(disabled_count));
-            self.set_message_ok(text.action_count_message(action, disabled_count));
-            self.save_state();
-            self.refresh();
-            self.selected_mods.clear();
-        }
+        let action = self.text().action_disabled();
+        self.finish_batch_mod_action(disabled_count, action);
     }
 
     fn batch_enable_selected(&mut self) {
@@ -431,15 +411,8 @@ impl HestiaApp {
                 }
             }
         }
-        if archived_count > 0 {
-            let text = self.text();
-            let action = text.action_archived();
-            self.log_action(action, &text.library_mods_count(archived_count));
-            self.set_message_ok(text.action_count_message(action, archived_count));
-            self.save_state();
-            self.refresh();
-            self.selected_mods.clear();
-        }
+        let action = self.text().action_archived();
+        self.finish_batch_mod_action(archived_count, action);
     }
 
     fn batch_delete_selected(&mut self) {

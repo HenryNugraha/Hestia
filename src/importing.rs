@@ -268,9 +268,9 @@ fn zip_entry_is_ignored_metadata(path: &Path) -> bool {
 
 #[allow(dead_code)]
 pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImport> {
-    match source.clone() {
+    match &source {
         ImportSource::Folder(path) => {
-            let inspection = inspect_directory(game_id, &source, &path)?;
+            let inspection = inspect_directory(game_id, &source, path)?;
             validate_import_candidates(&inspection, None)?;
             Ok(PreparedImport {
                 _temp_dir: None,
@@ -284,7 +284,7 @@ pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImp
                 .prefix("inspect-")
                 .tempdir_in(&extract_root)
                 .context("failed to create temp dir for archive inspection")?;
-            extract_archive(&path, temp_dir.path())?;
+            extract_archive(path, temp_dir.path())?;
             let inspection = inspect_directory(game_id, &source, temp_dir.path())?;
             validate_import_candidates(&inspection, None)?;
             Ok(PreparedImport {
@@ -301,9 +301,9 @@ pub fn inspect_source_cancelable(
     cancel: &CancelFlag,
 ) -> Result<PreparedImport> {
     check_cancel(cancel)?;
-    match source.clone() {
+    match &source {
         ImportSource::Folder(path) => {
-            let inspection = inspect_directory_cancelable(game_id, &source, &path, cancel)?;
+            let inspection = inspect_directory_cancelable(game_id, &source, path, cancel)?;
             validate_import_candidates(&inspection, Some(cancel))?;
             Ok(PreparedImport {
                 _temp_dir: None,
@@ -317,7 +317,7 @@ pub fn inspect_source_cancelable(
                 .prefix("inspect-")
                 .tempdir_in(&extract_root)
                 .context("failed to create temp dir for archive inspection")?;
-            extract_archive_cancelable(&path, temp_dir.path(), cancel)?;
+            extract_archive_cancelable(path, temp_dir.path(), cancel)?;
             check_cancel(cancel)?;
             let inspection =
                 inspect_directory_cancelable(game_id, &source, temp_dir.path(), cancel)?;
@@ -386,7 +386,7 @@ fn inspect_directory(
         }
     }
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(top_level_dirs.len().max(1));
     let mut notice = None;
 
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {
@@ -459,7 +459,7 @@ fn inspect_directory_cancelable(
         }
     }
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(top_level_dirs.len().max(1));
     let mut notice = None;
 
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {

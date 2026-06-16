@@ -61,7 +61,7 @@ fn spawn_gif_preview_worker(
                                 loop {
                                     let result = async {
                                         let resp = client
-                                            .get(url.clone())
+                                            .get(url)
                                             .send()
                                             .await?
                                             .error_for_status()?;
@@ -191,7 +191,7 @@ fn spawn_gif_animation_worker(
                                 let mut retries = 0u32;
                                 let max_retries = 3u32;
                                 let bytes = loop {
-                                    match client.get(url.clone()).send().await {
+                                    match client.get(url).send().await {
                                         Ok(response) => match response.error_for_status() {
                                             Ok(resp) => match resp.bytes().await {
                                                 Ok(bytes) => break bytes.to_vec(),
@@ -415,9 +415,9 @@ fn spawn_local_mod_image_worker(
                                 })
                                 .await
                             {
-                                thumbnail_byte_cache
-                                    .insert(cache_key.clone(), cached_bytes.clone());
                                 if let Some(image_thumb) = load_cover_color_image(&cached_bytes) {
+                                    thumbnail_byte_cache
+                                        .insert(cache_key.clone(), cached_bytes);
                                     let _ = tx.send(LocalModImageResult {
                                         texture_key: texture_key.clone(),
                                         image_full: None,

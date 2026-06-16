@@ -1296,8 +1296,9 @@ fn vanilla_exe_rels(game_id: &str) -> &'static [&'static str] {
 }
 
 pub fn vanilla_exe_file_names(game_id: &str) -> Vec<&'static str> {
-    let mut names = Vec::new();
-    for rel in vanilla_exe_rels(game_id) {
+    let rels = vanilla_exe_rels(game_id);
+    let mut names = Vec::with_capacity(rels.len());
+    for rel in rels {
         let Some(name) = Path::new(rel).file_name().and_then(|name| name.to_str()) else {
             continue;
         };

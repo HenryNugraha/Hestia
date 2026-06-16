@@ -145,7 +145,7 @@ impl HestiaApp {
     }
 
     fn import_manual_images_from_paths(mod_root: &Path, paths: Vec<PathBuf>) -> Result<Vec<String>> {
-        let mut imported = Vec::new();
+        let mut imported = Vec::with_capacity(paths.len());
         for path in paths {
             match Self::save_manual_mod_image_from_path(mod_root, &path) {
                 Ok(rel) => imported.push(rel),
@@ -963,7 +963,7 @@ impl HestiaApp {
 
     fn update_gif_animations(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        let mut texture_updates = Vec::new();
+        let mut texture_updates = Vec::with_capacity(self.animated_gif_state.len());
 
         for (texture_key, state) in self.animated_gif_state.iter_mut() {
             let elapsed_ms = ((now - state.frame_start_time) * 1000.0) as u32;

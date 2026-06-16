@@ -101,7 +101,8 @@ fn spawn_install_workers(
                                 fs::create_dir_all(&target_root)?;
                                 let mut installed_paths = Vec::new();
                                 let mut installed_candidate_labels = Vec::new();
-                                let mut target_cleaned = HashSet::new();
+                                let mut target_cleaned =
+                                    HashSet::with_capacity(preferred_names.len());
 
                                 for (i, &idx) in candidate_indices.iter().enumerate() {
                                     let preferred_name = &preferred_names[i];

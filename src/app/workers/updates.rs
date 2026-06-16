@@ -9,7 +9,7 @@ fn spawn_update_check_worker(
     runtime_services.spawn(async move {
         while let Some(request) = rx.recv().await {
             let mut grouped: HashMap<u64, Vec<(usize, String, Option<i64>, FileSetRecipe)>> =
-                HashMap::new();
+                HashMap::with_capacity(request.items.len());
             for (idx, (local_mod_id, _game_id, gb_id, local_sync_ts, file_set)) in
                 request.items.into_iter().enumerate()
             {
