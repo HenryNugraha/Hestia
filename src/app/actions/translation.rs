@@ -28,7 +28,7 @@ impl HestiaApp {
         }
 
         // Start translation
-        let lang = match self.state.language {
+        let lang = match self.state.static_prefs.language {
             AppLanguage::English => "en",
             AppLanguage::Indonesian => "id",
             AppLanguage::ChineseSimplified => "cn",
@@ -106,7 +106,7 @@ impl HestiaApp {
         };
 
         // Start translation
-        let lang = match self.state.language {
+        let lang = match self.state.static_prefs.language {
             AppLanguage::English => "en",
             AppLanguage::Indonesian => "id",
             AppLanguage::ChineseSimplified => "cn",

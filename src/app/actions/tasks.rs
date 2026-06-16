@@ -225,7 +225,7 @@ impl HestiaApp {
         self.state
             .games
             .iter()
-            .filter_map(|g| Self::game_archive_root(g, self.state.use_default_mods_path))
+            .filter_map(|g| Self::game_archive_root(g, self.state.static_prefs.use_default_mods_path))
             .map(|root| Self::directory_size_bytes(&root))
             .sum()
     }
@@ -263,7 +263,7 @@ impl HestiaApp {
     fn clear_archives(&mut self) -> Result<usize> {
         let mut removed = 0_usize;
         for game in &self.state.games {
-            let Some(root) = Self::game_archive_root(game, self.state.use_default_mods_path) else {
+            let Some(root) = Self::game_archive_root(game, self.state.static_prefs.use_default_mods_path) else {
                 continue;
             };
             if !root.exists() {
@@ -272,7 +272,7 @@ impl HestiaApp {
             for entry in fs::read_dir(&root)? {
                 let entry = entry?;
                 let path = entry.path();
-                match self.state.delete_behavior {
+                match self.state.static_prefs.delete_behavior {
                     DeleteBehavior::RecycleBin => trash::delete(&path)?,
                     DeleteBehavior::Permanent => {
                         if path.is_dir() {
@@ -312,7 +312,7 @@ impl HestiaApp {
             .tasks
             .iter()
             .filter(|task| {
-                if self.state.unsafe_content_mode == UnsafeContentMode::HideNoCounter
+                if self.state.static_prefs.unsafe_content_mode == UnsafeContentMode::HideNoCounter
                     && task.unsafe_content
                 {
                     return false;

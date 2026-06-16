@@ -17,47 +17,10 @@ fn serde_default_true() -> bool {
     true
 }
 
+/// Static preferences that rarely change during runtime.
+/// Deserializing these separately reduces overhead when loading AppState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppState {
-    pub version: u32,
-    #[serde(default)]
-    pub app_version: String,
-    pub games: Vec<GameInstall>,
-    pub library_folders: Vec<LibraryFolder>,
-    #[serde(default)]
-    pub mods: Vec<ModEntry>,
-    #[serde(default)]
-    pub tools: Vec<ToolEntry>,
-    #[serde(default)]
-    pub categories: Vec<ModCategory>,
-    #[serde(default)]
-    pub category_sort_mode_by_game: HashMap<String, ModCategorySortMode>,
-    #[serde(default)]
-    pub create_downloaded_mod_category_by_game: HashMap<String, bool>,
-    pub operations: Vec<OperationLogEntry>,
-    #[serde(default)]
-    pub tasks: Vec<TaskEntry>,
-    pub show_log: bool,
-    #[serde(default)]
-    pub show_tasks: bool,
-    #[serde(default)]
-    pub show_tools: bool,
-    #[serde(default)]
-    pub show_whats_new: bool,
-    #[serde(default)]
-    pub show_feedback_survey: bool,
-    #[serde(default)]
-    pub feedback_survey: FeedbackSurveyState,
-    #[serde(default = "serde_default_true")]
-    pub startup_path_scan_completed: bool,
-    #[serde(default)]
-    pub tasks_layout: TasksLayout,
-    #[serde(default)]
-    pub tasks_order: TasksOrder,
-    #[serde(default)]
-    pub last_selected_game_id: Option<String>,
-    #[serde(default)]
-    pub auto_game_enable_done: bool,
+pub struct StaticPreferences {
     #[serde(default)]
     pub modded_launcher_path_override: Option<PathBuf>,
     #[serde(default = "serde_default_true")]
@@ -125,38 +88,12 @@ pub struct AppState {
     #[serde(default = "serde_default_true")]
     pub automatically_check_for_update: bool,
     #[serde(default)]
-    pub staged_app_update: Option<StagedAppUpdate>,
-    #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
-    #[serde(skip)]
-    pub preferences_need_save: bool,
 }
 
-impl Default for AppState {
+impl Default for StaticPreferences {
     fn default() -> Self {
         Self {
-            version: 7,
-            app_version: env!("CARGO_PKG_VERSION").to_string(),
-            games: seeded_games(),
-            library_folders: Vec::new(),
-            mods: Vec::new(),
-            tools: Vec::new(),
-            categories: Vec::new(),
-            category_sort_mode_by_game: HashMap::new(),
-            create_downloaded_mod_category_by_game: HashMap::new(),
-            operations: Vec::new(),
-            tasks: Vec::new(),
-            show_log: false,
-            show_tasks: false,
-            show_tools: false,
-            show_whats_new: false,
-            show_feedback_survey: false,
-            feedback_survey: FeedbackSurveyState::default(),
-            startup_path_scan_completed: true,
-            tasks_layout: TasksLayout::SingleList,
-            tasks_order: TasksOrder::OldestFirst,
-            last_selected_game_id: None,
-            auto_game_enable_done: false,
             modded_launcher_path_override: None,
             use_default_mods_path: true,
             hide_disabled: false,
@@ -190,9 +127,89 @@ impl Default for AppState {
             modified_update_behavior: ModifiedUpdateBehavior::default(),
             always_replace_on_update: true,
             automatically_check_for_update: true,
-            staged_app_update: None,
             tool_blacklist: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppState {
+    pub version: u32,
+    #[serde(default)]
+    pub app_version: String,
+    pub games: Vec<GameInstall>,
+    pub library_folders: Vec<LibraryFolder>,
+    #[serde(default)]
+    pub mods: Vec<ModEntry>,
+    #[serde(default)]
+    pub tools: Vec<ToolEntry>,
+    #[serde(default)]
+    pub categories: Vec<ModCategory>,
+    #[serde(default)]
+    pub category_sort_mode_by_game: HashMap<String, ModCategorySortMode>,
+    #[serde(default)]
+    pub create_downloaded_mod_category_by_game: HashMap<String, bool>,
+    pub operations: Vec<OperationLogEntry>,
+    #[serde(default)]
+    pub tasks: Vec<TaskEntry>,
+    pub show_log: bool,
+    #[serde(default)]
+    pub show_tasks: bool,
+    #[serde(default)]
+    pub show_tools: bool,
+    #[serde(default)]
+    pub show_whats_new: bool,
+    #[serde(default)]
+    pub show_feedback_survey: bool,
+    #[serde(default)]
+    pub feedback_survey: FeedbackSurveyState,
+    #[serde(default = "serde_default_true")]
+    pub startup_path_scan_completed: bool,
+    #[serde(default)]
+    pub tasks_layout: TasksLayout,
+    #[serde(default)]
+    pub tasks_order: TasksOrder,
+    #[serde(default)]
+    pub last_selected_game_id: Option<String>,
+    #[serde(default)]
+    pub auto_game_enable_done: bool,
+    #[serde(default)]
+    pub staged_app_update: Option<StagedAppUpdate>,
+    #[serde(skip)]
+    pub preferences_need_save: bool,
+    // Static preferences inlined for backward compatibility
+    #[serde(flatten)]
+    pub static_prefs: StaticPreferences,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            version: 7,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            games: seeded_games(),
+            library_folders: Vec::new(),
+            mods: Vec::new(),
+            tools: Vec::new(),
+            categories: Vec::new(),
+            category_sort_mode_by_game: HashMap::new(),
+            create_downloaded_mod_category_by_game: HashMap::new(),
+            operations: Vec::new(),
+            tasks: Vec::new(),
+            show_log: false,
+            show_tasks: false,
+            show_tools: false,
+            show_whats_new: false,
+            show_feedback_survey: false,
+            feedback_survey: FeedbackSurveyState::default(),
+            startup_path_scan_completed: true,
+            tasks_layout: TasksLayout::SingleList,
+            tasks_order: TasksOrder::OldestFirst,
+            last_selected_game_id: None,
+            auto_game_enable_done: false,
+            staged_app_update: None,
             preferences_need_save: false,
+            static_prefs: StaticPreferences::default(),
         }
     }
 }

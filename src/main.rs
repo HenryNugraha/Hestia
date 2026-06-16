@@ -80,7 +80,7 @@ fn main() -> anyhow::Result<()> {
         .last_selected_game_id
         .as_ref()
         .and_then(|id| state.games.iter().find(|g| g.definition.id == *id))
-        .and_then(|g| g.mods_path(state.use_default_mods_path));
+        .and_then(|g| g.mods_path(state.static_prefs.use_default_mods_path));
     let _ = persistence::cleanup_orphan_tmp_files(selected_mods_root.as_deref(), &HashSet::new());
     let icon_bytes = include_bytes!("asset/icon.png");
     let icon =
@@ -93,13 +93,13 @@ fn main() -> anyhow::Result<()> {
         .with_decorations(false)
         .with_icon(icon)
         .with_title("Hestia");
-    if state.window_maximized {
+    if state.static_prefs.window_maximized {
         viewport = viewport.with_visible(false);
     } else {
-        if let Some([x, y]) = state.window_pos {
+        if let Some([x, y]) = state.static_prefs.window_pos {
             viewport = viewport.with_position(pos2(x, y));
         }
-        if let Some([w, h]) = state.window_size {
+        if let Some([w, h]) = state.static_prefs.window_size {
             viewport = viewport.with_inner_size(vec2(w, h));
         }
     }

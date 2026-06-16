@@ -17,7 +17,7 @@ fn spawn_selected_game_refresh_worker(
                 .spawn_blocking(move || -> Result<Vec<ModEntry>> {
                     let mut temp_state = AppState::default();
                     temp_state.games = games;
-                    temp_state.use_default_mods_path = use_default_mods_path;
+                    temp_state.static_prefs.use_default_mods_path = use_default_mods_path;
                     temp_state.mods = existing_mods;
                     xxmi::refresh_state(&mut temp_state, Some(&game_id_for_worker))?;
                     Ok(temp_state

@@ -62,14 +62,14 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
 
     for game in &games_to_scan {
         // Auto-create mods directory if both executables exist but folder is missing
-        if let Some(mods_path) = game.mods_path(state.use_default_mods_path) {
+        if let Some(mods_path) = game.mods_path(state.static_prefs.use_default_mods_path) {
             if !mods_path.exists() {
                 let vanilla_exists = game
                     .vanilla_exe_path()
                     .as_ref()
                     .is_some_and(|p| p.is_file());
                 let modded_exists = state
-                    .modded_launcher_path_override
+                    .static_prefs.modded_launcher_path_override
                     .as_ref()
                     .or(game.modded_exe_path_override.as_ref())
                     .is_some_and(|p| p.is_file());
@@ -83,13 +83,13 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
         }
         newly_scanned.extend(scan_live_mods(
             game,
-            state.use_default_mods_path,
-            state.scan_rabbitfx_requirement,
+            state.static_prefs.use_default_mods_path,
+            state.static_prefs.scan_rabbitfx_requirement,
         )?);
         newly_scanned.extend(scan_archived_mods(
             game,
-            state.use_default_mods_path,
-            state.scan_rabbitfx_requirement,
+            state.static_prefs.use_default_mods_path,
+            state.static_prefs.scan_rabbitfx_requirement,
         )?);
     }
 

@@ -15,12 +15,10 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::model::{
-    AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseSort, CacheSizeTier,
-    DeleteBehavior, FeedbackSurveyState, GameInstall, ImportResolution, LaunchBehavior,
-    LibraryCategoryDisplayMode, LibraryFolder, LibraryGroupMode, MOD_META_DIR, MOD_META_FILE,
-    MetadataVisibility, ModCategory, ModCategorySortMode, ModStatusTargets, ModifiedUpdateBehavior,
-    OperationLogEntry, PortableModState, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
-    TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry, UnsafeContentMode,
+    AppLanguage, AppState, FeedbackSurveyState, GameInstall, LibraryFolder, MOD_META_DIR,
+    MOD_META_FILE, ModCategory, ModCategorySortMode, OperationLogEntry, PortableModState,
+    StagedAppUpdate, StaticPreferences, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus,
+    TasksLayout, TasksOrder, ToolEntry,
 };
 
 #[derive(Debug, Clone)]
@@ -67,60 +65,6 @@ struct AppPreferences {
     #[serde(default)]
     auto_game_enable_done: bool,
     #[serde(default)]
-    modded_launcher_path_override: Option<PathBuf>,
-    #[serde(default = "serde_default_true")]
-    pub use_default_mods_path: bool,
-    #[serde(default)]
-    hide_disabled: bool,
-    #[serde(default)]
-    hide_archived: bool,
-    #[serde(default)]
-    pub metadata_visibility: MetadataVisibility,
-    #[serde(default)]
-    scan_rabbitfx_requirement: bool,
-    #[serde(default)]
-    font_style: AppFontStyle,
-    #[serde(default)]
-    language: Option<AppLanguage>,
-    #[serde(default)]
-    launch_behavior: LaunchBehavior,
-    #[serde(default)]
-    tool_launch_behavior: LaunchBehavior,
-    #[serde(default)]
-    after_install_behavior: AfterInstallBehavior,
-    #[serde(default)]
-    unsafe_content_mode: UnsafeContentMode,
-    #[serde(default)]
-    cache_size_tier: CacheSizeTier,
-    #[serde(default)]
-    import_resolution: ImportResolution,
-    #[serde(default)]
-    delete_behavior: DeleteBehavior,
-    #[serde(default)]
-    window_pos: Option<[f32; 2]>,
-    #[serde(default)]
-    window_size: Option<[f32; 2]>,
-    #[serde(default)]
-    window_maximized: bool,
-    #[serde(default)]
-    browse_sort: BrowseSort,
-    #[serde(default)]
-    search_sort: SearchSort,
-    #[serde(default)]
-    library_group_mode: LibraryGroupMode,
-    #[serde(default)]
-    library_category_display_mode: LibraryCategoryDisplayMode,
-    #[serde(default = "serde_default_true")]
-    library_sort_status_first: bool,
-    #[serde(default = "serde_default_true")]
-    library_status_group_show_category: bool,
-    #[serde(default = "serde_default_true")]
-    library_category_group_show_status: bool,
-    #[serde(default)]
-    library_sort_category_first: bool,
-    #[serde(default)]
-    library_uncategorized_first: bool,
-    #[serde(default)]
     tools: Vec<ToolEntry>,
     #[serde(default)]
     categories: Vec<ModCategory>,
@@ -129,19 +73,10 @@ struct AppPreferences {
     #[serde(default)]
     create_downloaded_mod_category_by_game: HashMap<String, bool>,
     #[serde(default)]
-    update_check_statuses: ModStatusTargets,
-    #[serde(default)]
-    auto_update_statuses: ModStatusTargets,
-    #[serde(default)]
-    modified_update_behavior: ModifiedUpdateBehavior,
-    #[serde(default = "serde_default_true")]
-    always_replace_on_update: bool,
-    #[serde(default = "serde_default_true")]
-    automatically_check_for_update: bool,
-    #[serde(default)]
     staged_app_update: Option<StagedAppUpdate>,
-    #[serde(default)]
-    tool_blacklist: HashMap<String, Vec<String>>,
+    // Flatten static preferences for backward compatibility
+    #[serde(flatten)]
+    static_prefs: StaticPreferences,
 }
 
 impl From<&AppState> for AppPreferences {
@@ -160,46 +95,14 @@ impl From<&AppState> for AppPreferences {
             tasks_order: state.tasks_order,
             last_selected_game_id: state.last_selected_game_id.clone(),
             auto_game_enable_done: state.auto_game_enable_done,
-            modded_launcher_path_override: state.modded_launcher_path_override.clone(),
-            use_default_mods_path: state.use_default_mods_path,
-            hide_disabled: state.hide_disabled,
-            hide_archived: state.hide_archived,
-            metadata_visibility: state.metadata_visibility,
-            scan_rabbitfx_requirement: state.scan_rabbitfx_requirement,
-            font_style: state.font_style,
-            language: Some(state.language),
-            launch_behavior: state.launch_behavior,
-            tool_launch_behavior: state.tool_launch_behavior,
-            after_install_behavior: state.after_install_behavior,
-            unsafe_content_mode: state.unsafe_content_mode,
-            cache_size_tier: state.cache_size_tier,
-            import_resolution: state.import_resolution,
-            delete_behavior: state.delete_behavior,
-            window_pos: state.window_pos,
-            window_size: state.window_size,
-            window_maximized: state.window_maximized,
-            browse_sort: state.browse_sort,
-            search_sort: state.search_sort,
-            library_group_mode: state.library_group_mode,
-            library_category_display_mode: state.library_category_display_mode,
-            library_sort_status_first: state.library_sort_status_first,
-            library_status_group_show_category: state.library_status_group_show_category,
-            library_category_group_show_status: state.library_category_group_show_status,
-            library_sort_category_first: state.library_sort_category_first,
-            library_uncategorized_first: state.library_uncategorized_first,
             tools: state.tools.clone(),
             categories: state.categories.clone(),
             category_sort_mode_by_game: state.category_sort_mode_by_game.clone(),
             create_downloaded_mod_category_by_game: state
                 .create_downloaded_mod_category_by_game
                 .clone(),
-            update_check_statuses: state.update_check_statuses,
-            auto_update_statuses: state.auto_update_statuses,
-            modified_update_behavior: state.modified_update_behavior,
-            always_replace_on_update: state.always_replace_on_update,
-            automatically_check_for_update: state.automatically_check_for_update,
             staged_app_update: state.staged_app_update.clone(),
-            tool_blacklist: state.tool_blacklist.clone(),
+            static_prefs: state.static_prefs.clone(),
         }
     }
 }
@@ -353,7 +256,11 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let previous_app_version = prefs.app_version.clone();
     let app_version_needs_save =
         app_version_needs_normalization(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
-    let language_needs_save = prefs.language.is_none();
+    
+    // Check if language field was missing (needs save)
+    let language_needs_save = prefs.static_prefs.language == AppLanguage::default() 
+        && previous_app_version.is_some();
+    
     state.version = prefs.version.max(7);
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
@@ -369,38 +276,14 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.tasks_order = prefs.tasks_order;
     state.last_selected_game_id = prefs.last_selected_game_id;
     state.auto_game_enable_done = prefs.auto_game_enable_done;
-    state.modded_launcher_path_override = prefs.modded_launcher_path_override;
-    state.use_default_mods_path = prefs.use_default_mods_path;
-    state.hide_disabled = prefs.hide_disabled;
-    state.hide_archived = prefs.hide_archived;
-    state.metadata_visibility = prefs.metadata_visibility;
-    state.scan_rabbitfx_requirement = prefs.scan_rabbitfx_requirement;
-    state.font_style = prefs.font_style;
-    state.language = prefs.language.unwrap_or_else(|| {
-        AppLanguage::detect_system_supported().unwrap_or_default()
-    });
-    state.launch_behavior = prefs.launch_behavior;
-    state.tool_launch_behavior = prefs.tool_launch_behavior;
-    state.after_install_behavior = prefs.after_install_behavior;
-    state.unsafe_content_mode = prefs.unsafe_content_mode;
-    state.cache_size_tier = prefs.cache_size_tier;
-    state.import_resolution = prefs.import_resolution;
-    state.delete_behavior = prefs.delete_behavior;
-    state.window_pos = prefs.window_pos;
-    state.window_size = prefs.window_size;
-    state.window_maximized = prefs.window_maximized;
-    state.browse_sort = prefs.browse_sort;
-    state.search_sort = prefs.search_sort;
-    state.library_group_mode = prefs.library_group_mode;
-    state.library_category_display_mode = prefs.library_category_display_mode;
-    state.library_sort_status_first = prefs.library_sort_status_first;
-    state.library_status_group_show_category = prefs.library_status_group_show_category;
-    state.library_category_group_show_status = prefs.library_category_group_show_status;
-    state.library_sort_category_first = prefs.library_sort_category_first;
-    state.library_uncategorized_first = prefs.library_uncategorized_first;
     state.tools = prefs.tools;
     state.categories = prefs.categories;
     state.category_sort_mode_by_game = prefs.category_sort_mode_by_game;
+    state.staged_app_update = prefs.staged_app_update;
+    
+    // Move static preferences (single assignment, no field-by-field copying)
+    state.static_prefs = prefs.static_prefs;
+    
     let (create_downloaded_mod_category_by_game, preferences_need_save) =
         normalize_create_downloaded_mod_category_by_game(
             &state.games,
@@ -410,13 +293,6 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
     state.preferences_need_save = preferences_need_save || app_version_needs_save || language_needs_save;
     initialize_tool_orders(&mut state, loaded_version);
-    state.update_check_statuses = prefs.update_check_statuses;
-    state.auto_update_statuses = prefs.auto_update_statuses;
-    state.modified_update_behavior = prefs.modified_update_behavior;
-    state.always_replace_on_update = prefs.always_replace_on_update;
-    state.automatically_check_for_update = prefs.automatically_check_for_update;
-    state.staged_app_update = prefs.staged_app_update;
-    state.tool_blacklist = prefs.tool_blacklist;
     Ok(state)
 }
 

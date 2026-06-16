@@ -346,8 +346,8 @@ impl HestiaApp {
                 .as_ref()
                 .map(|category| category.id),
             page,
-            browse_sort: self.state.browse_sort,
-            search_sort: self.state.search_sort,
+            browse_sort: self.state.static_prefs.browse_sort,
+            search_sort: self.state.static_prefs.search_sort,
             force_refresh,
         };
         let _ = self.browse_request_tx.send(request);
@@ -756,7 +756,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
             .iter()
             .filter(|card| {
                 !(matches!(
-                    self.state.unsafe_content_mode,
+                    self.state.static_prefs.unsafe_content_mode,
                     UnsafeContentMode::HideNoCounter | UnsafeContentMode::HideShowCounter
                 ) && card.unsafe_content)
             })
@@ -776,7 +776,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
     }
 
     fn hidden_unsafe_browse_count(&self) -> usize {
-        if self.state.unsafe_content_mode != UnsafeContentMode::HideShowCounter {
+        if self.state.static_prefs.unsafe_content_mode != UnsafeContentMode::HideShowCounter {
             return 0;
         }
         self.browse_state
@@ -787,7 +787,7 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
     }
 
     fn should_censor_unsafe(&self) -> bool {
-        self.state.unsafe_content_mode == UnsafeContentMode::Censor
+        self.state.static_prefs.unsafe_content_mode == UnsafeContentMode::Censor
     }
 
     fn browse_thumbnail_parallelism(&self) -> usize {

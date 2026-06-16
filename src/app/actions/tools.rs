@@ -253,6 +253,7 @@ impl HestiaApp {
             let key = Self::normalize_tool_path_key(path);
             if self
                 .state
+                .static_prefs
                 .tool_blacklist
                 .get(game_id)
                 .is_some_and(|items| items.iter().any(|item| item == &key))
@@ -283,7 +284,7 @@ impl HestiaApp {
         let Some(game) = self.selected_game().cloned() else {
             return false;
         };
-        let Some(mods_root) = game.mods_path(self.state.use_default_mods_path) else {
+        let Some(mods_root) = game.mods_path(self.state.static_prefs.use_default_mods_path) else {
             return false;
         };
         if !mods_root.is_dir() {
@@ -401,10 +402,10 @@ impl HestiaApp {
             self.report_warn(self.text().tool_already_added(), Some(self.text().tool_already_added()));
             return;
         }
-        if let Some(items) = self.state.tool_blacklist.get_mut(&game_id) {
+        if let Some(items) = self.state.static_prefs.tool_blacklist.get_mut(&game_id) {
             items.retain(|item| item != &key);
             if items.is_empty() {
-                self.state.tool_blacklist.remove(&game_id);
+                self.state.static_prefs.tool_blacklist.remove(&game_id);
             }
         }
         let label = path
@@ -439,7 +440,7 @@ impl HestiaApp {
         self.tool_icon_textures.remove(&tool.id);
         if tool.auto_detected {
             let key = Self::normalize_tool_path_key(&tool.path);
-            let items = self.state.tool_blacklist.entry(tool.game_id.clone()).or_default();
+            let items = self.state.static_prefs.tool_blacklist.entry(tool.game_id.clone()).or_default();
             if !items.iter().any(|item| item == &key) {
                 items.push(key);
                 items.sort();
@@ -508,7 +509,7 @@ impl HestiaApp {
             Ok(_) => {
                 self.log_action(self.text().tool_action_launched(), &tool.label);
                 self.set_message_ok(self.text().launched_tool(&tool.label));
-                Self::apply_launch_behavior(ctx, self.state.tool_launch_behavior);
+                Self::apply_launch_behavior(ctx, self.state.static_prefs.tool_launch_behavior);
             }
             Err(err) => self.report_error_message(
                 format!("failed to launch tool {}: {err}", tool.path.display()),

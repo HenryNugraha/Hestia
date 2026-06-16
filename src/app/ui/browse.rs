@@ -199,14 +199,14 @@ impl HestiaApp {
                             ui.spacing_mut().item_spacing.y = -2.0;
                             ui.add_space(2.0);
                             if self.browse_state.selected_character_category.is_some() {
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             } else if is_empty {
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             } else {
-                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::BestMatch, RichText::new(text.browse_best_match()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.search_sort, SearchSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.search_sort, SearchSort::BestMatch, RichText::new(text.browse_best_match()).size(11.0)).changed();
+                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.search_sort, SearchSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
                             }
                         });
                     });

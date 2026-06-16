@@ -49,7 +49,7 @@ impl HestiaApp {
     }
 
     fn request_automatic_app_update_check(&mut self, now: f64) {
-        if self.state.automatically_check_for_update {
+        if self.state.static_prefs.automatically_check_for_update {
             self.request_app_update_check(now);
         }
     }

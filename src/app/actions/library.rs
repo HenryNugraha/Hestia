@@ -42,7 +42,7 @@ impl HestiaApp {
 
     fn enable_or_restore_mod_by_id(&mut self, mod_id: &str) {
         let game = self.selected_game().cloned();
-        let use_default_path = self.state.use_default_mods_path;
+        let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
@@ -91,7 +91,7 @@ impl HestiaApp {
             self.clear_mod_image_runtime_state(&snapshot);
         }
         let game = self.selected_game().cloned();
-        let use_default_path = self.state.use_default_mods_path;
+        let use_default_path = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
@@ -135,7 +135,7 @@ impl HestiaApp {
 
     fn delete_mod_entry(&mut self, mod_entry: &ModEntry) -> Result<DeleteBehavior> {
         self.clear_mod_image_runtime_state(mod_entry);
-        match self.state.delete_behavior {
+        match self.state.static_prefs.delete_behavior {
             DeleteBehavior::RecycleBin => {
                 xxmi::send_to_recycle_bin(mod_entry)?;
                 Ok(DeleteBehavior::RecycleBin)
@@ -203,7 +203,7 @@ impl HestiaApp {
         }
 
         let game = self.selected_game().cloned();
-        let use_default_path = self.state.use_default_mods_path;
+        let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
@@ -257,7 +257,7 @@ impl HestiaApp {
             self.clear_mod_image_runtime_state(&snapshot);
         }
         let game = self.selected_game().cloned();
-        let use_default_path = self.state.use_default_mods_path;
+        let use_default_path = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
@@ -282,7 +282,7 @@ impl HestiaApp {
             .filter(|m| {
                 self.selected_mods.contains(&m.id)
                     && (matches!(m.update_state, ModUpdateState::UpdateAvailable)
-                        || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                        || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                             && Self::has_modified_update_available(m)))
             })
             .map(|m| m.id.clone())
@@ -326,7 +326,7 @@ impl HestiaApp {
                     }
                 } else if mod_entry.status == ModStatus::Archived {
                     if let Some(game_ref) = game.as_ref() {
-                        if xxmi::restore_mod(mod_entry, game_ref, self.state.use_default_mods_path).is_ok() {
+                        if xxmi::restore_mod(mod_entry, game_ref, self.state.static_prefs.use_default_mods_path).is_ok() {
                             unarchived_count += 1;
                         }
                     }
@@ -412,7 +412,7 @@ impl HestiaApp {
         for mod_entry in self.state.mods.iter_mut() {
             if mods_to_clear.iter().any(|m| m.id == mod_entry.id) {
                 if let Some(game_ref) = game.as_ref() {
-                    if xxmi::archive_mod(mod_entry, game_ref, self.state.use_default_mods_path).is_ok() {
+                    if xxmi::archive_mod(mod_entry, game_ref, self.state.static_prefs.use_default_mods_path).is_ok() {
                         archived_count += 1;
                     }
                 }
@@ -439,7 +439,7 @@ impl HestiaApp {
         }
         if deleted_count > 0 {
             let text = self.text();
-            let action = text.delete_action(self.state.delete_behavior);
+            let action = text.delete_action(self.state.static_prefs.delete_behavior);
             self.log_action(action, &text.library_mods_count(deleted_count));
             self.set_message_ok(text.action_count_message(action, deleted_count));
             self.save_state();

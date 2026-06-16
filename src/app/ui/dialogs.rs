@@ -299,7 +299,7 @@ impl HestiaApp {
             } else {
                 self.preferred_browse_folder_name(mod_title.as_deref(), &candidate.label)
             };
-                            let target_root = game.mods_path(self.state.use_default_mods_path).unwrap_or_default();
+                            let target_root = game.mods_path(self.state.static_prefs.use_default_mods_path).unwrap_or_default();
                             let existing_target = target_root.join(&preferred);
                             if existing_target.exists() {
                                 if update_folder_name.is_some() {
@@ -385,7 +385,7 @@ impl HestiaApp {
                         return;
                     };
                     let target_root = game
-                        .mods_path(self.state.use_default_mods_path)
+                        .mods_path(self.state.static_prefs.use_default_mods_path)
                         .unwrap_or_default();
                     let preferred = update_folder_name
                         .clone()
@@ -525,7 +525,7 @@ impl HestiaApp {
                 self.pending_imports.pop_front();
                 return;
             };
-            let target_root = game.mods_path(self.state.use_default_mods_path).unwrap_or_default();
+            let target_root = game.mods_path(self.state.static_prefs.use_default_mods_path).unwrap_or_default();
             let gb_profile = pending.gb_profile.clone();
             
             let title_name = self.sanitized_preferred_browse_title_name(Some(&mod_name));

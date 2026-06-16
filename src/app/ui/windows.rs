@@ -58,7 +58,7 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 ui.vertical(|ui| {
                     ui.add_space(5.0);
-                    let whats_new_date = WHATS_NEW_DATE.get(self.state.language);
+                    let whats_new_date = WHATS_NEW_DATE.get(self.state.static_prefs.language);
                     static_label(
                         ui,
                         RichText::new(whats_new_date)
@@ -69,7 +69,7 @@ impl HestiaApp {
                 });
             });
             for highlight in WHATS_NEW_HIGHLIGHTS {
-                let highlight = highlight.get(self.state.language);
+                let highlight = highlight.get(self.state.static_prefs.language);
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(12.0, 18.0),
@@ -103,7 +103,7 @@ impl HestiaApp {
         let mut survey_open = self.state.show_feedback_survey;
         let force_default_pos = self.feedback_survey_force_default_pos;
         let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let survey_title = survey.title.get(self.state.language);
+        let survey_title = survey.title.get(self.state.static_prefs.language);
         let mut window =
             egui::Window::new(icon_text_sized(Icon::ClipboardList, survey_title, 14.0, 14.0))
                 .id(egui::Id::new((
@@ -155,7 +155,7 @@ impl HestiaApp {
                         .show(ui, |ui| {
                             for question in survey.questions {
                                 ui.indent(("feedback_survey_question", question.id), |ui| {
-                                    ui.label(question.prompt.get(self.state.language));
+                                    ui.label(question.prompt.get(self.state.static_prefs.language));
                                     ui.horizontal_wrapped(|ui| {
                                         let selected = self
                                             .feedback_survey_answers
@@ -165,7 +165,7 @@ impl HestiaApp {
                                             ui.radio_value(
                                                 selected,
                                                 answer.id,
-                                                answer.label.get(self.state.language),
+                                                answer.label.get(self.state.static_prefs.language),
                                             )
                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                                         }
@@ -174,7 +174,7 @@ impl HestiaApp {
                                 ui.add_space(6.0);
                             }
 
-                            let message_label = survey.message_label.get(self.state.language);
+                            let message_label = survey.message_label.get(self.state.static_prefs.language);
                             if !message_label.trim().is_empty() {
                                 ui.label(message_label);
                                 ui.add(
@@ -1906,7 +1906,7 @@ impl HestiaApp {
                                     });
                                 };
 
-                                if self.state.library_uncategorized_first {
+                                if self.state.static_prefs.library_uncategorized_first {
                                     render_uncategorized_row(ui);
                                 }
                                 for (index, category) in categories.iter().enumerate() {
@@ -2141,7 +2141,7 @@ impl HestiaApp {
                                         ui.ctx().request_repaint();
                                     }
                                 }
-                                if !self.state.library_uncategorized_first {
+                                if !self.state.static_prefs.library_uncategorized_first {
                                     render_uncategorized_row(ui);
                                 }
                                 self.update_settings_category_drag_target(
@@ -2265,10 +2265,10 @@ impl HestiaApp {
 
                         static_label(ui, bold(text.behavior()).underline().size(16.0));
                         ui.indent("setting_general_behavior", |ui| {
-                            let launch_behavior = self.state.launch_behavior;
-                            let tool_launch_behavior = self.state.tool_launch_behavior;
-                            let after_install = self.state.after_install_behavior;
-                            let meta_vis = self.state.metadata_visibility;
+                            let launch_behavior = self.state.static_prefs.launch_behavior;
+                            let tool_launch_behavior = self.state.static_prefs.tool_launch_behavior;
+                            let after_install = self.state.static_prefs.after_install_behavior;
+                            let meta_vis = self.state.static_prefs.metadata_visibility;
                             let left_column_width = ui.available_width() * 0.32;
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
@@ -2278,11 +2278,11 @@ impl HestiaApp {
                                         text.when_launching_game(),
                                         &mut |ui| {
                                             egui::ComboBox::from_id_salt("launch_behavior")
-                                                .selected_text(text.launch_behavior(self.state.launch_behavior))
+                                                .selected_text(text.launch_behavior(self.state.static_prefs.launch_behavior))
                                                 .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::DoNothing, text.launch_behavior(LaunchBehavior::DoNothing));
-                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Minimize, text.launch_behavior(LaunchBehavior::Minimize));
-                                                    ui.selectable_value(&mut self.state.launch_behavior, LaunchBehavior::Exit, text.launch_behavior(LaunchBehavior::Exit));
+                                                    ui.selectable_value(&mut self.state.static_prefs.launch_behavior, LaunchBehavior::DoNothing, text.launch_behavior(LaunchBehavior::DoNothing));
+                                                    ui.selectable_value(&mut self.state.static_prefs.launch_behavior, LaunchBehavior::Minimize, text.launch_behavior(LaunchBehavior::Minimize));
+                                                    ui.selectable_value(&mut self.state.static_prefs.launch_behavior, LaunchBehavior::Exit, text.launch_behavior(LaunchBehavior::Exit));
                                                 });
                                         },
                                     );
@@ -2292,11 +2292,11 @@ impl HestiaApp {
                                         text.after_installing_mod(),
                                         &mut |ui| {
                                             egui::ComboBox::from_id_salt("after_install_behavior")
-                                                .selected_text(text.after_install_behavior(self.state.after_install_behavior))
+                                                .selected_text(text.after_install_behavior(self.state.static_prefs.after_install_behavior))
                                                 .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::DoNothing, text.after_install_behavior(AfterInstallBehavior::DoNothing));
-                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::AddToSelection, text.after_install_behavior(AfterInstallBehavior::AddToSelection));
-                                                    ui.selectable_value(&mut self.state.after_install_behavior, AfterInstallBehavior::OpenModDetail, text.after_install_behavior(AfterInstallBehavior::OpenModDetail));
+                                                    ui.selectable_value(&mut self.state.static_prefs.after_install_behavior, AfterInstallBehavior::DoNothing, text.after_install_behavior(AfterInstallBehavior::DoNothing));
+                                                    ui.selectable_value(&mut self.state.static_prefs.after_install_behavior, AfterInstallBehavior::AddToSelection, text.after_install_behavior(AfterInstallBehavior::AddToSelection));
+                                                    ui.selectable_value(&mut self.state.static_prefs.after_install_behavior, AfterInstallBehavior::OpenModDetail, text.after_install_behavior(AfterInstallBehavior::OpenModDetail));
                                                 });
                                         },
                                     );
@@ -2307,36 +2307,36 @@ impl HestiaApp {
                                         text.when_launching_tool(),
                                         &mut |ui| {
                                             egui::ComboBox::from_id_salt("tool_launch_behavior")
-                                                .selected_text(text.launch_behavior(self.state.tool_launch_behavior))
+                                                .selected_text(text.launch_behavior(self.state.static_prefs.tool_launch_behavior))
                                                 .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::DoNothing, text.launch_behavior(LaunchBehavior::DoNothing));
-                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Minimize, text.launch_behavior(LaunchBehavior::Minimize));
-                                                    ui.selectable_value(&mut self.state.tool_launch_behavior, LaunchBehavior::Exit, text.launch_behavior(LaunchBehavior::Exit));
+                                                    ui.selectable_value(&mut self.state.static_prefs.tool_launch_behavior, LaunchBehavior::DoNothing, text.launch_behavior(LaunchBehavior::DoNothing));
+                                                    ui.selectable_value(&mut self.state.static_prefs.tool_launch_behavior, LaunchBehavior::Minimize, text.launch_behavior(LaunchBehavior::Minimize));
+                                                    ui.selectable_value(&mut self.state.static_prefs.tool_launch_behavior, LaunchBehavior::Exit, text.launch_behavior(LaunchBehavior::Exit));
                                                 });
                                         },
                                     );
                                     ui.add_space(8.0);
                                     setting_block(ui, text.mod_detail_metadata(), &mut |ui| {
                                         egui::ComboBox::from_id_salt("metadata_visibility")
-                                            .selected_text(text.metadata_visibility(self.state.metadata_visibility))
+                                            .selected_text(text.metadata_visibility(self.state.static_prefs.metadata_visibility))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Never, text.metadata_visibility(MetadataVisibility::Never));
-                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::OnlyIfNoDescription, text.metadata_visibility(MetadataVisibility::OnlyIfNoDescription));
-                                                ui.selectable_value(&mut self.state.metadata_visibility, MetadataVisibility::Always, text.metadata_visibility(MetadataVisibility::Always));
+                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::Never, text.metadata_visibility(MetadataVisibility::Never));
+                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::OnlyIfNoDescription, text.metadata_visibility(MetadataVisibility::OnlyIfNoDescription));
+                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::Always, text.metadata_visibility(MetadataVisibility::Always));
                                             });
                                     });
                                 });
                             });
-                            if self.state.launch_behavior != launch_behavior {
+                            if self.state.static_prefs.launch_behavior != launch_behavior {
                                 should_save = true;
                             }
-                            if self.state.tool_launch_behavior != tool_launch_behavior {
+                            if self.state.static_prefs.tool_launch_behavior != tool_launch_behavior {
                                 should_save = true;
                             }
-                            if self.state.after_install_behavior != after_install {
+                            if self.state.static_prefs.after_install_behavior != after_install {
                                 should_save = true;
                             }
-                            if self.state.metadata_visibility != meta_vis {
+                            if self.state.static_prefs.metadata_visibility != meta_vis {
                                 should_save = true;
                             }
                             ui.add_space(1.0);
@@ -2345,38 +2345,38 @@ impl HestiaApp {
 
                         static_label(ui, bold(text.installed_mods_list()).underline().size(16.0));
                         ui.indent("setting_general_installed_mods_list", |ui| {
-                            let group_mode = self.state.library_group_mode;
-                            let category_display_mode = self.state.library_category_display_mode;
-                            let mut show_disabled = !self.state.hide_disabled;
-                            let mut show_archived = !self.state.hide_archived;
+                            let group_mode = self.state.static_prefs.library_group_mode;
+                            let category_display_mode = self.state.static_prefs.library_category_display_mode;
+                            let mut show_disabled = !self.state.static_prefs.hide_disabled;
+                            let mut show_archived = !self.state.static_prefs.hide_archived;
                             let left_column_width = ui.available_width() * 0.32;
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
                                     setting_block(ui, text.group_list_by(), &mut |ui| {
                                         egui::ComboBox::from_id_salt("library_group_mode")
-                                            .selected_text(text.library_group_mode(self.state.library_group_mode))
+                                            .selected_text(text.library_group_mode(self.state.static_prefs.library_group_mode))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Category, text.library_group_mode(LibraryGroupMode::Category));
-                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::Status, text.library_group_mode(LibraryGroupMode::Status));
-                                                ui.selectable_value(&mut self.state.library_group_mode, LibraryGroupMode::None, text.library_group_mode(LibraryGroupMode::None));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Category, text.library_group_mode(LibraryGroupMode::Category));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Status, text.library_group_mode(LibraryGroupMode::Status));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::None, text.library_group_mode(LibraryGroupMode::None));
                                             });
                                     });
                                     ui.add_space(8.0);
                                     setting_block(ui, text.category_layout(), &mut |ui| {
                                         ui.add_enabled_ui(
-                                            matches!(self.state.library_group_mode, LibraryGroupMode::Category),
+                                            matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
                                             |ui| {
                                                 egui::ComboBox::from_id_salt("library_category_display_mode")
-                                                    .selected_text(text.library_category_display_mode(self.state.library_category_display_mode))
+                                                    .selected_text(text.library_category_display_mode(self.state.static_prefs.library_category_display_mode))
                                                     .show_ui(ui, |ui| {
                                                         ui.selectable_value(
-                                                            &mut self.state.library_category_display_mode,
+                                                            &mut self.state.static_prefs.library_category_display_mode,
                                                             LibraryCategoryDisplayMode::GroupedSections,
                                                             text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
                                                         );
                                                         ui.selectable_value(
-                                                            &mut self.state.library_category_display_mode,
+                                                            &mut self.state.static_prefs.library_category_display_mode,
                                                             LibraryCategoryDisplayMode::Folders,
                                                             text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
                                                         );
@@ -2386,10 +2386,10 @@ impl HestiaApp {
                                     });
                                 });
                                 ui.vertical(|ui| {
-                                    let checkbox_changed = match self.state.library_group_mode {
+                                    let checkbox_changed = match self.state.static_prefs.library_group_mode {
                                         LibraryGroupMode::Status => {
                                             let response = ui.checkbox(
-                                                &mut self.state.library_sort_category_first,
+                                                &mut self.state.static_prefs.library_sort_category_first,
                                                 text.sort_by_category_first(),
                                             );
                                             response
@@ -2399,7 +2399,7 @@ impl HestiaApp {
                                         }
                                         LibraryGroupMode::Category | LibraryGroupMode::None => {
                                             let response = ui.checkbox(
-                                                &mut self.state.library_sort_status_first,
+                                                &mut self.state.static_prefs.library_sort_status_first,
                                                 text.sort_by_status_first(),
                                             );
                                             response
@@ -2411,14 +2411,14 @@ impl HestiaApp {
                                     if checkbox_changed {
                                         should_save = true;
                                     }
-                                    let show_card_detail_response = if matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                                    let show_card_detail_response = if matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
                                         ui.checkbox(
-                                            &mut self.state.library_category_group_show_status,
+                                            &mut self.state.static_prefs.library_category_group_show_status,
                                             text.show_mod_status_on_card(),
                                         )
                                     } else {
                                         let response = ui.checkbox(
-                                            &mut self.state.library_status_group_show_category,
+                                            &mut self.state.static_prefs.library_status_group_show_category,
                                             text.show_category_on_card(),
                                         );
                                         response
@@ -2433,23 +2433,23 @@ impl HestiaApp {
                                         .checkbox(&mut show_disabled, text.show_disabled_mods())
                                         .changed()
                                     {
-                                        self.state.hide_disabled = !show_disabled;
+                                        self.state.static_prefs.hide_disabled = !show_disabled;
                                         should_save = true;
                                     }
                                     if ui
                                         .checkbox(&mut show_archived, text.show_archived_mods())
                                         .changed()
                                     {
-                                        self.state.hide_archived = !show_archived;
+                                        self.state.static_prefs.hide_archived = !show_archived;
                                         should_save = true;
                                     }
                                     if matches!(
-                                        self.state.library_category_display_mode,
+                                        self.state.static_prefs.library_category_display_mode,
                                         LibraryCategoryDisplayMode::GroupedSections
-                                    ) && matches!(self.state.library_group_mode, LibraryGroupMode::Category)
+                                    ) && matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
                                         && ui
                                             .checkbox(
-                                                &mut self.state.library_uncategorized_first,
+                                                &mut self.state.static_prefs.library_uncategorized_first,
                                                 text.show_uncategorized_mods_first(),
                                             )
                                             .changed()
@@ -2458,10 +2458,10 @@ impl HestiaApp {
                                     }
                                 });
                             });
-                            if self.state.library_group_mode != group_mode {
+                            if self.state.static_prefs.library_group_mode != group_mode {
                                 should_save = true;
                             }
-                            if self.state.library_category_display_mode != category_display_mode {
+                            if self.state.static_prefs.library_category_display_mode != category_display_mode {
                                 should_save = true;
                             }
                             ui.add_space(1.0);
@@ -2472,24 +2472,24 @@ impl HestiaApp {
                         ui.indent("setting_general_operational", |ui| {
                             static_label(ui, text.mods_to_check_for_updates());
                             ui.add_space(-4.0);
-                            let update_check_statuses = self.state.update_check_statuses;
+                            let update_check_statuses = self.state.static_prefs.update_check_statuses;
                             ui.horizontal(|ui| {
                                 ui.checkbox(
-                                    &mut self.state.update_check_statuses.active,
+                                    &mut self.state.static_prefs.update_check_statuses.active,
                                     text.status_target_active(),
                                 );
                                 ui.checkbox(
-                                    &mut self.state.update_check_statuses.disabled,
+                                    &mut self.state.static_prefs.update_check_statuses.disabled,
                                     text.status_target_disabled(),
                                 );
                                 ui.checkbox(
-                                    &mut self.state.update_check_statuses.archived,
+                                    &mut self.state.static_prefs.update_check_statuses.archived,
                                     text.status_target_archived(),
                                 );
                             });
-                            if self.state.update_check_statuses.active != update_check_statuses.active
-                                || self.state.update_check_statuses.disabled != update_check_statuses.disabled
-                                || self.state.update_check_statuses.archived != update_check_statuses.archived
+                            if self.state.static_prefs.update_check_statuses.active != update_check_statuses.active
+                                || self.state.static_prefs.update_check_statuses.disabled != update_check_statuses.disabled
+                                || self.state.static_prefs.update_check_statuses.archived != update_check_statuses.archived
                             {
                                 should_save = true;
                                 update_check_targets_changed = true;
@@ -2497,88 +2497,88 @@ impl HestiaApp {
                             ui.add_space(8.0);
                             static_label(ui, text.automatically_update_mods());
                             ui.add_space(-4.0);
-                            let auto_update_statuses = self.state.auto_update_statuses;
+                            let auto_update_statuses = self.state.static_prefs.auto_update_statuses;
                             ui.horizontal(|ui| {
                                 ui.checkbox(
-                                    &mut self.state.auto_update_statuses.active,
+                                    &mut self.state.static_prefs.auto_update_statuses.active,
                                     text.status_target_active(),
                                 );
                                 ui.checkbox(
-                                    &mut self.state.auto_update_statuses.disabled,
+                                    &mut self.state.static_prefs.auto_update_statuses.disabled,
                                     text.status_target_disabled(),
                                 );
                                 ui.checkbox(
-                                    &mut self.state.auto_update_statuses.archived,
+                                    &mut self.state.static_prefs.auto_update_statuses.archived,
                                     text.status_target_archived(),
                                 );
                             });
-                            if self.state.auto_update_statuses.active != auto_update_statuses.active
-                                || self.state.auto_update_statuses.disabled != auto_update_statuses.disabled
-                                || self.state.auto_update_statuses.archived != auto_update_statuses.archived
+                            if self.state.static_prefs.auto_update_statuses.active != auto_update_statuses.active
+                                || self.state.static_prefs.auto_update_statuses.disabled != auto_update_statuses.disabled
+                                || self.state.static_prefs.auto_update_statuses.archived != auto_update_statuses.archived
                             {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
                             static_label(ui, text.also_update_modified_mods());
                             ui.add_space(-4.0);
-                            let modified_update_behavior = self.state.modified_update_behavior;
+                            let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
                             egui::ComboBox::from_id_salt("modified_update_behavior")
                                 .selected_text(text.modified_update_behavior(modified_update_behavior))
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
-                                        &mut self.state.modified_update_behavior,
+                                        &mut self.state.static_prefs.modified_update_behavior,
                                         ModifiedUpdateBehavior::Yes,
                                         text.modified_update_behavior(ModifiedUpdateBehavior::Yes),
                                     );
                                     ui.selectable_value(
-                                        &mut self.state.modified_update_behavior,
+                                        &mut self.state.static_prefs.modified_update_behavior,
                                         ModifiedUpdateBehavior::ShowButton,
                                         text.modified_update_behavior(ModifiedUpdateBehavior::ShowButton),
                                     );
                                     ui.selectable_value(
-                                        &mut self.state.modified_update_behavior,
+                                        &mut self.state.static_prefs.modified_update_behavior,
                                         ModifiedUpdateBehavior::HideButton,
                                         text.modified_update_behavior(ModifiedUpdateBehavior::HideButton),
                                     );
                                 });
-                            if self.state.modified_update_behavior != modified_update_behavior {
+                            if self.state.static_prefs.modified_update_behavior != modified_update_behavior {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
                             static_label(ui, text.when_installing_existing_mod());
                             ui.add_space(-4.0);
-                            let import_resolution = self.state.import_resolution;
-                            let always_replace_on_update = self.state.always_replace_on_update;
+                            let import_resolution = self.state.static_prefs.import_resolution;
+                            let always_replace_on_update = self.state.static_prefs.always_replace_on_update;
                             ui.horizontal(|ui| {
                                 egui::ComboBox::from_id_salt("import_resolution")
                                     .selected_text(text.import_resolution(import_resolution))
                                     .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut self.state.import_resolution, ImportResolution::Ask, text.import_resolution(ImportResolution::Ask));
-                                        ui.selectable_value(&mut self.state.import_resolution, ImportResolution::Replace, text.import_resolution(ImportResolution::Replace));
-                                        ui.selectable_value(&mut self.state.import_resolution, ImportResolution::Merge, text.import_resolution(ImportResolution::Merge));
-                                        ui.selectable_value(&mut self.state.import_resolution, ImportResolution::KeepBoth, text.import_resolution(ImportResolution::KeepBoth));
+                                        ui.selectable_value(&mut self.state.static_prefs.import_resolution, ImportResolution::Ask, text.import_resolution(ImportResolution::Ask));
+                                        ui.selectable_value(&mut self.state.static_prefs.import_resolution, ImportResolution::Replace, text.import_resolution(ImportResolution::Replace));
+                                        ui.selectable_value(&mut self.state.static_prefs.import_resolution, ImportResolution::Merge, text.import_resolution(ImportResolution::Merge));
+                                        ui.selectable_value(&mut self.state.static_prefs.import_resolution, ImportResolution::KeepBoth, text.import_resolution(ImportResolution::KeepBoth));
                                     });
                                 ui.checkbox(
-                                    &mut self.state.always_replace_on_update,
+                                    &mut self.state.static_prefs.always_replace_on_update,
                                     text.always_replace_on_updating_mods(),
                                 );
                             });
-                            if self.state.import_resolution != import_resolution
-                                || self.state.always_replace_on_update != always_replace_on_update
+                            if self.state.static_prefs.import_resolution != import_resolution
+                                || self.state.static_prefs.always_replace_on_update != always_replace_on_update
                             {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
                             static_label(ui, text.when_deleting_mod());
                             ui.add_space(-4.0);
-                            let delete_behavior = self.state.delete_behavior;
+                            let delete_behavior = self.state.static_prefs.delete_behavior;
                             egui::ComboBox::from_id_salt("delete_behavior")
                                 .selected_text(text.delete_behavior(delete_behavior))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.delete_behavior, DeleteBehavior::RecycleBin, text.delete_behavior(DeleteBehavior::RecycleBin));
-                                    ui.selectable_value(&mut self.state.delete_behavior, DeleteBehavior::Permanent, text.delete_behavior(DeleteBehavior::Permanent));
+                                    ui.selectable_value(&mut self.state.static_prefs.delete_behavior, DeleteBehavior::RecycleBin, text.delete_behavior(DeleteBehavior::RecycleBin));
+                                    ui.selectable_value(&mut self.state.static_prefs.delete_behavior, DeleteBehavior::Permanent, text.delete_behavior(DeleteBehavior::Permanent));
                                 });
-                            if self.state.delete_behavior != delete_behavior { should_save = true; }
+                            if self.state.static_prefs.delete_behavior != delete_behavior { should_save = true; }
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
@@ -2699,6 +2699,7 @@ impl HestiaApp {
 
                             let invalid = self
                                 .state
+                                .static_prefs
                                 .modded_launcher_path_override
                                 .as_ref()
                                 .map_or(true, |path| !path.is_file());
@@ -2728,6 +2729,7 @@ impl HestiaApp {
 
                                 let current_launcher_value = self
                                     .state
+                                    .static_prefs
                                     .modded_launcher_path_override
                                     .as_ref()
                                     .map(|path| path.to_string_lossy().to_string())
@@ -2777,9 +2779,9 @@ impl HestiaApp {
                                     && ui.input(|i| i.key_pressed(egui::Key::Enter))
                                     && launcher_dirty;
                                 if launcher_dirty && (action_clicked || submit_with_enter) {
-                                    self.state.modded_launcher_path_override =
+                                    self.state.static_prefs.modded_launcher_path_override =
                                         non_empty(launcher_value).map(PathBuf::from);
-                                    if let Some(path) = self.state.modded_launcher_path_override.clone() {
+                                    if let Some(path) = self.state.static_prefs.modded_launcher_path_override.clone() {
                                         for game in &mut self.state.games {
                                             game.modded_exe_path_override = Some(path.clone());
                                             game.mods_path_override = default_mods_path_from_launcher(
@@ -2803,7 +2805,7 @@ impl HestiaApp {
                                         .add_filter(text.file_filter_executable(), &["exe"])
                                         .pick_file()
                                     {
-                                        self.state.modded_launcher_path_override = Some(path.clone());
+                                        self.state.static_prefs.modded_launcher_path_override = Some(path.clone());
                                         for game in &mut self.state.games {
                                             game.modded_exe_path_override = Some(path.clone());
                                             game.mods_path_override = default_mods_path_from_launcher(
@@ -2827,9 +2829,9 @@ impl HestiaApp {
                             ui.add_space(-4.0);
                             ui.horizontal(|ui| {
                                 ui.add_space(4.0);
-                                let was_using_default_mods_path = self.state.use_default_mods_path;
-                                if ui.checkbox(&mut self.state.use_default_mods_path, text.path_use_default_xxmi_mod_path()).changed() {
-                                    if was_using_default_mods_path && !self.state.use_default_mods_path {
+                                let was_using_default_mods_path = self.state.static_prefs.use_default_mods_path;
+                                if ui.checkbox(&mut self.state.static_prefs.use_default_mods_path, text.path_use_default_xxmi_mod_path()).changed() {
+                                    if was_using_default_mods_path && !self.state.static_prefs.use_default_mods_path {
                                         for game in self.state.games.iter_mut().filter(|game| game.enabled) {
                                             if game.mods_path_override.is_none() {
                                                 game.mods_path_override = game.mods_path(was_using_default_mods_path);
@@ -3027,9 +3029,9 @@ impl HestiaApp {
                                                 ui.add_space(3.0);
                                             }
 
-                                            if game.enabled && !self.state.use_default_mods_path {
+                                            if game.enabled && !self.state.static_prefs.use_default_mods_path {
                                                 let mods_invalid = game
-                                                    .mods_path(self.state.use_default_mods_path)
+                                                    .mods_path(self.state.static_prefs.use_default_mods_path)
                                                     .map(|path| !path.is_dir())
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
@@ -3055,7 +3057,7 @@ impl HestiaApp {
                                                         game.definition.id.as_str(),
                                                     ));
                                                     let current_path_value = game
-                                                        .mods_path(self.state.use_default_mods_path)
+                                                        .mods_path(self.state.static_prefs.use_default_mods_path)
                                                         .map(|path| path.to_string_lossy().to_string())
                                                         .unwrap_or_default();
                                                     let mut path_value = ui
@@ -3152,20 +3154,20 @@ impl HestiaApp {
                         ui.indent("setting_general_interface", |ui| {
                             static_label(ui, text.language());
                             ui.add_space(-4.0);
-                            let previous_language = self.state.language;
+                            let previous_language = self.state.static_prefs.language;
                             egui::ComboBox::from_id_salt("app_language")
-                                .selected_text(self.state.language.native_label())
+                                .selected_text(self.state.static_prefs.language.native_label())
                                 .show_ui(ui, |ui| {
                                     for language in AppLanguage::ALL {
                                         ui.selectable_value(
-                                            &mut self.state.language,
+                                            &mut self.state.static_prefs.language,
                                             language,
                                             language.native_label(),
                                         )
                                         .on_hover_text(language.label());
                                     }
                                 });
-                            if self.state.language != previous_language {
+                            if self.state.static_prefs.language != previous_language {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
@@ -3173,24 +3175,24 @@ impl HestiaApp {
                             if classic_font_style_available() {
                                 static_label(ui, text.font_style());
                                 ui.add_space(-4.0);
-                                let previous_font_style = self.state.font_style;
+                                let previous_font_style = self.state.static_prefs.font_style;
                                 ui.horizontal(|ui| {
                                     ui.radio_value(
-                                        &mut self.state.font_style,
+                                        &mut self.state.static_prefs.font_style,
                                         AppFontStyle::Classic,
                                         text.font_classic(),
                                     )
                                     .on_hover_text(text.font_classic_tooltip());
                                     ui.add_space(12.0);
                                     ui.radio_value(
-                                        &mut self.state.font_style,
+                                        &mut self.state.static_prefs.font_style,
                                         AppFontStyle::Modern,
                                         text.font_modern(),
                                     )
                                     .on_hover_text(text.font_modern_tooltip());
                                 });
-                                if self.state.font_style != previous_font_style {
-                                    install_app_fonts(ctx, self.state.font_style);
+                                if self.state.static_prefs.font_style != previous_font_style {
+                                    install_app_fonts(ctx, self.state.static_prefs.font_style);
                                     should_save = true;
                                 }
                                 ui.add_space(8.0);
@@ -3203,16 +3205,16 @@ impl HestiaApp {
                         ui.indent("setting_advanced_nsfw", |ui| {
                             static_label(ui, text.hide_unsafe_contents());
                             ui.add_space(-4.0);
-                            let unsafe_mode = self.state.unsafe_content_mode;
+                            let unsafe_mode = self.state.static_prefs.unsafe_content_mode;
                             egui::ComboBox::from_id_salt("unsafe_content_mode")
                                 .selected_text(text.unsafe_content_mode(unsafe_mode))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.unsafe_content_mode, UnsafeContentMode::HideNoCounter, text.unsafe_content_mode(UnsafeContentMode::HideNoCounter));
-                                    ui.selectable_value(&mut self.state.unsafe_content_mode, UnsafeContentMode::HideShowCounter, text.unsafe_content_mode(UnsafeContentMode::HideShowCounter));
-                                    ui.selectable_value(&mut self.state.unsafe_content_mode, UnsafeContentMode::Censor, text.unsafe_content_mode(UnsafeContentMode::Censor));
-                                    ui.selectable_value(&mut self.state.unsafe_content_mode, UnsafeContentMode::Show, text.unsafe_content_mode(UnsafeContentMode::Show));
+                                    ui.selectable_value(&mut self.state.static_prefs.unsafe_content_mode, UnsafeContentMode::HideNoCounter, text.unsafe_content_mode(UnsafeContentMode::HideNoCounter));
+                                    ui.selectable_value(&mut self.state.static_prefs.unsafe_content_mode, UnsafeContentMode::HideShowCounter, text.unsafe_content_mode(UnsafeContentMode::HideShowCounter));
+                                    ui.selectable_value(&mut self.state.static_prefs.unsafe_content_mode, UnsafeContentMode::Censor, text.unsafe_content_mode(UnsafeContentMode::Censor));
+                                    ui.selectable_value(&mut self.state.static_prefs.unsafe_content_mode, UnsafeContentMode::Show, text.unsafe_content_mode(UnsafeContentMode::Show));
                                 });
-                            if self.state.unsafe_content_mode != unsafe_mode { should_save = true; }
+                            if self.state.static_prefs.unsafe_content_mode != unsafe_mode { should_save = true; }
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
@@ -3222,21 +3224,21 @@ impl HestiaApp {
                             self.refresh_usage_counters_if_needed(ui.input(|i| i.time));
                             static_label(ui, text.cache_size());
                             ui.add_space(-4.0);
-                            let previous_tier = self.state.cache_size_tier;
+                            let previous_tier = self.state.static_prefs.cache_size_tier;
                             egui::ComboBox::from_id_salt("cache_size_tier")
-                                .selected_text(self.state.cache_size_tier.label())
+                                .selected_text(self.state.static_prefs.cache_size_tier.label())
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.cache_size_tier, CacheSizeTier::Gb2, "2 GB");
-                                    ui.selectable_value(&mut self.state.cache_size_tier, CacheSizeTier::Gb4, "4 GB");
-                                    ui.selectable_value(&mut self.state.cache_size_tier, CacheSizeTier::Gb8, "8 GB");
-                                    ui.selectable_value(&mut self.state.cache_size_tier, CacheSizeTier::Gb16, "16 GB");
+                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb2, "2 GB");
+                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb4, "4 GB");
+                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb8, "8 GB");
+                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb16, "16 GB");
                                 });
-                            if self.state.cache_size_tier != previous_tier {
+                            if self.state.static_prefs.cache_size_tier != previous_tier {
                                 self.cache_limit_bytes
-                                    .store(self.state.cache_size_tier.bytes(), Ordering::Relaxed);
+                                    .store(self.state.static_prefs.cache_size_tier.bytes(), Ordering::Relaxed);
                                 let _ = persistence::evict_lru_if_needed(
                                     &self.portable,
-                                    self.state.cache_size_tier.bytes(),
+                                    self.state.static_prefs.cache_size_tier.bytes(),
                                 );
                                 self.mark_usage_counters_dirty();
                                 should_save = true;
@@ -3269,7 +3271,7 @@ impl HestiaApp {
                                 match self.clear_archives() {
                                     Ok(count) => {
                                         if count > 0 {
-                                            let action = text.archive_delete_action(self.state.delete_behavior);
+                                            let action = text.archive_delete_action(self.state.static_prefs.delete_behavior);
                                             self.log_action(action, &text.archived_mods_count(count));
                                             self.set_message_ok(text.archives_cleared(count));
                                         } else {
@@ -3349,7 +3351,7 @@ impl HestiaApp {
                             ui.add_space(-6.0);
                             if ui
                                 .checkbox(
-                                    &mut self.state.automatically_check_for_update,
+                                    &mut self.state.static_prefs.automatically_check_for_update,
                                     text.automatically_check_for_update(),
                                 )
                                 .changed()

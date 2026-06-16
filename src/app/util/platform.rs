@@ -336,7 +336,7 @@ fn prepare_initial_window_placement(
     cc: &eframe::CreationContext<'_>,
     state: &AppState,
 ) {
-    if !state.window_maximized {
+    if !state.static_prefs.window_maximized {
         return;
     }
 
@@ -360,7 +360,7 @@ fn prepare_initial_window_placement(
         }
     }
 
-    if let (Some([x, y]), Some([w, h])) = (state.window_pos, state.window_size) {
+    if let (Some([x, y]), Some([w, h])) = (state.static_prefs.window_pos, state.static_prefs.window_size) {
         placement.rcNormalPosition = RECT {
             left: x.round() as i32,
             top: y.round() as i32,

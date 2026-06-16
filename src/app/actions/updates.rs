@@ -511,8 +511,8 @@ impl HestiaApp {
         }
         self.pending_update_check_game = None;
         let mut items = Vec::with_capacity(self.state.mods.len());
-        let update_check_statuses = self.state.update_check_statuses;
-        let modified_update_behavior = self.state.modified_update_behavior;
+        let update_check_statuses = self.state.static_prefs.update_check_statuses;
+        let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
         let mut state_changed_without_fetch = false;
         for mod_entry in &mut self.state.mods {
             if let Some(id) = target_game_id {
@@ -677,12 +677,12 @@ impl HestiaApp {
                     }
                     let modified_update_available = Self::has_modified_update_available(mod_entry);
                     let auto_update_allowed = mod_entry.update_state == ModUpdateState::UpdateAvailable
-                        || (self.state.modified_update_behavior == ModifiedUpdateBehavior::Yes
+                        || (self.state.static_prefs.modified_update_behavior == ModifiedUpdateBehavior::Yes
                             && modified_update_available);
                     let should_auto_apply = !fetch_failed
                         && auto_update_allowed
                         && !has_pending_update_finalization
-                        && Self::status_target_enabled(&mod_entry.status, self.state.auto_update_statuses)
+                        && Self::status_target_enabled(&mod_entry.status, self.state.static_prefs.auto_update_statuses)
                         && !active_update_tasks.contains(&(
                             text.updating_task(
                                 mod_entry
@@ -763,7 +763,7 @@ impl HestiaApp {
     }
 
     fn should_auto_replace_update(&self, job_id: u64) -> bool {
-        if self.state.always_replace_on_update {
+        if self.state.static_prefs.always_replace_on_update {
             return true;
         }
         let _ = job_id;
@@ -771,7 +771,7 @@ impl HestiaApp {
     }
 
     fn configured_existing_target_choice(&self) -> Option<ConflictChoice> {
-        match self.state.import_resolution {
+        match self.state.static_prefs.import_resolution {
             ImportResolution::Ask => None,
             ImportResolution::Replace => Some(ConflictChoice::Replace),
             ImportResolution::Merge => Some(ConflictChoice::Merge),
@@ -886,11 +886,11 @@ impl HestiaApp {
             StartupPathTargetKind::Xxmi => {
                 if self
                     .state
-                    .modded_launcher_path_override
+                    .static_prefs.modded_launcher_path_override
                     .as_ref()
                     .is_none_or(|path| !path.is_file())
                 {
-                    self.state.modded_launcher_path_override = Some(path.clone());
+                    self.state.static_prefs.modded_launcher_path_override = Some(path.clone());
                     changed = true;
                 }
                 for game in &mut self.state.games {
@@ -992,7 +992,7 @@ impl HestiaApp {
         for (kind, path) in paths_to_apply {
             match kind {
                 StartupPathTargetKind::Xxmi => {
-                    self.state.modded_launcher_path_override = Some(path.clone());
+                    self.state.static_prefs.modded_launcher_path_override = Some(path.clone());
                     for game in &mut self.state.games {
                         game.modded_exe_path_override = Some(path.clone());
                         game.mods_path_override =
@@ -1010,7 +1010,7 @@ impl HestiaApp {
                                     .is_some_and(|path| path.is_file())
                         })
                         .filter_map(|game| {
-                            let mods_path = game.mods_path(self.state.use_default_mods_path)?;
+                            let mods_path = game.mods_path(self.state.static_prefs.use_default_mods_path)?;
                             fs::create_dir_all(&mods_path)
                                 .err()
                                 .map(|err| (mods_path, err))
@@ -1065,7 +1065,7 @@ impl HestiaApp {
         let request = RefreshRequest {
             game_id: game_id.clone(),
             games: self.state.games.clone(),
-            use_default_mods_path: self.state.use_default_mods_path,
+            use_default_mods_path: self.state.static_prefs.use_default_mods_path,
             existing_mods: self.state.mods.clone(),
         };
         if self.refresh_request_tx.send(request).is_ok() {
@@ -1330,7 +1330,7 @@ impl HestiaApp {
         }
 
         if let Some(id) = primary_id {
-            match self.state.after_install_behavior {
+            match self.state.static_prefs.after_install_behavior {
                 AfterInstallBehavior::DoNothing => {}
                 AfterInstallBehavior::AddToSelection => {
                     self.selected_mods.insert(id.clone());

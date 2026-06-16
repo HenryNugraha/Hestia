@@ -6,7 +6,7 @@ impl HestiaApp {
         runtime_services: RuntimeServices,
         startup_path_scan_due: bool,
     ) -> Self {
-        install_app_fonts(&cc.egui_ctx, state.font_style);
+        install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
         let (icon_request_tx, icon_request_rx) = tokio_mpsc::unbounded_channel::<IconRequest>();
         let (icon_result_tx, icon_result_rx) = tokio_mpsc::unbounded_channel::<IconResult>();
@@ -16,7 +16,7 @@ impl HestiaApp {
         let (mod_image_result_tx, mod_image_result_rx) = tokio_mpsc::unbounded_channel::<LocalModImageResult>();
         let (manual_image_event_tx, manual_image_event_rx) =
             tokio_mpsc::unbounded_channel::<ManualImageEvent>();
-        let cache_limit_bytes = Arc::new(AtomicU64::new(state.cache_size_tier.bytes()));
+        let cache_limit_bytes = Arc::new(AtomicU64::new(state.static_prefs.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
             &runtime_services,
             portable.clone(),
@@ -125,11 +125,11 @@ impl HestiaApp {
         let tasks_window_nonce = if state.show_tasks { 1 } else { 0 };
         let tasks_force_default_pos = state.show_tasks;
         let window_state_cache = Some(WindowStateSnapshot {
-            pos: state.window_pos,
-            size: state.window_size,
-            maximized: state.window_maximized,
+            pos: state.static_prefs.window_pos,
+            size: state.static_prefs.window_size,
+            maximized: state.static_prefs.window_maximized,
         });
-        let window_was_maximized = state.window_maximized;
+        let window_was_maximized = state.static_prefs.window_maximized;
         prepare_initial_window_placement(cc, &state);
         let next_job_id = state
             .tasks
@@ -806,7 +806,7 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
-        let global_modded_needs = match state.modded_launcher_path_override.as_ref() {
+        let global_modded_needs = match state.static_prefs.modded_launcher_path_override.as_ref() {
             Some(path) => !path.is_file(),
             None => true,
         };
@@ -819,12 +819,12 @@ impl HestiaApp {
                 .or_else(|| pick_most_recent_existing(&shortcut_candidates))
                 .or_else(|| pick_most_recent_existing(&fallback_candidates))
             {
-                state.modded_launcher_path_override = Some(path);
+                state.static_prefs.modded_launcher_path_override = Some(path);
                 changed = true;
             }
         }
 
-        let use_default_mods_path = state.use_default_mods_path;
+        let use_default_mods_path = state.static_prefs.use_default_mods_path;
         for game in &mut state.games {
             changed |= Self::auto_detect_single_game_paths(
                 game,
@@ -854,6 +854,7 @@ impl HestiaApp {
 
     fn startup_path_scan_targets(state: &AppState, include_all: bool) -> Vec<StartupPathScanTarget> {
         let xxmi_existing = state
+            .static_prefs
             .modded_launcher_path_override
             .as_ref()
             .filter(|path| path.is_file())
@@ -861,6 +862,7 @@ impl HestiaApp {
             .into_iter()
             .collect::<Vec<_>>();
         let has_missing_xxmi = state
+            .static_prefs
             .modded_launcher_path_override
             .as_ref()
             .is_none_or(|path| !path.is_file());
@@ -921,7 +923,7 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
-        let global_modded_needs = match self.state.modded_launcher_path_override.as_ref() {
+        let global_modded_needs = match self.state.static_prefs.modded_launcher_path_override.as_ref() {
             Some(path) => !path.is_file(),
             None => true,
         };
@@ -934,7 +936,7 @@ impl HestiaApp {
                 .or_else(|| pick_most_recent_existing(&shortcut_candidates))
                 .or_else(|| pick_most_recent_existing(&fallback_candidates))
             {
-                self.state.modded_launcher_path_override = Some(path);
+                self.state.static_prefs.modded_launcher_path_override = Some(path);
                 changed = true;
             }
         }
@@ -949,7 +951,7 @@ impl HestiaApp {
                 game,
                 xxmi_config.as_ref(),
                 &xxmi_launcher_candidates,
-                self.state.use_default_mods_path,
+                self.state.static_prefs.use_default_mods_path,
             );
         }
 
@@ -1056,6 +1058,7 @@ impl HestiaApp {
         }
         let Some(path) = (if modded {
             self.state
+                .static_prefs
                 .modded_launcher_path_override
                 .clone()
                 .or_else(|| game.modded_exe_path())
@@ -1087,7 +1090,7 @@ impl HestiaApp {
                 let text = self.text();
                 let label = if modded { text.modded() } else { text.vanilla() };
                 self.set_message_ok(text.launched_game_mode(&game.definition.name, label));
-                Self::apply_launch_behavior(ctx, self.state.launch_behavior);
+                Self::apply_launch_behavior(ctx, self.state.static_prefs.launch_behavior);
             }
             Err(err) => self.report_error(err, Some(self.text().launch_failed())),
         }
@@ -1132,6 +1135,7 @@ impl HestiaApp {
             Self::game_install_is_configured(game)
                 && self
                     .state
+                    .static_prefs
                     .modded_launcher_path_override
                     .as_ref()
                     .or_else(|| game.modded_exe_path_override.as_ref())
@@ -1178,10 +1182,10 @@ impl HestiaApp {
                 if !self.show_enabled_mods && item.status == ModStatus::Active {
                     return false;
                 }
-                if self.state.hide_disabled && item.status == ModStatus::Disabled {
+                if self.state.static_prefs.hide_disabled && item.status == ModStatus::Disabled {
                     return false;
                 }
-                if self.state.hide_archived && item.status == ModStatus::Archived {
+                if self.state.static_prefs.hide_archived && item.status == ModStatus::Archived {
                     return false;
                 }
                 if !self.show_unlinked_mods && item.update_state == ModUpdateState::Unlinked {
@@ -1228,7 +1232,7 @@ impl HestiaApp {
                     return false;
                 }
                 if matches!(
-                    self.state.unsafe_content_mode,
+                    self.state.static_prefs.unsafe_content_mode,
                     UnsafeContentMode::HideNoCounter | UnsafeContentMode::HideShowCounter
                 ) && item.unsafe_content
                 {
@@ -1295,17 +1299,17 @@ impl HestiaApp {
         };
         mods.sort_by(|a, b| {
             let name_cmp = display_name(a).cmp(&display_name(b));
-            let status_cmp = if self.state.library_sort_status_first
+            let status_cmp = if self.state.static_prefs.library_sort_status_first
                 && matches!(
-                    self.state.library_group_mode,
+                    self.state.static_prefs.library_group_mode,
                     LibraryGroupMode::Category | LibraryGroupMode::None
                 ) {
                 a.status.cmp(&b.status)
             } else {
                 std::cmp::Ordering::Equal
             };
-            let category_cmp = if self.state.library_sort_category_first
-                && !matches!(self.state.library_group_mode, LibraryGroupMode::Category)
+            let category_cmp = if self.state.static_prefs.library_sort_category_first
+                && !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
             {
                 category_order(a)
                     .cmp(&category_order(b))
@@ -1327,7 +1331,7 @@ impl HestiaApp {
             } else {
                 std::cmp::Ordering::Equal
             };
-            let sort_cmp = match self.state.library_sort {
+            let sort_cmp = match self.state.static_prefs.library_sort {
                 LibrarySort::NameAsc => name_cmp,
                 LibrarySort::NameDesc => name_cmp.reverse(),
                 LibrarySort::DateDesc => sort_date(b)
@@ -1734,10 +1738,10 @@ impl HestiaApp {
         let snapshot = WindowStateSnapshot { pos, size, maximized };
         if self.window_state_cache != Some(snapshot) {
             if !maximized {
-                self.state.window_pos = pos;
-                self.state.window_size = size;
+                self.state.static_prefs.window_pos = pos;
+                self.state.static_prefs.window_size = size;
             }
-            self.state.window_maximized = maximized;
+            self.state.static_prefs.window_maximized = maximized;
             if now - self.window_state_last_save >= 0.5 {
                 self.save_state();
                 self.window_state_last_save = now;
@@ -2030,7 +2034,7 @@ impl HestiaApp {
             self.reset_browse_for_game(&game_id);
             let selected_mods_root = self
                 .selected_game()
-                .and_then(|game| game.mods_path(self.state.use_default_mods_path));
+                .and_then(|game| game.mods_path(self.state.static_prefs.use_default_mods_path));
             let _ = persistence::cleanup_orphan_tmp_files(
                 selected_mods_root.as_deref(),
                 &HashSet::new(),

@@ -679,7 +679,7 @@ impl HestiaApp {
 
     fn render_library_sort_menu_button(&mut self, ui: &mut Ui, alpha: u8, width: f32) {
         let text = self.text();
-        let button_label = text.library_sort_label(self.state.library_sort);
+        let button_label = text.library_sort_label(self.state.static_prefs.library_sort);
         let mut button_job = LayoutJob::default();
         button_job.append(
             &icon_char(Icon::ArrowDownNarrowWide).to_string(),
@@ -794,7 +794,7 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_sort_mods_heading());
                 ui.add_space(-2.0);
-                let mut selected_sort = self.state.library_sort;
+                let mut selected_sort = self.state.static_prefs.library_sort;
                 should_save |= Self::sort_menu_radio(
                     ui,
                     &mut selected_sort,
@@ -823,8 +823,8 @@ impl HestiaApp {
                     text.library_sort_label(LibrarySort::DateAsc),
                     Some(text.library_sort_oldest_tooltip()),
                 );
-                if selected_sort != self.state.library_sort {
-                    self.state.library_sort = selected_sort;
+                if selected_sort != self.state.static_prefs.library_sort {
+                    self.state.static_prefs.library_sort = selected_sort;
                 }
 
                 ui.add_space(2.0);
@@ -833,7 +833,7 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_group_mods_heading());
                 ui.add_space(-2.0);
-                let mut group_mode = self.state.library_group_mode;
+                let mut group_mode = self.state.static_prefs.library_group_mode;
                 should_save |= Self::sort_menu_radio(
                     ui,
                     &mut group_mode,
@@ -855,8 +855,8 @@ impl HestiaApp {
                     text.library_group_mode(LibraryGroupMode::None),
                     Some(text.library_group_none_tooltip()),
                 );
-                if group_mode != self.state.library_group_mode {
-                    self.state.library_group_mode = group_mode;
+                if group_mode != self.state.static_prefs.library_group_mode {
+                    self.state.static_prefs.library_group_mode = group_mode;
                 }
 
                 ui.add_space(2.0);
@@ -865,7 +865,7 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_category_layout_heading());
                 ui.add_space(-2.0);
-                if !matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                if !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
                     static_label(
                         ui,
                         RichText::new(text.library_available_when_grouped_by_category())
@@ -876,9 +876,9 @@ impl HestiaApp {
                     ui.add_space(-1.0);
                 }
                 ui.add_enabled_ui(
-                    matches!(self.state.library_group_mode, LibraryGroupMode::Category),
+                    matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
                     |ui| {
-                        let mut display_mode = self.state.library_category_display_mode;
+                        let mut display_mode = self.state.static_prefs.library_category_display_mode;
                         should_save |= Self::sort_menu_radio(
                             ui,
                             &mut display_mode,
@@ -895,8 +895,8 @@ impl HestiaApp {
                             ),
                             Some(text.library_category_list_tooltip()),
                         );
-                        if display_mode != self.state.library_category_display_mode {
-                            self.state.library_category_display_mode = display_mode;
+                        if display_mode != self.state.static_prefs.library_category_display_mode {
+                            self.state.static_prefs.library_category_display_mode = display_mode;
                         }
                     },
                 );
@@ -910,7 +910,7 @@ impl HestiaApp {
                 let selected_game_id = self
                     .selected_game()
                     .map(|game| game.definition.id.clone());
-                if !matches!(self.state.library_group_mode, LibraryGroupMode::Category) {
+                if !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
                     static_label(
                         ui,
                         RichText::new(text.library_available_when_grouped_by_category())
@@ -921,7 +921,7 @@ impl HestiaApp {
                     ui.add_space(-1.0);
                 }
                 ui.add_enabled_ui(
-                    matches!(self.state.library_group_mode, LibraryGroupMode::Category)
+                    matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
                         && selected_game_id.is_some(),
                     |ui| {
                         if let Some(game_id) = selected_game_id.as_deref() {
@@ -975,14 +975,14 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_miscellaneous_heading());
                 ui.add_space(-2.0);
-                let detail_changed = match self.state.library_group_mode {
+                let detail_changed = match self.state.static_prefs.library_group_mode {
                     LibraryGroupMode::Status => ui
-                        .checkbox(&mut self.state.library_sort_category_first, text.sort_by_category_first())
+                        .checkbox(&mut self.state.static_prefs.library_sort_category_first, text.sort_by_category_first())
                         .on_hover_text(text.library_sort_category_first_tooltip())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .changed(),
                     LibraryGroupMode::Category | LibraryGroupMode::None => ui
-                        .checkbox(&mut self.state.library_sort_status_first, text.sort_by_status_first())
+                        .checkbox(&mut self.state.static_prefs.library_sort_status_first, text.sort_by_status_first())
                         .on_hover_text(text.library_sort_status_first_tooltip())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .changed(),
@@ -990,18 +990,18 @@ impl HestiaApp {
                 should_save |= detail_changed;
 
                 let card_detail_changed = if matches!(
-                    self.state.library_group_mode,
+                    self.state.static_prefs.library_group_mode,
                     LibraryGroupMode::Category
                 ) {
                     ui.checkbox(
-                        &mut self.state.library_category_group_show_status,
+                        &mut self.state.static_prefs.library_category_group_show_status,
                         text.show_mod_status_on_card(),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .changed()
                 } else {
                     ui.checkbox(
-                        &mut self.state.library_status_group_show_category,
+                        &mut self.state.static_prefs.library_status_group_show_category,
                         text.show_category_on_card(),
                     )
                     .on_hover_text(text.show_category_on_card_tooltip())
@@ -1012,16 +1012,16 @@ impl HestiaApp {
 
                 ui.add_enabled_ui(
                     matches!(
-                        self.state.library_group_mode,
+                        self.state.static_prefs.library_group_mode,
                         LibraryGroupMode::Category
                     ) && matches!(
-                        self.state.library_category_display_mode,
+                        self.state.static_prefs.library_category_display_mode,
                         LibraryCategoryDisplayMode::GroupedSections
                     ),
                     |ui| {
                         should_save |= ui
                             .checkbox(
-                                &mut self.state.library_uncategorized_first,
+                                &mut self.state.static_prefs.library_uncategorized_first,
                                 text.show_uncategorized_mods_first(),
                             )
                             .on_hover_text(text.library_uncategorized_first_list_only_tooltip())
@@ -1784,7 +1784,7 @@ impl HestiaApp {
         if let Some(err) = last_err {
             if deleted_count > 0 {
                 let text = self.text();
-                let action = text.delete_action(self.state.delete_behavior);
+                let action = text.delete_action(self.state.static_prefs.delete_behavior);
                 self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
                 self.set_message_ok(text.action_count_message(action, deleted_count));
                 self.save_state();
@@ -1796,7 +1796,7 @@ impl HestiaApp {
 
         self.delete_category(category_id);
         let text = self.text();
-        let action = text.delete_action(self.state.delete_behavior);
+        let action = text.delete_action(self.state.static_prefs.delete_behavior);
         self.log_action(action, &format!("{category_name} folder and {deleted_count} mod(s)"));
         self.set_message_ok(text.category_action_count_message(action, &category_name, deleted_count));
         self.refresh();
@@ -3253,7 +3253,7 @@ impl HestiaApp {
                     ModStatus::Archived => has_archived = true,
                 }
                 if matches!(update_state, ModUpdateState::UpdateAvailable)
-                    || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                    || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                         && *modified_update_available)
                 {
                     has_update_eligible = true;
@@ -3325,8 +3325,8 @@ impl HestiaApp {
                                     .is_some_and(|pos| icon_area.contains(pos))
                         });
                         let visibility_filtered = !self.show_enabled_mods
-                            || self.state.hide_disabled
-                            || self.state.hide_archived
+                            || self.state.static_prefs.hide_disabled
+                            || self.state.static_prefs.hide_archived
                             || !self.show_unlinked_mods
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
@@ -3532,14 +3532,14 @@ impl HestiaApp {
                                 );
                                 if show_all {
                                     self.show_enabled_mods = true;
-                                    self.state.hide_disabled = false;
-                                    self.state.hide_archived = false;
+                                    self.state.static_prefs.hide_disabled = false;
+                                    self.state.static_prefs.hide_archived = false;
                                     self.selected_mods.clear();
                                     self.save_state();
                                 } else if hide_all {
                                     self.show_enabled_mods = false;
-                                    self.state.hide_disabled = true;
-                                    self.state.hide_archived = true;
+                                    self.state.static_prefs.hide_disabled = true;
+                                    self.state.static_prefs.hide_archived = true;
                                     self.selected_mods.clear();
                                     self.save_state();
                                 }
@@ -3550,23 +3550,23 @@ impl HestiaApp {
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
 
-                                let mut show_disabled = !self.state.hide_disabled;
+                                let mut show_disabled = !self.state.static_prefs.hide_disabled;
                                 let disabled_changed = ui
                                     .checkbox(&mut show_disabled, text.disabled_mods())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 if disabled_changed {
-                                    self.state.hide_disabled = !show_disabled;
+                                    self.state.static_prefs.hide_disabled = !show_disabled;
                                     self.save_state();
                                 }
 
-                                let mut show_archived = !self.state.hide_archived;
+                                let mut show_archived = !self.state.static_prefs.hide_archived;
                                 let archived_changed = ui
                                     .checkbox(&mut show_archived, text.archived_mods())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 if archived_changed {
-                                    self.state.hide_archived = !show_archived;
+                                    self.state.static_prefs.hide_archived = !show_archived;
                                     self.save_state();
                                 }
 
@@ -4029,7 +4029,7 @@ impl HestiaApp {
                                         }
                                     }
                                     
-                                    let hiding_nsfw = self.state.unsafe_content_mode == UnsafeContentMode::HideShowCounter;
+                                    let hiding_nsfw = self.state.static_prefs.unsafe_content_mode == UnsafeContentMode::HideShowCounter;
                                     if hiding_nsfw {
                                         if let Some(game) = self.selected_game() {
                                             let hidden_count = self.state.mods.iter().filter(|m| m.game_id == game.definition.id && m.unsafe_content).count();
@@ -4069,15 +4069,15 @@ impl HestiaApp {
         let left_padding = 12.0;
         let desired_right_gap = 4.0;
         let card_spacing = 8.0;
-        let library_group_mode = self.state.library_group_mode;
-        let uncategorized_first = self.state.library_uncategorized_first;
+        let library_group_mode = self.state.static_prefs.library_group_mode;
+        let uncategorized_first = self.state.static_prefs.library_uncategorized_first;
         let selected_game_id = self
             .selected_game()
             .map(|game| game.definition.id.clone())
             .unwrap_or_default();
         let category_sections = self.categories_for_game(&selected_game_id);
         let category_sort_mode = self.category_sort_mode_for_game(&selected_game_id);
-        let category_display_mode = self.state.library_category_display_mode;
+        let category_display_mode = self.state.static_prefs.library_category_display_mode;
         let mut selected_category_folder_id =
             self.selected_category_folder_id
                 .clone()
@@ -4251,7 +4251,7 @@ impl HestiaApp {
                             (ModStatus::Disabled, text.mod_status_label(&ModStatus::Disabled), status_color(&ModStatus::Disabled)),
                             (ModStatus::Archived, text.mod_status_label(&ModStatus::Archived), status_color(&ModStatus::Archived)),
                         ];
-                        let modified_update_behavior = self.state.modified_update_behavior;
+                        let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
                         let dragging_category_id = self.dragging_category_id.clone();
                         let dragging_category_target_index =
                             self.dragging_category_target_index;
@@ -4266,8 +4266,8 @@ impl HestiaApp {
                             self.category_rename_name.clone();
                         let library_filter_active = !self.mods_search_query.trim().is_empty()
                             || !self.show_enabled_mods
-                            || self.state.hide_disabled
-                            || self.state.hide_archived
+                            || self.state.static_prefs.hide_disabled
+                            || self.state.static_prefs.hide_archived
                             || !self.show_unlinked_mods
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
@@ -4861,7 +4861,7 @@ impl HestiaApp {
                                                                     |ui| {
                                                                         if *linked {
                                                                             if matches!(update_state, ModUpdateState::UpdateAvailable)
-                                                                                || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                                                                                || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                                                                     && *modified_update_available)
                                                                             {
                                                                                 ui.spacing_mut().button_padding.y = 4.0;
@@ -4955,13 +4955,13 @@ impl HestiaApp {
                                                                                     .selectable(false),
                                                                                 )
                                                                                 .on_hover_cursor(egui::CursorIcon::Default);
-                                                                                let category_grouped = matches!(self.state.library_group_mode, LibraryGroupMode::Category);
+                                                                                let category_grouped = matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category);
                                                                                 let show_status_on_card = category_grouped
-                                                                                    && self.state.library_category_group_show_status;
+                                                                                    && self.state.static_prefs.library_category_group_show_status;
                                                                                 let show_category_on_card = if category_grouped {
-                                                                                    !self.state.library_category_group_show_status
+                                                                                    !self.state.static_prefs.library_category_group_show_status
                                                                                 } else {
-                                                                                    self.state.library_status_group_show_category
+                                                                                    self.state.static_prefs.library_status_group_show_category
                                                                                 };
                                                                                 if show_category_on_card {
                                                                                     let clamped = &category_label_display != category_label;
@@ -5247,7 +5247,7 @@ impl HestiaApp {
                                             ui.add_space(-2.0);
                                             if *linked
                                                 && (matches!(update_state, ModUpdateState::UpdateAvailable)
-                                                    || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                                                    || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                                         && *modified_update_available))
                                             {
                                                 if ui
@@ -6744,7 +6744,7 @@ impl HestiaApp {
                     ui.horizontal_wrapped(|ui| {
                         let modified_update_available = Self::has_modified_update_available(&selected);
                         if matches!(selected.update_state, ModUpdateState::UpdateAvailable)
-                            || (self.state.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                            || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                 && modified_update_available)
                         {
                             let update_response = ui.add(
@@ -6760,7 +6760,7 @@ impl HestiaApp {
                                 paint_modified_update_badge(ui, text, update_response.rect);
                             }
                         }
-                        let use_default_path = self.state.use_default_mods_path;
+                        let use_default_path = self.state.static_prefs.use_default_mods_path;
                         match selected.status {
                             ModStatus::Active => {
                             if ui
@@ -7020,7 +7020,7 @@ impl HestiaApp {
                 ScrollArea::vertical().id_salt("my_mod_detail_scroll").show(ui, |ui| {
                     if false { ui.horizontal(|ui| {
                         ui.horizontal_wrapped(|ui| {
-                            let use_default_path = self.state.use_default_mods_path;
+                            let use_default_path = self.state.static_prefs.use_default_mods_path;
                             match selected.status {
                                 ModStatus::Active => {
                                     if ui.button(icon_text_sized(Icon::Ban, text.disable(), 13.0, 13.0)).clicked() {
@@ -7688,7 +7688,7 @@ impl HestiaApp {
                         && selected.metadata.extracted.text_sources.is_empty()
                         && !personal_note_editing;
                     let metadata_as_description = matches!(
-                        self.state.metadata_visibility,
+                        self.state.static_prefs.metadata_visibility,
                         MetadataVisibility::OnlyIfNoDescription
                     ) && !has_description
                         && (extracted_markdown.is_some() || personal_note_editing);
@@ -7702,7 +7702,7 @@ impl HestiaApp {
                             }
                             if can_add_personal_note
                                 && !matches!(
-                                    self.state.metadata_visibility,
+                                    self.state.static_prefs.metadata_visibility,
                                     MetadataVisibility::Always
                                 )
                             {
@@ -7715,7 +7715,7 @@ impl HestiaApp {
                             }
                             if personal_note_editing
                                 && !matches!(
-                                    self.state.metadata_visibility,
+                                    self.state.static_prefs.metadata_visibility,
                                     MetadataVisibility::Always
                                 )
                             {
@@ -7736,7 +7736,7 @@ impl HestiaApp {
                             }
                         });
                         if personal_note_editing
-                            && !matches!(self.state.metadata_visibility, MetadataVisibility::Always)
+                            && !matches!(self.state.static_prefs.metadata_visibility, MetadataVisibility::Always)
                         {
                             self.render_personal_note_editor(ui, &selected.id);
                         } else {
@@ -7747,7 +7747,7 @@ impl HestiaApp {
                         }
                     }
                     
-                    let show_metadata = match self.state.metadata_visibility {
+                    let show_metadata = match self.state.static_prefs.metadata_visibility {
                         MetadataVisibility::Never => false,
                         MetadataVisibility::OnlyIfNoDescription => !has_description,
                         MetadataVisibility::Always => true,
@@ -7758,7 +7758,7 @@ impl HestiaApp {
                             || personal_note_editing
                             || (can_add_personal_note
                                 && matches!(
-                                    self.state.metadata_visibility,
+                                    self.state.static_prefs.metadata_visibility,
                                     MetadataVisibility::Always
                                 )))
                     {
@@ -8046,7 +8046,7 @@ impl HestiaApp {
                                     }
                                 } else if can_add_personal_note
                                     && matches!(
-                                        self.state.metadata_visibility,
+                                        self.state.static_prefs.metadata_visibility,
                                         MetadataVisibility::Always
                                     )
                                 {

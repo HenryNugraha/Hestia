@@ -2936,7 +2936,7 @@ impl TextCatalog {
 
 impl HestiaApp {
     fn text(&self) -> TextCatalog {
-        TextCatalog::new(self.state.language)
+        TextCatalog::new(self.state.static_prefs.language)
     }
 }
 
