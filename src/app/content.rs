@@ -1,9 +1,9 @@
 use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 
-// l10n order: English, Bahasa Indonesia, Simplified Chinese.
+// l10n order: English, Bahasa Indonesia, Simplified Chinese, Russian.
 // Add empty string "" to skip a language.
 
-pub(crate) const WHATS_NEW_DATE: L10n = l10n("15 June 2026", "15 Juni 2026", "2026年 6月 15日");
+pub(crate) const WHATS_NEW_DATE: L10n = l10n("15 June 2026", "15 Juni 2026", "2026年 6月 15日", "15 июня 2026");
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
         concat!(
@@ -17,6 +17,10 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
         concat!(
             "新增印度尼西亚语和简体中文翻译\n",
             "▸ 设置 > 高级 > 外观 > 语言"
+        ),
+        concat!(
+            "Добавлен перевод приложения на русский язык\n",
+            "▸ Настройки > Дополнительно > Внешний вид > Язык"
         ),
     ),
     l10n(
@@ -32,18 +36,23 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
             "为 mod 标题和描述添加了实验性翻译按钮\n",
             "▸ 服务器不稳定，速度可能会非常慢"
         ),
+        concat!(
+            "Добавлена экспериментальная кнопка перевода названия и описания мода\n",
+            "▸ Сервер нестабилен и может быть ОЧЕНЬ медленным"
+        ),
     ),
     l10n(
         "Added support for resuming downloads",
         "Menambahkan dukungan untuk melanjutkan unduhan",
         "新增支持断点续传功能",
+        "Добавлена поддержка возобновления загрузок",
     ),
 ];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;
 pub(crate) const FEEDBACK_SURVEY_TITLE: L10n =
-    l10n("Quick Feedback", "Survey Singkat", "小调查");
+    l10n("Quick Feedback", "Survey Singkat", "小调查", "Быстрый отзыв");
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
         "language_indonesia_quality",
@@ -51,12 +60,13 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
             "If using INDONESIAN localization: How do you like it?",
             "Jika pakai BAHASA INDONESIA: Bagaimana menurutmu?",
             "如果你用印度尼西亚语：你觉得怎么样？",
+            "Если используете ИНДОНЕЗИЙСКУЮ локализацию: как она вам?",
         ),
         &[
-            a(1, l10n("Great", "Bagus", "很好")),
-            a(2, l10n("Okay", "Biasa", "还行")),
-            a(3, l10n("Poor", "Buruk", "不好")),
-            a(4, l10n("Not using it", "Tidak pakai", "没在用")),
+            a(1, l10n("Great", "Bagus", "很好", "Отлично")),
+            a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
+            a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
+            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
         ],
     ),
     q(
@@ -65,12 +75,13 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
             "If using CHINESE localization: How do you like it?",
             "Jika pakai MANDARIN: Bagaimana menurutmu?",
             "如果你使用中文版：你觉得怎么样？",
+            "Если используете КИТАЙСКУЮ локализацию: как она вам?",
         ),
         &[
-            a(1, l10n("Great", "Bagus", "很好")),
-            a(2, l10n("Okay", "Biasa", "还行")),
-            a(3, l10n("Poor", "Buruk", "不好")),
-            a(4, l10n("Not using it", "Tidak pakai", "没在用")),
+            a(1, l10n("Great", "Bagus", "很好", "Отлично")),
+            a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
+            a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
+            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
         ],
     ),
 ];
@@ -78,4 +89,5 @@ pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: L10n = l10n(
     "Feature requests? Issues? Let me know!",
     "Permintaan fitur? Masalah? Infokan aja!",
     "有功能建议或遇到了问题？告诉我！（最好用英文）",
+    "Пожелания к функциям? Проблемы? Сообщите мне!",
 );

@@ -225,13 +225,15 @@ pub(crate) struct L10n {
     pub en_us: &'static str,
     pub id_id: &'static str,
     pub zh_cn: &'static str,
+    pub ru_ru: &'static str,
 }
 
-pub(crate) const fn l10n(en_us: &'static str, id_id: &'static str, zh_cn: &'static str) -> L10n {
+pub(crate) const fn l10n(en_us: &'static str, id_id: &'static str, zh_cn: &'static str, ru_ru: &'static str) -> L10n {
     L10n {
         en_us,
         id_id,
         zh_cn,
+        ru_ru,
     }
 }
 
@@ -240,6 +242,7 @@ impl L10n {
         let localized = match language {
             AppLanguage::Indonesian => self.id_id,
             AppLanguage::ChineseSimplified => self.zh_cn,
+            AppLanguage::Russian => self.ru_ru,
             AppLanguage::English => self.en_us,
         };
 
@@ -574,16 +577,18 @@ pub enum AppLanguage {
     English,
     Indonesian,
     ChineseSimplified,
+    Russian,
 }
 
 impl AppLanguage {
-    pub const ALL: [Self; 3] = [Self::English, Self::Indonesian, Self::ChineseSimplified];
+    pub const ALL: [Self; 4] = [Self::English, Self::Indonesian, Self::ChineseSimplified, Self::Russian];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
             Self::Indonesian => "Indonesian",
             Self::ChineseSimplified => "Chinese (Simplified)",
+            Self::Russian => "Russian",
         }
     }
 
@@ -592,6 +597,7 @@ impl AppLanguage {
             Self::English => "English",
             Self::Indonesian => "Bahasa Indonesia",
             Self::ChineseSimplified => "简体中文",
+            Self::Russian => "Русский",
         }
     }
 
@@ -619,6 +625,12 @@ impl AppLanguage {
             || language.starts_with("in-")
         {
             return Some(Self::Indonesian);
+        }
+        if language == "ru"
+            || language == "ru-ru"
+            || language.starts_with("ru-")
+        {
+            return Some(Self::Russian);
         }
         None
     }
@@ -1821,21 +1833,21 @@ pub fn seeded_games() -> Vec<GameInstall> {
 mod feedback_survey_tests {
     use super::*;
 
-    const SURVEY_TITLE: L10n = l10n("Survey", "Survey", "Survey");
-    const SURVEY_MESSAGE_LABEL: L10n = l10n("Anything else?", "Anything else?", "Anything else?");
+    const SURVEY_TITLE: L10n = l10n("Survey", "Survey", "Survey", "Survey");
+    const SURVEY_MESSAGE_LABEL: L10n = l10n("Anything else?", "Anything else?", "Anything else?", "Anything else?");
     const ANSWERS: &[ContentSurveyAnswer] = &[
         ContentSurveyAnswer {
             id: 1,
-            label: l10n("Yes", "Yes", "Yes"),
+            label: l10n("Yes", "Yes", "Yes", "Yes"),
         },
         ContentSurveyAnswer {
             id: 2,
-            label: l10n("No", "No", "No"),
+            label: l10n("No", "No", "No", "No"),
         },
     ];
     const QUESTIONS: &[ContentSurveyQuestion] = &[ContentSurveyQuestion {
         id: "q1",
-        prompt: l10n("Question?", "Question?", "Question?"),
+        prompt: l10n("Question?", "Question?", "Question?", "Question?"),
         answers: ANSWERS,
     }];
     const SURVEY: SurveyDefinition = SurveyDefinition {

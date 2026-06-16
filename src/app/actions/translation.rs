@@ -32,6 +32,7 @@ impl HestiaApp {
             AppLanguage::English => "en",
             AppLanguage::Indonesian => "id",
             AppLanguage::ChineseSimplified => "cn",
+            AppLanguage::Russian => "ru",
         };
 
         // Check if already in flight
@@ -110,6 +111,7 @@ impl HestiaApp {
             AppLanguage::English => "en",
             AppLanguage::Indonesian => "id",
             AppLanguage::ChineseSimplified => "cn",
+            AppLanguage::Russian => "ru",
         };
 
         // Check if already in flight

@@ -608,6 +608,7 @@ impl TextKey {
 include!("i18n/en_us.rs");
 include!("i18n/id_id.rs");
 include!("i18n/zh_cn.rs");
+include!("i18n/ru_ru.rs");
 
 impl TextCatalog {
     fn new(language: AppLanguage) -> Self {
@@ -620,6 +621,7 @@ impl TextCatalog {
             AppLanguage::English => EN_US[index],
             AppLanguage::Indonesian => ID_ID[index],
             AppLanguage::ChineseSimplified => ZH_CN[index],
+            AppLanguage::Russian => RU_RU[index],
         }
     }
 
