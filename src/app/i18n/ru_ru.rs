@@ -11,9 +11,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Напомнить позже", // FeedbackSurveyRemindLater
     "Пропустить эту версию", // FeedbackSurveySkipVersion
     "Больше не спрашивать", // FeedbackSurveyNeverAskAgain
-    "Подробнее о конфиденциальности", // FeedbackSurveyPrivacyDetails
-    "Отзыв отправляется анонимно.\nНевозможно определить или связаться с отправителем.\nРезультаты голосований могут быть опубликованы публично, но сообщения остаются приватными.\nНа сервер опроса будет отправлен только следующий набор данных:", // FeedbackSurveyPrivacyCopy
-    "• Клиент: SHA-256 хэш случайно созданного UUID из файла hestia.toml\n• URL сервера и базы данных: {server_url}\n• Геолокация сервера: Asia Pacific", // FeedbackSurveyPrivacyPayload
+    "Сведения о конфиденциальности", // FeedbackSurveyPrivacyDetails
+    "Отзыв отправляется анонимно.\nНевозможно идентифицировать отправителей или связаться с ними.\nРезультаты голосования могут быть опубликованы, но сообщения остаются приватными.\nНа сервер опроса будет отправлен только следующий набор данных:", // FeedbackSurveyPrivacyCopy
+    "• Клиент: SHA-256-хеш случайно созданного UUID из файла hestia.toml\n• URL сервера и базы данных: {server_url}\n• Геолокация сервера: Азиатско-Тихоокеанский регион", // FeedbackSurveyPrivacyPayload
     "Результаты опроса можно посмотреть здесь:", // FeedbackSurveyResultsHeader
     "• Текущий: ", // FeedbackSurveyResultsOngoing
     "• Предыдущий: ", // FeedbackSurveyResultsPrevious
@@ -34,54 +34,54 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Загрузки ({count})", // TasksDownloadsCount
     "Установки", // TasksInstalls
     "Установки ({count})", // TasksInstallsCount
-    "Ошибки", // TasksFailed
-    "Ошибки ({count})", // TasksFailedCount
+    "С ошибкой", // TasksFailed
+    "С ошибкой ({count})", // TasksFailedCount
     "Нет задач", // TasksNoTasks
     "В очереди", // TasksStatusQueued
-    "Установка", // TasksStatusInstalling
-    "Загрузка", // TasksStatusDownloading
-    "Отмена", // TasksStatusCanceling
+    "Устанавливается", // TasksStatusInstalling
+    "Загружается", // TasksStatusDownloading
+    "Отменяется", // TasksStatusCanceling
     "Завершено", // TasksStatusCompleted
     "Ошибка", // TasksStatusFailed
     "Отменено", // TasksStatusCanceled
     "Отменяется…", // TasksCanceling
-    "Отмена", // TasksCancel
+    "Отменить", // TasksCancel
     "Повторить", // TasksRetry
     "Возобновить", // TasksResume
     "Запуск загрузки…", // TasksStartingDownload
     "В очереди…", // TasksQueuedProgress
-    "Установка файлов мода…", // TasksInstallingModFiles
+    "Установка файлов модов…", // TasksInstallingModFiles
     "Отмена задачи…", // TasksCancelingTask
 
     // Window: Tools
-    "Инструменты", // ToolsWindowTitle
+    "Утилиты", // ToolsWindowTitle
     "Игра не выбрана", // ToolsNoGameSelected
-    "Запуск", // ToolsLaunch
-    "Настроить параметры запуска", // ToolsSetLaunchOptions
+    "Запустить", // ToolsLaunch
+    "Задать параметры запуска", // ToolsSetLaunchOptions
     "Открыть папку", // ToolsOpenFolder
     "Открепить от строки заголовка", // ToolsUnpinFromTitlebar
     "Закрепить в строке заголовка", // ToolsPinToTitlebar
     "Удалить", // ToolsRemove
-    "Добавить инструмент", // ToolsAddTool
-    "Инструмент", // ToolsFallbackLabel
-    "Сначала выберите игру, чтобы добавить инструмент", // ToolsNoGameSelectedForAdd
-    "Инструмент уже добавлен", // ToolsAlreadyAdded
-    "Инструмент добавлен", // ToolsToolAdded
-    "Инструмент удалён", // ToolsToolRemoved
-    "Для одной игры в строке заголовка можно показать не более 4 инструментов", // ToolsTitlebarLimit
-    "Достигнут лимит инструментов строки заголовка", // ToolsTitlebarLimitReached
-    "Отсутствует исполняемый файл инструмента", // ToolsExecutableMissing
-    "Инструмент не найден: {path}", // ToolsNotFound
-    "Инструмент запущен: {tool}", // ToolsLaunched
-    "Не удалось запустить инструмент", // ToolsCouldNotLaunch
+    "Добавить утилиту", // ToolsAddTool
+    "Утилита", // ToolsFallbackLabel
+    "Игра для добавления утилиты не выбрана", // ToolsNoGameSelectedForAdd
+    "Утилита уже добавлена", // ToolsAlreadyAdded
+    "Утилита добавлена", // ToolsToolAdded
+    "Утилита удалена", // ToolsToolRemoved
+    "Для одной игры в строке заголовка можно показать не более 4 утилит", // ToolsTitlebarLimit
+    "Достигнут лимит утилит строки заголовка", // ToolsTitlebarLimitReached
+    "Файл утилиты отсутствует", // ToolsExecutableMissing
+    "Утилита не найдена: {path}", // ToolsNotFound
+    "Запущена утилита: {tool}", // ToolsLaunched
+    "Не удалось запустить утилиту", // ToolsCouldNotLaunch
     "Не удалось открыть расположение", // ToolsCouldNotOpenLocation
-    "Параметры запуска инструмента сохранены", // ToolsLaunchOptionsSaved
-    "Инструмент добавлен", // ToolsActionAdded
-    "Инструмент удалён", // ToolsActionRemoved
-    "Инструмент запущен", // ToolsActionLaunched
+    "Параметры запуска утилиты сохранены", // ToolsLaunchOptionsSaved
+    "Утилита добавлена", // ToolsActionAdded
+    "Утилита удалена", // ToolsActionRemoved
+    "Утилита запущена", // ToolsActionLaunched
 
     // Window: Tool Launch Options
-    "Параметры запуска", // ToolLaunchOptionsWindowTitle
+    "Задать параметры запуска", // ToolLaunchOptionsWindowTitle
     "Параметры запуска (например, -option value -flag)", // ToolLaunchOptionsHint
     "Сохранить", // ToolLaunchOptionsSave
     "Отмена", // ToolLaunchOptionsCancel
@@ -101,17 +101,17 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Найдено несколько", // DialogMultipleFound
     "Импортированный мод", // DialogImportedMod
     "Отсутствует .ini", // DialogMissingIniTitle
-    "В родительской папке архива не найден распознаваемый .ini-файл. Возможно, архив содержит несколько модов.\nВыберите папки для установки:", // DialogMissingIniPrompt
+    "В родительской папке архива не найден распознаваемый .ini-файл; возможно, архив содержит несколько модов.\nВыберите папки для установки:", // DialogMissingIniPrompt
     "Установить", // DialogInstall
-    "Установить объединённо", // DialogInstallMerged
+    "Установить вместе", // DialogInstallMerged
     "Установить выбранные папки в одну папку мода и считать их одним модом", // DialogInstallMergedTooltip
     "Установить отдельно", // DialogInstallSeparately
     "Установить выбранные папки в отдельные папки модов", // DialogInstallSeparatelyTooltip
-    "Ошибка установки", // DialogInstallFailed
+    "Установка не удалась", // DialogInstallFailed
     "Установка недоступна", // DialogInstallUnavailable
-    "Ошибка установки для {name}: {error}", // DialogInstallFailedFor
-    "Ошибка проверки установки для {name}: {error}", // DialogInstallInspectionFailed
-    "Ошибка отправки установки для {name}", // DialogInstallDispatchFailed
+    "Не удалось установить {name}: {error}", // DialogInstallFailedFor
+    "Не удалось проверить установку {name}: {error}", // DialogInstallInspectionFailed
+    "Не удалось отправить установку {name}", // DialogInstallDispatchFailed
     "Не удалось начать установку для {name}: {error}", // DialogInstallStartFailed
     "Сначала выберите игру.", // DialogSelectGameFirst
     "Папки не выбраны", // DialogNoFoldersSelected
@@ -123,24 +123,24 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Заменить", // DialogReplace
     "Объединить", // DialogMerge
     "Оставить оба", // DialogKeepBoth
-    "Конфликт (заменить)", // DialogConflictReplace
-    "Конфликт (объединить)", // DialogConflictMerge
+    "Конфликт (замена)", // DialogConflictReplace
+    "Конфликт (объединение)", // DialogConflictMerge
     "Конфликт (оставить оба)", // DialogConflictKeepBoth
     "Конфликт (отмена)", // DialogConflictCancel
-    "Перетащите моды для установки\n\nили\n\nперетащите изображения, чтобы добавить в:\n{name}", // DialogDropModsImages
+    "Перетащите моды, чтобы установить их\n\nили\n\nперетащите изображения, чтобы добавить их в:\n{name}", // DialogDropModsImages
     "Перетащите для установки", // DialogDropToInstall
     "Не поддерживается", // DialogUnsupported
     "Не поддерживается: {file}", // DialogUnsupportedFile
     "файл", // DialogFile
     "Архивы", // DialogFileFilterArchives
     "Исполняемый файл", // DialogFileFilterExecutable
-    "Сначала откройте сведения о несвязанном моде", // DialogOpenUnlinkedModDetailFirst
-    "Установка: {count} мод.", // DialogInstallingCount
+    "Сначала откройте сведения о непривязанном моде", // DialogOpenUnlinkedModDetailFirst
+    "Установка: {count} модов", // DialogInstallingCount
     "Не удалось создать папку модов", // DialogCouldNotCreateModsFolder
     "Не удалось отключить установленный мод", // DialogCouldNotDisableInstalledMod
     "Не удалось оставить мод отключённым", // DialogCouldNotKeepModDisabled
     "Установлено", // DialogInstalledAction
-    "Установлено модов: {count}", // DialogInstalledCount
+    "Установлено: {count} модов", // DialogInstalledCount
     "Установлено: {name}", // DialogInstalledName
     "Синхронизировано", // DialogSyncedAction
     "Обновление недоступно", // DialogUpdateUnavailable
@@ -151,7 +151,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Не удалось сохранить данные", // AppCouldNotSaveData
     "Предупреждение: {detail}", // AppLogWarn
     "Ошибка: {detail}", // AppLogError
-    "Ошибка запуска", // AppLaunchFailed
+    "Запуск не удался", // AppLaunchFailed
     "Путь запуска не задан", // AppLaunchPathNotSet
     "Игра не выбрана", // AppGameNotSelected
     "Играть (с модами)", // AppPlayModded
@@ -159,7 +159,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "С модами", // AppModded
     "Без модов", // AppVanilla
     "Путь {label} не задан для {game}", // AppLaunchPathNotSetForGame
-    "Запущено: {game} ({mode})", // AppLaunchedGameMode
+    "Запущено {game} ({mode})", // AppLaunchedGameMode
     "Для этой версии не настроен опрос обратной связи.", // AppNoFeedbackSurveyConfigured
     "Добавление изображения из буфера обмена…", // AppAddingClipboardImage
     "Не удалось вставить изображение", // AppCouldNotPasteImage
@@ -172,22 +172,22 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Не удалось открыть браузер", // AppCouldNotOpenBrowser
     "Не удалось обновить моды", // AppCouldNotRefreshMods
     "Просканировано модов: {count}, изменений нет", // AppModsScannedNoChanges
-    "Перезагружено: {count} мод., изменений нет", // AppReloadedNoChanges
+    "Перезагружено: {count} модов, изменений нет", // AppReloadedNoChanges
     "Просканировано модов: {count}", // AppModsScanned
-    "Перезагружено: {count} мод.", // AppReloaded
+    "Перезагружено: {count} модов", // AppReloaded
     "Добавлено: {count}", // AppReloadAdded
     "Удалено: {count}", // AppReloadRemoved
     "Изменено: {count}", // AppReloadChanged
-    "Перезагрузить: {line}", // AppReloadAction
+    "Перезагрузка: {line}", // AppReloadAction
     "Категория", // AppCategoryAction
     "Создано: \"{category}\"", // AppCategoryCreated
     "{mod} не имеет допустимой категории GameBanana; создание категории пропущено", // AppCategorySkippedNoValidGameBananaCategory
     "Опрос", // AppSurveyAction
-    "Нечитаемый ожидающий отзыв удалён: {error}", // AppSurveyDiscardedUnreadablePendingFeedbackPayload
-    "Повторная отправка ожидающего отзыва", // AppSurveyRetryingPendingFeedbackPayload
+    "Удалён нечитаемый ожидающий пакет данных отзыва: {error}", // AppSurveyDiscardedUnreadablePendingFeedbackPayload
+    "Повторная отправка ожидающего пакета данных отзыва", // AppSurveyRetryingPendingFeedbackPayload
     "Отзыв для {version} отправлен", // AppSurveySubmittedFeedback
     "Ошибка отправки отзыва для {version}: {error}", // AppSurveyFeedbackSubmitFailed
-    "Ожидающий отзыв для {version} удалён", // AppSurveyDiscardedPendingFeedbackPayload
+    "Удалён ожидающий пакет данных отзыва для {version}", // AppSurveyDiscardedPendingFeedbackPayload
     "Не удалось отправить отзыв", // AppCouldNotSubmitFeedback
     "Отзыв отправлен", // AppFeedbackSubmitted
     "Загрузка отменена: {title}", // AppDownloadCanceled
@@ -195,8 +195,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Main GUI: Chrome
     "\nМенеджер модов", // ChromeAppSubtitle
     "Играть", // ChromePlay
-    "Установить\nZip/Rar", // ChromeInstallArchive
-    "Установить\nПапку", // ChromeInstallFolder
+    "Из\nZip/Rar", // ChromeInstallArchive
+    "Из\nпапки", // ChromeInstallFolder
     "Обновить", // ChromeReload
     "Игра не установлена или не настроена.", // ChromeGameNotInstalled
     "Запустить игру с модами через XXMI", // ChromeLaunchWithModsTooltip
@@ -205,17 +205,17 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Играть без модов", // ChromePlayWithoutMods
     "Установить мод из архива zip/rar/7z", // ChromeInstallArchiveTooltip
     "Установить мод из уже распакованной папки", // ChromeInstallFolderTooltip
-    "Установить", // ChromeInstall
-    "Установить и отключить", // ChromeInstallDisabled
+    "Поставить", // ChromeInstall
+    "Поставить выкл.", // ChromeInstallDisabled
     "Повторно просканировать установленные моды и проверить обновления на GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip
     "Обновить текущий список (Ctrl+R)", // ChromeReloadBrowseTooltip
     "Закрыть", // ChromeClose
     "Восстановить", // ChromeRestore
     "Развернуть", // ChromeMaximize
     "Свернуть", // ChromeMinimize
-    "Мои моды", // ChromeMyMods
-    "Обзор", // ChromeBrowse
-    "Инструменты (Ctrl+T)", // ChromeToolsTooltip
+    "Моды", // ChromeMyMods
+    "Каталог", // ChromeBrowse
+    "Утилиты (Ctrl+T)", // ChromeToolsTooltip
     "Задачи (Ctrl+J)", // ChromeTasksTooltip
     "Журнал (Ctrl+L)", // ChromeLogTooltip
     "Настройки (F10)", // ChromeSettingsTooltip
@@ -235,43 +235,43 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Модов: {count}", // BrowseSelectedCharacterModsCount
     "Показать все моды", // BrowseShowAllMods
     "Получение модов с GameBanana…", // BrowseFetchingMods
-    "Установлено", // BrowseInstalled
-    "Открыть в браузере", // BrowseOpenInBrowser
+    "Есть", // BrowseInstalled
+    "На страницу", // BrowseOpenInBrowser
     "Не удалось открыть браузер", // BrowseCouldNotOpenBrowser
-    "Загрузка ещё…", // BrowseLoadingMore
+    "Загрузка дополнительных данных…", // BrowseLoadingMore
     "Для этой игры не настроен список персонажей.", // BrowseNoCharacterList
     "Обновить персонажей", // BrowseRefreshCharacters
     "Очистить этот фильтр", // BrowseClearFilter
     "Выбрано: {name}", // BrowseSelectedCharacter
     "Персонажей: {count}", // BrowseCharacterCount
     "Ожидание", // BrowseWaiting
-    "GameBanana не вернула список персонажей.", // BrowseNoCharactersReturned
+    "GameBanana не вернул список персонажей.", // BrowseNoCharactersReturned
     "Сведения о моде", // BrowseModDetail
     "Скопировать ID GameBanana", // BrowseCopyGameBananaId
     "ID GameBanana скопирован", // BrowseGameBananaIdCopied
     "Неизвестно", // BrowseUnknown
     "Обновления", // BrowseUpdates
-    "Этот мод приватный.", // BrowsePrivateMod
+    "Этот мод закрытый.", // BrowsePrivateMod
     "Автоматическая установка отключена. Если у вас есть доступ, можно просмотреть или скачать мод напрямую на GameBanana.", // BrowseAutomaticInstallDisabledAuthorized
-    "Этот мод удерживается", // BrowseWithheldMod
-    "Удерживается", // BrowseWithheldBy
-    "Автоматическая установка отключена до снятия удержания.", // BrowseAutomaticInstallDisabledWithheld
+    "Этот мод временно скрыт", // BrowseWithheldMod
+    "Скрыт пользователем", // BrowseWithheldBy
+    "Автоматическая установка отключена, пока скрытие не будет снято.", // BrowseAutomaticInstallDisabledWithheld
     "Нарушение правил", // BrowseRuleViolation
     "Этого мода больше не существует.", // BrowseDeletedModNoLongerExists
-    "Этот мод удалён пользователем", // BrowseDeletedBy
+    "Этот мод был удалён пользователем", // BrowseDeletedBy
     "Этот мод удалён", // BrowseDeleted
     "Файлы", // BrowseFiles
     "Архивные файлы", // BrowseArchivedFiles
     "Загрузка сведений о моде…", // BrowseLoadingDetails
-    "{size} • {date} • загрузок: {downloads}", // BrowseFileMetadata
+    "{size} • {date} • {downloads} загрузок", // BrowseFileMetadata
     "Выбрать файлы", // BrowseChooseFiles
     "У этого мода доступно несколько файлов.\nВыберите файлы для загрузки и установки:", // BrowseMultipleFilesPrompt
     "Для этой игры не настроен список категорий персонажей GameBanana.", // BrowseNoConfiguredCharacterCategoryList
     "Персонажи недоступны", // BrowseCharactersUnavailable
     "Ошибка подключения", // BrowseConnectionFailed
-    "Ошибка обзора", // BrowseFailed
+    "Ошибка загрузки каталога", // BrowseFailed
     "Ошибка загрузки персонажей", // BrowseCharactersFailed
-    "Ошибка сведений обзора", // BrowseDetailFailed
+    "Ошибка загрузки сведений", // BrowseDetailFailed
     "Не удалось загрузить обновления", // BrowseCouldNotLoadUpdates
     "Загружено: {title}", // BrowseDownloaded
     "Не удалось подготовить установку", // BrowseCouldNotPrepareInstall
@@ -280,23 +280,23 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Файлы для загрузки не найдены", // BrowseNoDownloadableFilesFound
     "Файлы не выбраны", // BrowseNoFilesSelected
     "Загрузка добавлена в очередь", // BrowseDownloadQueued
-    "Ошибка обновления страницы обзора; используются кэшированные результаты: {warning}", // BrowsePageWarning
-    "Ошибка страницы обзора: {error}", // BrowsePageFailed
+    "Не удалось обновить страницу каталога; используются кэшированные результаты: {warning}", // BrowsePageWarning
+    "Ошибка страницы каталога: {error}", // BrowsePageFailed
     "Ошибка обновления категорий персонажей; используются кэшированные результаты: {warning}", // BrowseCharacterCategoriesWarning
     "Ошибка категорий персонажей: {error}", // BrowseCharacterCategoriesFailed
-    "Ошибка обновления сведений обзора для мода {mod_id}; используются кэшированные сведения: {warning}", // BrowseDetailWarning
-    "Ошибка сведений обзора для мода {mod_id}: {error}", // BrowseDetailFailedMessage
-    "Ошибка обновления обзоров для мода {mod_id}; используются кэшированные обновления: {warning}", // BrowseUpdatesWarning
-    "Ошибка обновлений обзора для мода {mod_id}: {error}", // BrowseUpdatesFailedMessage
-    "Ошибка загрузки для {title}: {error}", // BrowseDownloadFailedMessage
+    "Не удалось обновить сведения о моде {mod_id}; используются кэшированные сведения: {warning}", // BrowseDetailWarning
+    "Не удалось загрузить сведения о моде {mod_id}: {error}", // BrowseDetailFailedMessage
+    "Не удалось обновить данные об обновлениях для мода {mod_id}; используются кэшированные данные: {warning}", // BrowseUpdatesWarning
+    "Не удалось загрузить данные об обновлениях для мода {mod_id}: {error}", // BrowseUpdatesFailedMessage
+    "Не удалось загрузить {title}: {error}", // BrowseDownloadFailedMessage
 
     // Main GUI: My Mods
     "Сканирование установленных модов", // LibraryScanningInstalledMods
-    "Убедитесь, что XXMI установлен правильно.", // LibraryEnsureXxmiInstalled
+    "Убедитесь, что XXMI установлен корректно.", // LibraryEnsureXxmiInstalled
     "- Скачать XXMI: ", // LibraryDownloadXxmi
-    "Затем откройте настройки, чтобы включить игру и при необходимости исправить путь к игре.\n- Нажмите на значок игры, чтобы включить или отключить её.\n- Вручную выберите путь, нажав кнопку […].", // LibraryBlankInstructions
+    "Затем откройте окно настроек, чтобы включить игру и при необходимости исправить путь к игре.\n- Нажмите значок игры, чтобы включить или отключить её.\n- Выберите путь вручную, нажав кнопку […].", // LibraryBlankInstructions
     "Открыть настройки", // LibraryOpenSettings
-    "Фильтр по названию мода…", // LibrarySearchHint
+    "Фильтр по названию мода...", // LibrarySearchHint
     "Установленные моды", // LibraryInstalledMods
     "Выбрано: {count}", // LibrarySelectedCount
     "Выбрать все видимые моды", // LibrarySelectAllVisibleMods
@@ -304,37 +304,37 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "1 мод", // LibraryOneMod
     "Назад", // LibraryBack
     "Назад к папкам категорий", // LibraryBackToCategoryFolders
-    "{active} активных • {disabled} отключено • {archived} в архиве", // LibraryCategorySummary
+    "{active} активных • {disabled} отключённых • {archived} в архиве", // LibraryCategorySummary
     "Название А-Я", // LibrarySortNameAsc
     "Название Я-А", // LibrarySortNameDesc
-    "Новые → Старые", // LibrarySortDateDesc
-    "Старые → Новые", // LibrarySortDateAsc
-    "Сортировка, группировка и раскладка установленных модов", // LibrarySortMenuTooltip
+    "Новые → старые", // LibrarySortDateDesc
+    "Старые → новые", // LibrarySortDateAsc
+    "Сортировка, группировка и вид установленных модов", // LibrarySortMenuTooltip
     "Сортировка модов", // LibrarySortModsHeading
     "Сортировка по названию мода, при отсутствии — по имени папки.", // LibrarySortNameTooltip
     "Используется самая новая известная дата установки, изменения содержимого или обновления.", // LibrarySortNewestTooltip
     "Сначала используется самая старая известная дата установки, изменения содержимого или обновления.", // LibrarySortOldestTooltip
     "Группировка модов", // LibraryGroupModsHeading
     "Группирует моды по категориям для каждой игры.", // LibraryGroupCategoryTooltip
-    "Группирует моды по разделам «Активные», «Отключённые» и «Архив».", // LibraryGroupStatusTooltip
+    "Группирует моды по разделам «Активные», «Отключённые» и «В архиве».", // LibraryGroupStatusTooltip
     "Показывает один непрерывный отсортированный список модов.", // LibraryGroupNoneTooltip
-    "Раскладка категорий", // LibraryCategoryLayoutHeading
+    "Макет категорий", // LibraryCategoryLayoutHeading
     "Доступно при группировке по категориям.", // LibraryAvailableWhenGroupedByCategory
-    "Сначала показывает плитки категорий, затем открывает по одной категории.", // LibraryCategoryFoldersTooltip
+    "Сначала показывает плитки категорий, затем открывает по одной категории за раз.", // LibraryCategoryFoldersTooltip
     "Показывает каждую категорию отдельным разделом в списке модов.", // LibraryCategoryListTooltip
     "Сортировка категорий", // LibrarySortCategoriesHeading
     "Вручную", // LibraryCategorySortManual
     "По названию (А-Я)", // LibraryCategorySortByNameAsc
-    "Меньше модов", // LibraryCategorySortByLeastMods
-    "Больше модов", // LibraryCategorySortByMostMods
+    "Меньше всего модов", // LibraryCategorySortByLeastMods
+    "Больше всего модов", // LibraryCategorySortByMostMods
     "Используется ваш ручной порядок категорий.", // LibraryCategorySortManualTooltip
-    "Категории сортируются по названию.", // LibraryCategorySortByNameTooltip
+    "Сортирует папки и разделы категорий по названию категории.", // LibraryCategorySortByNameTooltip
     "Сначала показываются категории с наибольшим количеством модов.", // LibraryCategorySortByMostModsTooltip
     "Сначала показываются категории с наименьшим количеством модов.", // LibraryCategorySortByLeastModsTooltip
     "Разное", // LibraryMiscellaneousHeading
     "Внутри статусных групп сначала учитывается порядок категорий, затем выбранная сортировка.", // LibrarySortCategoryFirstTooltip
-    "Сначала активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка.", // LibrarySortStatusFirstTooltip
-    "Доступно при группировке по категориям в списке.", // LibraryUncategorizedFirstListOnlyTooltip
+    "Сначала размещает активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка.", // LibrarySortStatusFirstTooltip
+    "Доступно при группировке по категориям в виде списка.", // LibraryUncategorizedFirstListOnlyTooltip
     "Показать/скрыть", // LibraryToggleVisibility
     "Состояние мода", // LibraryModStateHeading
     "Показать все состояния модов", // LibraryShowAllModStates
@@ -345,18 +345,18 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Состояние обновления", // LibraryUpdateStateHeading
     "Показать все состояния обновлений", // LibraryShowAllUpdateStates
     "Скрыть все состояния обновлений", // LibraryHideAllUpdateStates
-    "Без связи", // LibraryUnlinked
+    "Не привязан", // LibraryUnlinked
     "Актуально", // LibraryUpToDate
     "Доступно обновление", // LibraryUpdateAvailable
     "Проверка пропущена", // LibraryCheckSkipped
     "Источник отсутствует", // LibraryMissingSource
     "Изменён локально", // LibraryModifiedLocally
     "Обновление игнорируется", // LibraryIgnoringUpdate
-    "Показывает моды, которые игнорируют текущее обновление или игнорируют обновления до отключения.", // LibraryIgnoringUpdateTooltip
-    "Обновить", // LibraryUpdate
+    "Показывает моды, которые игнорируют текущее обновление или игнорируют обновления до отключения этой опции.", // LibraryIgnoringUpdateTooltip
+    "Апдейт", // LibraryUpdate
     "Включить", // LibraryEnable
     "Отключить", // LibraryDisable
-    "В архив", // LibraryArchive
+    "Архив", // LibraryArchive
     "Ещё", // LibraryMore
     "(нет)", // LibraryNone
     "Категорий пока нет.\n\n1. Откройте сведения мода, нажав на карточку.\n2. Нажмите «Без категории» под названием мода.\n3. Нажмите «+ Новая категория» и задайте имя.", // LibraryNoCategoryHelp
@@ -364,45 +364,45 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Новая категория", // LibraryNewCategory
     "Открыть", // LibraryOpen
     "Проводник", // LibraryFileExplorer
-    "Для этого мода не указан источник GameBanana.", // LibraryNoGameBananaSource
+    "К этому моду не привязан источник GameBanana.", // LibraryNoGameBananaSource
     "Пропустить обновление один раз", // LibraryIgnoreUpdateOnce
-    "Игнорирует текущее обновление, если оно доступно. Если обновления ещё нет, запоминает текущую удалённую версию и игнорирует следующее обнаруженное обновление.", // LibraryIgnoreUpdateOnceTooltip
-    "Перед использованием «пропустить один раз» синхронизируйте этот мод с GameBanana.", // LibraryIgnoreUpdateOnceDisabledTooltip
-    "Перед использованием «пропустить один раз» синхронизируйте хотя бы один выбранный мод с GameBanana.", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
+    "Игнорирует текущее обновление, если оно доступно. Если обновления пока нет, запоминает текущую удалённую версию и игнорирует следующее обнаруженное обновление.", // LibraryIgnoreUpdateOnceTooltip
+    "Синхронизируйте этот мод с GameBanana перед разовым игнорированием обновления.", // LibraryIgnoreUpdateOnceDisabledTooltip
+    "Синхронизируйте хотя бы один выбранный мод с GameBanana перед разовым игнорированием обновления.", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Игнорировать обновление всегда", // LibraryIgnoreUpdateAlways
-    "Бессрочно устанавливает статус обновления мода в «Игнорировать обновление всегда» до снятия отметки.", // LibraryIgnoreUpdateAlwaysTooltip
+    "Бессрочно задаёт для мода статус «Игнорировать обновления всегда», пока опция не будет снята.", // LibraryIgnoreUpdateAlwaysTooltip
     "Изменён", // LibraryModified
     "\n(Изменён)", // LibraryModifiedSuffix
     "…и ещё {count}", // LibraryAndMore
-    "Изменён и пропущен один раз", // LibraryModifiedIgnoringOnce
-    "Изменён и пропущен всегда", // LibraryModifiedIgnoringAlways
-    "Изменён и доступно обновление", // LibraryModifiedUpdateAvailable
-    "Пропущен один раз", // LibraryIgnoringOnce
-    "Пропущен всегда", // LibraryIgnoringAlways
+    "Изменён и игнорируется разово", // LibraryModifiedIgnoringOnce
+    "Изменён и игнорируется всегда", // LibraryModifiedIgnoringAlways
+    "Изменён, доступно обновление", // LibraryModifiedUpdateAvailable
+    "Игнорируется разово", // LibraryIgnoringOnce
+    "Игнорируется всегда", // LibraryIgnoringAlways
     "Отсутствует", // LibraryMissing
-    "Пропущен", // LibrarySkipped
+    "Пропущено", // LibrarySkipped
     "Пусто", // LibraryEmpty
     "Перемещение", // LibraryMoving
     "Переместить сюда", // LibraryMoveHere
     "Открыть {item}", // LibraryOpenItem
     "Перетащить в категорию", // LibraryDropOnCategory
-    "Переупорядочить папку", // LibraryReorderFolder
+    "Изменить порядок папки", // LibraryReorderFolder
     "Категории", // LibraryCategoriesHeading
-    "Папок: {folders} / без категории: {uncategorized}", // LibraryFoldersUncategorizedSummary
+    "Папок: {folders} / модов без категории: {uncategorized}", // LibraryFoldersUncategorizedSummary
     "Перетаскивание переключает порядок на ручной", // LibraryDropSwitchesToManualOrder
     "Переименовать", // LibraryRename
     "Переименовать (F2)", // LibraryRenameShortcut
-    "Только папка, переместить моды наружу", // LibraryFolderOnlyMoveModsOutside
-    "Папка и моды внутри", // LibraryFolderAndModsInside
+    "Только папка, моды переместить наружу", // LibraryFolderOnlyMoveModsOutside
+    "Папка вместе с модами внутри", // LibraryFolderAndModsInside
     "Папка удалена: {category}", // LibraryDeletedFolder
     "Активен", // LibraryStatusActive
     "Отключён", // LibraryStatusDisabled
-    "Архив", // LibraryStatusArchived
+    "В архиве", // LibraryStatusArchived
     "Перемещено в корзину", // LibraryRecycledAction
     "Удалено", // LibraryDeletedAction
     "Ошибка удаления", // LibraryDeleteFailed
     "Ошибка отключения", // LibraryDisableFailed
-    "Ошибка архивации", // LibraryArchiveFailed
+    "Ошибка перемещения в архив", // LibraryArchiveFailed
     "Ошибка включения", // LibraryEnableFailed
     "Ошибка восстановления", // LibraryRestoreFailed
     "Отключено", // LibraryActionDisabled
@@ -410,9 +410,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Включено", // LibraryActionEnabled
     "Возвращено из архива", // LibraryActionUnarchived
     "{action}: {name}", // LibraryActionMessage
-    "{action} модов: {count}", // LibraryActionCountMessage
-    "{action} {category} и модов: {count}", // LibraryCategoryActionCountMessage
-    "Обновления добавлены в очередь для модов: {count}", // LibraryQueuedUpdates
+    "{action}: {count} модов", // LibraryActionCountMessage
+    "{action}: {category} и {count} модов", // LibraryCategoryActionCountMessage
+    "В очередь добавлены обновления для {count} модов", // LibraryQueuedUpdates
     "Ошибка переименования", // LibraryRenameFailed
     "Переименовано", // LibraryActionRenamed
     "Переименовано в: {name}", // LibraryRenamedTo
@@ -437,24 +437,24 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Требуется RabbitFX", // LibraryRequiresRabbitFx
     "Добавить личную заметку", // LibraryAddPersonalNote
     "Сохранить личную заметку", // LibrarySavePersonalNote
-    "Редактируемая пользовательская заметка", // LibraryEditableUserNote
+    "Редактируемая заметка пользователя", // LibraryEditableUserNote
     "Изменить личную заметку", // LibraryEditPersonalNote
     "+ Добавить заметку", // LibraryAddNote
-    "Локально", // LibraryLocal
+    "Локальный", // LibraryLocal
     "Открыть в проводнике", // LibraryOpenInFileExplorer
     "Источник", // LibrarySource
     "• Последняя синхронизация: {age}", // LibraryLastSynced
-    "Синхронизировать", // LibraryResync
+    "Повторить синхронизацию", // LibraryResync
     "Отвязать", // LibraryUnlink
     "Страница GameBanana", // LibraryGameBananaPage
-    "Свяжите с GameBanana, чтобы включить отслеживание обновлений и синхронизацию метаданных.", // LibraryLinkGameBananaPrompt
+    "Привяжите мод к GameBanana, чтобы включить отслеживание обновлений и синхронизацию метаданных.", // LibraryLinkGameBananaPrompt
     "URL или ID", // LibraryUrlOrId
     "Синхронизировать мод", // LibrarySyncMod
-    "Настройки обновлений:", // LibraryUpdatePreferences
+    "Параметры обновлений:", // LibraryUpdatePreferences
     "Синхронизация с GameBanana…", // LibrarySyncingGameBanana
 
     // Window: Settings
-    "Настройки", // SettingsWindowTitle
+    "Опции", // SettingsWindowTitle
     "Общие", // SettingsTabGeneral
     "Категории", // SettingsTabCategory
     "Дополнительно", // SettingsTabAdvanced
@@ -465,12 +465,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Поведение", // SettingsGeneralBehaviorSection
     "При запуске игры:", // SettingsGeneralBehaviorWhenLaunchingGame
     "После установки мода:", // SettingsGeneralBehaviorAfterInstallingMod
-    "При запуске инструмента:", // SettingsGeneralBehaviorWhenLaunchingTool
-    "Метаданные сведений о моде:", // SettingsGeneralBehaviorModDetailMetadata
+    "При запуске утилиты:", // SettingsGeneralBehaviorWhenLaunchingTool
+    "Метаданные в сведениях о моде:", // SettingsGeneralBehaviorModDetailMetadata
     "Ничего не делать", // SettingsGeneralBehaviorDoNothing
     "Свернуть Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Выйти из Hestia", // SettingsGeneralBehaviorExitHestia
-    "Добавить к выбранному", // SettingsGeneralBehaviorAddToSelection
+    "Добавить в выделенное", // SettingsGeneralBehaviorAddToSelection
     "Открыть сведения о моде", // SettingsGeneralBehaviorOpenModDetail
     "Не показывать", // SettingsGeneralBehaviorNeverShow
     "Показывать, если нет описания", // SettingsGeneralBehaviorShowIfNoDescription
@@ -479,14 +479,14 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > General > Installed Mods List
     "Список установленных модов", // SettingsGeneralInstalledModsListSection
     "Группировать список:", // SettingsGeneralInstalledModsGroupListBy
-    "Раскладка категорий:", // SettingsGeneralInstalledModsCategoryLayout
+    "Макет категорий:", // SettingsGeneralInstalledModsCategoryLayout
     "Категория", // SettingsGeneralInstalledModsGroupCategory
     "Статус", // SettingsGeneralInstalledModsGroupStatus
     "Нет", // SettingsGeneralInstalledModsGroupNone
     "Список", // SettingsGeneralInstalledModsLayoutList
     "Папки", // SettingsGeneralInstalledModsLayoutFolders
     "Сначала сортировать по категории", // SettingsGeneralInstalledModsSortByCategoryFirst
-    "Сортировка по порядку категорий, не обязательно алфавитному.", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
+    "Сортировка по порядку категорий (не обязательно по алфавиту).", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
     "Сначала сортировать по статусу", // SettingsGeneralInstalledModsSortByStatusFirst
     "Сначала активные моды, затем отключённые и архивные.", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
     "Показывать статус мода на карточке", // SettingsGeneralInstalledModsShowModStatusOnCard
@@ -506,7 +506,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Также обновлять изменённые моды:", // SettingsGeneralOperationalAlsoUpdateModifiedMods
     "Да", // SettingsGeneralOperationalYes
     "Нет, но показывать кнопку «Обновить»", // SettingsGeneralOperationalNoButShowUpdateButton
-    "Нет и скрыть кнопку «Обновить»", // SettingsGeneralOperationalNoAndHideUpdateButton
+    "Нет, скрыть кнопку «Обновить»", // SettingsGeneralOperationalNoAndHideUpdateButton
     "При установке уже существующего мода:", // SettingsGeneralOperationalWhenInstallingExistingMod
     "Всегда спрашивать", // SettingsGeneralOperationalAlwaysAsk
     "Всегда заменять", // SettingsGeneralOperationalAlwaysReplace
@@ -515,43 +515,43 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При обновлении модов всегда заменять", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
     "При удалении мода:", // SettingsGeneralOperationalWhenDeletingMod
     "Переместить в корзину", // SettingsGeneralOperationalMoveToRecycleBin
-    "Удалить безвозвратно", // SettingsGeneralOperationalDeletePermanently
+    "Удалить навсегда", // SettingsGeneralOperationalDeletePermanently
 
     // Window: Settings > General > Tasks
     "Задачи", // SettingsGeneralTasksSection
-    "Раскладка задач:", // SettingsGeneralTasksLayout
+    "Вид задач:", // SettingsGeneralTasksLayout
     "Разделы", // SettingsGeneralTasksLayoutSections
     "Вкладки", // SettingsGeneralTasksLayoutTabbed
     "Единый список", // SettingsGeneralTasksLayoutSingleList
-    "Очищать завершённые задачи:", // SettingsGeneralTasksClearCompletedTasks
-    "Очистить задачи", // SettingsGeneralTasksClearTasks
+    "Очищать завершённые:", // SettingsGeneralTasksClearCompletedTasks
+    "Очистить", // SettingsGeneralTasksClearTasks
     "Порядок задач:", // SettingsGeneralTasksOrder
     "Старые → Новые", // SettingsGeneralTasksOldestToNewest
     "Новые → Старые", // SettingsGeneralTasksNewestToOldest
 
     // Window: Settings > Category
     "Выберите игру для настройки категорий.", // SettingsCategorySelectGame
-    "Обзор", // SettingsCategoryBrowseSection
-    "Автоматически создавать категории GameBanana для загруженных модов", // SettingsCategoryAutoCreateGameBananaCategories
+    "Каталог", // SettingsCategoryBrowseSection
+    "Создавать категории GameBanana автоматически", // SettingsCategoryAutoCreateGameBananaCategories
     "Применяется к {game}.", // SettingsCategoryAppliesToGame
     "Категории", // SettingsCategoryCategoriesSection
     "Выбрать все категории", // SettingsCategorySelectAllCategories
     "Снять выбор со всех категорий", // SettingsCategoryUnselectAllCategories
-    "Создать", // SettingsCategoryNew
+    "Новая", // SettingsCategoryNew
     "Новая категория (Ctrl+N)", // SettingsCategoryNewTooltip
     "Удалить", // SettingsCategoryDelete
     "Без категории", // SettingsCategoryUncategorized
 
     // Window: Settings > Game & Path
     "Проблемы с путями?", // SettingsPathScanTitle
-    "Hestia может выполнить глубокое сканирование для обнаружения путей XXMI и поддерживаемых игр", // SettingsPathScanDescription
+    "Hestia может выполнить глубокое сканирование, чтобы найти пути к XXMI и поддерживаемым играм", // SettingsPathScanDescription
     "Сканировать пути", // SettingsPathScanButtonScan
     "Сканирование…", // SettingsPathScanButtonScanning
     "Сканирует доступные диски в поисках XXMI и исполняемых файлов игр.", // SettingsPathScanButtonTooltip
     "XXMI", // SettingsPathXxmiSection
     "Лаунчер XXMI:", // SettingsPathXxmiLauncher
     "Путь не найден", // SettingsPathPathNotFound
-    "Использовать путь модов XXMI по умолчанию для игр", // SettingsPathUseDefaultXxmiModPath
+    "Использовать путь к модам XXMI по умолчанию для игр", // SettingsPathUseDefaultXxmiModPath
     "Игра", // SettingsPathGameSection
     "EXE-файл игры:", // SettingsPathGameExeFile
     "Папка модов {code}:", // SettingsPathGameModsFolder
@@ -562,21 +562,21 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Стиль шрифта:", // SettingsAdvancedAppearanceFontStyle
     "Классический", // SettingsAdvancedAppearanceFontClassic
     "Современный", // SettingsAdvancedAppearanceFontModern
-    "Использует шрифт Segoe UI", // SettingsAdvancedAppearanceFontClassicTooltip
-    "Использует шрифт Selawik", // SettingsAdvancedAppearanceFontModernTooltip
+    "Использует шрифт «Segoe UI»", // SettingsAdvancedAppearanceFontClassicTooltip
+    "Использует шрифт «Selawik»", // SettingsAdvancedAppearanceFontModernTooltip
 
     // Window: Settings > Advanced > Content Restriction
-    "Ограничение контента", // SettingsAdvancedContentRestrictionSection
-    "Скрывать небезопасный контент:", // SettingsAdvancedContentRestrictionHideUnsafeContents
+    "Ограничения содержимого", // SettingsAdvancedContentRestrictionSection
+    "NSFW-контент:", // SettingsAdvancedContentRestrictionHideUnsafeContents
     "Скрывать NSFW-моды и счётчик", // SettingsAdvancedContentRestrictionHideNsfwHideCounter
     "Скрывать NSFW-моды, показывать счётчик", // SettingsAdvancedContentRestrictionHideNsfwShowCounter
-    "Показывать изображения с цензурой", // SettingsAdvancedContentRestrictionShowImagesCensored
+    "Показывать с цензурированными изображениями", // SettingsAdvancedContentRestrictionShowImagesCensored
     "Показывать без ограничений", // SettingsAdvancedContentRestrictionShowUnrestricted
 
     // Window: Settings > Advanced > Cache and Archive
     "Кэш и архив", // SettingsAdvancedCacheArchiveSection
     "Размер кэша:", // SettingsAdvancedCacheArchiveCacheSize
-    "Использование: {gb} ГБ", // SettingsAdvancedCacheArchiveCurrentUsage
+    "Текущее использование: {gb} ГБ", // SettingsAdvancedCacheArchiveCurrentUsage
     "Очистить кэш", // SettingsAdvancedCacheArchiveClearCache
     "Кэш очищен", // SettingsAdvancedCacheArchiveCacheCleared
     "Не удалось очистить кэш", // SettingsAdvancedCacheArchiveClearCacheFailed
@@ -584,21 +584,21 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Удалить архивные моды", // SettingsAdvancedCacheArchiveDeleteArchivedMods
     "Перемещено в корзину", // SettingsAdvancedCacheArchiveRecycled
     "Удалено", // SettingsAdvancedCacheArchiveDeleted
-    "Архивных модов: {count}", // SettingsAdvancedCacheArchiveArchivedMods
-    "Архив очищен: {count}", // SettingsAdvancedCacheArchiveArchivesCleared
+    "{count} архивных модов", // SettingsAdvancedCacheArchiveArchivedMods
+    "Архивы очищены: {count}", // SettingsAdvancedCacheArchiveArchivesCleared
     "Нет архивов для очистки", // SettingsAdvancedCacheArchiveNoArchivesToClear
-    "Не удалось очистить архив", // SettingsAdvancedCacheArchiveClearArchivesFailed
+    "Не удалось очистить архивы", // SettingsAdvancedCacheArchiveClearArchivesFailed
 
     // Window: Settings > About
-    "автор: {authors}", // SettingsAboutBy
+    "от {authors}", // SettingsAboutBy
     "Версия:", // SettingsAboutVersion
-    "Нажмите, чтобы открыть «Что нового».", // SettingsAboutVersionTooltip
-    "Автоматически проверять обновления", // SettingsAboutAutomaticallyCheckForUpdate
+    "Нажмите, чтобы показать «Что нового».", // SettingsAboutVersionTooltip
+    "Автоматически проверять наличие обновлений", // SettingsAboutAutomaticallyCheckForUpdate
     "Проверка…", // SettingsAboutUpdateChecking
     "Перезапустить для обновления", // SettingsAboutUpdateRestartToUpdate
-    "Проверить обновление", // SettingsAboutUpdateCheckForUpdate
-    "Актуально", // SettingsAboutUpdateUpToDate
-    "Ошибка проверки", // SettingsAboutUpdateFailedToCheck
+    "Проверить наличие обновлений", // SettingsAboutUpdateCheckForUpdate
+    "Обновлений нет", // SettingsAboutUpdateUpToDate
+    "Не удалось проверить", // SettingsAboutUpdateFailedToCheck
     "Требуется ручное обновление", // SettingsAboutUpdateManualRequired
     "Доступно обновление", // SettingsAboutUpdateAvailable
     "Обновление готово", // SettingsAboutUpdateReady
@@ -606,11 +606,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Загрузка обновления отменена", // SettingsAboutUpdateDownloadCanceled
     "Дождитесь завершения активных задач перед обновлением", // SettingsAboutUpdateWaitForActiveTasks
     "Не удалось применить обновление", // SettingsAboutUpdateCouldNotApply
-    "Hestia установлена в папку, которую этот процесс не может обновить:\n{path}\nПереместите Hestia в другую папку и попробуйте снова или обновите установку из процесса с повышенными правами.", // SettingsAboutUpdateManualInstallFolder
-    "Атрибуция", // SettingsAboutAttributionSection
-    "Источник данных: GameBanana, API используется с разрешения. Метаданные модов, медиа и данные обзора GameBanana получены из GameBanana.", // SettingsAboutAttributionGameBanana
+    "Hestia установлена в папку, которую этот процесс не может обновить:\n{path}\nПереместите Hestia в другую папку и попробуйте снова или обновите эту установку из процесса с повышенными правами.", // SettingsAboutUpdateManualInstallFolder
+    "Источники", // SettingsAboutAttributionSection
+    "Источник данных: GameBanana, API используется с разрешения. Метаданные модов, медиафайлы и данные каталога GameBanana получены из GameBanana.", // SettingsAboutAttributionGameBanana
 
     // Translation
-    "Ошибка перевода", // TranslationFailed
-    "Идёт перевод", // TranslationInProgress
+    "Перевод не удался", // TranslationFailed
+    "Выполняется перевод", // TranslationInProgress
 ];
