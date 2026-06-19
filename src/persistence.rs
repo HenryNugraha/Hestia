@@ -24,6 +24,7 @@ use crate::model::{
 #[derive(Debug, Clone)]
 pub struct PortablePaths {
     pub state_archive: PathBuf,
+    pub state_source: Option<PathBuf>,
     pub history_db: PathBuf,
 }
 
@@ -118,6 +119,7 @@ impl PortablePaths {
         let paths = resolve_persistent_data_paths(&exe, &root)?;
         Ok(Self {
             state_archive: paths.state_archive,
+            state_source: paths.state_source,
             history_db: paths.history_db,
         })
     }
@@ -140,6 +142,7 @@ impl PortablePaths {
 
 struct PersistentDataPaths {
     state_archive: PathBuf,
+    state_source: Option<PathBuf>,
     history_db: PathBuf,
 }
 
@@ -161,21 +164,75 @@ fn resolve_persistent_data_paths_with_fallback_dir(
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("hestia");
-    let portable_state = root.join(format!("{exe_stem}.toml"));
+    let portable_state = root.join("hestia.toml");
+    let legacy_exe_portable_state = root.join(format!("{exe_stem}.toml"));
+    let latest_portable_state_source = latest_versioned_portable_state(root);
     let portable_history = root.join("hestia.dat");
     let fallback_state = fallback_dir.join("hestia.toml");
+    let fallback_exe_state = fallback_dir.join(format!("{exe_stem}.toml"));
+    let latest_fallback_state_source = latest_versioned_portable_state(fallback_dir);
     let fallback_history = fallback_dir.join("hestia.dat");
 
-    if portable_state.exists() || portable_history.exists() {
+    if portable_state.exists() {
         return PersistentDataPaths {
             state_archive: portable_state,
+            state_source: None,
             history_db: portable_history,
         };
     }
 
-    if fallback_state.exists() || fallback_history.exists() {
+    if let Some(state_source) = latest_portable_state_source {
+        return PersistentDataPaths {
+            state_archive: portable_state,
+            state_source: Some(state_source),
+            history_db: portable_history,
+        };
+    }
+
+    if legacy_exe_portable_state.exists() {
+        return PersistentDataPaths {
+            state_archive: portable_state,
+            state_source: Some(legacy_exe_portable_state),
+            history_db: portable_history,
+        };
+    }
+
+    if portable_history.exists() {
+        return PersistentDataPaths {
+            state_archive: portable_state,
+            state_source: None,
+            history_db: portable_history,
+        };
+    }
+
+    if fallback_state.exists() {
         return PersistentDataPaths {
             state_archive: fallback_state,
+            state_source: None,
+            history_db: fallback_history,
+        };
+    }
+
+    if let Some(state_source) = latest_fallback_state_source {
+        return PersistentDataPaths {
+            state_archive: fallback_state,
+            state_source: Some(state_source),
+            history_db: fallback_history,
+        };
+    }
+
+    if fallback_exe_state.exists() {
+        return PersistentDataPaths {
+            state_archive: fallback_state,
+            state_source: Some(fallback_exe_state),
+            history_db: fallback_history,
+        };
+    }
+
+    if fallback_history.exists() {
+        return PersistentDataPaths {
+            state_archive: fallback_state,
+            state_source: None,
             history_db: fallback_history,
         };
     }
@@ -183,14 +240,40 @@ fn resolve_persistent_data_paths_with_fallback_dir(
     if dir_is_writable(root, exe_stem) {
         return PersistentDataPaths {
             state_archive: portable_state,
+            state_source: None,
             history_db: portable_history,
         };
     }
 
     PersistentDataPaths {
         state_archive: fallback_state,
+        state_source: None,
         history_db: fallback_history,
     }
+}
+
+fn latest_versioned_portable_state(root: &Path) -> Option<PathBuf> {
+    fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
+            let file_name = entry.file_name();
+            let version = versioned_portable_toml_version(file_name.to_str()?)?;
+            Some((version, entry.path()))
+        })
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .map(|(_, path)| path)
+}
+
+fn versioned_portable_toml_version(file_name: &str) -> Option<semver::Version> {
+    const PREFIX: &str = "Hestia - Portable v";
+    const SUFFIX: &str = ".toml";
+
+    let version = file_name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
+    semver::Version::parse(version).ok()
 }
 
 fn appdata_fallback_dir() -> Result<PathBuf> {
@@ -244,23 +327,26 @@ pub fn runtime_temp_extract_dir() -> PathBuf {
 
 pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let mut state = AppState::default();
-    if !paths.state_archive.exists() {
+    let state_read_path = paths.state_source.as_ref().unwrap_or(&paths.state_archive);
+    if !state_read_path.exists() {
         state.show_whats_new = true;
         state.startup_path_scan_completed = false;
         return Ok(state);
     }
-    let raw = fs::read_to_string(&paths.state_archive).context("failed to read hestia.toml")?;
-    let prefs: AppPreferences = toml::from_str(&raw).context("failed to parse hestia.toml")?;
+    let raw = fs::read_to_string(state_read_path)
+        .with_context(|| format!("failed to read {}", state_read_path.display()))?;
+    let prefs: AppPreferences = toml::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", state_read_path.display()))?;
 
     let loaded_version = prefs.version;
     let previous_app_version = prefs.app_version.clone();
     let app_version_needs_save =
         app_version_needs_normalization(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
-    
+
     // Check if language field was missing (needs save)
-    let language_needs_save = prefs.static_prefs.language == AppLanguage::default() 
-        && previous_app_version.is_some();
-    
+    let language_needs_save =
+        prefs.static_prefs.language == AppLanguage::default() && previous_app_version.is_some();
+
     state.version = prefs.version.max(7);
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
@@ -280,10 +366,10 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.categories = prefs.categories;
     state.category_sort_mode_by_game = prefs.category_sort_mode_by_game;
     state.staged_app_update = prefs.staged_app_update;
-    
+
     // Move static preferences (single assignment, no field-by-field copying)
     state.static_prefs = prefs.static_prefs;
-    
+
     let (create_downloaded_mod_category_by_game, preferences_need_save) =
         normalize_create_downloaded_mod_category_by_game(
             &state.games,
@@ -291,7 +377,8 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
             prefs.create_downloaded_mod_category_by_game,
         );
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
-    state.preferences_need_save = preferences_need_save || app_version_needs_save || language_needs_save;
+    state.preferences_need_save =
+        preferences_need_save || app_version_needs_save || language_needs_save;
     initialize_tool_orders(&mut state, loaded_version);
     Ok(state)
 }
@@ -862,14 +949,14 @@ fn evict_lru_if_needed_path(max_bytes: u64) -> Result<()> {
     }
 
     use rayon::prelude::*;
-    
+
     // Collect entries first
     let entries: Vec<_> = WalkDir::new(&cache_root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .collect();
-    
+
     // Process in parallel to gather file info
     let files: Vec<_> = entries
         .par_iter()
@@ -881,7 +968,7 @@ fn evict_lru_if_needed_path(max_bytes: u64) -> Result<()> {
             Some((modified, path, size))
         })
         .collect();
-    
+
     let usage: u64 = files.iter().map(|(_, _, size)| size).sum();
 
     if usage <= threshold {
@@ -943,19 +1030,19 @@ fn prune_tmp_files_in_dir(
     min_age: Duration,
 ) -> Result<()> {
     use rayon::prelude::*;
-    
+
     if !root.exists() {
         return Ok(());
     }
     let now = SystemTime::now();
-    
+
     // Collect entries first
     let entries: Vec<_> = WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .collect();
-    
+
     // Process in parallel
     entries.par_iter().for_each(|entry| {
         let path = entry.path();
@@ -1157,6 +1244,7 @@ mod tests {
         );
 
         assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
         assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
     }
 
@@ -1178,7 +1266,114 @@ mod tests {
         );
 
         assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
         assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_renamed_exe_reads_legacy_portable_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(install_dir.join("hestia.toml"), "portable state").unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia-preview.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
+        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_renamed_exe_reads_fallback_exe_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(fallback_dir.join("hestia-preview.toml"), "fallback state").unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia-preview.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
+        assert_eq!(
+            paths.state_source,
+            Some(fallback_dir.join("hestia-preview.toml"))
+        );
+        assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_renamed_exe_creates_stable_portable_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia-preview.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
+        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn persistent_paths_reads_latest_versioned_portable_state_but_writes_stable_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(install_dir.join("Hestia - Portable v1.6.0.toml"), "old").unwrap();
+        fs::write(install_dir.join("Hestia - Portable v1.7.0.toml"), "new").unwrap();
+        fs::write(install_dir.join("Hestia - Portable vbad.toml"), "ignored").unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("Hestia - Portable v1.8.0.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(
+            paths.state_source,
+            Some(install_dir.join("Hestia - Portable v1.7.0.toml"))
+        );
+        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn save_app_state_migrates_legacy_source_to_stable_state_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        fs::create_dir_all(&install_dir).unwrap();
+        let legacy_state = install_dir.join("Hestia - Portable v1.6.0.toml");
+        fs::write(&legacy_state, "version = 7\ngames = []\n").unwrap();
+        let paths = PortablePaths {
+            state_archive: install_dir.join("hestia.toml"),
+            state_source: Some(legacy_state),
+            history_db: install_dir.join("hestia.dat"),
+        };
+
+        let state = load_app_state(&paths).unwrap();
+        save_app_state(&paths, &state).unwrap();
+
+        assert!(paths.state_archive.exists());
     }
 
     #[test]
@@ -1196,6 +1391,7 @@ mod tests {
         );
 
         assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
         assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
     }
 }
