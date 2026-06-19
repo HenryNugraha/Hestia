@@ -614,6 +614,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
 
     // Translation strings
     "Terjemahkan (F7)", // TranslationToggleShortcut
+    "Terjemahkan ulang", // TranslationRetranslate
     "Terjemahan gagal", // TranslationFailed
     "Sedang menerjemahkan", // TranslationInProgress
 ];

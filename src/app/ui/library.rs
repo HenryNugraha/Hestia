@@ -7000,15 +7000,25 @@ impl HestiaApp {
                             );
 
                             if is_loading {
-                                translate_btn.on_hover_text(text.translation_in_progress());
+                                let translate_btn = translate_btn
+                                    .on_hover_text(text.translation_in_progress())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                translate_btn.context_menu(|ui| {
+                                    ui.add_enabled(false, egui::Button::new(text.retranslate()));
+                                });
                             } else {
-                                if translate_btn
+                                let translate_btn = translate_btn
                                     .on_hover_text(text.translate_shortcut())
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if translate_btn.clicked() {
                                     self.toggle_my_mods_translation(selected.id.clone());
                                 }
+                                translate_btn.context_menu(|ui| {
+                                    if ui.button(text.retranslate()).clicked() {
+                                        self.retranslate_my_mods_translation(selected.id.clone());
+                                        ui.close();
+                                    }
+                                });
                             }
                         }
                     });

@@ -614,6 +614,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
 
     // Translation strings
     "翻译 (F7)", // TranslationToggleShortcut
+    "重新翻译", // TranslationRetranslate
     "翻译失败", // TranslationFailed
     "正在翻译", // TranslationInProgress
 ];

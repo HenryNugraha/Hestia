@@ -613,6 +613,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
 
     // Translation strings
     "Перевести (F7)", // TranslationToggleShortcut
+    "Перевести заново", // TranslationRetranslate
     "Перевод не удался", // TranslationFailed
     "Выполняется перевод", // TranslationInProgress
 ];

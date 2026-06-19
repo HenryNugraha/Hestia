@@ -600,6 +600,7 @@ enum TextKey {
     SettingsAboutAttributionGameBanana,
 
     TranslationToggleShortcut,
+    TranslationRetranslate,
     TranslationFailed,
     TranslationInProgress,
 }
@@ -2948,6 +2949,10 @@ impl TextCatalog {
 
     fn translate_shortcut(self) -> &'static str {
         self.get(TextKey::TranslationToggleShortcut)
+    }
+
+    fn retranslate(self) -> &'static str {
+        self.get(TextKey::TranslationRetranslate)
     }
 }
 

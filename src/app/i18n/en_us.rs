@@ -614,6 +614,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
 
     // Translation strings
     "Translate (F7)", // TranslationToggleShortcut
+    "Retranslate", // TranslationRetranslate
     "Translation failed", // TranslationFailed
     "Translation in progress", // TranslationInProgress
 ];

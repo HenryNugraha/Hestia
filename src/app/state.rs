@@ -230,7 +230,7 @@ pub struct HestiaApp {
     image_generation: Arc<AtomicU64>,
     translation_request_tx: WorkerTx<TranslationRequest>,
     translation_event_rx: WorkerRx<TranslationEvent>,
-    translation_inflight: HashSet<(u64, String)>,
+    translation_inflight: HashSet<(u64, String, String)>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
     mod_card_display_cache: HashMap<String, ModCardDisplayCache>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
@@ -375,6 +375,7 @@ struct BrowseDetailCache {
 struct MyModTranslationState {
     translated_profile: Option<gamebanana::ProfileResponse>,
     translation_lang: Option<String>,
+    translation_source_hash: Option<String>,
     translation_loading: bool,
 }
 

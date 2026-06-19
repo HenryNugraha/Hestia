@@ -1393,9 +1393,23 @@ impl HestiaApp {
                             } else {
                                 translate_btn.on_hover_text(text.translate_shortcut())
                             };
-                            if translate_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            let translate_btn =
+                                translate_btn.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if translate_btn.clicked() {
                                 self.toggle_browse_translation(mod_id);
                             }
+                            translate_btn.context_menu(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        !translation_loading,
+                                        egui::Button::new(text.retranslate()),
+                                    )
+                                    .clicked()
+                                {
+                                    self.retranslate_browse_translation(mod_id);
+                                    ui.close();
+                                }
+                            });
                         }
                         
                         ui.allocate_ui_with_layout(
