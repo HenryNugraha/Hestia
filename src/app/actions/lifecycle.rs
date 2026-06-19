@@ -1458,6 +1458,67 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
+    fn active_detail_window_layer(ctx: &egui::Context) -> Option<egui::LayerId> {
+        ctx.top_layer_id().filter(|layer_id| {
+            layer_id.order == egui::Order::Middle
+                && (layer_id.id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID)
+                    || layer_id.id == egui::Id::new("mod_detail_window"))
+        })
+    }
+
+    fn active_detail_can_translate(&self, active_layer: egui::LayerId) -> bool {
+        if active_layer.id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID) {
+            return self.browse_detail_open
+                && self
+                    .browse_state
+                    .selected_mod_id
+                    .is_some_and(|mod_id| self.browse_state.details.contains_key(&mod_id));
+        }
+
+        if active_layer.id == egui::Id::new("mod_detail_window") {
+            return self.mod_detail_open
+                && self.selected_mod().is_some_and(|mod_entry| {
+                    mod_entry
+                        .source
+                        .as_ref()
+                        .and_then(|source| source.gamebanana.as_ref())
+                        .is_some()
+                });
+        }
+
+        false
+    }
+
+    fn toggle_visible_detail_translation(&mut self) {
+        match self.current_view {
+            ViewMode::Browse => {
+                let Some(mod_id) = self.browse_state.selected_mod_id else {
+                    return;
+                };
+                if self.browse_detail_open && self.browse_state.details.contains_key(&mod_id) {
+                    self.toggle_browse_translation(mod_id);
+                }
+            }
+            ViewMode::Library => {
+                let mod_id = self
+                    .selected_mod()
+                    .filter(|mod_entry| {
+                        mod_entry
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some()
+                    })
+                    .map(|mod_entry| mod_entry.id.clone());
+                if self.mod_detail_open {
+                    if let Some(mod_id) = mod_id {
+                        self.toggle_my_mods_translation(mod_id);
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(windows)]
     fn poll_windows_ctrl_v_edge(&mut self, ctx: &egui::Context) -> bool {
         let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
@@ -1510,6 +1571,15 @@ impl HestiaApp {
         let app_window_focused = ctx.input(|input| {
             input.focused && input.viewport().focused.unwrap_or(input.focused)
         });
+        if app_window_focused
+            && !text_input_active
+            && !self.settings_open
+            && Self::active_detail_window_layer(ctx)
+                .is_some_and(|layer_id| self.active_detail_can_translate(layer_id))
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F7))
+        {
+            self.toggle_visible_detail_translation();
+        }
         if app_window_focused
             && !text_input_active
             && self.settings_open

@@ -513,8 +513,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Always Merge", // SettingsGeneralOperationalAlwaysMerge
     "Always Keep Both", // SettingsGeneralOperationalAlwaysKeepBoth
     "Always replace on updating mods", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
-    "Always translate mod details", // SettingsGeneralOperationalAlwaysTranslateModDetails
-    "Automatically translates GameBanana details when opening a mod detail window in Browse or MY MODS. Original GameBanana metadata stays unchanged.", // SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip
     "When deleting a mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Move to Recycle Bin", // SettingsGeneralOperationalMoveToRecycleBin
     "Delete Permanently", // SettingsGeneralOperationalDeletePermanently
@@ -566,6 +564,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Modern", // SettingsAdvancedAppearanceFontModern
     "Uses 'Segoe UI' typeface", // SettingsAdvancedAppearanceFontClassicTooltip
     "Uses 'Selawik' typeface", // SettingsAdvancedAppearanceFontModernTooltip
+    "Always translate mod details", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
+    "When enabled, mod titles and descriptions are automatically translated to the selected language when viewing details.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Content Restriction", // SettingsAdvancedContentRestrictionSection
@@ -613,6 +613,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Data source: GameBanana, API used with permission. GameBanana mod metadata, media, and browse data are sourced from GameBanana.", // SettingsAboutAttributionGameBanana
 
     // Translation strings
+    "Translate (F7)", // TranslationToggleShortcut
     "Translation failed", // TranslationFailed
     "Translation in progress", // TranslationInProgress
 ];

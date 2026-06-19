@@ -513,8 +513,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Selalu gabungkan", // SettingsGeneralOperationalAlwaysMerge
     "Selalu simpan terpisah", // SettingsGeneralOperationalAlwaysKeepBoth
     "Selalu timpa saat memperbarui mod", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
-    "Selalu terjemahkan detail mod", // SettingsGeneralOperationalAlwaysTranslateModDetails
-    "Otomatis menerjemahkan detail GameBanana saat membuka jendela detail mod di Browse atau MY MODS. Metadata GameBanana asli tidak diubah.", // SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip
     "Saat menghapus mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Pindahkan ke Tempat Sampah", // SettingsGeneralOperationalMoveToRecycleBin
     "Hapus permanen", // SettingsGeneralOperationalDeletePermanently
@@ -566,6 +564,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Modern", // SettingsAdvancedAppearanceFontModern
     "Menggunakan font Segoe UI", // SettingsAdvancedAppearanceFontClassicTooltip
     "Menggunakan font Selawik", // SettingsAdvancedAppearanceFontModernTooltip
+    "Selalu terjemahkan detail mod", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
+    "Jika diaktifkan, judul dan deskripsi mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Pembatasan Konten", // SettingsAdvancedContentRestrictionSection
@@ -613,6 +613,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Sumber data: GameBanana, API digunakan dengan izin. Metadata mod, media, dan data jelajah GameBanana bersumber dari GameBanana.", // SettingsAboutAttributionGameBanana
 
     // Translation strings
+    "Terjemahkan (F7)", // TranslationToggleShortcut
     "Terjemahan gagal", // TranslationFailed
     "Sedang menerjemahkan", // TranslationInProgress
 ];

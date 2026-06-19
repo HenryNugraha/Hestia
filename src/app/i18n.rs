@@ -507,8 +507,6 @@ enum TextKey {
     SettingsGeneralOperationalAlwaysMerge,
     SettingsGeneralOperationalAlwaysKeepBoth,
     SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods,
-    SettingsGeneralOperationalAlwaysTranslateModDetails,
-    SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip,
     SettingsGeneralOperationalWhenDeletingMod,
     SettingsGeneralOperationalMoveToRecycleBin,
     SettingsGeneralOperationalDeletePermanently,
@@ -556,6 +554,8 @@ enum TextKey {
     SettingsAdvancedAppearanceFontModern,
     SettingsAdvancedAppearanceFontClassicTooltip,
     SettingsAdvancedAppearanceFontModernTooltip,
+    SettingsAdvancedAppearanceAlwaysTranslateModDetails,
+    SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip,
 
     SettingsAdvancedContentRestrictionSection,
     SettingsAdvancedContentRestrictionHideUnsafeContents,
@@ -599,6 +599,7 @@ enum TextKey {
     SettingsAboutAttributionSection,
     SettingsAboutAttributionGameBanana,
 
+    TranslationToggleShortcut,
     TranslationFailed,
     TranslationInProgress,
 }
@@ -2554,11 +2555,11 @@ impl TextCatalog {
     }
 
     fn always_translate_mod_details(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralOperationalAlwaysTranslateModDetails)
+        self.get(TextKey::SettingsAdvancedAppearanceAlwaysTranslateModDetails)
     }
 
     fn always_translate_mod_details_tooltip(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip)
+        self.get(TextKey::SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip)
     }
 
     fn when_deleting_mod(self) -> &'static str {
@@ -2943,6 +2944,10 @@ impl TextCatalog {
 
     fn translation_in_progress(self) -> &'static str {
         self.get(TextKey::TranslationInProgress)
+    }
+
+    fn translate_shortcut(self) -> &'static str {
+        self.get(TextKey::TranslationToggleShortcut)
     }
 }
 

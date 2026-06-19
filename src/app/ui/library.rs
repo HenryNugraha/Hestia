@@ -7003,6 +7003,7 @@ impl HestiaApp {
                                 translate_btn.on_hover_text(text.translation_in_progress());
                             } else {
                                 if translate_btn
+                                    .on_hover_text(text.translate_shortcut())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .clicked()
                                 {

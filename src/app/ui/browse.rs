@@ -1391,7 +1391,7 @@ impl HestiaApp {
                             let translate_btn = if translation_loading {
                                 translate_btn.on_hover_text(text.translation_in_progress())
                             } else {
-                                translate_btn
+                                translate_btn.on_hover_text(text.translate_shortcut())
                             };
                             if translate_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 self.toggle_browse_translation(mod_id);
