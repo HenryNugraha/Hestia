@@ -1458,35 +1458,26 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
-    fn active_detail_window_layer(ctx: &egui::Context) -> Option<egui::LayerId> {
-        ctx.top_layer_id().filter(|layer_id| {
-            layer_id.order == egui::Order::Middle
-                && (layer_id.id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID)
-                    || layer_id.id == egui::Id::new("mod_detail_window"))
-        })
-    }
-
-    fn active_detail_can_translate(&self, active_layer: egui::LayerId) -> bool {
-        if active_layer.id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID) {
-            return self.browse_detail_open
-                && self
-                    .browse_state
-                    .selected_mod_id
-                    .is_some_and(|mod_id| self.browse_state.details.contains_key(&mod_id));
+    fn current_view_detail_can_translate(&self) -> bool {
+        match self.current_view {
+            ViewMode::Browse => {
+                self.browse_detail_open
+                    && self
+                        .browse_state
+                        .selected_mod_id
+                        .is_some_and(|mod_id| self.browse_state.details.contains_key(&mod_id))
+            }
+            ViewMode::Library => {
+                self.mod_detail_open
+                    && self.selected_mod().is_some_and(|mod_entry| {
+                        mod_entry
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some()
+                    })
+            }
         }
-
-        if active_layer.id == egui::Id::new("mod_detail_window") {
-            return self.mod_detail_open
-                && self.selected_mod().is_some_and(|mod_entry| {
-                    mod_entry
-                        .source
-                        .as_ref()
-                        .and_then(|source| source.gamebanana.as_ref())
-                        .is_some()
-                });
-        }
-
-        false
     }
 
     fn toggle_visible_detail_translation(&mut self) {
@@ -1573,9 +1564,7 @@ impl HestiaApp {
         });
         if app_window_focused
             && !text_input_active
-            && !self.settings_open
-            && Self::active_detail_window_layer(ctx)
-                .is_some_and(|layer_id| self.active_detail_can_translate(layer_id))
+            && self.current_view_detail_can_translate()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F7))
         {
             self.toggle_visible_detail_translation();
