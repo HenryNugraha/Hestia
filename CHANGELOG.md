@@ -3,10 +3,12 @@
 ## [1.7.0-alpha] - 2026-xx-xx
 
 ### Added
-- ?
+- Rus lang
 
 ### Changed
-- ?
+- Rust & deps upgrade (egui stays 0.33)
+- Performance optimization
+- UI refinement for rus
 
 ### Fixed
 - ?

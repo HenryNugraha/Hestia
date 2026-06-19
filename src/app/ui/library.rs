@@ -3284,6 +3284,8 @@ impl HestiaApp {
 
                     let selection_anim = ui.ctx().animate_bool_with_time(ui.id().with("batch_anim"), has_selection, 0.2);
 
+                    let mods_status_filter_popup_id = ui.id().with("mods_status_filter_popup");
+
                     ui.scope(|ui| {
                         let icon_size = 41.0;
                         let full_width = 240.0;
@@ -3322,7 +3324,7 @@ impl HestiaApp {
                             i.pointer.secondary_clicked()
                                 && i.pointer
                                     .hover_pos()
-                                    .is_some_and(|pos| icon_area.contains(pos))
+                                    .is_some_and(|pos| rect.contains(pos))
                         });
                         let visibility_filtered = !self.show_enabled_mods
                             || self.state.static_prefs.hide_disabled
@@ -3367,7 +3369,7 @@ impl HestiaApp {
                         const VISIBILITY_HEADER_LABEL_GAP: f32 = 3.0;
 
                         egui::Popup::new(
-                            ui.id().with("mods_status_filter_popup"),
+                            mods_status_filter_popup_id,
                             ui.ctx().clone(),
                             egui::PopupAnchor::PointerFixed,
                             icon_resp.layer_id,
@@ -3723,6 +3725,19 @@ impl HestiaApp {
                         ui.add_space(-4.0 * header_visibility);
                         let unit_width = 302.0 * header_visibility;
                         let (unit_rect, label_resp) = ui.allocate_exact_size(egui::vec2(unit_width, 41.0), Sense::click());
+                        if ui.ctx().input(|i| {
+                            i.pointer.secondary_clicked()
+                                && i.pointer
+                                    .hover_pos()
+                                    .is_some_and(|pos| unit_rect.contains(pos))
+                        }) {
+                            suppress_mod_card_context_menu = true;
+                            let hover_pos = ui.ctx().pointer_hover_pos();
+                            #[allow(deprecated)]
+                            ui.ctx().memory_mut(|memory| {
+                                memory.open_popup_at(mods_status_filter_popup_id, hover_pos);
+                            });
+                        }
                         
                         if label_resp.clicked() {
                             self.mods_search_expanded = true;
