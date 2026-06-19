@@ -292,10 +292,13 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Сканирование установленных модов", // LibraryScanningInstalledMods
-    "Убедитесь, что XXMI установлен корректно.", // LibraryEnsureXxmiInstalled
-    "- Скачать XXMI: ", // LibraryDownloadXxmi
-    "Затем откройте окно настроек, чтобы включить игру и при необходимости исправить путь к игре.\n- Нажмите значок игры, чтобы включить или отключить её.\n- Выберите путь вручную, нажав кнопку […].", // LibraryBlankInstructions
-    "Открыть настройки", // LibraryOpenSettings
+    "Установите XXMI", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher нужен для управления играми.", // LibraryInstallXxmiDescription
+    "Настройте XXMI, затем позвольте Hestia найти ваши игры.", // LibrarySetupDescription
+    "Скачать XXMI", // LibraryDownloadXxmi
+    "Найти игры и исправить пути", // LibraryFindGamesAndFixPaths
+    "Найдите XXMI и поддерживаемые игры на дисках.", // LibraryPathScanDescription
+    "Настройки игры и путей", // LibraryGamePathSettings
     "Фильтр по названию мода...", // LibrarySearchHint
     "Установленные моды", // LibraryInstalledMods
     "Выбрано: {count}", // LibrarySelectedCount

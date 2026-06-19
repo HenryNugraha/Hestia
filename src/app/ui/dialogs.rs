@@ -110,14 +110,23 @@ impl HestiaApp {
                             self.finish_startup_path_scan(ctx);
                         }
                     } else {
+                        let cancel_requested = self
+                            .startup_path_scan
+                            .as_ref()
+                            .is_some_and(|scan| scan.cancel_requested);
                         let stop_button = egui::Button::new(RichText::new(text.stop_scan()).size(15.0))
                             .min_size(Vec2::new(140.0, 38.0));
                         if ui
-                            .add(stop_button)
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .add_enabled(!cancel_requested, stop_button)
+                            .on_hover_cursor(if cancel_requested {
+                                egui::CursorIcon::NotAllowed
+                            } else {
+                                egui::CursorIcon::PointingHand
+                            })
                             .clicked()
                         {
-                            if let Some(scan) = self.startup_path_scan.as_ref() {
+                            if let Some(scan) = self.startup_path_scan.as_mut() {
+                                scan.cancel_requested = true;
                                 scan.cancel.store(true, Ordering::Relaxed);
                             }
                         }

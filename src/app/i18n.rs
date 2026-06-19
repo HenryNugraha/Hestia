@@ -291,9 +291,12 @@ enum TextKey {
 
     LibraryScanningInstalledMods,
     LibraryEnsureXxmiInstalled,
+    LibraryInstallXxmiDescription,
+    LibrarySetupDescription,
     LibraryDownloadXxmi,
-    LibraryBlankInstructions,
-    LibraryOpenSettings,
+    LibraryFindGamesAndFixPaths,
+    LibraryPathScanDescription,
+    LibraryGamePathSettings,
     LibrarySearchHint,
     LibraryInstalledMods,
     LibrarySelectedCount,
@@ -1757,16 +1760,28 @@ impl TextCatalog {
         self.get(TextKey::LibraryEnsureXxmiInstalled)
     }
 
+    fn install_xxmi_description(self) -> &'static str {
+        self.get(TextKey::LibraryInstallXxmiDescription)
+    }
+
+    fn library_setup_description(self) -> &'static str {
+        self.get(TextKey::LibrarySetupDescription)
+    }
+
     fn download_xxmi(self) -> &'static str {
         self.get(TextKey::LibraryDownloadXxmi)
     }
 
-    fn library_blank_instructions(self) -> &'static str {
-        self.get(TextKey::LibraryBlankInstructions)
+    fn find_games_and_fix_paths(self) -> &'static str {
+        self.get(TextKey::LibraryFindGamesAndFixPaths)
     }
 
-    fn open_settings(self) -> &'static str {
-        self.get(TextKey::LibraryOpenSettings)
+    fn library_path_scan_description(self) -> &'static str {
+        self.get(TextKey::LibraryPathScanDescription)
+    }
+
+    fn game_path_settings(self) -> &'static str {
+        self.get(TextKey::LibraryGamePathSettings)
     }
 
     fn library_search_hint(self) -> &'static str {

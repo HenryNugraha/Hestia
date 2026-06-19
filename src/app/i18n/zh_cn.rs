@@ -292,10 +292,13 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "正在扫描已安装 Mod", // LibraryScanningInstalledMods
-    "请确认 XXMI 已正确安装。", // LibraryEnsureXxmiInstalled
-    "- 下载 XXMI：", // LibraryDownloadXxmi
-    "然后前往设置窗口启用游戏，并在需要时修复游戏路径。\n- 点击游戏图标以启用/禁用它。\n- 点击 […] 按钮手动选择路径。", // LibraryBlankInstructions
-    "打开设置", // LibraryOpenSettings
+    "安装 XXMI", // LibraryEnsureXxmiInstalled
+    "需要 XXMI Launcher 才能管理受支持的游戏。", // LibraryInstallXxmiDescription
+    "先设置 XXMI，再让 Hestia 查找您的游戏。", // LibrarySetupDescription
+    "下载 XXMI", // LibraryDownloadXxmi
+    "查找游戏并修复路径", // LibraryFindGamesAndFixPaths
+    "扫描可访问的驱动器以查找 XXMI 和受支持游戏的安装位置。", // LibraryPathScanDescription
+    "游戏和路径设置", // LibraryGamePathSettings
     "筛选 Mod 名称…", // LibrarySearchHint
     "已安装 Mod", // LibraryInstalledMods
     "{count} 个已选", // LibrarySelectedCount

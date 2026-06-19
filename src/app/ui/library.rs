@@ -3200,47 +3200,188 @@ impl HestiaApp {
         egui::Frame::new()
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    ui.add_space(16.0);
-                    static_label(ui, bold(text.no_games_detected(), Some(24.0)).underline());
-                    ui.add_space(-2.0);
-                    static_label(
-                        ui,
-                        RichText::new(text.ensure_xxmi_installed())
-                            .color(Color32::from_gray(170))
-                            .size(16.0),
-                    );
-                    ui.add_space(-10.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        static_label(
-                            ui,
-                            RichText::new(text.download_xxmi())
-                                .color(Color32::from_gray(170))
-                                .size(16.0),
-                        );
-                        ui.hyperlink("https://github.com/SpectrumQT/XXMI-Launcher");
-                    });
-                    ui.add_space(8.0);
-                    static_label(
-                        ui,
-                        RichText::new(text.library_blank_instructions())
-                        .color(Color32::from_gray(170))
-                        .size(16.0),
-                    );
-                    ui.add_space(4.0);
-                    if ui
-                        .add_sized(
-                            [156.0, 48.0],
-                            egui::Button::new(bold(text.open_settings(), Some(16.0))),
-                        )
-                        .clicked()
-                    {
-                        self.settings_open = true;
-                        self.settings_tab = SettingsTab::Path;
-                    }
-                    ui.add_space(16.0);
-                });
+                ui.add_space(22.0);
+                let panel_size = egui::vec2(520.0, 360.0);
+                let (panel_rect, _) = ui.allocate_exact_size(panel_size, Sense::hover());
+                ui.painter().rect(
+                    panel_rect,
+                    egui::CornerRadius::same(8),
+                    Color32::from_rgb(31, 34, 38),
+                    egui::Stroke::new(1.0, Color32::from_rgb(58, 63, 70)),
+                    egui::StrokeKind::Inside,
+                );
+                let content_rect = panel_rect.shrink2(egui::vec2(22.0, 20.0));
+                let mut panel_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(content_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                let ui = &mut panel_ui;
+                ui.set_width(content_rect.width());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 26.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                            static_label(ui, bold(text.no_games_detected(), Some(21.0)));
+                    },
+                );
+                        ui.add_space(2.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                            static_label(
+                                ui,
+                                RichText::new(text.library_setup_description())
+                                    .color(Color32::from_gray(155))
+                                    .size(13.0),
+                            );
+                    },
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(14.0);
+
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 20.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                            ui.add_space(28.0);
+                            static_label(
+                                ui,
+                                RichText::new("01")
+                                    .color(Color32::from_rgb(203, 104, 59))
+                                    .size(11.0)
+                                    .strong(),
+                            );
+                            ui.add_space(4.0);
+                            static_label(ui, bold(text.ensure_xxmi_installed(), Some(15.0)));
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 18.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                            ui.add_space(54.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.install_xxmi_description())
+                                    .color(Color32::from_gray(165))
+                                    .size(13.0),
+                            );
+                    },
+                );
+                        ui.add_space(6.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 42.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                            ui.add_space(54.0);
+                            let download_xxmi_button = egui::Button::new(icon_bold_text(
+                                Icon::ExternalLink,
+                                text.download_xxmi(),
+                                14.0,
+                                14.0,
+                            ))
+                            .fill(Color32::from_rgb(48, 51, 56))
+                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(73, 78, 86)));
+                            if ui
+                                .add_sized([172.0, 40.0], download_xxmi_button)
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                if let Err(err) = open_external_url(
+                                    "https://github.com/SpectrumQT/XXMI-Launcher",
+                                ) {
+                                    self.report_error(err, Some(text.app_could_not_open_browser()));
+                                }
+                            }
+                    },
+                );
+
+                        ui.add_space(18.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 20.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                            ui.add_space(28.0);
+                            static_label(
+                                ui,
+                                RichText::new("02")
+                                    .color(Color32::from_rgb(203, 104, 59))
+                                    .size(11.0)
+                                    .strong(),
+                            );
+                            ui.add_space(4.0);
+                            static_label(
+                                ui,
+                                bold(text.find_games_and_fix_paths(), Some(15.0)),
+                            );
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 18.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                            ui.add_space(54.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.library_path_scan_description())
+                                    .color(Color32::from_gray(165))
+                                    .size(13.0),
+                            );
+                    },
+                );
+                        let scanning = self.startup_path_scan.is_some();
+                        ui.add_space(6.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 42.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                            ui.add_space(54.0);
+                            let scan_button = egui::Button::new(icon_bold_text(
+                                Icon::Search,
+                                text.path_scan_button(scanning),
+                                15.0,
+                                16.0,
+                            ))
+                            .fill(Color32::from_rgb(180, 78, 35))
+                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)))
+                            .min_size(egui::vec2(172.0, 40.0));
+                            if ui
+                                .add_enabled(!scanning, scan_button)
+                                .on_hover_text(text.path_scan_button_tooltip())
+                                .on_hover_cursor(if scanning {
+                                    egui::CursorIcon::NotAllowed
+                                } else {
+                                    egui::CursorIcon::PointingHand
+                                })
+                                .clicked()
+                            {
+                                self.start_manual_path_scan();
+                            }
+                    },
+                );
+                ui.add_space(-2.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_rect.width(), 18.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                        ui.add_space(54.0);
+                        if ui
+                            .link(
+                                RichText::new(format!("{} →", text.game_path_settings()))
+                                    .color(Color32::from_gray(175))
+                                    .size(13.0),
+                            )
+                            .clicked()
+                        {
+                            self.settings_open = true;
+                            self.settings_tab = SettingsTab::Path;
+                        }
+                    },
+                );
             });
     }
 

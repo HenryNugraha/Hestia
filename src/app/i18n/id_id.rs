@@ -219,7 +219,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Unduhan (Ctrl+J)", // ChromeTasksTooltip
     "Log (Ctrl+L)", // ChromeLogTooltip
     "Setelan (F10)", // ChromeSettingsTooltip
-    "Tidak ada game yang terdeteksi atau diaktifkan", // ChromeNoGamesDetected
+    "Tidak ada game dipilih", // ChromeNoGamesDetected
     "Lihat Setelan → Game & Path", // ChromeSeeSettingsGamePath
 
     // Main GUI: Browse
@@ -292,10 +292,13 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Memindai mod terpasang", // LibraryScanningInstalledMods
-    "Pastikan XXMI sudah terpasang dengan benar.", // LibraryEnsureXxmiInstalled
-    "- Unduh XXMI: ", // LibraryDownloadXxmi
-    "Lalu buka setelan untuk mengaktifkan game dan memperbaiki path game jika diperlukan.\n- Klik ikon game untuk mengaktifkan/menonaktifkannya.\n- Pilih path secara manual dengan mengeklik tombol […].", // LibraryBlankInstructions
-    "Buka Setelan", // LibraryOpenSettings
+    "Pasang XXMI", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher diperlukan untuk mengelola game yang didukung.", // LibraryInstallXxmiDescription
+    "Siapkan XXMI, lalu biarkan Hestia menemukan game Anda.", // LibrarySetupDescription
+    "Unduh XXMI", // LibraryDownloadXxmi
+    "Temukan game dan perbaiki path", // LibraryFindGamesAndFixPaths
+    "Temukan lokasi instalasi XXMI dan game di komputer ini.", // LibraryPathScanDescription
+    "Setelan Game & Path", // LibraryGamePathSettings
     "Filter nama mod...", // LibrarySearchHint
     "Mod Terpasang", // LibraryInstalledMods
     "{count} dipilih", // LibrarySelectedCount

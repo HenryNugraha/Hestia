@@ -1050,6 +1050,7 @@ struct StartupPathScanStatus {
 struct StartupPathScanState {
     statuses: Vec<StartupPathScanStatus>,
     cancel: Arc<AtomicBool>,
+    cancel_requested: bool,
     stopped: bool,
     finished: bool,
     run_initial_mod_scan_after: bool,

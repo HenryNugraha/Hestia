@@ -440,7 +440,7 @@ impl HestiaApp {
             return;
         }
         let targets = Self::startup_path_scan_targets(&self.state, true);
-        self.startup_path_scan = Self::build_startup_path_scan_state(&targets, false);
+        self.startup_path_scan = Self::build_startup_path_scan_state(&targets, true);
         self.dispatch_startup_path_scan(targets);
     }
 
@@ -465,6 +465,7 @@ impl HestiaApp {
         Some(StartupPathScanState {
             statuses,
             cancel,
+            cancel_requested: false,
             stopped: false,
             finished: false,
             run_initial_mod_scan_after,
@@ -2213,6 +2214,7 @@ impl HestiaApp {
                 selected_mods_root.as_deref(),
                 &HashSet::new(),
             );
+            self.queue_game_refresh(game_id.clone());
             self.queue_update_check_for_linked_mods(Some(&game_id));
         }
     }

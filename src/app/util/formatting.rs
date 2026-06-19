@@ -240,6 +240,38 @@ fn icon_text_sized(icon: Icon, label: &str, icon_size: f32, text_size: f32) -> L
     job
 }
 
+fn icon_bold_text(icon: Icon, label: &str, icon_size: f32, text_size: f32) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.append(
+        &icon_char(icon).to_string(),
+        0.0,
+        TextFormat {
+            font_id: egui::FontId::new(icon_size, FontFamily::Name(LUCIDE_FAMILY.into())),
+            color: Color32::from_rgb(225, 229, 233),
+            ..Default::default()
+        },
+    );
+    job.append(
+        " ",
+        0.0,
+        TextFormat {
+            font_id: egui::FontId::new(text_size, FontFamily::Name(BOLD_FONT_FAMILY.into())),
+            color: Color32::from_rgb(225, 229, 233),
+            ..Default::default()
+        },
+    );
+    job.append(
+        label,
+        0.0,
+        TextFormat {
+            font_id: egui::FontId::new(text_size, FontFamily::Name(BOLD_FONT_FAMILY.into())),
+            color: Color32::from_rgb(225, 229, 233),
+            ..Default::default()
+        },
+    );
+    job
+}
+
 fn parse_gb_id_from_entry(mod_entry: &ModEntry) -> u64 {
     mod_entry
         .source

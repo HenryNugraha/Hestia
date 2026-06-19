@@ -292,10 +292,13 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Scanning installed mods", // LibraryScanningInstalledMods
-    "Ensure you have XXMI installed correctly.", // LibraryEnsureXxmiInstalled
-    "- Download XXMI: ", // LibraryDownloadXxmi
-    "Then go to the settings window to enable a game and fix the game path if needed.\n- Click on the game icon to enable/disable it.\n- Manually select a path by clicking the […] button.", // LibraryBlankInstructions
-    "Open Settings", // LibraryOpenSettings
+    "Install XXMI", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher is required to manage supported games.", // LibraryInstallXxmiDescription
+    "Set up XXMI, then let Hestia locate your games.", // LibrarySetupDescription
+    "Download XXMI", // LibraryDownloadXxmi
+    "Find games and fix paths", // LibraryFindGamesAndFixPaths
+    "Scan your accessible drives for XXMI and supported game installations.", // LibraryPathScanDescription
+    "Game & Path Settings", // LibraryGamePathSettings
     "Filter mod's name...", // LibrarySearchHint
     "Installed Mods", // LibraryInstalledMods
     "{count} selected", // LibrarySelectedCount
