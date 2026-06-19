@@ -22,6 +22,69 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn text_edit_has_focus(ctx: &egui::Context) -> bool {
+    ctx.memory(|memory| memory.focused())
+        .is_some_and(|focused_id| egui::TextEdit::load_state(ctx, focused_id).is_some())
+}
+
+#[derive(Clone, Copy)]
+enum VerticalScrollNavigation {
+    Home,
+    End,
+    PageUp(f32),
+    PageDown(f32),
+}
+
+fn vertical_scroll_navigation(
+    ui: &mut Ui,
+    scroll_rect: egui::Rect,
+) -> Option<VerticalScrollNavigation> {
+    if text_edit_has_focus(ui.ctx()) || !ui.rect_contains_pointer(scroll_rect) {
+        return None;
+    }
+
+    let page_height = (scroll_rect.height() - 48.0).max(64.0);
+    ui.input_mut(|input| {
+        if input.consume_key(egui::Modifiers::NONE, egui::Key::Home) {
+            Some(VerticalScrollNavigation::Home)
+        } else if input.consume_key(egui::Modifiers::NONE, egui::Key::End) {
+            Some(VerticalScrollNavigation::End)
+        } else if input.consume_key(egui::Modifiers::NONE, egui::Key::PageUp) {
+            Some(VerticalScrollNavigation::PageUp(page_height))
+        } else if input.consume_key(egui::Modifiers::NONE, egui::Key::PageDown) {
+            Some(VerticalScrollNavigation::PageDown(page_height))
+        } else {
+            None
+        }
+    })
+}
+
+fn apply_vertical_scroll_navigation(
+    ui: &mut Ui,
+    action: Option<VerticalScrollNavigation>,
+    at_content_end: bool,
+) {
+    let Some(action) = action else {
+        return;
+    };
+
+    match action {
+        VerticalScrollNavigation::Home if !at_content_end => {
+            ui.scroll_to_cursor(Some(egui::Align::TOP));
+        }
+        VerticalScrollNavigation::End if at_content_end => {
+            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+        }
+        VerticalScrollNavigation::PageUp(page_height) if at_content_end => {
+            ui.scroll_with_delta(egui::vec2(0.0, page_height));
+        }
+        VerticalScrollNavigation::PageDown(page_height) if at_content_end => {
+            ui.scroll_with_delta(egui::vec2(0.0, -page_height));
+        }
+        _ => {}
+    }
+}
+
 struct CategoryFolderTile {
     id: String,
     name: String,
@@ -4202,18 +4265,23 @@ impl HestiaApp {
                         scroll.bar_inner_margin = desired_right_gap;
                     }
 
-                    let mut scroll_area =
-                        ScrollArea::vertical()
-                            .id_salt("library_main_mod_grid_scroll")
-                            .auto_shrink([false, false]);
-                    if let Some(category_id) = selected_category_folder_id.as_deref() {
-                        scroll_area = scroll_area.id_salt(("library_category_folder_scroll", category_id));
-                    }
-                    scroll_area.show_viewport(ui, |ui, viewport| {
-                        let scroll_viewport_rect = egui::Rect::from_min_max(
-                            ui.max_rect().min + viewport.min.to_vec2(),
-                            ui.max_rect().min + viewport.max.to_vec2(),
-                        );
+                    let scroll_id_salt =
+                        if let Some(category_id) = selected_category_folder_id.as_deref() {
+                            egui::Id::new(("library_category_folder_scroll", category_id))
+                        } else {
+                            egui::Id::new("library_main_mod_grid_scroll")
+                        };
+                    let scroll_rect = ui.available_rect_before_wrap();
+                    let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
+                    ScrollArea::vertical()
+                        .id_salt(scroll_id_salt)
+                        .auto_shrink([false, false])
+                        .show_viewport(ui, |ui, viewport| {
+                            apply_vertical_scroll_navigation(ui, scroll_navigation, false);
+                            let scroll_viewport_rect = egui::Rect::from_min_max(
+                                ui.max_rect().min + viewport.min.to_vec2(),
+                                ui.max_rect().min + viewport.max.to_vec2(),
+                            );
                         ui.spacing_mut().item_spacing.x = card_spacing; // Gap between cards horizontally
                         ui.add_space(0.0);
 
@@ -6508,6 +6576,7 @@ impl HestiaApp {
                             ui.ctx()
                                 .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
                         }
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
                 });
             },
@@ -7057,7 +7126,11 @@ impl HestiaApp {
                     );
                 });
                 self.mod_detail_tab = ModDetailTab::Overview;
-                ScrollArea::vertical().id_salt("my_mod_detail_scroll").show(ui, |ui| {
+                let scroll_id_salt = egui::Id::new("my_mod_detail_scroll");
+                let scroll_rect = ui.available_rect_before_wrap();
+                let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
+                ScrollArea::vertical().id_salt(scroll_id_salt).show(ui, |ui| {
+                    apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                     if false { ui.horizontal(|ui| {
                         ui.horizontal_wrapped(|ui| {
                             let use_default_path = self.state.static_prefs.use_default_mods_path;
@@ -8521,6 +8594,7 @@ impl HestiaApp {
                             );
                         });
                     }
+                    apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
 
             });

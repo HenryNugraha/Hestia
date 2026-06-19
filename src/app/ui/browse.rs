@@ -250,7 +250,12 @@ impl HestiaApp {
 
         let left_padding = 12.0;
         ui.add_space(8.0);
-        ScrollArea::vertical().show(ui, |ui| {
+        let scroll_rect = ui.available_rect_before_wrap();
+        let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
+        ScrollArea::vertical()
+            .id_salt("browse_main_mod_grid_scroll")
+            .show(ui, |ui| {
+            apply_vertical_scroll_navigation(ui, scroll_navigation, false);
             ui.spacing_mut().item_spacing.x = 8.0;
             if let Some(category) = self.browse_state.selected_character_category.clone() {
                 ui.horizontal(|ui| {
@@ -742,6 +747,7 @@ impl HestiaApp {
             {
                 self.request_browse_page(self.browse_state.next_page);
             }
+            apply_vertical_scroll_navigation(ui, scroll_navigation, true);
         });
     }
 
@@ -923,12 +929,15 @@ impl HestiaApp {
 
         let categories = self.browse_state.character_categories.clone();
         let columns = 3;
+        let scroll_rect = ui.available_rect_before_wrap();
+        let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
         ScrollArea::vertical()
             .max_height(grid_height)
             .min_scrolled_height(grid_height)
             .auto_shrink([false, false])
             .id_salt("browse_character_picker_scroll")
             .show(ui, |ui| {
+                apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                 let selected_id = self
                     .browse_state
@@ -948,6 +957,7 @@ impl HestiaApp {
                         }
                     });
                 }
+                apply_vertical_scroll_navigation(ui, scroll_navigation, true);
             });
     }
 
@@ -1443,7 +1453,11 @@ impl HestiaApp {
                         );
                     });
 
-                    ScrollArea::vertical().id_salt("browse_detail_scroll").show(ui, |ui| {
+                    let scroll_id_salt = egui::Id::new("browse_detail_scroll");
+                    let scroll_rect = ui.available_rect_before_wrap();
+                    let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
+                    ScrollArea::vertical().id_salt(scroll_id_salt).show(ui, |ui| {
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                         if let Some(preview) = &profile.preview_media {
                             ui.add_space(10.0);
                             
@@ -1941,6 +1955,7 @@ impl HestiaApp {
                                 self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
                             }
                         }
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
                 } else {
                     ui.add_space(18.0);
