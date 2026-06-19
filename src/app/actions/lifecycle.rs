@@ -1689,6 +1689,7 @@ impl HestiaApp {
         if let Some(id) = mod_id {
             self.mod_detail_open = true;
             self.mod_detail_focus_requested = true;
+            self.maybe_translate_my_mod_details(&id);
 
             // Optimization: Pre-fetch full cover image for the selected mod to avoid redundant decoding later.
             // Extract necessary data before any mutable borrows of `self`

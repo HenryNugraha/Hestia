@@ -88,6 +88,8 @@ pub struct StaticPreferences {
     #[serde(default = "serde_default_true")]
     pub automatically_check_for_update: bool,
     #[serde(default)]
+    pub always_translate_mod_details: bool,
+    #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
@@ -127,6 +129,7 @@ impl Default for StaticPreferences {
             modified_update_behavior: ModifiedUpdateBehavior::default(),
             always_replace_on_update: true,
             automatically_check_for_update: true,
+            always_translate_mod_details: false,
             tool_blacklist: HashMap::new(),
         }
     }

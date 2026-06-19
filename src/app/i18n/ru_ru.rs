@@ -513,6 +513,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Всегда объединять", // SettingsGeneralOperationalAlwaysMerge
     "Всегда оставлять оба", // SettingsGeneralOperationalAlwaysKeepBoth
     "При обновлении модов всегда заменять", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
+    "Всегда переводить сведения о моде", // SettingsGeneralOperationalAlwaysTranslateModDetails
+    "Автоматически переводит сведения GameBanana при открытии окна мода в Browse или MY MODS. Исходные метаданные GameBanana не меняются.", // SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip
     "При удалении мода:", // SettingsGeneralOperationalWhenDeletingMod
     "Переместить в корзину", // SettingsGeneralOperationalMoveToRecycleBin
     "Удалить навсегда", // SettingsGeneralOperationalDeletePermanently
@@ -610,7 +612,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Источники", // SettingsAboutAttributionSection
     "Источник данных: GameBanana, API используется с разрешения. Метаданные модов, медиафайлы и данные каталога GameBanana получены из GameBanana.", // SettingsAboutAttributionGameBanana
 
-    // Translation
+    // Translation strings
     "Перевод не удался", // TranslationFailed
     "Выполняется перевод", // TranslationInProgress
 ];

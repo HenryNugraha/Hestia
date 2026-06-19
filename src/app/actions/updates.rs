@@ -1320,7 +1320,6 @@ impl HestiaApp {
                 gb_profile.as_deref(),
             );
         }
-
         if let Some((target_mod_id, rename_to)) = post_install_rename {
             match self.rename_mod_folder(&target_mod_id, &rename_to) {
                 Ok(()) => {

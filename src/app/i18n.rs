@@ -507,6 +507,8 @@ enum TextKey {
     SettingsGeneralOperationalAlwaysMerge,
     SettingsGeneralOperationalAlwaysKeepBoth,
     SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods,
+    SettingsGeneralOperationalAlwaysTranslateModDetails,
+    SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip,
     SettingsGeneralOperationalWhenDeletingMod,
     SettingsGeneralOperationalMoveToRecycleBin,
     SettingsGeneralOperationalDeletePermanently,
@@ -2549,6 +2551,14 @@ impl TextCatalog {
 
     fn always_replace_on_updating_mods(self) -> &'static str {
         self.get(TextKey::SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods)
+    }
+
+    fn always_translate_mod_details(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalAlwaysTranslateModDetails)
+    }
+
+    fn always_translate_mod_details_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip)
     }
 
     fn when_deleting_mod(self) -> &'static str {

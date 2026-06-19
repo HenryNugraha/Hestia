@@ -506,6 +506,9 @@ impl HestiaApp {
         self.browse_detail_focus_requested = true;
         self.request_browse_detail(mod_id);
         self.request_browse_updates(mod_id);
+        if self.browse_state.details.contains_key(&mod_id) {
+            self.maybe_translate_gamebanana_mod_details(mod_id);
+        }
         self.queue_detail_preview_images(mod_id);
         self.begin_full_image_prefetch(mod_id);
     }
@@ -998,6 +1001,9 @@ fn queue_browse_image_full(&mut self, url: String, cancel_key: Option<u64>, prio
                     self.queue_detail_preview_images(mod_id);
                     if self.browse_state.selected_mod_id == Some(mod_id) {
                         self.begin_full_image_prefetch(mod_id);
+                        if self.browse_detail_open {
+                            self.maybe_translate_gamebanana_mod_details(mod_id);
+                        }
                     }
                     self.request_browse_updates(mod_id);
 

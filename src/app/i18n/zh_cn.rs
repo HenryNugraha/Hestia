@@ -513,6 +513,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "始终合并", // SettingsGeneralOperationalAlwaysMerge
     "始终保留两者", // SettingsGeneralOperationalAlwaysKeepBoth
     "更新 Mod 时始终替换", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
+    "始终翻译 Mod 详情", // SettingsGeneralOperationalAlwaysTranslateModDetails
+    "在浏览或 MY MODS 中打开 Mod 详情窗口时自动翻译 GameBanana 详情。原始 GameBanana 元数据保持不变。", // SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip
     "删除 Mod 时：", // SettingsGeneralOperationalWhenDeletingMod
     "移至回收站", // SettingsGeneralOperationalMoveToRecycleBin
     "永久删除", // SettingsGeneralOperationalDeletePermanently
@@ -610,7 +612,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "来源说明", // SettingsAboutAttributionSection
     "数据来源：GameBanana，API 经授权使用。GameBanana 的 Mod 元数据、媒体和浏览数据均来自 GameBanana。", // SettingsAboutAttributionGameBanana
 
-    // Translation
+    // Translation strings
     "翻译失败", // TranslationFailed
     "正在翻译", // TranslationInProgress
 ];

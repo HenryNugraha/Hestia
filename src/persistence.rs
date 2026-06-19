@@ -1128,6 +1128,19 @@ mod tests {
     }
 
     #[test]
+    fn always_translate_mod_details_defaults_false_and_roundtrips() {
+        let old_config: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
+        assert!(!old_config.static_prefs.always_translate_mod_details);
+
+        let mut state = AppState::default();
+        state.static_prefs.always_translate_mod_details = true;
+        let raw = toml::to_string(&AppPreferences::from(&state)).unwrap();
+        let saved: AppPreferences = toml::from_str(&raw).unwrap();
+
+        assert!(saved.static_prefs.always_translate_mod_details);
+    }
+
+    #[test]
     fn persistent_paths_prefer_existing_fallback_before_new_portable_files() {
         let temp = tempfile::tempdir().unwrap();
         let install_dir = temp.path().join("install");

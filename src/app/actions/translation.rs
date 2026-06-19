@@ -1,4 +1,157 @@
 impl HestiaApp {
+    fn current_translation_lang(&self) -> &'static str {
+        match self.state.static_prefs.language {
+            AppLanguage::English => "en",
+            AppLanguage::Indonesian => "id",
+            AppLanguage::ChineseSimplified => "cn",
+            AppLanguage::Russian => "ru",
+        }
+    }
+
+    fn translation_cache_path(mod_id: u64, lang: &str) -> std::path::PathBuf {
+        persistence::cache_file_path(&format!("gb_profile_{}-{}.json", mod_id, lang))
+    }
+
+    fn cached_translation_profile(
+        mod_id: u64,
+        lang: &str,
+    ) -> Option<gamebanana::ProfileResponse> {
+        let cache_path = Self::translation_cache_path(mod_id, lang);
+        std::fs::read_to_string(cache_path)
+            .ok()
+            .and_then(|json| serde_json::from_str::<gamebanana::ProfileResponse>(&json).ok())
+    }
+
+    fn apply_translated_profile(
+        &mut self,
+        mod_id: u64,
+        lang: &str,
+        profile: gamebanana::ProfileResponse,
+    ) {
+        if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+            let markdown = prepare_markdown_for_display(
+                profile.html_text.as_deref().unwrap_or_default(),
+                None,
+                Some(mod_id),
+                &self.portable,
+            );
+
+            detail.translated_profile = Some(profile.clone());
+            detail.translation_lang = Some(lang.to_string());
+            detail.translation_loading = false;
+            detail.markdown = markdown;
+        }
+
+        let mod_ids_to_update: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter(|m| {
+                m.source
+                    .as_ref()
+                    .and_then(|s| s.gamebanana.as_ref())
+                    .map(|l| l.mod_id == mod_id)
+                    .unwrap_or(false)
+            })
+            .map(|m| m.id.clone())
+            .collect();
+
+        for mod_entry_id in mod_ids_to_update {
+            let state = self
+                .my_mods_translation_state
+                .entry(mod_entry_id)
+                .or_insert_with(|| MyModTranslationState {
+                    translated_profile: None,
+                    translation_lang: None,
+                    translation_loading: false,
+                });
+            state.translated_profile = Some(profile.clone());
+            state.translation_lang = Some(lang.to_string());
+            state.translation_loading = false;
+        }
+    }
+
+    fn set_translation_loading_for_gamebanana_mod(&mut self, mod_id: u64, loading: bool) {
+        if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+            detail.translation_loading = loading;
+        }
+
+        let mod_ids_to_update: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter(|m| {
+                m.source
+                    .as_ref()
+                    .and_then(|s| s.gamebanana.as_ref())
+                    .map(|l| l.mod_id == mod_id)
+                    .unwrap_or(false)
+            })
+            .map(|m| m.id.clone())
+            .collect();
+
+        for mod_entry_id in mod_ids_to_update {
+            let state = self
+                .my_mods_translation_state
+                .entry(mod_entry_id)
+                .or_insert_with(|| MyModTranslationState {
+                    translated_profile: None,
+                    translation_lang: None,
+                    translation_loading: false,
+                });
+            state.translation_loading = loading;
+        }
+    }
+
+    fn request_translation_for_gamebanana_mod(&mut self, mod_id: u64, lang: &str) {
+        if self.translation_inflight.contains(&(mod_id, lang.to_string())) {
+            self.set_translation_loading_for_gamebanana_mod(mod_id, true);
+            return;
+        }
+
+        if let Some(profile) = Self::cached_translation_profile(mod_id, lang) {
+            self.apply_translated_profile(mod_id, lang, profile);
+            return;
+        }
+
+        self.set_translation_loading_for_gamebanana_mod(mod_id, true);
+        self.translation_inflight.insert((mod_id, lang.to_string()));
+        let _ = self.translation_request_tx.send(TranslationRequest {
+            mod_id,
+            lang: lang.to_string(),
+        });
+    }
+
+    pub(crate) fn maybe_translate_gamebanana_mod_details(&mut self, mod_id: u64) {
+        if !self.state.static_prefs.always_translate_mod_details {
+            return;
+        }
+        if mod_id == 0 {
+            return;
+        }
+        let lang = self.current_translation_lang();
+        self.request_translation_for_gamebanana_mod(mod_id, lang);
+    }
+
+    pub(crate) fn maybe_translate_my_mod_details(&mut self, mod_entry_id: &str) {
+        if !self.state.static_prefs.always_translate_mod_details {
+            return;
+        }
+        let Some(gb_id) = self
+            .state
+            .mods
+            .iter()
+            .find(|m| m.id == mod_entry_id)
+            .and_then(|m| m.source.as_ref())
+            .and_then(|s| s.gamebanana.as_ref())
+            .map(|l| l.mod_id)
+        else {
+            return;
+        };
+        let lang = self.current_translation_lang();
+        self.request_translation_for_gamebanana_mod(gb_id, lang);
+    }
+
     pub(crate) fn toggle_browse_translation(&mut self, mod_id: u64) {
         let Some(detail) = self.browse_state.details.get_mut(&mod_id) else {
             return;
@@ -28,50 +181,8 @@ impl HestiaApp {
         }
 
         // Start translation
-        let lang = match self.state.static_prefs.language {
-            AppLanguage::English => "en",
-            AppLanguage::Indonesian => "id",
-            AppLanguage::ChineseSimplified => "cn",
-            AppLanguage::Russian => "ru",
-        };
-
-        // Check if already in flight
-        if self.translation_inflight.contains(&(mod_id, lang.to_string())) {
-            return;
-        }
-
-        // Check cache first by attempting to load
-        let cache_key = format!("gb_profile_{}-{}.json", mod_id, lang);
-        let cache_path = persistence::cache_file_path(&cache_key);
-        
-        if cache_path.exists() {
-            if let Ok(json) = std::fs::read_to_string(&cache_path) {
-                if let Ok(profile) = serde_json::from_str::<gamebanana::ProfileResponse>(&json) {
-                    // Cache hit - use it immediately and regenerate markdown
-                    if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
-                        let markdown = prepare_markdown_for_display(
-                            profile.html_text.as_deref().unwrap_or_default(),
-                            None,
-                            Some(mod_id),
-                            &self.portable,
-                        );
-                        
-                        detail.translated_profile = Some(profile);
-                        detail.translation_lang = Some(lang.to_string());
-                        detail.markdown = markdown;
-                    }
-                    return;
-                }
-            }
-        }
-
-        // Cache miss - request from API
-        detail.translation_loading = true;
-        self.translation_inflight.insert((mod_id, lang.to_string()));
-        let _ = self.translation_request_tx.send(TranslationRequest {
-            mod_id,
-            lang: lang.to_string(),
-        });
+        let lang = self.current_translation_lang();
+        self.request_translation_for_gamebanana_mod(mod_id, lang);
     }
 
     pub(crate) fn toggle_my_mods_translation(&mut self, mod_id: String) {
@@ -107,42 +218,8 @@ impl HestiaApp {
         };
 
         // Start translation
-        let lang = match self.state.static_prefs.language {
-            AppLanguage::English => "en",
-            AppLanguage::Indonesian => "id",
-            AppLanguage::ChineseSimplified => "cn",
-            AppLanguage::Russian => "ru",
-        };
-
-        // Check if already in flight
-        if self.translation_inflight.contains(&(gb_id, lang.to_string())) {
-            return;
-        }
-
-        // Check cache first
-        let cache_key = format!("gb_profile_{}-{}.json", gb_id, lang);
-        let cache_path = persistence::cache_file_path(&cache_key);
-        
-        if cache_path.exists() {
-            if let Ok(json) = std::fs::read_to_string(&cache_path) {
-                if let Ok(profile) = serde_json::from_str::<gamebanana::ProfileResponse>(&json) {
-                    // Cache hit - use it immediately
-                    if let Some(state) = self.my_mods_translation_state.get_mut(&mod_id) {
-                        state.translated_profile = Some(profile);
-                        state.translation_lang = Some(lang.to_string());
-                    }
-                    return;
-                }
-            }
-        }
-
-        // Cache miss - request from API
-        translation_state.translation_loading = true;
-        self.translation_inflight.insert((gb_id, lang.to_string()));
-        let _ = self.translation_request_tx.send(TranslationRequest {
-            mod_id: gb_id,
-            lang: lang.to_string(),
-        });
+        let lang = self.current_translation_lang();
+        self.request_translation_for_gamebanana_mod(gb_id, lang);
     }
 
     pub(crate) fn handle_translation_events(&mut self) {
@@ -151,62 +228,10 @@ impl HestiaApp {
 
             match event.result {
                 Ok(profile) => {
-                    // Update browse detail cache
-                    if let Some(detail) = self.browse_state.details.get_mut(&event.mod_id) {
-                        // Regenerate markdown from translated profile
-                        let markdown = prepare_markdown_for_display(
-                            profile.html_text.as_deref().unwrap_or_default(),
-                            None,
-                            Some(event.mod_id),
-                            &self.portable,
-                        );
-                        
-                        detail.translated_profile = Some(profile.clone());
-                        detail.translation_lang = Some(event.lang.clone());
-                        detail.translation_loading = false;
-                        detail.markdown = markdown;
-                    }
-
-                    // Update my mods translation state
-                    let mod_ids_to_update: Vec<String> = self.state.mods.iter()
-                        .filter(|m| {
-                            m.source.as_ref()
-                                .and_then(|s| s.gamebanana.as_ref())
-                                .map(|l| l.mod_id == event.mod_id)
-                                .unwrap_or(false)
-                        })
-                        .map(|m| m.id.clone())
-                        .collect();
-                    
-                    for mod_id in mod_ids_to_update {
-                        if let Some(state) = self.my_mods_translation_state.get_mut(&mod_id) {
-                            state.translated_profile = Some(profile.clone());
-                            state.translation_lang = Some(event.lang.clone());
-                            state.translation_loading = false;
-                        }
-                    }
+                    self.apply_translated_profile(event.mod_id, &event.lang, profile);
                 }
                 Err(err) => {
-                    // Clear loading state
-                    if let Some(detail) = self.browse_state.details.get_mut(&event.mod_id) {
-                        detail.translation_loading = false;
-                    }
-
-                    let mod_ids_to_update: Vec<String> = self.state.mods.iter()
-                        .filter(|m| {
-                            m.source.as_ref()
-                                .and_then(|s| s.gamebanana.as_ref())
-                                .map(|l| l.mod_id == event.mod_id)
-                                .unwrap_or(false)
-                        })
-                        .map(|m| m.id.clone())
-                        .collect();
-                    
-                    for mod_id in mod_ids_to_update {
-                        if let Some(state) = self.my_mods_translation_state.get_mut(&mod_id) {
-                            state.translation_loading = false;
-                        }
-                    }
+                    self.set_translation_loading_for_gamebanana_mod(event.mod_id, false);
 
                     // Show error toast
                     let text = self.text();

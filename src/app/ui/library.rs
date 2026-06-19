@@ -6968,17 +6968,34 @@ impl HestiaApp {
                             let translation_state = self.my_mods_translation_state.get(&selected.id);
                             let is_loading = translation_state.map(|s| s.translation_loading).unwrap_or(false);
                             let is_active = translation_state.and_then(|s| s.translation_lang.as_ref()).is_some();
+                            let pulse = if is_loading {
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(80));
+                                ((ui.input(|i| i.time) * 4.0).sin() as f32 * 0.5 + 0.5)
+                                    .clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
 
                             let icon_color = if is_loading {
-                                Color32::from_rgb(245, 158, 11) // Amber/yellow
+                                Color32::from_rgb(
+                                    245,
+                                    (142.0 + 64.0 * pulse) as u8,
+                                    (11.0 + 28.0 * pulse) as u8,
+                                )
                             } else if is_active {
-                                Color32::from_rgb(34, 197, 94) // Green
+                                Color32::from_rgb(34, 197, 94)
                             } else {
                                 Color32::from_gray(160)
                             };
+                            let icon_size = if is_loading {
+                                12.0 + 1.5 * pulse
+                            } else {
+                                12.0
+                            };
 
                             let translate_btn = ui.add(
-                                egui::Button::new(icon_rich(Icon::Languages, 12.0, icon_color))
+                                egui::Button::new(icon_rich(Icon::Languages, icon_size, icon_color))
                                     .frame(false),
                             );
 

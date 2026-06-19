@@ -3150,24 +3150,46 @@ impl HestiaApp {
                     }
                     }
                     SettingsTab::Advanced => {
+                        let radius = egui::CornerRadius::same(3);
+                        ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                        ui.style_mut().visuals.widgets.open.corner_radius = radius;
+
                         static_label(ui, bold(text.appearance(), Some(16.0)).underline());
                         ui.indent("setting_general_interface", |ui| {
                             static_label(ui, text.language());
                             ui.add_space(-4.0);
                             let previous_language = self.state.static_prefs.language;
-                            egui::ComboBox::from_id_salt("app_language")
-                                .selected_text(self.state.static_prefs.language.native_label())
-                                .show_ui(ui, |ui| {
-                                    for language in AppLanguage::ALL {
-                                        ui.selectable_value(
-                                            &mut self.state.static_prefs.language,
-                                            language,
-                                            language.native_label(),
-                                        )
-                                        .on_hover_text(language.label());
-                                    }
-                                });
+                            let always_translate_mod_details =
+                                self.state.static_prefs.always_translate_mod_details;
+                            ui.horizontal(|ui| {
+                                egui::ComboBox::from_id_salt("app_language")
+                                    .selected_text(self.state.static_prefs.language.native_label())
+                                    .show_ui(ui, |ui| {
+                                        for language in AppLanguage::ALL {
+                                            ui.selectable_value(
+                                                &mut self.state.static_prefs.language,
+                                                language,
+                                                language.native_label(),
+                                            )
+                                            .on_hover_text(language.label());
+                                        }
+                                    });
+                                let auto_translate_response = ui.checkbox(
+                                    &mut self.state.static_prefs.always_translate_mod_details,
+                                    text.always_translate_mod_details(),
+                                );
+                                auto_translate_response
+                                    .clone()
+                                    .on_hover_text(text.always_translate_mod_details_tooltip());
+                            });
                             if self.state.static_prefs.language != previous_language {
+                                should_save = true;
+                            }
+                            if self.state.static_prefs.always_translate_mod_details
+                                != always_translate_mod_details
+                            {
                                 should_save = true;
                             }
                             ui.add_space(8.0);
@@ -3383,4 +3405,3 @@ impl HestiaApp {
         }
     }
 }
-

@@ -1357,20 +1357,42 @@ impl HestiaApp {
                         if let Some(detail) = self.browse_state.details.get(&mod_id) {
                             let translation_loading = detail.translation_loading;
                             let translation_active = detail.translation_lang.is_some();
+                            let pulse = if translation_loading {
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(80));
+                                ((ui.input(|i| i.time) * 4.0).sin() as f32 * 0.5 + 0.5)
+                                    .clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
                             
                             let icon_color = if translation_loading {
-                                Color32::from_rgb(245, 158, 11) // Yellow/amber
+                                Color32::from_rgb(
+                                    245,
+                                    (142.0 + 64.0 * pulse) as u8,
+                                    (11.0 + 28.0 * pulse) as u8,
+                                )
                             } else if translation_active {
-                                Color32::from_rgb(34, 197, 94) // Green
+                                Color32::from_rgb(34, 197, 94)
                             } else {
-                                Color32::from_gray(160) // Gray
+                                Color32::from_gray(160)
+                            };
+                            let icon_size = if translation_loading {
+                                13.0 + 1.5 * pulse
+                            } else {
+                                13.0
                             };
                             
                             let translate_btn = ui.add(
-                                egui::Button::new(icon_rich(Icon::Languages, 13.0, icon_color))
+                                egui::Button::new(icon_rich(Icon::Languages, icon_size, icon_color))
                                     .frame(false),
                             );
-                            
+
+                            let translate_btn = if translation_loading {
+                                translate_btn.on_hover_text(text.translation_in_progress())
+                            } else {
+                                translate_btn
+                            };
                             if translate_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 self.toggle_browse_translation(mod_id);
                             }

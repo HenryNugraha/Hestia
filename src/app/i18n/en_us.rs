@@ -513,6 +513,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Always Merge", // SettingsGeneralOperationalAlwaysMerge
     "Always Keep Both", // SettingsGeneralOperationalAlwaysKeepBoth
     "Always replace on updating mods", // SettingsGeneralOperationalAlwaysReplaceOnUpdatingMods
+    "Always translate mod details", // SettingsGeneralOperationalAlwaysTranslateModDetails
+    "Automatically translates GameBanana details when opening a mod detail window in Browse or MY MODS. Original GameBanana metadata stays unchanged.", // SettingsGeneralOperationalAlwaysTranslateModDetailsTooltip
     "When deleting a mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Move to Recycle Bin", // SettingsGeneralOperationalMoveToRecycleBin
     "Delete Permanently", // SettingsGeneralOperationalDeletePermanently
@@ -610,7 +612,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Attribution", // SettingsAboutAttributionSection
     "Data source: GameBanana, API used with permission. GameBanana mod metadata, media, and browse data are sourced from GameBanana.", // SettingsAboutAttributionGameBanana
 
-    // Translation
+    // Translation strings
     "Translation failed", // TranslationFailed
     "Translation in progress", // TranslationInProgress
 ];
