@@ -850,7 +850,6 @@ impl HestiaApp {
     }
 
     fn consume_startup_path_scan_events(&mut self, ctx: &egui::Context) {
-        let mut finished = false;
         let mut saw_event = false;
         while let Ok(event) = self.startup_path_scan_rx.try_recv() {
             saw_event = true;
@@ -879,27 +878,13 @@ impl HestiaApp {
                         scan.stopped = stopped;
                         scan.finished = true;
                     }
-                    finished = true;
                 }
-            }
-        }
-
-        if finished {
-            if !self.startup_path_scan_needs_review() {
-                self.finish_startup_path_scan(ctx);
             }
         }
 
         if saw_event || self.startup_path_scan.is_some() {
             ctx.request_repaint();
         }
-    }
-
-    fn startup_path_scan_needs_review(&self) -> bool {
-        let Some(scan) = self.startup_path_scan.as_ref() else {
-            return false;
-        };
-        scan.stopped || scan.statuses.iter().any(|status| status.candidates.is_empty())
     }
 
     fn apply_startup_found_path_if_missing(

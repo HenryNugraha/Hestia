@@ -95,6 +95,9 @@ enum TextKey {
     DialogScanResults,
     DialogContinue,
     DialogStopScan,
+    DialogStoppingScan,
+    DialogScanStopped,
+    DialogScanCompleted,
     DialogStopped,
     DialogNotFound,
     DialogSearching,
@@ -943,6 +946,18 @@ impl TextCatalog {
 
     fn stop_scan(self) -> &'static str {
         self.get(TextKey::DialogStopScan)
+    }
+
+    fn stopping_scan(self) -> &'static str {
+        self.get(TextKey::DialogStoppingScan)
+    }
+
+    fn scan_stopped(self) -> &'static str {
+        self.get(TextKey::DialogScanStopped)
+    }
+
+    fn scan_completed(self) -> &'static str {
+        self.get(TextKey::DialogScanCompleted)
     }
 
     fn stopped(self) -> &'static str {

@@ -93,6 +93,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Результаты сканирования", // DialogScanResults
     "Продолжить", // DialogContinue
     "Остановить сканирование", // DialogStopScan
+    "Остановка сканирования…", // DialogStoppingScan
+    "Сканирование остановлено.", // DialogScanStopped
+    "Сканирование завершено.", // DialogScanCompleted
     "Остановлено", // DialogStopped
     "Не найдено", // DialogNotFound
     "Поиск…", // DialogSearching

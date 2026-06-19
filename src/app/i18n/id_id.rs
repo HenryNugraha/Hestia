@@ -93,6 +93,9 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Hasil Pemindaian", // DialogScanResults
     "Lanjutkan", // DialogContinue
     "Hentikan Pemindaian", // DialogStopScan
+    "Menghentikan pemindaian…", // DialogStoppingScan
+    "Pemindaian dihentikan.", // DialogScanStopped
+    "Pemindaian selesai.", // DialogScanCompleted
     "Dihentikan", // DialogStopped
     "Tidak ditemukan", // DialogNotFound
     "Mencari...", // DialogSearching

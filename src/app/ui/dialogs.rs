@@ -26,12 +26,37 @@ impl HestiaApp {
                         .max_rect(header_rect)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 );
-                header_ui.add(egui::Spinner::new().size(16.0));
+                let scan = self.startup_path_scan.as_ref().expect("scan checked above");
+                let header_color = if scan.finished && !scan.stopped {
+                    Color32::from_rgb(126, 205, 145)
+                } else {
+                    Color32::from_gray(210)
+                };
+                let header_label = if scan.finished {
+                    if scan.stopped {
+                        static_label(
+                            &mut header_ui,
+                            icon_rich(Icon::Ban, 16.0, Color32::from_gray(170)),
+                        );
+                        text.scan_stopped()
+                    } else {
+                        static_label(
+                            &mut header_ui,
+                            icon_rich(Icon::Check, 16.0, header_color),
+                        );
+                        text.scan_completed()
+                    }
+                } else {
+                    header_ui.add(egui::Spinner::new().size(16.0));
+                    if scan.cancel_requested {
+                        text.stopping_scan()
+                    } else {
+                        text.scanning_paths()
+                    }
+                };
                 static_label(
                     &mut header_ui,
-                    RichText::new(text.scanning_paths())
-                        .size(14.0)
-                        .color(Color32::from_gray(210)),
+                    RichText::new(header_label).size(14.0).color(header_color),
                 );
 
                 let content_rect = egui::Rect::from_center_size(
@@ -865,4 +890,3 @@ impl HestiaApp {
         }
     }
 }
-

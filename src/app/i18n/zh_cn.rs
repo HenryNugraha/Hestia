@@ -93,6 +93,9 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "扫描结果", // DialogScanResults
     "继续", // DialogContinue
     "停止扫描", // DialogStopScan
+    "正在停止扫描…", // DialogStoppingScan
+    "扫描已停止。", // DialogScanStopped
+    "扫描已完成。", // DialogScanCompleted
     "已停止", // DialogStopped
     "未找到", // DialogNotFound
     "正在搜索…", // DialogSearching

@@ -93,6 +93,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Scan Results", // DialogScanResults
     "Continue", // DialogContinue
     "Stop Scan", // DialogStopScan
+    "Stopping scan…", // DialogStoppingScan
+    "Scan stopped.", // DialogScanStopped
+    "Scan completed.", // DialogScanCompleted
     "Stopped", // DialogStopped
     "Not found", // DialogNotFound
     "Searching...", // DialogSearching
