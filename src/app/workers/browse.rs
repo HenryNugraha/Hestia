@@ -6,6 +6,7 @@ fn spawn_browse_worker(
 ) {
     let client = runtime_services.http_client.clone();
     let json_limiter = Arc::clone(&runtime_services.json_limiter);
+    let active_page_task = Arc::new(Mutex::new(None::<tokio::task::AbortHandle>));
     runtime_services.spawn(async move {
         while let Some(request) = rx.recv().await {
             match request {
@@ -20,13 +21,18 @@ fn spawn_browse_worker(
                     search_sort,
                     force_refresh,
                 } => {
-                    // A page fetch must not block the command loop. A newer search or sort
-                    // request gets its own task and supersedes this one through `generation`.
+                    // Browse list queries are interactive and deliberately bypass the shared
+                    // JSON limiter used by background update/profile work. Keep exactly one
+                    // active query; a newer search, filter, or sort cancels the older request.
+                    if let Ok(mut active_task) = active_page_task.lock() {
+                        if let Some(task) = active_task.take() {
+                            task.abort();
+                        }
+                    }
                     let page_tx = tx.clone();
                     let page_portable = portable.clone();
                     let page_client = client.clone();
-                    let page_limiter = Arc::clone(&json_limiter);
-                    tokio::spawn(async move {
+                    let page_task = tokio::spawn(async move {
                         let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
                             let _ = page_tx.send(BrowseEvent::PageFailed {
                                 _nonce: nonce,
@@ -65,8 +71,6 @@ fn spawn_browse_worker(
                                 }
                             }
                         }
-
-                        let _permit = page_limiter.acquire().await.ok();
 
                         let started = Instant::now();
                         let result = load_browse_page_with_cache(
@@ -109,6 +113,9 @@ fn spawn_browse_worker(
                             }
                         }
                     });
+                    if let Ok(mut active_task) = active_page_task.lock() {
+                        *active_task = Some(page_task.abort_handle());
+                    }
                 }
                 BrowseRequest::FetchCharacterCategories {
                     nonce,
@@ -116,7 +123,6 @@ fn spawn_browse_worker(
                     super_category_id,
                     force_refresh,
                 } => {
-                    let _permit = json_limiter.acquire().await.ok();
                     let cache_key =
                         gamebanana::character_categories_cache_key(&game_id, super_category_id);
                     match load_character_categories_with_cache(

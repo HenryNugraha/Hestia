@@ -674,7 +674,7 @@ impl HestiaApp {
                                                                 ui.add(egui::Label::new(RichText::new(relative_time_label(card.updated_at, false)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                                 ui.add_space(-5.0);
                                                                 ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
-                                                                ui.add_space(8.0);
+                                                                ui.add_space(4.0);
                                                                 let likes_response = ui.add(egui::Label::new(RichText::new(format_compact_count(card.like_count)).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                                 if card.like_count >= 1_000 {
                                                                     likes_response.on_hover_text(format_count_with_separators(card.like_count));
@@ -1555,11 +1555,11 @@ impl HestiaApp {
                                         }
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::Download, 12.0, Color32::from_rgb(131, 214, 247))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
                                         ui.add(egui::Label::new(RichText::new(relative_time_label(updated_at, false)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
                                         let likes_response = ui.add(egui::Label::new(RichText::new(format_compact_count(like_count)).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         if like_count >= 1_000 {
                                             likes_response.on_hover_text(format_count_with_separators(like_count));
