@@ -12,11 +12,14 @@ impl HestiaApp {
         let (icon_result_tx, icon_result_rx) = tokio_mpsc::unbounded_channel::<IconResult>();
         spawn_icon_worker(&runtime_services, icon_request_rx, icon_result_tx);
         let image_generation = Arc::new(AtomicU64::new(0));
-        let (mod_image_request_tx, mod_image_request_rx) = tokio_mpsc::unbounded_channel::<LocalModImageRequest>();
-        let (mod_image_result_tx, mod_image_result_rx) = tokio_mpsc::unbounded_channel::<LocalModImageResult>();
+        let (mod_image_request_tx, mod_image_request_rx) =
+            tokio_mpsc::unbounded_channel::<LocalModImageRequest>();
+        let (mod_image_result_tx, mod_image_result_rx) =
+            tokio_mpsc::unbounded_channel::<LocalModImageResult>();
         let (manual_image_event_tx, manual_image_event_rx) =
             tokio_mpsc::unbounded_channel::<ManualImageEvent>();
-        let cache_limit_bytes = Arc::new(AtomicU64::new(state.static_prefs.cache_size_tier.bytes()));
+        let cache_limit_bytes =
+            Arc::new(AtomicU64::new(state.static_prefs.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
             &runtime_services,
             portable.clone(),
@@ -29,15 +32,30 @@ impl HestiaApp {
         let (cover_request_tx, cover_request_rx) = tokio_mpsc::unbounded_channel::<CoverRequest>();
         let (cover_result_tx, cover_result_rx) = tokio_mpsc::unbounded_channel::<CoverResult>();
         spawn_cover_worker(&runtime_services, cover_request_rx, cover_result_tx);
-        let (install_request_tx, install_request_rx) = tokio_mpsc::unbounded_channel::<InstallRequest>();
+        let (install_request_tx, install_request_rx) =
+            tokio_mpsc::unbounded_channel::<InstallRequest>();
         let (install_event_tx, install_event_rx) = tokio_mpsc::unbounded_channel::<InstallEvent>();
-        spawn_install_workers(&runtime_services, portable.clone(), install_request_rx, install_event_tx);
-        let (browse_request_tx, browse_request_rx) = tokio_mpsc::unbounded_channel::<BrowseRequest>();
+        spawn_install_workers(
+            &runtime_services,
+            portable.clone(),
+            install_request_rx,
+            install_event_tx,
+        );
+        let (browse_request_tx, browse_request_rx) =
+            tokio_mpsc::unbounded_channel::<BrowseRequest>();
         let (browse_event_tx, browse_event_rx) = tokio_mpsc::unbounded_channel::<BrowseEvent>();
-        spawn_browse_worker(&runtime_services, portable.clone(), browse_request_rx, browse_event_tx);
-        let (browse_image_request_tx, browse_image_request_rx) = tokio_mpsc::unbounded_channel::<BrowseImageRequest>();
-        let (browse_image_result_tx, browse_image_result_rx) = tokio_mpsc::unbounded_channel::<BrowseImageResult>();
-        let youtube_icon_texture = load_image_texture(&cc.egui_ctx, youtube_icon_bytes(), "youtube-icon");
+        spawn_browse_worker(
+            &runtime_services,
+            portable.clone(),
+            browse_request_rx,
+            browse_event_tx,
+        );
+        let (browse_image_request_tx, browse_image_request_rx) =
+            tokio_mpsc::unbounded_channel::<BrowseImageRequest>();
+        let (browse_image_result_tx, browse_image_result_rx) =
+            tokio_mpsc::unbounded_channel::<BrowseImageResult>();
+        let youtube_icon_texture =
+            load_image_texture(&cc.egui_ctx, youtube_icon_bytes(), "youtube-icon");
         spawn_browse_image_workers(
             &runtime_services,
             portable.clone(),
@@ -58,10 +76,14 @@ impl HestiaApp {
             feedback_survey_worker_rx,
             feedback_survey_worker_tx,
         );
-        let (translation_request_tx, translation_request_rx) = tokio_mpsc::unbounded_channel::<TranslationRequest>();
-        let (translation_event_tx, translation_event_rx) = tokio_mpsc::unbounded_channel::<TranslationEvent>();
+        let (translation_request_tx, translation_request_rx) =
+            tokio_mpsc::unbounded_channel::<TranslationRequest>();
+        let (translation_event_tx, translation_event_rx) =
+            tokio_mpsc::unbounded_channel::<TranslationEvent>();
         let translation_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-            .with(RetryTransientMiddleware::new_with_policy(ExponentialBackoff::builder().build_with_max_retries(3)))
+            .with(RetryTransientMiddleware::new_with_policy(
+                ExponentialBackoff::builder().build_with_max_retries(3),
+            ))
             .build();
         spawn_translation_worker(
             &runtime_services,
@@ -70,8 +92,10 @@ impl HestiaApp {
             translation_request_rx,
             translation_event_tx,
         );
-        let (update_check_tx, update_check_worker_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckRequest>();
-        let (update_check_worker_tx, update_check_rx) = tokio_mpsc::unbounded_channel::<UpdateCheckResult>();
+        let (update_check_tx, update_check_worker_rx) =
+            tokio_mpsc::unbounded_channel::<UpdateCheckRequest>();
+        let (update_check_worker_tx, update_check_rx) =
+            tokio_mpsc::unbounded_channel::<UpdateCheckResult>();
         spawn_update_check_worker(
             &runtime_services,
             portable.clone(),
@@ -82,13 +106,19 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<RefreshRequest>();
         let (refresh_result_tx, refresh_result_rx) =
             tokio_mpsc::unbounded_channel::<RefreshEvent>();
-        spawn_selected_game_refresh_worker(&runtime_services, refresh_request_rx, refresh_result_tx);
-        let app_icon_texture =
-            load_title_icon_texture(&cc.egui_ctx, app_icon_bytes(), "app-icon");
+        spawn_selected_game_refresh_worker(
+            &runtime_services,
+            refresh_request_rx,
+            refresh_result_tx,
+        );
+        let app_icon_texture = load_title_icon_texture(&cc.egui_ctx, app_icon_bytes(), "app-icon");
         let selected_game = resolve_last_selected_game(&state).unwrap_or(0);
         let game_cover_textures = HashMap::new();
-        let mod_thumbnail_placeholder =
-            load_cover_texture(&cc.egui_ctx, mod_thumbnail_placeholder_bytes(), "mod-thumb-placeholder");
+        let mod_thumbnail_placeholder = load_cover_texture(
+            &cc.egui_ctx,
+            mod_thumbnail_placeholder_bytes(),
+            "mod-thumb-placeholder",
+        );
         let mod_cover_textures = HashMap::new();
         let mod_full_textures = HashMap::new();
         state.mods.clear();
@@ -105,8 +135,7 @@ impl HestiaApp {
         if startup_path_scan_due && startup_path_targets.is_empty() {
             state.startup_path_scan_completed = true;
         }
-        let startup_path_scan =
-            Self::build_startup_path_scan_state(&startup_path_targets, true);
+        let startup_path_scan = Self::build_startup_path_scan_state(&startup_path_targets, true);
         state.tasks.retain(|task| task.status.is_terminal());
         state.show_log = false;
         state.show_tasks = false;
@@ -144,13 +173,21 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<GifPreviewRequest>();
         let (gif_preview_event_tx, gif_preview_event_rx) =
             tokio_mpsc::unbounded_channel::<GifPreviewEvent>();
-        spawn_gif_preview_worker(&runtime_services, gif_preview_request_rx, gif_preview_event_tx);
+        spawn_gif_preview_worker(
+            &runtime_services,
+            gif_preview_request_rx,
+            gif_preview_event_tx,
+        );
 
         let (gif_animation_request_tx, gif_animation_request_rx) =
             tokio_mpsc::unbounded_channel::<GifAnimationRequest>();
         let (gif_animation_event_tx, gif_animation_event_rx) =
             tokio_mpsc::unbounded_channel::<GifAnimationEvent>();
-        spawn_gif_animation_worker(&runtime_services, gif_animation_request_rx, gif_animation_event_tx);
+        spawn_gif_animation_worker(
+            &runtime_services,
+            gif_animation_request_rx,
+            gif_animation_event_tx,
+        );
 
         let mut app = Self {
             runtime_services,
@@ -589,7 +626,8 @@ impl HestiaApp {
                     priority: 1, // Default to background
                 },
             );
-            self.texture_ram_estimated_bytes = self.texture_ram_estimated_bytes.saturating_add(bytes);
+            self.texture_ram_estimated_bytes =
+                self.texture_ram_estimated_bytes.saturating_add(bytes);
         }
         for (k, t) in &self.mod_full_textures {
             let key = Self::texture_key(TextureKind::ModFull, k);
@@ -606,7 +644,8 @@ impl HestiaApp {
                     priority: 0, // Default to inactive high-res
                 },
             );
-            self.texture_ram_estimated_bytes = self.texture_ram_estimated_bytes.saturating_add(bytes);
+            self.texture_ram_estimated_bytes =
+                self.texture_ram_estimated_bytes.saturating_add(bytes);
         }
         for (k, t) in &self.browse_thumb_textures {
             let key = Self::texture_key(TextureKind::BrowseThumb, k);
@@ -623,7 +662,8 @@ impl HestiaApp {
                     priority: 1, // Default to background
                 },
             );
-            self.texture_ram_estimated_bytes = self.texture_ram_estimated_bytes.saturating_add(bytes);
+            self.texture_ram_estimated_bytes =
+                self.texture_ram_estimated_bytes.saturating_add(bytes);
         }
         for (k, t) in &self.browse_image_textures {
             let key = Self::texture_key(TextureKind::BrowseFull, k);
@@ -640,7 +680,8 @@ impl HestiaApp {
                     priority: 0, // Default to inactive high-res
                 },
             );
-            self.texture_ram_estimated_bytes = self.texture_ram_estimated_bytes.saturating_add(bytes);
+            self.texture_ram_estimated_bytes =
+                self.texture_ram_estimated_bytes.saturating_add(bytes);
         }
     }
 
@@ -649,14 +690,17 @@ impl HestiaApp {
         // Level 3 (Current Full View) is protected.
         for target_priority in 0..=2 {
             while self.texture_ram_estimated_bytes > self.texture_ram_budget_bytes {
-                let victim = self.texture_meta.iter()
+                let victim = self
+                    .texture_meta
+                    .iter()
                     .filter(|(_, meta)| meta.priority == target_priority)
                     .min_by_key(|(_, meta)| meta.last_access_tick)
                     .map(|(key, _)| key.clone());
 
                 if let Some((kind, key)) = victim {
                     self.remove_tracked_texture(kind, &key);
-                    self.texture_evictions_window_count = self.texture_evictions_window_count.saturating_add(1);
+                    self.texture_evictions_window_count =
+                        self.texture_evictions_window_count.saturating_add(1);
                 } else {
                     break; // No more victims at this priority level
                 }
@@ -693,13 +737,16 @@ impl HestiaApp {
                     let prefix = format!("my-mod-shot-{mod_id}-");
 
                     self.mod_cover_textures.remove(mod_id);
-                    self.mod_cover_textures.retain(|k, _| !k.starts_with(&prefix));
+                    self.mod_cover_textures
+                        .retain(|k, _| !k.starts_with(&prefix));
 
                     self.mod_full_textures.remove(mod_id);
-                    self.mod_full_textures.retain(|k, _| k != mod_id && !k.starts_with(&prefix));
+                    self.mod_full_textures
+                        .retain(|k, _| k != mod_id && !k.starts_with(&prefix));
 
                     self.pending_mod_image_requests.remove(mod_id);
-                    self.pending_mod_image_requests.retain(|k| !k.starts_with(&prefix));
+                    self.pending_mod_image_requests
+                        .retain(|k| !k.starts_with(&prefix));
 
                     self.pending_mod_image_queue.retain(|req| {
                         req.texture_key != *mod_id && !req.texture_key.starts_with(&prefix)
@@ -728,7 +775,11 @@ impl HestiaApp {
         self.mod_full_textures.get(key)
     }
 
-    fn get_browse_thumb_texture(&mut self, key: &str, priority: u8) -> Option<&egui::TextureHandle> {
+    fn get_browse_thumb_texture(
+        &mut self,
+        key: &str,
+        priority: u8,
+    ) -> Option<&egui::TextureHandle> {
         if self.browse_thumb_textures.contains_key(key) {
             self.touch_texture(TextureKind::BrowseThumb, key, priority);
             return self.browse_thumb_textures.get(key);
@@ -853,7 +904,10 @@ impl HestiaApp {
         changed
     }
 
-    fn startup_path_scan_targets(state: &AppState, include_all: bool) -> Vec<StartupPathScanTarget> {
+    fn startup_path_scan_targets(
+        state: &AppState,
+        include_all: bool,
+    ) -> Vec<StartupPathScanTarget> {
         let xxmi_existing = state
             .static_prefs
             .modded_launcher_path_override
@@ -924,7 +978,12 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
-        let global_modded_needs = match self.state.static_prefs.modded_launcher_path_override.as_ref() {
+        let global_modded_needs = match self
+            .state
+            .static_prefs
+            .modded_launcher_path_override
+            .as_ref()
+        {
             Some(path) => !path.is_file(),
             None => true,
         };
@@ -1047,7 +1106,10 @@ impl HestiaApp {
 
     fn launch_selected_game(&mut self, ctx: &egui::Context, modded: bool) {
         let Some(game) = self.selected_game().cloned() else {
-            self.report_error_message(self.text().game_not_selected(), Some(self.text().launch_failed()));
+            self.report_error_message(
+                self.text().game_not_selected(),
+                Some(self.text().launch_failed()),
+            );
             return;
         };
         if !Self::game_install_is_configured(&game) {
@@ -1067,7 +1129,11 @@ impl HestiaApp {
             game.vanilla_exe_path()
         }) else {
             let text = self.text();
-            let label = if modded { text.play_modded() } else { text.play_vanilla() };
+            let label = if modded {
+                text.play_modded()
+            } else {
+                text.play_vanilla()
+            };
             self.report_error_message(
                 text.launch_path_not_set_for_game(label, &game.definition.name),
                 Some(text.launch_path_not_set()),
@@ -1089,7 +1155,11 @@ impl HestiaApp {
         match result {
             Ok(()) => {
                 let text = self.text();
-                let label = if modded { text.modded() } else { text.vanilla() };
+                let label = if modded {
+                    text.modded()
+                } else {
+                    text.vanilla()
+                };
                 self.set_message_ok(text.launched_game_mode(&game.definition.name, label));
                 Self::apply_launch_behavior(ctx, self.state.static_prefs.launch_behavior);
             }
@@ -1198,8 +1268,7 @@ impl HestiaApp {
                 if !self.show_ignoring_update_mods
                     && matches!(
                         item.update_state,
-                        ModUpdateState::IgnoringUpdateOnce
-                            | ModUpdateState::IgnoringUpdateAlways
+                        ModUpdateState::IgnoringUpdateOnce | ModUpdateState::IgnoringUpdateAlways
                     )
                 {
                     return false;
@@ -1310,37 +1379,23 @@ impl HestiaApp {
                 std::cmp::Ordering::Equal
             };
             let category_cmp = if self.state.static_prefs.library_sort_category_first
-                && !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
-            {
-                category_order(a)
-                    .cmp(&category_order(b))
-                    .then_with(|| {
-                        let left = a
-                            .metadata
-                            .user
-                            .category
-                            .trim()
-                            .to_ascii_lowercase();
-                        let right = b
-                            .metadata
-                            .user
-                            .category
-                            .trim()
-                            .to_ascii_lowercase();
-                        left.cmp(&right)
-                    })
+                && !matches!(
+                    self.state.static_prefs.library_group_mode,
+                    LibraryGroupMode::Category
+                ) {
+                category_order(a).cmp(&category_order(b)).then_with(|| {
+                    let left = a.metadata.user.category.trim().to_ascii_lowercase();
+                    let right = b.metadata.user.category.trim().to_ascii_lowercase();
+                    left.cmp(&right)
+                })
             } else {
                 std::cmp::Ordering::Equal
             };
             let sort_cmp = match self.state.static_prefs.library_sort {
                 LibrarySort::NameAsc => name_cmp,
                 LibrarySort::NameDesc => name_cmp.reverse(),
-                LibrarySort::DateDesc => sort_date(b)
-                    .cmp(&sort_date(a))
-                    .then_with(|| name_cmp),
-                LibrarySort::DateAsc => sort_date(a)
-                    .cmp(&sort_date(b))
-                    .then_with(|| name_cmp),
+                LibrarySort::DateDesc => sort_date(b).cmp(&sort_date(a)).then_with(|| name_cmp),
+                LibrarySort::DateAsc => sort_date(a).cmp(&sort_date(b)).then_with(|| name_cmp),
             };
             status_cmp.then(category_cmp).then(sort_cmp)
         });
@@ -1515,9 +1570,8 @@ impl HestiaApp {
         let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
         let v_down = unsafe { GetAsyncKeyState(i32::from(VK_V.0)) } < 0;
         let down = ctrl_down && v_down;
-        let window_focused = ctx.input(|input| {
-            input.focused && input.viewport().focused.unwrap_or(input.focused)
-        });
+        let window_focused =
+            ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
         if !window_focused {
             self.clipboard_image_paste_held = down;
             return false;
@@ -1541,27 +1595,39 @@ impl HestiaApp {
         };
         let text_input_active = self.shortcuts_blocked_by_text_input(ctx);
 
-        if ctx.input(|input| input.modifiers.ctrl && input.key_pressed(egui::Key::Tab) && !input.modifiers.shift && !input.modifiers.alt) {
+        if ctx.input(|input| {
+            input.modifiers.ctrl
+                && input.key_pressed(egui::Key::Tab)
+                && !input.modifiers.shift
+                && !input.modifiers.alt
+        }) {
             self.toggle_primary_view();
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F10)) {
             self.settings_open = !self.settings_open;
         }
-        if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::L))) {
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::L))
+        }) {
             self.toggle_log_window();
         }
-        if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::T))) {
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::T))
+        }) {
             self.toggle_tools_window();
         }
-        if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::J))) {
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::J))
+        }) {
             self.toggle_tasks_window();
         }
-        if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::F))) {
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::F))
+        }) {
             self.focus_active_search(ctx);
         }
-        let app_window_focused = ctx.input(|input| {
-            input.focused && input.viewport().focused.unwrap_or(input.focused)
-        });
+        let app_window_focused =
+            ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
         if app_window_focused
             && !text_input_active
             && self.current_view_detail_can_translate()
@@ -1590,35 +1656,40 @@ impl HestiaApp {
             let folder_back_requested = !text_input_active
                 && self.selected_category_folder_id.is_some()
                 && (ctx.input_mut(|input| {
-                    input.consume_shortcut(&egui::KeyboardShortcut::new(
-                        alt,
-                        egui::Key::ArrowLeft,
-                    )) || input.consume_shortcut(&egui::KeyboardShortcut::new(
-                        alt,
-                        egui::Key::ArrowUp,
-                    )) || input.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)
-                }) || ctx.input(|input| {
-                    input.pointer.button_clicked(egui::PointerButton::Extra1)
-                }));
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(alt, egui::Key::ArrowLeft))
+                        || input
+                            .consume_shortcut(&egui::KeyboardShortcut::new(alt, egui::Key::ArrowUp))
+                        || input.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)
+                }) || ctx
+                    .input(|input| input.pointer.button_clicked(egui::PointerButton::Extra1)));
             if folder_back_requested {
                 self.leave_category_folder_view();
             }
             if !text_input_active
                 && self.delete_shortcut_has_mod_context()
-                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+                && ctx
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
             {
                 self.delete_selected_context();
             }
-            if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::E))) {
+            if ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::E))
+            }) {
                 self.enable_or_restore_selected_context();
             }
-            if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::D))) {
+            if ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::D))
+            }) {
                 self.disable_selected_context();
             }
-            if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::A))) {
+            if ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::A))
+            }) {
                 self.archive_selected_context();
             }
-            if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::R))) {
+            if ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::R))
+            }) {
                 self.enable_or_restore_selected_context();
             }
             if !text_input_active
@@ -1642,7 +1713,9 @@ impl HestiaApp {
             }
         }
 
-        if ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::R))) {
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::R))
+        }) {
             match self.current_view {
                 ViewMode::Library => self.refresh_with_toast(),
                 ViewMode::Browse => self.restart_browse_query(),
@@ -1662,8 +1735,9 @@ impl HestiaApp {
             .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
         self.pending_image_loads
             .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
-        self.pending_mod_image_queue
-            .retain(|req| req.texture_key != cover_key && !req.texture_key.starts_with(&shot_prefix));
+        self.pending_mod_image_queue.retain(|req| {
+            req.texture_key != cover_key && !req.texture_key.starts_with(&shot_prefix)
+        });
         self.pending_texture_uploads.retain(|item| match item {
             PendingTextureUpload::ModThumb { texture_key, .. }
             | PendingTextureUpload::ModFull { texture_key, .. } => {
@@ -1754,8 +1828,8 @@ impl HestiaApp {
             // Extract necessary data before any mutable borrows of `self`
             let (mod_entry_id_clone, source_path_clone, markdown_content) = {
                 if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == id) {
-                let (_, source_path, _) = Self::current_card_thumb_meta(mod_entry);
-                let markdown = mod_primary_description_markdown(mod_entry, &self.portable);
+                    let (_, source_path, _) = Self::current_card_thumb_meta(mod_entry);
+                    let markdown = mod_primary_description_markdown(mod_entry, &self.portable);
                     (Some(id.clone()), source_path, Some(markdown))
                 } else {
                     (None, None, None)
@@ -1796,7 +1870,11 @@ impl HestiaApp {
                 .map(|rect| [rect.size().x, rect.size().y])
         };
         self.window_was_maximized = maximized;
-        let snapshot = WindowStateSnapshot { pos, size, maximized };
+        let snapshot = WindowStateSnapshot {
+            pos,
+            size,
+            maximized,
+        };
         if self.window_state_cache != Some(snapshot) {
             if !maximized {
                 self.state.static_prefs.window_pos = pos;
@@ -1813,7 +1891,10 @@ impl HestiaApp {
 
     fn refresh(&mut self) {
         self.mark_usage_counters_dirty();
-        let old_ts: HashMap<String, DateTime<Utc>> = self.state.mods.iter()
+        let old_ts: HashMap<String, DateTime<Utc>> = self
+            .state
+            .mods
+            .iter()
             .map(|m| (m.id.clone(), m.updated_at))
             .collect();
 
@@ -1834,13 +1915,18 @@ impl HestiaApp {
     }
 
     fn enqueue_mod_image_sync(&mut self, mod_id: &str) {
-        let job_data = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| {
-            m.source.as_ref().and_then(|s| {
-                s.snapshot.as_ref().map(|snap| {
-                    (m.root_path.clone(), snap.clone())
+        let job_data = self
+            .state
+            .mods
+            .iter()
+            .find(|m| m.id == mod_id)
+            .and_then(|m| {
+                m.source.as_ref().and_then(|s| {
+                    s.snapshot
+                        .as_ref()
+                        .map(|snap| (m.root_path.clone(), snap.clone()))
                 })
-            })
-        });
+            });
 
         if let Some((root_path, snapshot)) = job_data {
             let job_id = self.next_background_job_id();
@@ -1853,7 +1939,10 @@ impl HestiaApp {
         }
     }
 
-    fn is_missing_expected_source_images(mod_entry: &ModEntry, snapshot: &GameBananaSnapshot) -> bool {
+    fn is_missing_expected_source_images(
+        mod_entry: &ModEntry,
+        snapshot: &GameBananaSnapshot,
+    ) -> bool {
         if snapshot.preview_urls.is_empty() {
             return false;
         }
@@ -1887,7 +1976,10 @@ impl HestiaApp {
     fn refresh_with_toast_internal(&mut self, force_update_check: bool) {
         self.mark_usage_counters_dirty();
         self.clear_translation_caches();
-        let old_ts: HashMap<String, DateTime<Utc>> = self.state.mods.iter()
+        let old_ts: HashMap<String, DateTime<Utc>> = self
+            .state
+            .mods
+            .iter()
             .map(|m| (m.id.clone(), m.updated_at))
             .collect();
         let game_id = self.selected_game().map(|g| g.definition.id.clone());
@@ -1936,7 +2028,11 @@ impl HestiaApp {
                 updated_at: mod_entry.updated_at,
             })
             .collect();
-        items.sort_by(|a, b| a.folder_name.to_lowercase().cmp(&b.folder_name.to_lowercase()));
+        items.sort_by(|a, b| {
+            a.folder_name
+                .to_lowercase()
+                .cmp(&b.folder_name.to_lowercase())
+        });
         items
     }
 
@@ -1959,7 +2055,11 @@ impl HestiaApp {
                     && !self.pending_known_installed_paths.contains(&item.root_path)
             })
             .collect();
-        added_items.sort_by(|a, b| a.folder_name.to_lowercase().cmp(&b.folder_name.to_lowercase()));
+        added_items.sort_by(|a, b| {
+            a.folder_name
+                .to_lowercase()
+                .cmp(&b.folder_name.to_lowercase())
+        });
         for item in added_items {
             added += 1;
             detail_lines.push(format!("added {}", item.folder_name));
@@ -1969,7 +2069,11 @@ impl HestiaApp {
             .iter()
             .filter(|item| !after_map.contains_key(&item.id))
             .collect();
-        removed_items.sort_by(|a, b| a.folder_name.to_lowercase().cmp(&b.folder_name.to_lowercase()));
+        removed_items.sort_by(|a, b| {
+            a.folder_name
+                .to_lowercase()
+                .cmp(&b.folder_name.to_lowercase())
+        });
         for item in removed_items {
             removed += 1;
             detail_lines.push(format!("removed {}", item.folder_name));
@@ -1990,7 +2094,11 @@ impl HestiaApp {
                 }
             })
             .collect();
-        changed_items.sort_by(|a, b| a.folder_name.to_lowercase().cmp(&b.folder_name.to_lowercase()));
+        changed_items.sort_by(|a, b| {
+            a.folder_name
+                .to_lowercase()
+                .cmp(&b.folder_name.to_lowercase())
+        });
         for item in changed_items {
             changed += 1;
             detail_lines.push(format!("changed {}", item.folder_name));
@@ -2043,7 +2151,6 @@ impl HestiaApp {
         }
     }
 
-
     fn sync_selection_after_refresh(&mut self) {
         let live_ids: HashSet<_> = self.state.mods.iter().map(|item| item.id.clone()).collect();
         self.selected_mods.retain(|id| live_ids.contains(id));
@@ -2060,9 +2167,7 @@ impl HestiaApp {
         if index >= self.state.games.len() {
             return;
         }
-        let previous_game_id = self
-            .selected_game()
-            .map(|game| game.definition.id.clone());
+        let previous_game_id = self.selected_game().map(|game| game.definition.id.clone());
         self.selected_game = index;
         let game_id = self.state.games[index].definition.id.clone();
         self.state.last_selected_game_id = Some(game_id.clone());
@@ -2155,8 +2260,7 @@ impl HestiaApp {
     fn check_pending_worker_events(&mut self) -> bool {
         // Check if any worker channels have pending events
         // This uses try_recv's non-blocking peek behavior
-        let has_events = 
-            !self.icon_result_rx.is_empty()
+        let has_events = !self.icon_result_rx.is_empty()
             || !self.mod_image_result_rx.is_empty()
             || !self.manual_image_event_rx.is_empty()
             || !self.gif_preview_event_rx.is_empty()
@@ -2173,23 +2277,26 @@ impl HestiaApp {
             || !self.translation_event_rx.is_empty()
             || !self.install_event_rx.is_empty()
             || !self.refresh_result_rx.is_empty();
-        
+
         self.pending_events.has_worker_events = has_events;
         has_events
     }
 
     fn check_pending_process_work(&mut self) -> bool {
         // Check if any processing queues have work
-        let has_work = 
-            !self.pending_mod_image_queue.is_empty()
+        let has_work = !self.pending_mod_image_queue.is_empty()
             || !self.pending_texture_uploads.is_empty()
-            || (self.current_view == ViewMode::Browse && self.has_enabled_games() && self.browse_state.cards.is_empty() && !self.browse_state.loading_page)
+            || (self.current_view == ViewMode::Browse
+                && self.has_enabled_games()
+                && self.browse_state.cards.is_empty()
+                && !self.browse_state.loading_page
+                && self.browse_state.page_error.is_none())
             || self.pending_browse_open_mod_id.is_some()
             || !self.browse_image_queue.is_empty()
             || !self.browse_download_queue.is_empty()
             || self.app_update_download_inflight.is_some()
             || !self.install_queue.is_empty();
-        
+
         self.pending_events.has_process_work = has_work;
         has_work
     }

@@ -20,79 +20,95 @@ fn spawn_browse_worker(
                     search_sort,
                     force_refresh,
                 } => {
-                    let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
-                        let _ = tx.send(BrowseEvent::PageFailed {
-                            _nonce: nonce,
-                            generation,
-                            page,
-                            error: format!("unsupported game id: {game_id}"),
-                        });
-                        continue;
-                    };
-                    let _permit = json_limiter.acquire().await.ok();
-                    let cache_key = if let Some(category_id) = character_category_id {
-                        gamebanana::character_browse_page_cache_key(
-                            &game_id,
-                            category_id,
-                            query.as_deref(),
-                            page,
-                            browse_sort,
-                        )
-                    } else {
-                        match query.as_deref() {
-                            Some(query) if !query.trim().is_empty() => {
-                                gamebanana::search_page_cache_key(
-                                    &game_id,
-                                    query,
-                                    page,
-                                    search_sort,
-                                )
+                    // A page fetch must not block the command loop. A newer search or sort
+                    // request gets its own task and supersedes this one through `generation`.
+                    let page_tx = tx.clone();
+                    let page_portable = portable.clone();
+                    let page_client = client.clone();
+                    let page_limiter = Arc::clone(&json_limiter);
+                    tokio::spawn(async move {
+                        let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
+                            let _ = page_tx.send(BrowseEvent::PageFailed {
+                                _nonce: nonce,
+                                generation,
+                                page,
+                                error: format!("unsupported game id: {game_id}"),
+                            });
+                            return;
+                        };
+                        let cache_key = if let Some(category_id) = character_category_id {
+                            gamebanana::character_browse_page_cache_key(
+                                &game_id, category_id, query.as_deref(), page, browse_sort,
+                            )
+                        } else {
+                            match query.as_deref() {
+                                Some(query) if !query.trim().is_empty() => gamebanana::search_page_cache_key(
+                                    &game_id, query, page, search_sort,
+                                ),
+                                _ => gamebanana::browse_page_cache_key(&game_id, page, browse_sort),
                             }
-                            _ => gamebanana::browse_page_cache_key(&game_id, page, browse_sort),
+                        };
+
+                        // Show known-good cached data immediately, then refresh it below.
+                        if force_refresh {
+                            if let Ok(Some(cached)) = persistence::cache_get(&page_portable, &cache_key) {
+                                if let Ok(payload) = serde_json::from_slice(&cached) {
+                                    let _ = page_tx.send(BrowseEvent::PageLoaded {
+                                        _nonce: nonce,
+                                        generation,
+                                        game_id: game_id.clone(),
+                                        query: query.clone(),
+                                        character_category_id,
+                                        page,
+                                        payload,
+                                    });
+                                }
+                            }
                         }
-                    };
-                    let result = load_browse_page_with_cache(
-                        &portable,
-                        &client,
-                        gamebanana_id,
-                        &game_id,
-                        query.as_deref(),
-                        character_category_id,
-                        page,
-                        browse_sort,
-                        search_sort,
-                        force_refresh,
-                        &cache_key,
-                    )
-                    .await;
-                    match result {
-                        Ok((payload, used_cache_fallback)) => {
-                            if used_cache_fallback {
-                                let _ = tx.send(BrowseEvent::PageWarning {
+
+                        let _permit = page_limiter.acquire().await.ok();
+
+                        let started = Instant::now();
+                        let result = load_browse_page_with_cache(
+                            &page_portable, &page_client, gamebanana_id, &game_id,
+                            query.as_deref(), character_category_id, page, browse_sort,
+                            search_sort, force_refresh, &cache_key,
+                        ).await;
+                        match result {
+                            Ok((payload, refresh_error)) => {
+                                if let Some(error) = refresh_error {
+                                    let _ = page_tx.send(BrowseEvent::PageWarning {
+                                        _nonce: nonce,
+                                        generation,
+                                        warning: format!(
+                                            "request failed after {} ms; using cached results: {error}",
+                                            started.elapsed().as_millis(),
+                                        ),
+                                    });
+                                }
+                                let _ = page_tx.send(BrowseEvent::PageLoaded {
                                     _nonce: nonce,
                                     generation,
-                                    warning: "Connection failed".to_string(),
+                                    game_id,
+                                    query,
+                                    character_category_id,
+                                    page,
+                                    payload,
                                 });
                             }
-                            let _ = tx.send(BrowseEvent::PageLoaded {
-                                _nonce: nonce,
-                                generation,
-                                game_id,
-                                query,
-                                character_category_id,
-                                page,
-                                payload,
-                            });
+                            Err(err) => {
+                                let _ = page_tx.send(BrowseEvent::PageFailed {
+                                    _nonce: nonce,
+                                    generation,
+                                    page,
+                                    error: format!(
+                                        "request failed after {} ms (page={page}, browse_sort={browse_sort:?}, search_sort={search_sort:?}): {err:#}",
+                                        started.elapsed().as_millis(),
+                                    ),
+                                });
+                            }
                         }
-                        Err(err) => {
-                            let _ = tx.send(BrowseEvent::PageFailed {
-                                _nonce: nonce,
-                                generation,
-                                page,
-                                error: format!("{err:#}"),
-                            });
-                        }
-                    }
+                    });
                 }
                 BrowseRequest::FetchCharacterCategories {
                     nonce,
@@ -220,45 +236,71 @@ async fn load_browse_page_with_cache(
     search_sort: SearchSort,
     force_refresh: bool,
     cache_key: &str,
-) -> Result<(gamebanana::ApiEnvelope<gamebanana::BrowseRecord>, bool)> {
+) -> Result<(gamebanana::ApiEnvelope<gamebanana::BrowseRecord>, Option<String>)> {
     if !force_refresh {
         if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-            if let Ok(payload) = serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::BrowseRecord>>(&cached) {
-                return Ok((payload, false));
+            if let Ok(payload) =
+                serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::BrowseRecord>>(&cached)
+            {
+                return Ok((payload, None));
             }
         }
     }
 
-    let fetch_result = if let Some(category_id) = character_category_id {
-        gamebanana::fetch_character_browse_page_async(client, category_id, query, page, browse_sort)
+    const MAX_ATTEMPTS: usize = 3;
+    let mut attempt = 0;
+    let fetch_result = loop {
+        attempt += 1;
+        let result = if let Some(category_id) = character_category_id {
+            gamebanana::fetch_character_browse_page_async(
+                client,
+                category_id,
+                query,
+                page,
+                browse_sort,
+            )
             .await
-    } else {
-        match query {
-            Some(query) if !query.trim().is_empty() => {
-                gamebanana::fetch_search_page_async(client, gamebanana_id, query, page, search_sort)
+        } else {
+            match query {
+                Some(query) if !query.trim().is_empty() => {
+                    gamebanana::fetch_search_page_async(
+                        client,
+                        gamebanana_id,
+                        query,
+                        page,
+                        search_sort,
+                    )
                     .await
+                }
+                _ => {
+                    gamebanana::fetch_browse_page_async(client, gamebanana_id, page, browse_sort)
+                        .await
+                }
             }
-            _ => gamebanana::fetch_browse_page_async(client, gamebanana_id, page, browse_sort).await,
+        };
+        match result {
+            Ok(payload) => break Ok(payload),
+            Err(err) if attempt >= MAX_ATTEMPTS => {
+                break Err(err.context(format!("Browse request exhausted {MAX_ATTEMPTS} attempts")));
+            }
+            Err(_) => tokio::time::sleep(Duration::from_secs(1_u64 << (attempt - 1))).await,
         }
     };
 
     match fetch_result {
         Ok(payload) => {
             if let Ok(bytes) = serde_json::to_vec(&payload) {
-                let _ = persistence::cache_put(
-                    portable,
-                    cache_key,
-                    "browse-json",
-                    &bytes,
-                    0,
-                );
+                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
             }
-            Ok((payload, false))
+            Ok((payload, None))
         }
         Err(err) if force_refresh => {
             if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-                if let Ok(payload) = serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::BrowseRecord>>(&cached) {
-                    return Ok((payload, true));
+                if let Ok(payload) = serde_json::from_slice::<
+                    gamebanana::ApiEnvelope<gamebanana::BrowseRecord>,
+                >(&cached)
+                {
+                    return Ok((payload, Some(format!("{err:#}"))));
                 }
             }
             Err(err)
@@ -329,19 +371,14 @@ async fn load_profile_with_cache(
     match gamebanana::fetch_profile_async(client, mod_id).await {
         Ok(profile) => {
             if let Ok(bytes) = serde_json::to_vec(&profile) {
-                let _ = persistence::cache_put(
-                    portable,
-                    cache_key,
-                    "browse-json",
-                    &bytes,
-                    0,
-                );
+                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
             }
             Ok((profile, false))
         }
         Err(err) if force_refresh => {
             if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-                if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached) {
+                if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
+                {
                     return Ok((profile, true));
                 }
             }
@@ -360,7 +397,9 @@ async fn load_updates_with_cache(
 ) -> Result<(gamebanana::ApiEnvelope<gamebanana::UpdateRecord>, bool)> {
     if !force_refresh {
         if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-            if let Ok(updates) = serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::UpdateRecord>>(&cached) {
+            if let Ok(updates) =
+                serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::UpdateRecord>>(&cached)
+            {
                 return Ok((updates, false));
             }
         }
@@ -369,19 +408,16 @@ async fn load_updates_with_cache(
     match gamebanana::fetch_updates_async(client, mod_id).await {
         Ok(updates) => {
             if let Ok(bytes) = serde_json::to_vec(&updates) {
-                let _ = persistence::cache_put(
-                    portable,
-                    cache_key,
-                    "browse-json",
-                    &bytes,
-                    0,
-                );
+                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
             }
             Ok((updates, false))
         }
         Err(err) if force_refresh => {
             if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-                if let Ok(updates) = serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::UpdateRecord>>(&cached) {
+                if let Ok(updates) = serde_json::from_slice::<
+                    gamebanana::ApiEnvelope<gamebanana::UpdateRecord>,
+                >(&cached)
+                {
                     return Ok((updates, true));
                 }
             }
@@ -427,7 +463,8 @@ fn spawn_browse_image_workers(
                         .bytes()
                         .await?
                         .to_vec();
-                    let _ = persistence::cache_put(&portable, &cache_key, "browse-img", &bytes, limit);
+                    let _ =
+                        persistence::cache_put(&portable, &cache_key, "browse-img", &bytes, limit);
                     Ok(bytes)
                 }
                 .await;
@@ -448,7 +485,10 @@ fn spawn_browse_image_workers(
                                 } else {
                                     None
                                 },
-                                image_thumb: load_cover_color_image_thumbnail(&bytes, thumb_profile),
+                                image_thumb: load_cover_color_image_thumbnail(
+                                    &bytes,
+                                    thumb_profile,
+                                ),
                                 cancel_key: request.cancel_key,
                                 failure: None,
                             })
@@ -476,4 +516,3 @@ fn spawn_browse_image_workers(
         }
     });
 }
-

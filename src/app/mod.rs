@@ -157,6 +157,9 @@ impl eframe::App for HestiaApp {
         
         // Control repaint behavior to reduce CPU usage on idle
         // Only request continuous repaints when necessary
+        let has_pending_browse_request = self.browse_state.loading_page
+            || self.browse_state.character_categories_loading
+            || !self.browse_state.loading_details.is_empty();
         let needs_continuous_repaint = 
             !self.animated_gif_state.is_empty()
             || self.app_update_download_inflight.is_some()
@@ -167,6 +170,10 @@ impl eframe::App for HestiaApp {
         
         if needs_continuous_repaint {
             ctx.request_repaint();
+        } else if has_pending_browse_request {
+            // Worker channels do not wake egui themselves. Poll while a Browse request is in
+            // flight so completed results are consumed even without user interaction.
+            ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             // On idle, only repaint when there's actual interaction INSIDE the window
             // This prevents repaints from mouse movement outside the window

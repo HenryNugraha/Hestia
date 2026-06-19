@@ -153,6 +153,61 @@ fn format_file_size(size: u64) -> String {
     }
 }
 
+fn format_compact_count(count: u64) -> String {
+    const SUFFIXES: &[(u64, &str)] = &[(1_000_000_000, "b"), (1_000_000, "m"), (1_000, "k")];
+
+    let Some(&(divisor, suffix)) = SUFFIXES.iter().find(|&&(divisor, _)| count >= divisor) else {
+        return count.to_string();
+    };
+
+    let whole = count / divisor;
+    if whole < 10 {
+        let tenth = (count % divisor) / (divisor / 10);
+        if tenth > 0 {
+            return format!("{whole}.{tenth}{suffix}");
+        }
+    }
+
+    format!("{whole}{suffix}")
+}
+
+fn format_count_with_separators(count: u64) -> String {
+    let digits = count.to_string();
+    let first_group_len = match digits.len() % 3 {
+        0 => 3,
+        remainder => remainder,
+    };
+    let mut formatted = String::with_capacity(digits.len() + (digits.len() - 1) / 3);
+    formatted.push_str(&digits[..first_group_len]);
+    for group in digits[first_group_len..].as_bytes().chunks(3) {
+        formatted.push(',');
+        formatted.extend(group.iter().map(|&byte| byte as char));
+    }
+    formatted
+}
+
+#[cfg(test)]
+mod formatting_tests {
+    use super::{format_compact_count, format_count_with_separators};
+
+    #[test]
+    fn formats_compact_counts_without_rounding_up() {
+        assert_eq!(format_compact_count(123), "123");
+        assert_eq!(format_compact_count(1_234), "1.2k");
+        assert_eq!(format_compact_count(12_345), "12k");
+        assert_eq!(format_compact_count(123_456), "123k");
+        assert_eq!(format_compact_count(1_234_567), "1.2m");
+        assert_eq!(format_compact_count(9_999), "9.9k");
+    }
+
+    #[test]
+    fn formats_exact_counts_with_thousands_separators() {
+        assert_eq!(format_count_with_separators(123), "123");
+        assert_eq!(format_count_with_separators(1_234), "1,234");
+        assert_eq!(format_count_with_separators(1_234_567), "1,234,567");
+    }
+}
+
 fn icon_text_sized(icon: Icon, label: &str, icon_size: f32, text_size: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.append(

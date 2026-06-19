@@ -10,38 +10,51 @@ impl HestiaApp {
                     ui.set_height(41.0);
                     let is_empty = self.browse_query.trim().is_empty();
                     let expanded = self.browse_search_expanded;
-                    let how_expanded = ui.ctx().animate_bool_with_time(ui.id().with("browse_search_anim"), expanded, 0.2);
+                    let how_expanded = ui.ctx().animate_bool_with_time(
+                        ui.id().with("browse_search_anim"),
+                        expanded,
+                        0.2,
+                    );
 
                     ui.scope(|ui| {
                         let icon_size = 41.0;
                         let full_width = 320.0;
                         let current_width = icon_size + (full_width - icon_size) * how_expanded;
 
-                        let (rect, _area_resp) = ui.allocate_exact_size(Vec2::new(current_width, 41.0), Sense::hover());
-                        
+                        let (rect, _area_resp) =
+                            ui.allocate_exact_size(Vec2::new(current_width, 41.0), Sense::hover());
+
                         if how_expanded > 0.0 {
                             let bg_alpha = (how_expanded * 255.0) as u8;
                             ui.painter().rect(
                                 rect,
                                 egui::CornerRadius::same(6),
                                 Color32::from_rgba_premultiplied(44, 47, 52, bg_alpha),
-                                egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(69, 74, 81, bg_alpha)),
+                                egui::Stroke::new(
+                                    1.0,
+                                    Color32::from_rgba_premultiplied(69, 74, 81, bg_alpha),
+                                ),
                                 egui::StrokeKind::Inside,
                             );
                         }
 
                         let icon_pos = rect.left_center() + egui::vec2(20.5, 0.0);
-                        let icon_area = egui::Rect::from_center_size(icon_pos, egui::Vec2::splat(28.0));
-                        let icon_resp = ui.interact(icon_area, ui.id().with("browse_search_toggle"), Sense::click());
+                        let icon_area =
+                            egui::Rect::from_center_size(icon_pos, egui::Vec2::splat(28.0));
+                        let icon_resp = ui.interact(
+                            icon_area,
+                            ui.id().with("browse_search_toggle"),
+                            Sense::click(),
+                        );
 
-                        let icon_color = if expanded || !is_empty { 
-                            Color32::from_rgb(214, 104, 58) 
+                        let icon_color = if expanded || !is_empty {
+                            Color32::from_rgb(214, 104, 58)
                         } else if icon_resp.hovered() {
                             Color32::WHITE
-                        } else { 
+                        } else {
                             Color32::from_gray(170)
                         };
-                        
+
                         ui.painter().text(
                             icon_pos,
                             egui::Align2::CENTER_CENTER,
@@ -54,9 +67,15 @@ impl HestiaApp {
                             self.browse_search_expanded = !self.browse_search_expanded;
                         }
                         if icon_resp.hovered() {
-                            icon_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                            icon_resp
+                                .clone()
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
                             if !expanded {
-                                ui.painter().circle_filled(icon_pos, 14.0, Color32::from_white_alpha(15));
+                                ui.painter().circle_filled(
+                                    icon_pos,
+                                    14.0,
+                                    Color32::from_white_alpha(15),
+                                );
                             }
                         }
 
@@ -64,35 +83,55 @@ impl HestiaApp {
                             let right_padding = if !is_empty { 64.0 } else { 32.0 };
                             let input_rect = egui::Rect::from_min_max(
                                 rect.min + egui::vec2(icon_size, 0.0),
-                                rect.max - egui::vec2(right_padding, 0.0)
+                                rect.max - egui::vec2(right_padding, 0.0),
                             );
-                            
-                            let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(input_rect));
+
+                            let mut child_ui =
+                                ui.new_child(egui::UiBuilder::new().max_rect(input_rect));
                             let edit_resp = child_ui.add(
                                 TextEdit::singleline(&mut self.browse_query)
                                     .id_source(BROWSE_SEARCH_INPUT_ID)
-                                    .hint_text(if how_expanded > 0.8 { text.browse_search_hint() } else { "" })
+                                    .hint_text(if how_expanded > 0.8 {
+                                        text.browse_search_hint()
+                                    } else {
+                                        ""
+                                    })
                                     .frame(false)
-                                    .desired_width(input_rect.width())
+                                    .desired_width(input_rect.width()),
                             );
                             if self.browse_search_focus_pending {
                                 edit_resp.request_focus();
                                 self.browse_search_focus_pending = false;
                             }
-                            if edit_resp.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                            if edit_resp.lost_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                            {
                                 self.restart_browse_query();
                             }
                         }
 
                         if how_expanded > 0.9 {
                             let mut next_x = rect.right() - 16.0;
-                            
-                            let action_icon = if is_empty { Icon::RotateCw } else { Icon::ArrowRightCircle };
+
+                            let action_icon = if is_empty {
+                                Icon::RotateCw
+                            } else {
+                                Icon::ArrowRightCircle
+                            };
                             let action_pos = egui::pos2(next_x, rect.center().y);
-                            let action_area = egui::Rect::from_center_size(action_pos, egui::Vec2::splat(24.0));
-                            let action_resp = ui.interact(action_area, ui.id().with("browse_search_submit"), Sense::click());
-                            let action_color = if action_resp.hovered() { Color32::WHITE } else { Color32::from_gray(170) };
-                            
+                            let action_area =
+                                egui::Rect::from_center_size(action_pos, egui::Vec2::splat(24.0));
+                            let action_resp = ui.interact(
+                                action_area,
+                                ui.id().with("browse_search_submit"),
+                                Sense::click(),
+                            );
+                            let action_color = if action_resp.hovered() {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_gray(170)
+                            };
+
                             ui.painter().text(
                                 action_pos,
                                 egui::Align2::CENTER_CENTER,
@@ -103,15 +142,26 @@ impl HestiaApp {
                             if action_resp.clicked() {
                                 self.restart_browse_query();
                             }
-                            action_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
-                            
+                            action_resp
+                                .clone()
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+
                             next_x -= 24.0;
 
                             if !is_empty {
                                 let x_pos = egui::pos2(next_x, rect.center().y);
-                                let x_area = egui::Rect::from_center_size(x_pos, egui::Vec2::splat(24.0));
-                                let x_resp = ui.interact(x_area, ui.id().with("browse_search_clear"), Sense::click());
-                                let x_color = if x_resp.hovered() { Color32::from_gray(225) } else { Color32::from_gray(120) };
+                                let x_area =
+                                    egui::Rect::from_center_size(x_pos, egui::Vec2::splat(24.0));
+                                let x_resp = ui.interact(
+                                    x_area,
+                                    ui.id().with("browse_search_clear"),
+                                    Sense::click(),
+                                );
+                                let x_color = if x_resp.hovered() {
+                                    Color32::from_gray(225)
+                                } else {
+                                    Color32::from_gray(120)
+                                };
                                 ui.painter().text(
                                     x_pos,
                                     egui::Align2::CENTER_CENTER,
@@ -123,7 +173,9 @@ impl HestiaApp {
                                     self.browse_query.clear();
                                     self.restart_browse_query();
                                 }
-                                x_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                                x_resp
+                                    .clone()
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                             }
                         }
                     });
@@ -139,12 +191,25 @@ impl HestiaApp {
                         if label_resp.clicked() {
                             self.browse_search_expanded = true;
                         }
-                        label_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                        label_resp
+                            .clone()
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
                         let slide_left = 40.0 * (1.0 - header_visibility);
-                        let text_color = Color32::from_rgba_premultiplied(228, 231, 235, (header_visibility * 255.0) as u8);
-                        let title_text = bold(text.browse_mods_title(), Some(18.0)).color(text_color);
-                        let title_galley = egui::WidgetText::from(title_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default);
+                        let text_color = Color32::from_rgba_premultiplied(
+                            228,
+                            231,
+                            235,
+                            (header_visibility * 255.0) as u8,
+                        );
+                        let title_text =
+                            bold(text.browse_mods_title(), Some(18.0)).color(text_color);
+                        let title_galley = egui::WidgetText::from(title_text).into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Extend),
+                            f32::INFINITY,
+                            egui::FontSelection::Default,
+                        );
                         let extended_clip_rect = label_rect.expand2(egui::vec2(10.0, 0.0));
                         ui.painter().with_clip_rect(extended_clip_rect).galley(
                             egui::Align2::LEFT_CENTER
@@ -190,9 +255,10 @@ impl HestiaApp {
                         ui.add_space(5.0);
                         ui.spacing_mut().icon_width = 7.5;
                         ui.spacing_mut().icon_spacing = 2.0;
-                        
+
                         let visuals = ui.visuals_mut();
-                        visuals.widgets.inactive.bg_fill = Color32::from_rgba_unmultiplied(96, 96, 96, 182);
+                        visuals.widgets.inactive.bg_fill =
+                            Color32::from_rgba_unmultiplied(96, 96, 96, 182);
                         visuals.widgets.hovered.bg_fill = Color32::from_gray(182);
                         visuals.widgets.active.bg_fill = Color32::from_gray(96);
                         visuals.widgets.inactive.bg_stroke.color = Color32::from_gray(160);
@@ -202,14 +268,50 @@ impl HestiaApp {
                             ui.spacing_mut().item_spacing.y = -2.0;
                             ui.add_space(2.0);
                             if self.browse_state.selected_character_category.is_some() {
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.browse_sort,
+                                        BrowseSort::Popular,
+                                        RichText::new(text.browse_popular()).size(11.0),
+                                    )
+                                    .changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.browse_sort,
+                                        BrowseSort::RecentUpdated,
+                                        RichText::new(text.browse_recent_updated()).size(11.0),
+                                    )
+                                    .changed();
                             } else if is_empty {
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::Popular, RichText::new(text.browse_popular()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.browse_sort, BrowseSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.browse_sort,
+                                        BrowseSort::Popular,
+                                        RichText::new(text.browse_popular()).size(11.0),
+                                    )
+                                    .changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.browse_sort,
+                                        BrowseSort::RecentUpdated,
+                                        RichText::new(text.browse_recent_updated()).size(11.0),
+                                    )
+                                    .changed();
                             } else {
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.search_sort, SearchSort::BestMatch, RichText::new(text.browse_best_match()).size(11.0)).changed();
-                                sort_changed |= ui.radio_value(&mut self.state.static_prefs.search_sort, SearchSort::RecentUpdated, RichText::new(text.browse_recent_updated()).size(11.0)).changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.search_sort,
+                                        SearchSort::BestMatch,
+                                        RichText::new(text.browse_best_match()).size(11.0),
+                                    )
+                                    .changed();
+                                sort_changed |= ui
+                                    .radio_value(
+                                        &mut self.state.static_prefs.search_sort,
+                                        SearchSort::RecentUpdated,
+                                        RichText::new(text.browse_recent_updated()).size(11.0),
+                                    )
+                                    .changed();
                             }
                         });
                     });
@@ -361,6 +463,27 @@ impl HestiaApp {
                             .size(16.0)
                             .color(Color32::from_gray(180)),
                     );
+                });
+            }
+
+            if let Some(error) = self.browse_state.page_error.clone() {
+                ui.add_space(12.0);
+                ui.centered_and_justified(|ui| {
+                    ui.horizontal(|ui| {
+                        static_label(
+                            ui,
+                            RichText::new(text.connection_failed())
+                                .size(14.0)
+                                .color(Color32::from_rgb(213, 139, 139)),
+                        );
+                        if ui
+                            .button(RichText::new(text.task_retry()).size(12.0))
+                            .on_hover_text(error)
+                            .clicked()
+                        {
+                            self.request_browse_page_with_mode(1, true);
+                        }
+                    });
                 });
             }
 
@@ -552,7 +675,10 @@ impl HestiaApp {
                                                                 ui.add_space(-5.0);
                                                                 ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                                 ui.add_space(8.0);
-                                                                ui.add(egui::Label::new(RichText::new(card.like_count.to_string()).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                                                let likes_response = ui.add(egui::Label::new(RichText::new(format_compact_count(card.like_count)).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                                                if card.like_count >= 1_000 {
+                                                                    likes_response.on_hover_text(format_count_with_separators(card.like_count));
+                                                                }
                                                                 ui.add_space(-5.0);
                                                                 ui.add(egui::Label::new(icon_rich(Icon::Heart, 12.0, Color32::from_rgb(214, 132, 154))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                             });
@@ -743,6 +869,7 @@ impl HestiaApp {
             let sentinel = ui.allocate_response(Vec2::new(ui.available_width(), 400.0), Sense::hover());
             if sentinel.rect.intersects(ui.clip_rect())
                 && !self.browse_state.loading_page
+                && self.browse_state.page_error.is_none()
                 && self.browse_state.has_more
             {
                 self.request_browse_page(self.browse_state.next_page);
@@ -791,8 +918,10 @@ impl HestiaApp {
             .as_ref()
             .map(|category| category.name.clone());
         let header_width = BROWSE_CHARACTER_PICKER_WIDTH - 8.0;
-        let header_response =
-            ui.allocate_response(Vec2::new(header_width, BROWSE_CHARACTER_PICKER_HEADER_HEIGHT), Sense::hover());
+        let header_response = ui.allocate_response(
+            Vec2::new(header_width, BROWSE_CHARACTER_PICKER_HEADER_HEIGHT),
+            Sense::hover(),
+        );
         let header_rect = header_response.rect;
         let title_font = egui::FontId::new(14.0, FontFamily::Name(BOLD_FONT_FAMILY.into()));
         let title_pos = egui::pos2(header_rect.center().x, header_rect.top() + 14.0);
@@ -982,10 +1111,8 @@ impl HestiaApp {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(3), fill);
         if selected || hovered {
-            let accent_rect = egui::Rect::from_min_max(
-                rect.min,
-                egui::pos2(rect.right(), rect.top() + 2.0),
-            );
+            let accent_rect =
+                egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + 2.0));
             ui.painter().rect_filled(
                 accent_rect,
                 egui::CornerRadius::same(3),
@@ -1075,16 +1202,10 @@ impl HestiaApp {
         } else {
             Color32::from_rgb(218, 222, 228)
         };
-        static_label(
-            &mut child_ui,
-            RichText::new(line_1).size(11.5).color(color),
-        );
+        static_label(&mut child_ui, RichText::new(line_1).size(11.5).color(color));
         if let Some(line_2) = line_2 {
             child_ui.add_space(-6.0);
-            static_label(
-                &mut child_ui,
-                RichText::new(line_2).size(11.5).color(color),
-            );
+            static_label(&mut child_ui, RichText::new(line_2).size(11.5).color(color));
         }
 
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1428,7 +1549,10 @@ impl HestiaApp {
                             |ui| {
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.add(egui::Label::new(RichText::new(profile.download_count.to_string()).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        let downloads_response = ui.add(egui::Label::new(RichText::new(format_compact_count(profile.download_count)).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        if profile.download_count >= 1_000 {
+                                            downloads_response.on_hover_text(format_count_with_separators(profile.download_count));
+                                        }
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::Download, 12.0, Color32::from_rgb(131, 214, 247))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(8.0);
@@ -1436,7 +1560,10 @@ impl HestiaApp {
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(8.0);
-                                        ui.add(egui::Label::new(RichText::new(like_count.to_string()).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        let likes_response = ui.add(egui::Label::new(RichText::new(format_compact_count(like_count)).size(11.5).color(Color32::from_gray(178))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        if like_count >= 1_000 {
+                                            likes_response.on_hover_text(format_count_with_separators(like_count));
+                                        }
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::Heart, 12.0, Color32::from_rgb(214, 132, 154))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                     });
@@ -2040,8 +2167,7 @@ impl HestiaApp {
                                 file.clone(),
                                 vec![file.clone()],
                                 None,
-                                self
-                                    .browse_state
+                                self.browse_state
                                     .details
                                     .get(&mod_id)
                                     .map(|detail| detail.unsafe_content)
@@ -2077,120 +2203,157 @@ impl HestiaApp {
             .iter()
             .find(|c| c.id == prompt.mod_id)
             .map(|c| c.name.clone())
-            .or_else(|| self.browse_state.details.get(&prompt.mod_id).map(|d| d.profile.name.clone()))
+            .or_else(|| {
+                self.browse_state
+                    .details
+                    .get(&prompt.mod_id)
+                    .map(|d| d.profile.name.clone())
+            })
             .unwrap_or_else(|| format!("Mod {}", prompt.mod_id));
 
         let mut open = true;
         let mut should_cancel = false;
         let mut should_confirm = false;
-        egui::Window::new(icon_text_sized(Icon::Files, text.browse_choose_files(), 14.0, 14.0))
-            .id(egui::Id::new(BROWSE_FILE_PICKER_WINDOW_ID))
-            .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
-            .default_size(egui::vec2(420.0, 420.0))
-            .order(egui::Order::Foreground)
-            .resizable(false)
-            .collapsible(false)
-            .constrain_to(constrain_rect)
-            .open(&mut open)
-            .frame(
-                egui::Frame::window(&ctx.style())
-                    .inner_margin(egui::Margin::same(16))
-                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    static_label(ui, icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)));
-                    ui.vertical(|ui| {
-                        static_label(ui, bold(&mod_name, Some(16.0)).underline());
-                        ui.add_space(4.0);
-                        static_label(
-                            ui,
-                            RichText::new(text.browse_multiple_files_prompt()).size(14.0),
-                        );
-                    });
-                });
-                ui.add_space(-8.0);
-                ui.vertical_centered(|ui| {
-                    egui::Frame::new()
-                        .fill(Color32::from_rgba_unmultiplied(180, 180, 180, 48))
-                        .corner_radius(12.0)
-                        .inner_margin(egui::Margin::same(16))
-                        .outer_margin(egui::Margin {
-                            left: 0,
-                            right: 0,
-                            top: 0,
-                            bottom: 4,
-                        })
-                        .show(ui, |ui| {
-                            ui.set_width(388.0);
-                            ScrollArea::vertical()
-                                .max_height(300.0)
-                                .show(ui, |ui| {
-                                let mut style = (**ui.style()).clone();
-                                style.visuals.widgets.active.bg_fill = egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
-                                style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(2);
-                                style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(2);
-                                style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(2);
-                                style.spacing.item_spacing.y = 8.0;
-                                style.spacing.icon_spacing = 4.0;
-                                ui.set_style(style);
-                                ui.spacing_mut().item_spacing.y = 6.0;
-                                for file_entry in &mut prompt.files {
-                                    let row_response = egui::Frame::group(ui.style())
-                                        .inner_margin(egui::Margin::symmetric(10, 8))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                larger_checkbox(ui, file_entry.selected);
-                                                ui.vertical(|ui| {
-                                                    static_label(ui, bold(&file_entry.file.file_name, None));
-                                                    ui.add_space(-4.0);
-                                                    static_label(
-                                                        ui,
-                                                        RichText::new(text.browse_file_metadata(
-                                                            format_file_size(file_entry.file.file_size),
-                                                            format_exact_local_timestamp(file_entry.file.date_added),
-                                                            file_entry.file.download_count,
-                                                        ))
-                                                        .size(11.5)
-                                                        .color(Color32::from_gray(155)),
-                                                    );
-                                                    if let Some(description) = &file_entry.file.description {
-                                                        if !description.trim().is_empty() {
-                                                            static_label(ui, RichText::new(gamebanana::sanitize_inline(description)).size(12.0).color(Color32::from_gray(186)));
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                        }).response;
-                                    if row_response.interact(Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                        file_entry.selected = !file_entry.selected;
-                                    }
-                                }
-                            });
-                        });
-                        ui.horizontal(|ui| {
-                            let install_response = ui.add_enabled(
-                                prompt_game_ready,
-                                egui::Button::new(text.install())
-                                    .fill(Color32::from_rgb(180, 78, 35))
-                                );
-                            if !prompt_game_ready {
-                                install_response
-                                    .clone()
-                                    .on_hover_text(text.game_not_installed())
-                                    .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                            }
-                            if install_response.clicked() {
-                                should_confirm = true;
-                            }
-                            if ui.button(text.cancel()).clicked() {
-                                should_cancel = true;
-                            }
-                        });
+        egui::Window::new(icon_text_sized(
+            Icon::Files,
+            text.browse_choose_files(),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new(BROWSE_FILE_PICKER_WINDOW_ID))
+        .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
+        .default_size(egui::vec2(420.0, 420.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .constrain_to(constrain_rect)
+        .open(&mut open)
+        .frame(
+            egui::Frame::window(&ctx.style())
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
+        )
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                static_label(
+                    ui,
+                    icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)),
+                );
+                ui.vertical(|ui| {
+                    static_label(ui, bold(&mod_name, Some(16.0)).underline());
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.browse_multiple_files_prompt()).size(14.0),
+                    );
                 });
             });
+            ui.add_space(-8.0);
+            ui.vertical_centered(|ui| {
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(180, 180, 180, 48))
+                    .corner_radius(12.0)
+                    .inner_margin(egui::Margin::same(16))
+                    .outer_margin(egui::Margin {
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        bottom: 4,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(388.0);
+                        ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            let mut style = (**ui.style()).clone();
+                            style.visuals.widgets.active.bg_fill =
+                                egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
+                            style.visuals.widgets.inactive.bg_fill =
+                                egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
+                            style.visuals.widgets.hovered.bg_fill =
+                                egui::Color32::from_rgba_unmultiplied(128, 128, 128, 128);
+                            style.visuals.widgets.active.corner_radius =
+                                egui::CornerRadius::same(2);
+                            style.visuals.widgets.inactive.corner_radius =
+                                egui::CornerRadius::same(2);
+                            style.visuals.widgets.hovered.corner_radius =
+                                egui::CornerRadius::same(2);
+                            style.spacing.item_spacing.y = 8.0;
+                            style.spacing.icon_spacing = 4.0;
+                            ui.set_style(style);
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            for file_entry in &mut prompt.files {
+                                let row_response = egui::Frame::group(ui.style())
+                                    .inner_margin(egui::Margin::symmetric(10, 8))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            larger_checkbox(ui, file_entry.selected);
+                                            ui.vertical(|ui| {
+                                                static_label(
+                                                    ui,
+                                                    bold(&file_entry.file.file_name, None),
+                                                );
+                                                ui.add_space(-4.0);
+                                                static_label(
+                                                    ui,
+                                                    RichText::new(text.browse_file_metadata(
+                                                        format_file_size(file_entry.file.file_size),
+                                                        format_exact_local_timestamp(
+                                                            file_entry.file.date_added,
+                                                        ),
+                                                        file_entry.file.download_count,
+                                                    ))
+                                                    .size(11.5)
+                                                    .color(Color32::from_gray(155)),
+                                                );
+                                                if let Some(description) =
+                                                    &file_entry.file.description
+                                                {
+                                                    if !description.trim().is_empty() {
+                                                        static_label(
+                                                            ui,
+                                                            RichText::new(
+                                                                gamebanana::sanitize_inline(
+                                                                    description,
+                                                                ),
+                                                            )
+                                                            .size(12.0)
+                                                            .color(Color32::from_gray(186)),
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    })
+                                    .response;
+                                if row_response
+                                    .interact(Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    file_entry.selected = !file_entry.selected;
+                                }
+                            }
+                        });
+                    });
+                ui.horizontal(|ui| {
+                    let install_response = ui.add_enabled(
+                        prompt_game_ready,
+                        egui::Button::new(text.install()).fill(Color32::from_rgb(180, 78, 35)),
+                    );
+                    if !prompt_game_ready {
+                        install_response
+                            .clone()
+                            .on_hover_text(text.game_not_installed())
+                            .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                    }
+                    if install_response.clicked() {
+                        should_confirm = true;
+                    }
+                    if ui.button(text.cancel()).clicked() {
+                        should_cancel = true;
+                    }
+                });
+            });
+        });
         if should_confirm {
             self.confirm_browse_file_prompt();
         } else if should_cancel || !open {
@@ -2204,13 +2367,16 @@ impl HestiaApp {
         };
         let current_key = overlay.texture_key.clone();
         let current_overlay_caption = overlay.caption.clone();
-        
+
         let capacity = if self.current_view == ViewMode::Browse {
             self.browse_state
                 .selected_mod_id
                 .and_then(|mod_id| self.browse_state.details.get(&mod_id))
                 .and_then(|detail| {
-                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    let profile = detail
+                        .translated_profile
+                        .as_ref()
+                        .unwrap_or(&detail.profile);
                     profile.preview_media.as_ref().map(|p| p.images.len())
                 })
                 .unwrap_or(0)
@@ -2221,7 +2387,10 @@ impl HestiaApp {
         if self.current_view == ViewMode::Browse {
             if let Some(mod_id) = self.browse_state.selected_mod_id {
                 if let Some(detail) = self.browse_state.details.get(&mod_id) {
-                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    let profile = detail
+                        .translated_profile
+                        .as_ref()
+                        .unwrap_or(&detail.profile);
                     if let Some(preview) = &profile.preview_media {
                         for image in &preview.images {
                             let full_url = gamebanana::full_image_url(image);
@@ -2236,11 +2405,15 @@ impl HestiaApp {
                 images.push((item.texture_key.clone(), item.caption.clone()));
             }
         }
-        
+
         let current_index = images.iter().position(|(k, _)| *k == current_key);
         let total_images = images.len();
 
-        enum NavAction { Close, Next, Prev }
+        enum NavAction {
+            Close,
+            Next,
+            Prev,
+        }
         let mut action = None;
 
         let screen_rect = ctx.viewport_rect();
@@ -2251,22 +2424,34 @@ impl HestiaApp {
             .show(ctx, |ui| {
                 ui.set_min_size(screen_rect.size());
                 let rect = ui.available_rect_before_wrap();
-                
+
                 let bg_response = ui.allocate_rect(rect, Sense::click());
-                ui.painter().rect_filled(rect, 0.0, Color32::from_rgba_premultiplied(0, 0, 0, 240));
+                ui.painter()
+                    .rect_filled(rect, 0.0, Color32::from_rgba_premultiplied(0, 0, 0, 240));
 
                 if bg_response.clicked() {
                     action = Some(NavAction::Close);
                 }
 
                 ui.input(|i| {
-                    if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter) {
+                    if i.key_pressed(egui::Key::Escape)
+                        || i.key_pressed(egui::Key::Space)
+                        || i.key_pressed(egui::Key::Enter)
+                    {
                         action = Some(NavAction::Close);
                     }
-                    if i.key_pressed(egui::Key::A) || i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp) {
+                    if i.key_pressed(egui::Key::A)
+                        || i.key_pressed(egui::Key::W)
+                        || i.key_pressed(egui::Key::ArrowLeft)
+                        || i.key_pressed(egui::Key::ArrowUp)
+                    {
                         action = Some(NavAction::Prev);
                     }
-                    if i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::D) || i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown) {
+                    if i.key_pressed(egui::Key::S)
+                        || i.key_pressed(egui::Key::D)
+                        || i.key_pressed(egui::Key::ArrowRight)
+                        || i.key_pressed(egui::Key::ArrowDown)
+                    {
                         action = Some(NavAction::Next);
                     }
                     if i.smooth_scroll_delta.y > 0.0 {
@@ -2290,12 +2475,12 @@ impl HestiaApp {
                     let scale = (rect.width() / size.x).min(rect.height() / size.y);
                     let target_size = size * scale;
                     let image_rect = egui::Rect::from_center_size(rect.center(), target_size);
-                    
+
                     ui.painter().image(
                         texture.id(),
                         image_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        Color32::WHITE
+                        Color32::WHITE,
                     );
 
                     let caption = current_index
@@ -2316,7 +2501,11 @@ impl HestiaApp {
                                 rect.max,
                             );
 
-                            ui.painter().rect_filled(caption_rect, 0.0, Color32::from_black_alpha(64));
+                            ui.painter().rect_filled(
+                                caption_rect,
+                                0.0,
+                                Color32::from_black_alpha(64),
+                            );
                             ui.painter().galley(
                                 caption_rect.center() - galley.size() / 2.0,
                                 galley,
@@ -2331,25 +2520,54 @@ impl HestiaApp {
                 if total_images > 1 {
                     let button_size = Vec2::new(64.0, 128.0);
                     let center_y = rect.center().y - (button_size.y / 2.0);
-                    
+
                     if current_index.is_some_and(|i| i > 0) {
-                        let left_rect = egui::Rect::from_min_size(egui::pos2(rect.min.x + 32.0, center_y), button_size);
-                        let resp = ui.interact(left_rect, ui.id().with("nav_l"), Sense::click())
+                        let left_rect = egui::Rect::from_min_size(
+                            egui::pos2(rect.min.x + 32.0, center_y),
+                            button_size,
+                        );
+                        let resp = ui
+                            .interact(left_rect, ui.id().with("nav_l"), Sense::click())
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         let alpha = if resp.hovered() { 240 } else { 102 };
-                        ui.painter().rect_filled(left_rect, 12.0, Color32::from_black_alpha(alpha));
-                        ui.painter().text(left_rect.center(), egui::Align2::CENTER_CENTER, icon_char(Icon::ChevronLeft), egui::FontId::new(48.0, FontFamily::Name(LUCIDE_FAMILY.into())), Color32::WHITE);
-                        if resp.clicked() { action = Some(NavAction::Prev); }
+                        ui.painter()
+                            .rect_filled(left_rect, 12.0, Color32::from_black_alpha(alpha));
+                        ui.painter().text(
+                            left_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            icon_char(Icon::ChevronLeft),
+                            egui::FontId::new(48.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                            Color32::WHITE,
+                        );
+                        if resp.clicked() {
+                            action = Some(NavAction::Prev);
+                        }
                     }
-                    
+
                     if current_index.is_some_and(|i| i < total_images - 1) {
-                        let right_rect = egui::Rect::from_min_size(egui::pos2(rect.max.x - 32.0 - button_size.x, center_y), button_size);
-                        let resp = ui.interact(right_rect, ui.id().with("nav_r"), Sense::click())
+                        let right_rect = egui::Rect::from_min_size(
+                            egui::pos2(rect.max.x - 32.0 - button_size.x, center_y),
+                            button_size,
+                        );
+                        let resp = ui
+                            .interact(right_rect, ui.id().with("nav_r"), Sense::click())
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         let alpha = if resp.hovered() { 240 } else { 102 };
-                        ui.painter().rect_filled(right_rect, 12.0, Color32::from_black_alpha(alpha));
-                        ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, icon_char(Icon::ChevronRight), egui::FontId::new(48.0, FontFamily::Name(LUCIDE_FAMILY.into())), Color32::WHITE);
-                        if resp.clicked() { action = Some(NavAction::Next); }
+                        ui.painter().rect_filled(
+                            right_rect,
+                            12.0,
+                            Color32::from_black_alpha(alpha),
+                        );
+                        ui.painter().text(
+                            right_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            icon_char(Icon::ChevronRight),
+                            egui::FontId::new(48.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                            Color32::WHITE,
+                        );
+                        if resp.clicked() {
+                            action = Some(NavAction::Next);
+                        }
                     }
                 }
             });
@@ -2394,6 +2612,4 @@ impl HestiaApp {
             None => {}
         }
     }
-
 }
-

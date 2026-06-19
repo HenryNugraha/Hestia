@@ -325,6 +325,7 @@ struct BrowseState {
     next_page: usize,
     has_more: bool,
     loading_page: bool,
+    page_error: Option<String>,
     refresh_page_cache_for_session: bool,
     selected_mod_id: Option<u64>,
     character_categories_game_id: Option<String>,
@@ -588,13 +589,27 @@ enum BrowseRequest {
 }
 
 enum GifPreviewRequest {
-    FromFile { src_path: PathBuf, out_png: PathBuf, gif_dest: String },
-    FromUrl { url: String, out_png: PathBuf, gif_dest: String },
+    FromFile {
+        src_path: PathBuf,
+        out_png: PathBuf,
+        gif_dest: String,
+    },
+    FromUrl {
+        url: String,
+        out_png: PathBuf,
+        gif_dest: String,
+    },
 }
 
 enum GifPreviewEvent {
-    Ready { out_png: PathBuf, gif_dest: String, image: egui::ColorImage },
-    Failed { out_png: PathBuf },
+    Ready {
+        out_png: PathBuf,
+        gif_dest: String,
+        image: egui::ColorImage,
+    },
+    Failed {
+        out_png: PathBuf,
+    },
 }
 
 #[derive(Clone)]
@@ -609,13 +624,25 @@ struct GifAnimation {
 }
 
 enum GifAnimationRequest {
-    FromFile { src_path: PathBuf, texture_key: String },
-    FromUrl { url: String, texture_key: String },
+    FromFile {
+        src_path: PathBuf,
+        texture_key: String,
+    },
+    FromUrl {
+        url: String,
+        texture_key: String,
+    },
 }
 
 enum GifAnimationEvent {
-    Ready { texture_key: String, animation: GifAnimation },
-    Failed { texture_key: String, error: String },
+    Ready {
+        texture_key: String,
+        animation: GifAnimation,
+    },
+    Failed {
+        texture_key: String,
+        error: String,
+    },
 }
 
 #[derive(Clone)]
@@ -944,10 +971,22 @@ impl ThumbnailProfile {
 }
 
 enum PendingTextureUpload {
-    ModThumb { texture_key: String, image: egui::ColorImage },
-    ModFull { texture_key: String, image: egui::ColorImage },
-    BrowseThumb { texture_key: String, image: egui::ColorImage },
-    BrowseFull { texture_key: String, image: egui::ColorImage },
+    ModThumb {
+        texture_key: String,
+        image: egui::ColorImage,
+    },
+    ModFull {
+        texture_key: String,
+        image: egui::ColorImage,
+    },
+    BrowseThumb {
+        texture_key: String,
+        image: egui::ColorImage,
+    },
+    BrowseFull {
+        texture_key: String,
+        image: egui::ColorImage,
+    },
 }
 
 impl PendingTextureUpload {
@@ -1051,5 +1090,3 @@ struct WindowStateSnapshot {
     size: Option<[f32; 2]>,
     maximized: bool,
 }
-
-
