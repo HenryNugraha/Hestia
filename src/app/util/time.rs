@@ -35,12 +35,16 @@ fn format_log_timestamp(timestamp: DateTime<Utc>, use_24h: bool) -> (String, Str
     (date, time)
 }
 
-fn mod_age_label(updated_at: DateTime<Utc>) -> String {
-    relative_time_label(updated_at, false)
+fn mod_age_label(updated_at: DateTime<Utc>, text: TextCatalog) -> String {
+    relative_time_label_at(updated_at, Local::now(), false, text)
 }
 
-fn relative_time_label(updated_at: DateTime<Utc>, compact_today: bool) -> String {
-    let local_now = Local::now();
+fn relative_time_label_at(
+    updated_at: DateTime<Utc>,
+    local_now: DateTime<Local>,
+    compact_today: bool,
+    text: TextCatalog,
+) -> String {
     let local_then = updated_at.with_timezone(&Local);
     let delta = local_now.signed_duration_since(local_then);
 
@@ -50,18 +54,18 @@ fn relative_time_label(updated_at: DateTime<Utc>, compact_today: bool) -> String
 
     if days <= 0 {
         if compact_today {
-            "Today".to_string()
+            text.relative_time_today().to_string()
         } else if hours <= 0 {
             if minutes <= 0 {
-                "Now".to_string()
+                text.relative_time_now().to_string()
             } else {
-                format!("{minutes}m")
+                text.relative_time_minutes(minutes)
             }
         } else {
-            format!("{hours}h")
+            text.relative_time_hours(hours)
         }
     } else {
-        format!("{days}d")
+        text.relative_time_days(days)
     }
 }
 

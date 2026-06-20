@@ -409,6 +409,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "已启用", // LibraryStatusActive
     "禁用", // LibraryStatusDisabled
     "已归档", // LibraryStatusArchived
+    "刚刚", // RelativeTimeNow
+    "今天", // RelativeTimeToday
+    "{count} 分钟", // RelativeTimeMinutes
+    "{count} 小时", // RelativeTimeHours
+    "{count} 天", // RelativeTimeDays
     "已移至回收站", // LibraryRecycledAction
     "已删除", // LibraryDeletedAction
     "删除失败", // LibraryDeleteFailed

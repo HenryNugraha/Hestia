@@ -1,6 +1,7 @@
 impl HestiaApp {
     fn render_browse_left_pane(&mut self, ui: &mut Ui) {
         let text = self.text();
+        let age_now = Local::now();
         egui::Frame::new()
             .fill(Color32::from_rgba_premultiplied(36, 38, 42, 242))
             .corner_radius(egui::CornerRadius::same(0))
@@ -678,7 +679,7 @@ impl HestiaApp {
                                                             ).on_hover_cursor(egui::CursorIcon::Default);
                                                             ui.add_space(-6.0);
                                                             ui.horizontal(|ui| {
-                                                                ui.add(egui::Label::new(RichText::new(relative_time_label(card.updated_at, false)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                                                ui.add(egui::Label::new(RichText::new(relative_time_label_at(card.updated_at, age_now, false, text)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                                 ui.add_space(-5.0);
                                                                 ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                                                 ui.add_space(4.0);
@@ -1262,6 +1263,7 @@ impl HestiaApp {
 
     fn render_browse_detail_window(&mut self, ctx: &egui::Context, pane_rect: egui::Rect) {
         let text = self.text();
+        let age_now = Local::now();
         let Some(mod_id) = self.browse_state.selected_mod_id else {
             self.render_browse_screenshot_overlay(ctx);
             return;
@@ -1563,7 +1565,7 @@ impl HestiaApp {
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::Download, 12.0, Color32::from_rgb(131, 214, 247))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(4.0);
-                                        ui.add(egui::Label::new(RichText::new(relative_time_label(updated_at, false)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
+                                        ui.add(egui::Label::new(RichText::new(relative_time_label_at(updated_at, age_now, false, text)).size(11.5).color(Color32::from_gray(145))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(-5.0);
                                         ui.add(egui::Label::new(icon_rich(Icon::CalendarClock, 12.0, Color32::from_rgb(112, 164, 118))).selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                         ui.add_space(4.0);
@@ -1819,7 +1821,7 @@ impl HestiaApp {
                                             }
                                             static_label(
                                                 ui,
-                                                RichText::new(format!("/ {}", mod_age_label(entry.updated_at)))
+                                                RichText::new(format!("/ {}", relative_time_label_at(entry.updated_at, age_now, false, text)))
                                                     .size(11.0)
                                                     .color(Color32::from_gray(145)),
                                             );

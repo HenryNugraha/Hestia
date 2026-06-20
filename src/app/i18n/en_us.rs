@@ -409,6 +409,11 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Active", // LibraryStatusActive
     "Disabled", // LibraryStatusDisabled
     "Archived", // LibraryStatusArchived
+    "Now", // RelativeTimeNow
+    "Today", // RelativeTimeToday
+    "{count}m", // RelativeTimeMinutes
+    "{count}h", // RelativeTimeHours
+    "{count}d", // RelativeTimeDays
     "Recycled", // LibraryRecycledAction
     "Deleted", // LibraryDeletedAction
     "Delete failed", // LibraryDeleteFailed

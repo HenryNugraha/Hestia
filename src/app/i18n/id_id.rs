@@ -409,6 +409,11 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Aktif", // LibraryStatusActive
     "Nonaktif", // LibraryStatusDisabled
     "Arsip", // LibraryStatusArchived
+    "Baru", // RelativeTimeNow
+    "Hari ini", // RelativeTimeToday
+    "{count}mnt", // RelativeTimeMinutes
+    "{count}j", // RelativeTimeHours
+    "{count}hr", // RelativeTimeDays
     "Dipindahkan ke Tempat Sampah", // LibraryRecycledAction
     "Dihapus", // LibraryDeletedAction
     "Gagal menghapus", // LibraryDeleteFailed

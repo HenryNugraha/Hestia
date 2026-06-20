@@ -407,6 +407,11 @@ enum TextKey {
     LibraryStatusActive,
     LibraryStatusDisabled,
     LibraryStatusArchived,
+    RelativeTimeNow,
+    RelativeTimeToday,
+    RelativeTimeMinutes,
+    RelativeTimeHours,
+    RelativeTimeDays,
     LibraryRecycledAction,
     LibraryDeletedAction,
     LibraryDeleteFailed,
@@ -2218,6 +2223,29 @@ impl TextCatalog {
             ModStatus::Disabled => self.get(TextKey::LibraryStatusDisabled),
             ModStatus::Archived => self.get(TextKey::LibraryStatusArchived),
         }
+    }
+
+    fn relative_time_now(self) -> &'static str {
+        self.get(TextKey::RelativeTimeNow)
+    }
+
+    fn relative_time_today(self) -> &'static str {
+        self.get(TextKey::RelativeTimeToday)
+    }
+
+    fn relative_time_minutes(self, count: i64) -> String {
+        self.get(TextKey::RelativeTimeMinutes)
+            .replace("{count}", &count.to_string())
+    }
+
+    fn relative_time_hours(self, count: i64) -> String {
+        self.get(TextKey::RelativeTimeHours)
+            .replace("{count}", &count.to_string())
+    }
+
+    fn relative_time_days(self, count: i64) -> String {
+        self.get(TextKey::RelativeTimeDays)
+            .replace("{count}", &count.to_string())
     }
 
     fn delete_action(self, behavior: DeleteBehavior) -> &'static str {

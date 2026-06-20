@@ -236,7 +236,6 @@ pub struct HestiaApp {
     translation_request_nonce: u64,
     cancelled_translation_requests: HashSet<u64>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
-    mod_card_display_cache: HashMap<String, ModCardDisplayCache>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
@@ -388,15 +387,6 @@ struct MyModTranslationState {
     unlinked_translations: HashMap<String, String>,
     unlinked_loading: HashSet<String>,
     unlinked_translation_enabled: bool,
-}
-
-// Cache for pre-computed card display data to reduce per-frame string operations
-#[derive(Clone)]
-struct ModCardDisplayCache {
-    age_label: String,
-    category_label: String,
-    status_label: String,
-    updated_at: DateTime<Utc>, // Track when data was computed
 }
 
 #[derive(Clone)]

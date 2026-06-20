@@ -690,46 +690,6 @@ enum CategoryPickerTarget<'a> {
 }
 
 impl HestiaApp {
-    // Get or compute cached display data for a mod card
-    fn get_mod_card_display_cache(
-        &mut self,
-        mod_id: &str,
-        updated_at: DateTime<Utc>,
-        category_label: &str,
-        status: &ModStatus,
-    ) -> (String, String, String) {
-        let text = self.text();
-        
-        // Check if we have a valid cache entry
-        if let Some(cache) = self.mod_card_display_cache.get(mod_id) {
-            if cache.updated_at == updated_at {
-                return (
-                    cache.age_label.clone(),
-                    cache.category_label.clone(),
-                    cache.status_label.clone(),
-                );
-            }
-        }
-        
-        // Compute fresh values
-        let age_label = mod_age_label(updated_at);
-        let category_label_cached = clamp_category_card_label(category_label).to_string();
-        let status_label = text.mod_status_label(&status).to_string();
-        
-        // Store in cache
-        self.mod_card_display_cache.insert(
-            mod_id.to_string(),
-            ModCardDisplayCache {
-                age_label: age_label.clone(),
-                category_label: category_label_cached.clone(),
-                status_label: status_label.clone(),
-                updated_at,
-            },
-        );
-        
-        (age_label, category_label_cached, status_label)
-    }
-
     fn sort_menu_heading(ui: &mut Ui, text: &str) {
         ui.allocate_ui_with_layout(
             Vec2::new(ui.available_width(), 18.0),
@@ -3434,6 +3394,7 @@ impl HestiaApp {
 
     fn render_mod_grid(&mut self, ui: &mut Ui) {
         let text = self.text();
+        let age_now = Local::now();
         let cards: Vec<_> = self
             .mods_for_selected_game()
             .into_iter()
@@ -4832,9 +4793,11 @@ impl HestiaApp {
                                             category_label,
                                         ) = card;
                                         
-                                        // Get cached display data
-                                        let (age_label, category_label_display, status_label) = 
-                                            self.get_mod_card_display_cache(mod_id, *updated_at, category_label, status);
+                                        let age_label =
+                                            relative_time_label_at(*updated_at, age_now, false, text);
+                                        let category_label_display =
+                                            clamp_category_card_label(category_label);
+                                        let status_label = text.mod_status_label(status);
                                         
                                         let selected = self
                                             .selected_mod_id
@@ -5238,10 +5201,10 @@ impl HestiaApp {
                                                                                     self.state.static_prefs.library_status_group_show_category
                                                                                 };
                                                                                 if show_category_on_card {
-                                                                                    let clamped = &category_label_display != category_label;
+                                                                                    let clamped = category_label_display != category_label.as_str();
                                                                                     let category_response = ui.add(
                                                                                         egui::Label::new(
-                                                                                            RichText::new(&category_label_display)
+                                                                                            RichText::new(category_label_display)
                                                                                                 .size(12.0)
                                                                                                 .color(Color32::from_rgb(176, 198, 218)),
                                                                                         )
@@ -5257,7 +5220,7 @@ impl HestiaApp {
                                                                                 } else if show_status_on_card || !category_grouped {
                                                                                     ui.add(
                                                                                         egui::Label::new(
-                                                                                            RichText::new(&status_label)
+                                                                                            RichText::new(status_label)
                                                                                                 .size(13.0)
                                                                                                 .color(status_color),
                                                                                         )
@@ -6912,7 +6875,7 @@ impl HestiaApp {
                     .title
                     .clone()
                     .unwrap_or_else(|| selected.folder_name.clone());
-                let age = mod_age_label(selected.updated_at);
+                let age = mod_age_label(selected.updated_at, text);
                 ui.horizontal_wrapped(|ui| {
                     if self.mod_detail_editing && self.mod_detail_edit_target_id.as_deref() == Some(&selected.id) {
                         let title_width = ui.fonts_mut(|f| {
@@ -8634,7 +8597,7 @@ impl HestiaApp {
                                                 ui.add_space(-8.0);
                                                 static_label(
                                                     ui,
-                                                    RichText::new(text.last_synced(&mod_age_label(ts)))
+                                                    RichText::new(text.last_synced(&mod_age_label(ts, text)))
                                                         .size(11.0)
                                                         .color(Color32::from_gray(145))
                                                 );

@@ -312,7 +312,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "1 мод", // LibraryOneMod
     "Назад", // LibraryBack
     "Назад к папкам категорий", // LibraryBackToCategoryFolders
-    "{active} активных • {disabled} отключённых • {archived} в архиве", // LibraryCategorySummary
+    "{active} Активен • {disabled} Отключён • {archived} Архив", // LibraryCategorySummary
     "Название А-Я", // LibrarySortNameAsc
     "Название Я-А", // LibrarySortNameDesc
     "Новые → старые", // LibrarySortDateDesc
@@ -385,11 +385,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Изменён", // LibraryModified
     "\n(Изменён)", // LibraryModifiedSuffix
     "…и ещё {count}", // LibraryAndMore
-    "Изменён и игнорируется разово", // LibraryModifiedIgnoringOnce
-    "Изменён и игнорируется всегда", // LibraryModifiedIgnoringAlways
-    "Изменён, доступно обновление", // LibraryModifiedUpdateAvailable
-    "Игнорируется разово", // LibraryIgnoringOnce
-    "Игнорируется всегда", // LibraryIgnoringAlways
+    "Изм. игнор разово", // LibraryModifiedIgnoringOnce
+    "Изм. игнор всегда", // LibraryModifiedIgnoringAlways
+    "Изм. есть обн.", // LibraryModifiedUpdateAvailable
+    "Игнор разово", // LibraryIgnoringOnce
+    "Игнор всегда", // LibraryIgnoringAlways
     "Отсутствует", // LibraryMissing
     "Пропущено", // LibrarySkipped
     "Пусто", // LibraryEmpty
@@ -408,7 +408,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Папка удалена: {category}", // LibraryDeletedFolder
     "Активен", // LibraryStatusActive
     "Отключён", // LibraryStatusDisabled
-    "В архиве", // LibraryStatusArchived
+    "Архив", // LibraryStatusArchived
+    "Сейчас", // RelativeTimeNow
+    "Сегодня", // RelativeTimeToday
+    "{count}мин", // RelativeTimeMinutes
+    "{count}ч", // RelativeTimeHours
+    "{count}дн", // RelativeTimeDays
     "Перемещено в корзину", // LibraryRecycledAction
     "Удалено", // LibraryDeletedAction
     "Ошибка удаления", // LibraryDeleteFailed

@@ -161,6 +161,7 @@ impl eframe::App for HestiaApp {
         let has_pending_browse_request = self.browse_state.loading_page
             || self.browse_state.character_categories_loading
             || !self.browse_state.loading_details.is_empty();
+        let relative_time_visible = matches!(self.current_view, ViewMode::Library | ViewMode::Browse);
         let needs_continuous_repaint = 
             !self.animated_gif_state.is_empty()
             || self.app_update_download_inflight.is_some()
@@ -175,6 +176,10 @@ impl eframe::App for HestiaApp {
             // Worker channels do not wake egui themselves. Poll while a Browse request is in
             // flight so completed results are consumed even without user interaction.
             ctx.request_repaint_after(Duration::from_millis(100));
+        } else if relative_time_visible {
+            // Relative-time labels advance at minute granularity. Wake once per minute rather
+            // than continuously repainting while the app is idle.
+            ctx.request_repaint_after(Duration::from_secs(60));
         } else {
             // On idle, only repaint when there's actual interaction INSIDE the window
             // This prevents repaints from mouse movement outside the window
