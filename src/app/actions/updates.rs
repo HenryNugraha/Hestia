@@ -1108,6 +1108,16 @@ impl HestiaApp {
             self.refresh_inflight = false;
             match event {
                 RefreshEvent::Ready { game_id, mods } => {
+                    let reload_before = self
+                        .pending_reload_summary
+                        .as_ref()
+                        .is_some_and(|(reload_game_id, _)| reload_game_id == &game_id)
+                        .then(|| {
+                            self.pending_reload_summary
+                                .take()
+                                .map(|(_, snapshots)| snapshots)
+                        })
+                        .flatten();
                     let is_current = self
                         .selected_game()
                         .is_some_and(|g| g.definition.id == game_id);
@@ -1133,11 +1143,33 @@ impl HestiaApp {
                     let finalized_install =
                         self.resolve_pending_install_finalization_for_game(&game_id);
                     self.save_state();
-                    if !finalized_install {
+                    if reload_before.is_some() {
+                        self.queue_update_check_for_linked_mods_force(Some(&game_id));
+                    } else if !finalized_install {
                         self.queue_update_check_for_linked_mods(Some(&game_id));
+                    }
+                    if let Some(before) = reload_before {
+                        let after = self.capture_reload_snapshots(Some(&game_id));
+                        let summary = self.build_reload_summary(&before, &after);
+                        self.push_log(
+                            self.text()
+                                .reload_action(&self.reload_summary_log_text(&summary)),
+                        );
+                        for line in &summary.detail_lines {
+                            self.push_log(self.text().reload_action(&line));
+                        }
+                        self.set_message_ok(self.reload_summary_toast_text(&summary));
+                        self.request_automatic_app_update_check(0.0);
                     }
                 }
                 RefreshEvent::Failed { game_id, error } => {
+                    if self
+                        .pending_reload_summary
+                        .as_ref()
+                        .is_some_and(|(reload_game_id, _)| reload_game_id == &game_id)
+                    {
+                        self.pending_reload_summary = None;
+                    }
                     let is_current = self
                         .selected_game()
                         .is_some_and(|g| g.definition.id == game_id);

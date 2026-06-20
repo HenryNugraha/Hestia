@@ -242,6 +242,7 @@ pub struct HestiaApp {
     refresh_result_rx: WorkerRx<RefreshEvent>,
     refresh_inflight: bool,
     refresh_pending_selected_game: Option<String>,
+    pending_reload_summary: Option<(String, Vec<ReloadSnapshot>)>,
     pending_install_finalize: HashMap<u64, PendingInstallFinalize>,
     pending_known_installed_paths: HashSet<PathBuf>,
     reload_spin_until: f64,

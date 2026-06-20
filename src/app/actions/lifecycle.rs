@@ -354,6 +354,7 @@ impl HestiaApp {
             refresh_result_rx,
             refresh_inflight: false,
             refresh_pending_selected_game: None,
+            pending_reload_summary: None,
             pending_install_finalize: HashMap::new(),
             pending_known_installed_paths: HashSet::new(),
             reload_spin_until: 0.7,
@@ -1971,48 +1972,22 @@ impl HestiaApp {
     }
 
     fn refresh_with_toast(&mut self) {
-        self.refresh_with_toast_internal(true);
-    }
-
-    fn refresh_with_toast_internal(&mut self, force_update_check: bool) {
+        if self.startup_scan_loading || self.refresh_inflight {
+            return;
+        }
         self.mark_usage_counters_dirty();
         self.clear_translation_caches();
-        let old_ts: HashMap<String, DateTime<Utc>> = self
-            .state
-            .mods
-            .iter()
-            .map(|m| (m.id.clone(), m.updated_at))
-            .collect();
-        let game_id = self.selected_game().map(|g| g.definition.id.clone());
-        let before = self.capture_reload_snapshots(game_id.as_deref());
+        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+            return;
+        };
+        let before = self.capture_reload_snapshots(Some(&game_id));
 
-        match xxmi::refresh_state(&mut self.state, game_id.as_deref()) {
-            Ok(()) => {
-                self.restore_imported_mod_categories(game_id.as_deref());
-                let after = self.capture_reload_snapshots(game_id.as_deref());
-                let summary = self.build_reload_summary(&before, &after);
-                self.invalidate_stale_mod_textures(&old_ts);
-                self.backfill_missing_mod_images(game_id.as_deref());
-                self.sync_tools_for_selected_game();
-                self.save_state();
-                self.sync_selection_after_refresh();
-                if force_update_check {
-                    self.queue_update_check_for_linked_mods_force(game_id.as_deref());
-                } else {
-                    self.queue_update_check_for_linked_mods(game_id.as_deref());
-                }
-                self.request_automatic_app_update_check(0.0);
-                self.push_log(
-                    self.text()
-                        .reload_action(&self.reload_summary_log_text(&summary)),
-                );
-                for line in &summary.detail_lines {
-                    self.push_log(self.text().reload_action(&line));
-                }
-                self.set_message_ok(self.reload_summary_toast_text(&summary));
-            }
-            Err(err) => self.report_error(err, Some(self.text().could_not_refresh_mods())),
-        }
+        // Do this before the background library scan so newly added tool executables appear
+        // as soon as the UI repaints after the reload click.
+        self.sync_tools_for_selected_game();
+        self.save_state();
+        self.pending_reload_summary = Some((game_id.clone(), before));
+        self.queue_game_refresh(game_id);
     }
 
     fn capture_reload_snapshots(&self, game_id: Option<&str>) -> Vec<ReloadSnapshot> {
