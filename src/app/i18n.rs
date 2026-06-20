@@ -315,11 +315,14 @@ enum TextKey {
     LibrarySortNameDesc,
     LibrarySortDateDesc,
     LibrarySortDateAsc,
+    LibrarySortSizeAsc,
+    LibrarySortSizeDesc,
     LibrarySortMenuTooltip,
     LibrarySortModsHeading,
     LibrarySortNameTooltip,
     LibrarySortNewestTooltip,
     LibrarySortOldestTooltip,
+    LibrarySortSizeTooltip,
     LibraryGroupModsHeading,
     LibraryGroupCategoryTooltip,
     LibraryGroupStatusTooltip,
@@ -1856,6 +1859,8 @@ impl TextCatalog {
             LibrarySort::NameDesc => self.get(TextKey::LibrarySortNameDesc),
             LibrarySort::DateDesc => self.get(TextKey::LibrarySortDateDesc),
             LibrarySort::DateAsc => self.get(TextKey::LibrarySortDateAsc),
+            LibrarySort::SizeAsc => self.get(TextKey::LibrarySortSizeAsc),
+            LibrarySort::SizeDesc => self.get(TextKey::LibrarySortSizeDesc),
         }
     }
 
@@ -1877,6 +1882,10 @@ impl TextCatalog {
 
     fn library_sort_oldest_tooltip(self) -> &'static str {
         self.get(TextKey::LibrarySortOldestTooltip)
+    }
+
+    fn library_sort_size_tooltip(self) -> &'static str {
+        self.get(TextKey::LibrarySortSizeTooltip)
     }
 
     fn library_group_mods_heading(self) -> &'static str {

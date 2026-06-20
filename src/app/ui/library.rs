@@ -918,6 +918,20 @@ impl HestiaApp {
                     text.library_sort_label(LibrarySort::DateAsc),
                     Some(text.library_sort_oldest_tooltip()),
                 );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::SizeAsc,
+                    text.library_sort_label(LibrarySort::SizeAsc),
+                    Some(text.library_sort_size_tooltip()),
+                );
+                should_save |= Self::sort_menu_radio(
+                    ui,
+                    &mut selected_sort,
+                    LibrarySort::SizeDesc,
+                    text.library_sort_label(LibrarySort::SizeDesc),
+                    Some(text.library_sort_size_tooltip()),
+                );
                 if selected_sort != self.state.static_prefs.library_sort {
                     self.state.static_prefs.library_sort = selected_sort;
                 }

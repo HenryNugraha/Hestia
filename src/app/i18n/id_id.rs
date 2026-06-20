@@ -317,11 +317,14 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Nama Z-A", // LibrarySortNameDesc
     "Terbaru → Terlama", // LibrarySortDateDesc
     "Terlama → Terbaru", // LibrarySortDateAsc
+    "Ukuran Terkecil → Terbesar", // LibrarySortSizeAsc
+    "Ukuran Terbesar → Terkecil", // LibrarySortSizeDesc
     "Urutkan, kelompokkan, dan atur tampilan mod terpasang", // LibrarySortMenuTooltip
     "Urutkan Mod", // LibrarySortModsHeading
     "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada.", // LibrarySortNameTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui.", // LibrarySortNewestTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terlama yang diketahui terlebih dahulu.", // LibrarySortOldestTooltip
+    "Mengurutkan berdasarkan total ukuran konten mod.", // LibrarySortSizeTooltip
     "Kelompokkan Mod", // LibraryGroupModsHeading
     "Mengelompokkan mod berdasarkan kategori per game.", // LibraryGroupCategoryTooltip
     "Mengelompokkan mod ke bagian Aktif, Dinonaktifkan, dan Diarsipkan.", // LibraryGroupStatusTooltip

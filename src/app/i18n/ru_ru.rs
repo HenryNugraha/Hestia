@@ -317,11 +317,14 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Название Я-А", // LibrarySortNameDesc
     "Новые → старые", // LibrarySortDateDesc
     "Старые → новые", // LibrarySortDateAsc
+    "Наименьший → Наибольший размер", // LibrarySortSizeAsc
+    "Наибольший → Наименьший размер", // LibrarySortSizeDesc
     "Сортировка, группировка и вид установленных модов", // LibrarySortMenuTooltip
     "Сортировка модов", // LibrarySortModsHeading
     "Сортировка по названию мода, при отсутствии — по имени папки.", // LibrarySortNameTooltip
     "Используется самая новая известная дата установки, изменения содержимого или обновления.", // LibrarySortNewestTooltip
     "Сначала используется самая старая известная дата установки, изменения содержимого или обновления.", // LibrarySortOldestTooltip
+    "Сортирует по общему размеру содержимого мода.", // LibrarySortSizeTooltip
     "Группировка модов", // LibraryGroupModsHeading
     "Группирует моды по категориям для каждой игры.", // LibraryGroupCategoryTooltip
     "Группирует моды по разделам «Активные», «Отключённые» и «В архиве».", // LibraryGroupStatusTooltip

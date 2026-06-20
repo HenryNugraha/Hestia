@@ -788,6 +788,8 @@ pub enum LibrarySort {
     NameDesc,
     DateDesc,
     DateAsc,
+    SizeAsc,
+    SizeDesc,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

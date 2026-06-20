@@ -1402,6 +1402,14 @@ impl HestiaApp {
                 LibrarySort::NameDesc => name_cmp.reverse(),
                 LibrarySort::DateDesc => sort_date(b).cmp(&sort_date(a)).then_with(|| name_cmp),
                 LibrarySort::DateAsc => sort_date(a).cmp(&sort_date(b)).then_with(|| name_cmp),
+                LibrarySort::SizeAsc => a
+                    .content_size_bytes
+                    .cmp(&b.content_size_bytes)
+                    .then_with(|| name_cmp),
+                LibrarySort::SizeDesc => b
+                    .content_size_bytes
+                    .cmp(&a.content_size_bytes)
+                    .then_with(|| name_cmp),
             };
             status_cmp.then(category_cmp).then(sort_cmp)
         });

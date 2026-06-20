@@ -317,11 +317,14 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "名称 Z-A", // LibrarySortNameDesc
     "最新 → 最旧", // LibrarySortDateDesc
     "最旧 → 最新", // LibrarySortDateAsc
+    "大小：最小 → 最大", // LibrarySortSizeAsc
+    "大小：最大 → 最小", // LibrarySortSizeDesc
     "排序、分组并设置已安装 Mod 的布局", // LibrarySortMenuTooltip
     "排序 Mod", // LibrarySortModsHeading
     "按 Mod 标题排序，没有标题时使用文件夹名。", // LibrarySortNameTooltip
     "使用已知最新的安装、内容或刷新时间。", // LibrarySortNewestTooltip
     "优先使用已知最旧的安装、内容或刷新时间。", // LibrarySortOldestTooltip
+    "按 Mod 内容总大小排序。", // LibrarySortSizeTooltip
     "分组 Mod", // LibraryGroupModsHeading
     "按每个游戏的分类对 Mod 分组。", // LibraryGroupCategoryTooltip
     "将 Mod 分组到启用、禁用和已归档分区。", // LibraryGroupStatusTooltip

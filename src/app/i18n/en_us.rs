@@ -317,11 +317,14 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Name Z-A", // LibrarySortNameDesc
     "Newest → Oldest", // LibrarySortDateDesc
     "Oldest → Newest", // LibrarySortDateAsc
+    "Smallest → Largest Size", // LibrarySortSizeAsc
+    "Largest → Smallest Size", // LibrarySortSizeDesc
     "Sort, group, and layout installed mods", // LibrarySortMenuTooltip
     "Sort Mods", // LibrarySortModsHeading
     "Sorts by mod title, falling back to folder name.", // LibrarySortNameTooltip
     "Uses the newest known install, content, or refresh timestamp.", // LibrarySortNewestTooltip
     "Uses the oldest known install, content, or refresh timestamp first.", // LibrarySortOldestTooltip
+    "Sorts by total mod content size.", // LibrarySortSizeTooltip
     "Group Mods", // LibraryGroupModsHeading
     "Groups mods by your per-game categories.", // LibraryGroupCategoryTooltip
     "Groups mods into Active, Disabled, and Archived sections.", // LibraryGroupStatusTooltip
