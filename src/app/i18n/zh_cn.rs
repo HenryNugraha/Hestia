@@ -55,6 +55,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Tools
     "工具", // ToolsWindowTitle
+    "为这款游戏添加外部工具快捷方式，然后从 Hestia 启动它们。可按需设置自定义启动选项，并将常用工具固定到标题栏。", // ToolsDescription
     "未选择游戏", // ToolsNoGameSelected
     "启动", // ToolsLaunch
     "设置启动选项", // ToolsSetLaunchOptions

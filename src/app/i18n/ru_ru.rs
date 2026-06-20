@@ -55,6 +55,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Tools
     "Утилиты", // ToolsWindowTitle
+    "Добавляйте ярлыки внешних утилит для этой игры и запускайте их из Hestia. При необходимости настройте параметры запуска и закрепите часто используемые утилиты в строке заголовка.", // ToolsDescription
     "Игра не выбрана", // ToolsNoGameSelected
     "Запустить", // ToolsLaunch
     "Задать параметры запуска", // ToolsSetLaunchOptions

@@ -55,6 +55,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Tools
     "Tools", // ToolsWindowTitle
+    "Add shortcuts to external tools for this game, then launch them from Hestia. Set custom launch options when needed, and pin frequently used tools to the title bar.", // ToolsDescription
     "No game selected", // ToolsNoGameSelected
     "Launch", // ToolsLaunch
     "Set launch options", // ToolsSetLaunchOptions

@@ -59,6 +59,7 @@ enum TextKey {
     TasksCancelingTask,
 
     ToolsWindowTitle,
+    ToolsDescription,
     ToolsNoGameSelected,
     ToolsLaunch,
     ToolsSetLaunchOptions,
@@ -810,6 +811,10 @@ impl TextCatalog {
 
     fn tools(self) -> &'static str {
         self.get(TextKey::ToolsWindowTitle)
+    }
+
+    fn tools_description(self) -> &'static str {
+        self.get(TextKey::ToolsDescription)
     }
 
     fn no_game_selected(self) -> &'static str {

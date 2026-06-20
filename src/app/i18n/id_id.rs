@@ -55,6 +55,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Tools
     "Alat", // ToolsWindowTitle
+    "Tambahkan pintasan ke alat eksternal untuk game ini, lalu jalankan dari Hestia. Atur opsi peluncuran khusus bila diperlukan, dan sematkan alat yang sering digunakan ke titlebar.", // ToolsDescription
     "Tidak ada game yang dipilih", // ToolsNoGameSelected
     "Jalankan", // ToolsLaunch
     "Atur opsi peluncuran", // ToolsSetLaunchOptions

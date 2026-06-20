@@ -878,6 +878,27 @@ impl HestiaApp {
                 return;
             };
 
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    // The parent row centers this column, so 6 px produces a 3 px icon offset.
+                    ui.add_space(6.0);
+                    static_label(ui, icon_rich(Icon::Info, 32.0, Color32::from_gray(155)));
+                });
+                ui.add_space(-4.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(text.tools_description())
+                            .size(12.0)
+                            .color(Color32::from_gray(155)),
+                    )
+                    .wrap()
+                    .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+            });
+            ui.add_space(6.0);
+
             let tools = self.selected_game_tools();
             for tool in &tools {
                 self.ensure_tool_icon_texture(ctx, tool);
