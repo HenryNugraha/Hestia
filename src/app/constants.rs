@@ -34,6 +34,7 @@ const SETTINGS_USAGE_REFRESH_SECS: f64 = 5.0;
 
 // Worker pool and concurrency limits for install, network JSON, images, and texture uploads.
 const INSTALL_WORKER_COUNT: usize = 6;
+const ALTCHA_POW_WORKERS: u32 = 4;
 const FULL_IMAGE_LIMIT: usize = 6;
 const THUMB_IMAGE_LIMIT: usize = 12;
 const BROWSE_IMAGE_RETRY_COOLDOWN_SECS: u64 = 15;

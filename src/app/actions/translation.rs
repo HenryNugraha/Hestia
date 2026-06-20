@@ -18,6 +18,230 @@ impl HestiaApp {
             .unwrap_or_else(|_| format!("{:016x}", xxh3_64(profile.name.as_bytes())))
     }
 
+    fn unlinked_text_content_hash(content: &str) -> String {
+        Sha256::digest(content.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn unlinked_translation_memory_key(lang: &str, content_hash: &str) -> String {
+        format!("{lang}:{content_hash}")
+    }
+
+    fn next_translation_request_id(&mut self) -> u64 {
+        self.translation_request_nonce = self.translation_request_nonce.wrapping_add(1);
+        if self.translation_request_nonce == 0 {
+            self.translation_request_nonce = 1;
+        }
+        self.translation_request_nonce
+    }
+
+    fn unlinked_texts_to_translate(&self, mod_entry_id: &str) -> Vec<(String, String)> {
+        let Some(mod_entry) = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_entry_id)
+        else {
+            return Vec::new();
+        };
+        if mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_some()
+        {
+            return Vec::new();
+        }
+
+        let personal_note_path = xxmi::personal_note_relative_path();
+        let mut contents = Vec::new();
+        if let Some(description) = mod_entry
+            .metadata
+            .user
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|description| !description.is_empty())
+        {
+            contents.push(description.to_string());
+        }
+        contents.extend(
+            mod_entry
+                .metadata
+                .extracted
+                .text_sources
+                .iter()
+                .filter(|source| source.path != personal_note_path)
+                .map(|source| source.content.trim())
+                .filter(|content| !content.is_empty())
+                .map(ToString::to_string),
+        );
+        let mut seen = HashSet::new();
+        contents
+            .into_iter()
+            .map(|content| {
+                let content_hash = Self::unlinked_text_content_hash(&content);
+                (content, content_hash)
+            })
+            .filter(|(_, content_hash)| seen.insert(content_hash.clone()))
+            .collect()
+    }
+
+    fn unlinked_metadata_source_content(&self, mod_entry_id: &str) -> Option<String> {
+        let mod_entry = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_entry_id)?;
+        let source_path = mod_entry.metadata.extracted.readme_path.as_deref()?;
+        if source_path == xxmi::personal_note_relative_path() {
+            return None;
+        }
+        mod_entry
+            .metadata
+            .extracted
+            .text_sources
+            .iter()
+            .find(|source| source.path == source_path)
+            .map(|source| source.content.trim())
+            .filter(|content| !content.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn unlinked_translation_for_content(&self, mod_entry_id: &str, content: &str) -> Option<&str> {
+        let content_hash = Self::unlinked_text_content_hash(content.trim());
+        let key =
+            Self::unlinked_translation_memory_key(self.current_translation_lang(), &content_hash);
+        self.my_mods_translation_state
+            .get(mod_entry_id)?
+            .unlinked_translation_enabled
+            .then(|| {
+                self.my_mods_translation_state
+                    .get(mod_entry_id)
+                    .and_then(|state| state.unlinked_translations.get(&key))
+                    .map(String::as_str)
+            })
+            .flatten()
+    }
+
+    fn request_unlinked_text_translation(
+        &mut self,
+        mod_entry_id: &str,
+        content: String,
+        force_refresh: bool,
+    ) {
+        let lang = self.current_translation_lang().to_string();
+        let content_hash = Self::unlinked_text_content_hash(&content);
+        let memory_key = Self::unlinked_translation_memory_key(&lang, &content_hash);
+        if !force_refresh {
+            if let Some(translation) = cached_unlinked_text_translation(&lang, &content_hash) {
+                self.my_mods_translation_state
+                    .entry(mod_entry_id.to_string())
+                    .or_default()
+                    .unlinked_translations
+                    .insert(memory_key, translation);
+                return;
+            }
+        }
+
+        let inflight_key = (mod_entry_id.to_string(), lang.clone(), content_hash.clone());
+        if self
+            .unlinked_translation_inflight
+            .contains_key(&inflight_key)
+        {
+            return;
+        }
+        let request_id = self.next_translation_request_id();
+        self.unlinked_translation_inflight
+            .insert(inflight_key, request_id);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        self.unlinked_translation_cancellations
+            .insert(request_id, Arc::clone(&cancellation));
+        self.my_mods_translation_state
+            .entry(mod_entry_id.to_string())
+            .or_default()
+            .unlinked_loading
+            .insert(memory_key);
+        let _ = self
+            .translation_request_tx
+            .send(TranslationRequest::UnlinkedText {
+                request_id,
+                cancellation,
+                mod_entry_id: mod_entry_id.to_string(),
+                lang,
+                content,
+                content_hash,
+                force_refresh,
+            });
+    }
+
+    fn enable_unlinked_translation(&mut self, mod_entry_id: &str, force_refresh: bool) {
+        self.my_mods_translation_state
+            .entry(mod_entry_id.to_string())
+            .or_default()
+            .unlinked_translation_enabled = true;
+        for (content, _) in self.unlinked_texts_to_translate(mod_entry_id) {
+            self.request_unlinked_text_translation(mod_entry_id, content, force_refresh);
+        }
+    }
+
+    fn disable_unlinked_translation(&mut self, mod_entry_id: &str) {
+        if let Some(state) = self.my_mods_translation_state.get_mut(mod_entry_id) {
+            state.unlinked_translation_enabled = false;
+            state.unlinked_loading.clear();
+        }
+    }
+
+    fn cancel_unlinked_translation(&mut self, mod_entry_id: &str) {
+        let keys: Vec<(String, String, String)> = self
+            .unlinked_translation_inflight
+            .keys()
+            .filter(|(inflight_mod_id, _, _)| inflight_mod_id == mod_entry_id)
+            .cloned()
+            .collect();
+        for key in keys {
+            if let Some(request_id) = self.unlinked_translation_inflight.remove(&key) {
+                if let Some(cancellation) = self.unlinked_translation_cancellations.get(&request_id)
+                {
+                    cancellation.store(true, Ordering::Relaxed);
+                }
+                self.cancelled_translation_requests.insert(request_id);
+            }
+        }
+        self.disable_unlinked_translation(mod_entry_id);
+    }
+
+    fn cancel_gamebanana_translation(&mut self, mod_id: u64) {
+        let keys: Vec<(u64, String, String)> = self
+            .translation_inflight
+            .keys()
+            .filter(|(inflight_mod_id, _, _)| *inflight_mod_id == mod_id)
+            .cloned()
+            .collect();
+        for key in keys {
+            if let Some(request_id) = self.translation_inflight.remove(&key) {
+                self.cancelled_translation_requests.insert(request_id);
+            }
+        }
+        self.set_translation_loading_for_gamebanana_mod(mod_id, false);
+    }
+
+    pub(crate) fn handle_unlinked_metadata_source_changed(&mut self, mod_entry_id: &str) {
+        if !self.state.static_prefs.always_translate_mod_details {
+            self.disable_unlinked_translation(mod_entry_id);
+            return;
+        }
+        self.my_mods_translation_state
+            .entry(mod_entry_id.to_string())
+            .or_default()
+            .unlinked_translation_enabled = true;
+        if let Some(content) = self.unlinked_metadata_source_content(mod_entry_id) {
+            self.request_unlinked_text_translation(mod_entry_id, content, false);
+        }
+    }
+
     fn translation_cache_key(mod_id: u64, lang: &str, source_hash: &str) -> String {
         format!("gb_profile_{mod_id}-{lang}-{source_hash}.json")
     }
@@ -113,12 +337,7 @@ impl HestiaApp {
             let state = self
                 .my_mods_translation_state
                 .entry(mod_entry_id)
-                .or_insert_with(|| MyModTranslationState {
-                    translated_profile: None,
-                    translation_lang: None,
-                    translation_source_hash: None,
-                    translation_loading: false,
-                });
+                .or_default();
             state.translated_profile = Some(profile.clone());
             state.translation_lang = Some(lang.to_string());
             state.translation_source_hash = Some(source_hash.to_string());
@@ -149,20 +368,20 @@ impl HestiaApp {
             let state = self
                 .my_mods_translation_state
                 .entry(mod_entry_id)
-                .or_insert_with(|| MyModTranslationState {
-                    translated_profile: None,
-                    translation_lang: None,
-                    translation_source_hash: None,
-                    translation_loading: false,
-                });
+                .or_default();
             state.translation_loading = loading;
         }
     }
 
-    fn request_translation_for_gamebanana_mod(&mut self, mod_id: u64, lang: &str, force_refresh: bool) {
+    fn request_translation_for_gamebanana_mod(
+        &mut self,
+        mod_id: u64,
+        lang: &str,
+        force_refresh: bool,
+    ) {
         let source_hash = self.known_translation_source_hash_for_gamebanana_mod(mod_id);
         let inflight_key = (mod_id, lang.to_string(), source_hash.clone());
-        if self.translation_inflight.contains(&inflight_key) {
+        if self.translation_inflight.contains_key(&inflight_key) {
             self.set_translation_loading_for_gamebanana_mod(mod_id, true);
             return;
         }
@@ -175,13 +394,17 @@ impl HestiaApp {
         }
 
         self.set_translation_loading_for_gamebanana_mod(mod_id, true);
-        self.translation_inflight.insert(inflight_key);
-        let _ = self.translation_request_tx.send(TranslationRequest {
-            mod_id,
-            lang: lang.to_string(),
-            source_hash,
-            force_refresh,
-        });
+        let request_id = self.next_translation_request_id();
+        self.translation_inflight.insert(inflight_key, request_id);
+        let _ = self
+            .translation_request_tx
+            .send(TranslationRequest::GameBanana {
+                request_id,
+                mod_id,
+                lang: lang.to_string(),
+                source_hash,
+                force_refresh,
+            });
     }
 
     fn request_translation_for_mod_entry(&mut self, mod_entry_id: &str, force_refresh: bool) {
@@ -215,7 +438,23 @@ impl HestiaApp {
         if !self.state.static_prefs.always_translate_mod_details {
             return;
         }
-        self.request_translation_for_mod_entry(mod_entry_id, false);
+        let linked = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_entry_id)
+            .is_some_and(|mod_entry| {
+                mod_entry
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.gamebanana.as_ref())
+                    .is_some()
+            });
+        if linked {
+            self.request_translation_for_mod_entry(mod_entry_id, false);
+        } else {
+            self.enable_unlinked_translation(mod_entry_id, false);
+        }
     }
 
     pub(crate) fn toggle_browse_translation(&mut self, mod_id: u64) {
@@ -225,8 +464,7 @@ impl HestiaApp {
 
         // If translation is loading, show toast and return
         if detail.translation_loading {
-            let text = self.text();
-            self.set_message_ok(text.translation_in_progress());
+            self.cancel_gamebanana_translation(mod_id);
             return;
         }
 
@@ -239,7 +477,7 @@ impl HestiaApp {
                 Some(mod_id),
                 &self.portable,
             );
-            
+
             detail.translation_lang = None;
             detail.translated_profile = None;
             detail.markdown = markdown;
@@ -257,19 +495,56 @@ impl HestiaApp {
     }
 
     pub(crate) fn toggle_my_mods_translation(&mut self, mod_id: String) {
-        let translation_state = self.my_mods_translation_state.entry(mod_id.clone()).or_insert_with(|| MyModTranslationState {
-            translated_profile: None,
-            translation_lang: None,
-            translation_source_hash: None,
-            translation_loading: false,
-        });
-
-        // If translation is loading, show toast and return
-        if translation_state.translation_loading {
-            let text = self.text();
-            self.set_message_ok(text.translation_in_progress());
+        let linked = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_id)
+            .is_some_and(|mod_entry| {
+                mod_entry
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.gamebanana.as_ref())
+                    .is_some()
+            });
+        if !linked {
+            let active = self
+                .my_mods_translation_state
+                .get(&mod_id)
+                .is_some_and(|state| state.unlinked_translation_enabled);
+            if active {
+                self.cancel_unlinked_translation(&mod_id);
+            } else {
+                self.enable_unlinked_translation(&mod_id, false);
+            }
             return;
         }
+
+        let translation_loading = self
+            .my_mods_translation_state
+            .entry(mod_id.clone())
+            .or_default()
+            .translation_loading;
+
+        if translation_loading {
+            let gamebanana_id = self
+                .state
+                .mods
+                .iter()
+                .find(|mod_entry| mod_entry.id == mod_id)
+                .and_then(|mod_entry| mod_entry.source.as_ref())
+                .and_then(|source| source.gamebanana.as_ref())
+                .map(|link| link.mod_id);
+            if let Some(gamebanana_id) = gamebanana_id {
+                self.cancel_gamebanana_translation(gamebanana_id);
+            }
+            return;
+        }
+
+        let translation_state = self
+            .my_mods_translation_state
+            .entry(mod_id.clone())
+            .or_default();
 
         // If translation is active, toggle it off
         if translation_state.translation_lang.is_some() {
@@ -283,7 +558,23 @@ impl HestiaApp {
     }
 
     pub(crate) fn retranslate_my_mods_translation(&mut self, mod_id: String) {
-        self.request_translation_for_mod_entry(&mod_id, true);
+        let linked = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_id)
+            .is_some_and(|mod_entry| {
+                mod_entry
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.gamebanana.as_ref())
+                    .is_some()
+            });
+        if linked {
+            self.request_translation_for_mod_entry(&mod_id, true);
+        } else {
+            self.enable_unlinked_translation(&mod_id, true);
+        }
     }
 
     pub(crate) fn retranslate_visible_detail_after_language_change(&mut self) {
@@ -318,16 +609,7 @@ impl HestiaApp {
                     return;
                 }
 
-                let Some(mod_entry_id) = self
-                    .selected_mod()
-                    .filter(|mod_entry| {
-                        mod_entry
-                            .source
-                            .as_ref()
-                            .and_then(|source| source.gamebanana.as_ref())
-                            .is_some()
-                    })
-                    .map(|mod_entry| mod_entry.id.clone())
+                let Some(mod_entry_id) = self.selected_mod().map(|mod_entry| mod_entry.id.clone())
                 else {
                     return;
                 };
@@ -335,60 +617,117 @@ impl HestiaApp {
                 let translation_active = self
                     .my_mods_translation_state
                     .get(&mod_entry_id)
-                    .map(|state| state.translation_lang.is_some())
-                    .unwrap_or(false);
+                    .is_some_and(|state| {
+                        state.translation_lang.is_some() || state.unlinked_translation_enabled
+                    });
                 if !translation_active {
                     return;
                 }
 
-                self.request_translation_for_mod_entry(&mod_entry_id, false);
+                self.maybe_translate_my_mod_details(&mod_entry_id);
             }
         }
     }
 
     pub(crate) fn handle_translation_events(&mut self) {
         while let Ok(event) = self.translation_event_rx.try_recv() {
-            self.translation_inflight.remove(&(
-                event.mod_id,
-                event.lang.clone(),
-                event.source_hash.clone(),
-            ));
-
-            if event.lang != self.current_translation_lang() {
-                let still_loading = self
-                    .translation_inflight
-                    .iter()
-                    .any(|(mod_id, _, _)| *mod_id == event.mod_id);
-                self.set_translation_loading_for_gamebanana_mod(event.mod_id, still_loading);
+            let TranslationEvent::GameBanana {
+                request_id,
+                mod_id,
+                lang,
+                source_hash,
+                result,
+            } = event
+            else {
+                let TranslationEvent::UnlinkedText {
+                    request_id,
+                    mod_entry_id,
+                    lang,
+                    content_hash,
+                    result,
+                } = event
+                else {
+                    unreachable!();
+                };
+                let inflight_key = (mod_entry_id.clone(), lang.clone(), content_hash.clone());
+                if self.unlinked_translation_inflight.get(&inflight_key) == Some(&request_id) {
+                    self.unlinked_translation_inflight.remove(&inflight_key);
+                }
+                self.unlinked_translation_cancellations.remove(&request_id);
+                if self.cancelled_translation_requests.remove(&request_id) {
+                    continue;
+                }
+                let memory_key = Self::unlinked_translation_memory_key(&lang, &content_hash);
+                if let Some(state) = self.my_mods_translation_state.get_mut(&mod_entry_id) {
+                    if !self
+                        .unlinked_translation_inflight
+                        .contains_key(&inflight_key)
+                    {
+                        state.unlinked_loading.remove(&memory_key);
+                    }
+                }
+                if lang != self.current_translation_lang()
+                    || !self
+                        .unlinked_texts_to_translate(&mod_entry_id)
+                        .iter()
+                        .any(|(_, hash)| hash == &content_hash)
+                {
+                    continue;
+                }
+                match result {
+                    Ok(translation) => {
+                        self.my_mods_translation_state
+                            .entry(mod_entry_id)
+                            .or_default()
+                            .unlinked_translations
+                            .insert(memory_key, translation);
+                    }
+                    Err(err) => {
+                        let text = self.text();
+                        self.set_message_ok(text.translation_failed());
+                        self.log_error(&format!("Translation failed for unlinked mod: {err}"));
+                    }
+                }
+                continue;
+            };
+            let inflight_key = (mod_id, lang.clone(), source_hash.clone());
+            if self.translation_inflight.get(&inflight_key) == Some(&request_id) {
+                self.translation_inflight.remove(&inflight_key);
+            }
+            if self.cancelled_translation_requests.remove(&request_id) {
                 continue;
             }
 
-            let current_source_hash = self.known_translation_source_hash_for_gamebanana_mod(event.mod_id);
-            if event.source_hash != current_source_hash {
+            if lang != self.current_translation_lang() {
                 let still_loading = self
                     .translation_inflight
                     .iter()
-                    .any(|(mod_id, _, _)| *mod_id == event.mod_id);
-                self.set_translation_loading_for_gamebanana_mod(event.mod_id, still_loading);
+                    .any(|((inflight_mod_id, _, _), _)| *inflight_mod_id == mod_id);
+                self.set_translation_loading_for_gamebanana_mod(mod_id, still_loading);
                 continue;
             }
 
-            match event.result {
+            let current_source_hash = self.known_translation_source_hash_for_gamebanana_mod(mod_id);
+            if source_hash != current_source_hash {
+                let still_loading = self
+                    .translation_inflight
+                    .iter()
+                    .any(|((inflight_mod_id, _, _), _)| *inflight_mod_id == mod_id);
+                self.set_translation_loading_for_gamebanana_mod(mod_id, still_loading);
+                continue;
+            }
+
+            match result {
                 Ok(profile) => {
-                    self.apply_translated_profile(
-                        event.mod_id,
-                        &event.lang,
-                        &event.source_hash,
-                        profile,
-                    );
+                    self.apply_translated_profile(mod_id, &lang, &source_hash, profile);
                 }
                 Err(err) => {
-                    self.set_translation_loading_for_gamebanana_mod(event.mod_id, false);
+                    self.set_translation_loading_for_gamebanana_mod(mod_id, false);
 
                     // Show error toast
                     let text = self.text();
                     self.set_message_ok(text.translation_failed());
-                    self.log_error(&format!("Translation failed for mod {}: {}", event.mod_id, err));
+                    self.log_error(&format!("Translation failed for mod {mod_id}: {err}"));
                 }
             }
         }
@@ -414,7 +753,16 @@ impl HestiaApp {
             detail.translation_loading = false;
         }
         self.my_mods_translation_state.clear();
+        self.cancelled_translation_requests
+            .extend(self.translation_inflight.values().copied());
+        self.cancelled_translation_requests
+            .extend(self.unlinked_translation_inflight.values().copied());
         self.translation_inflight.clear();
+        self.unlinked_translation_inflight.clear();
+        for cancellation in self.unlinked_translation_cancellations.values() {
+            cancellation.store(true, Ordering::Relaxed);
+        }
+        self.unlinked_translation_cancellations.clear();
 
         let index_path = Self::translation_cache_index_path();
         if let Ok(raw) = std::fs::read_to_string(&index_path) {

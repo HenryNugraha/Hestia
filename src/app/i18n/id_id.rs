@@ -573,7 +573,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Menggunakan font Segoe UI", // SettingsAdvancedAppearanceFontClassicTooltip
     "Menggunakan font Selawik", // SettingsAdvancedAppearanceFontModernTooltip
     "Selalu terjemahkan detail mod", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "Jika diaktifkan, judul dan deskripsi mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "Jika diaktifkan, deskripsi dan metadata mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Pembatasan Konten", // SettingsAdvancedContentRestrictionSection

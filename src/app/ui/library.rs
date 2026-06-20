@@ -831,8 +831,15 @@ impl HestiaApp {
             .on_hover_text(text.library_sort_menu_tooltip())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
 
+        let popup_open_command = if response.secondary_clicked() {
+            Some(egui::SetOpenCommand::Bool(true))
+        } else {
+            response.clicked().then_some(egui::SetOpenCommand::Toggle)
+        };
+
         egui::Popup::menu(&response)
             .id(popup_id)
+            .open_memory(popup_open_command)
             .width(244.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .frame(
@@ -3000,6 +3007,7 @@ impl HestiaApp {
             self.personal_note_edit_text.clear();
         }
         self.save_state();
+        self.handle_unlinked_metadata_source_changed(mod_id);
     }
 
     fn start_personal_note_edit(&mut self, mod_id: &str, initial_text: String) {
@@ -3524,12 +3532,7 @@ impl HestiaApp {
                         let icon_area = egui::Rect::from_center_size(icon_pos, egui::Vec2::splat(28.0));
                         let icon_resp = ui.interact(icon_area, ui.id().with("search_toggle"), Sense::click());
                         mod_card_context_block_rects.push(icon_area);
-                        let filter_context_menu_open = ui.ctx().input(|i| {
-                            i.pointer.secondary_clicked()
-                                && i.pointer
-                                    .hover_pos()
-                                    .is_some_and(|pos| rect.contains(pos))
-                        });
+                        let filter_context_menu_open = icon_resp.secondary_clicked();
                         let visibility_filtered = !self.show_enabled_mods
                             || self.state.static_prefs.hide_disabled
                             || self.state.static_prefs.hide_archived
@@ -4473,6 +4476,13 @@ impl HestiaApp {
                             (ModStatus::Archived, text.mod_status_label(&ModStatus::Archived), status_color(&ModStatus::Archived)),
                         ];
                         let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
+                        let mod_drag_enabled = matches!(
+                            self.state.static_prefs.library_group_mode,
+                            LibraryGroupMode::Category
+                        ) && matches!(
+                            self.state.static_prefs.library_category_display_mode,
+                            LibraryCategoryDisplayMode::Folders
+                        );
                         let dragging_category_id = self.dragging_category_id.clone();
                         let dragging_category_target_index =
                             self.dragging_category_target_index;
@@ -4814,7 +4824,11 @@ impl HestiaApp {
                                                 ui.vertical(|ui| {
                                                     let (rect, response) = ui.allocate_exact_size(
                                                         Vec2::new(CARD_WIDTH, 130.0),
-                                                        Sense::click_and_drag(),
+                                                        if mod_drag_enabled {
+                                                            Sense::click_and_drag()
+                                                        } else {
+                                                            Sense::click()
+                                                        },
                                                     );
 
                                                     if response.gained_focus() && !response.clicked() {
@@ -4825,7 +4839,7 @@ impl HestiaApp {
                                                         self.toggle_mod_selection(mod_id, !checked);
                                                         response.request_focus();
                                                     }
-                                                    if response.drag_started() {
+                                                    if mod_drag_enabled && response.drag_started() {
                                                         if self.selected_mods.contains(mod_id) {
                                                             self.dragging_mod_ids = self
                                                                 .selected_mods
@@ -6688,7 +6702,12 @@ impl HestiaApp {
                         {
                             self.finish_category_drag();
                         }
-                        if let Some((mod_ids, category_id)) = pending_mod_category_assignment {
+                        if !mod_drag_enabled {
+                            self.dragging_mod_ids.clear();
+                        }
+                        if let Some((mod_ids, category_id)) =
+                            pending_mod_category_assignment.filter(|_| mod_drag_enabled)
+                        {
                             let moved_selected_mod =
                                 self.selected_mod_id.as_ref().is_some_and(|selected_id| {
                                     mod_ids.iter().any(|mod_id| mod_id == selected_id)
@@ -7173,11 +7192,29 @@ impl HestiaApp {
                             }
                         }
                         
-                        // Translation button (only if mod is linked to GameBanana)
-                        if selected.source.as_ref().and_then(|s| s.gamebanana.as_ref()).is_some() {
+                        let translation_is_linked = selected
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some();
+                        let has_unlinked_text_to_translate = !translation_is_linked
+                            && !self.unlinked_texts_to_translate(&selected.id).is_empty();
+                        if translation_is_linked || has_unlinked_text_to_translate {
                             let translation_state = self.my_mods_translation_state.get(&selected.id);
-                            let is_loading = translation_state.map(|s| s.translation_loading).unwrap_or(false);
-                            let is_active = translation_state.and_then(|s| s.translation_lang.as_ref()).is_some();
+                            let is_loading = if translation_is_linked {
+                                translation_state.map(|state| state.translation_loading).unwrap_or(false)
+                            } else {
+                                translation_state
+                                    .is_some_and(|state| !state.unlinked_loading.is_empty())
+                            };
+                            let is_active = if translation_is_linked {
+                                translation_state
+                                    .and_then(|state| state.translation_lang.as_ref())
+                                    .is_some()
+                            } else {
+                                translation_state
+                                    .is_some_and(|state| state.unlinked_translation_enabled)
+                            };
                             let pulse = if is_loading {
                                 ui.ctx()
                                     .request_repaint_after(std::time::Duration::from_millis(80));
@@ -7213,6 +7250,9 @@ impl HestiaApp {
                                 let translate_btn = translate_btn
                                     .on_hover_text(text.translation_in_progress())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if translate_btn.clicked() {
+                                    self.toggle_my_mods_translation(selected.id.clone());
+                                }
                                 translate_btn.context_menu(|ui| {
                                     ui.add_enabled(false, egui::Button::new(text.retranslate()));
                                 });
@@ -7920,6 +7960,32 @@ impl HestiaApp {
                     } else {
                         mod_primary_description_markdown(&selected, &self.portable)
                     };
+                    let markdown = if selected
+                        .source
+                        .as_ref()
+                        .and_then(|source| source.gamebanana.as_ref())
+                        .is_none()
+                    {
+                        selected
+                            .metadata
+                            .user
+                            .description
+                            .as_deref()
+                            .and_then(|description| {
+                                self.unlinked_translation_for_content(&selected.id, description)
+                            })
+                            .map(|translation| {
+                                prepare_markdown_for_display(
+                                    translation,
+                                    Some(&selected.root_path),
+                                    None,
+                                    &self.portable,
+                                )
+                            })
+                            .unwrap_or(markdown)
+                    } else {
+                        markdown
+                    };
                     let has_description = markdown != "No description";
                     let extracted_markdown = mod_extracted_description_markdown(&selected);
                     let personal_note_source_path = xxmi::personal_note_relative_path();
@@ -8332,6 +8398,13 @@ impl HestiaApp {
                             if personal_note_editing {
                                 self.render_personal_note_editor(ui, &selected.id);
                             } else if let Some(extracted) = extracted_markdown {
+                                let extracted = if personal_note_selected {
+                                    extracted
+                                } else {
+                                    self.unlinked_translation_for_content(&selected.id, &extracted)
+                                        .unwrap_or(&extracted)
+                                        .to_string()
+                                };
                                 if personal_note_selected {
                                     let markdown = personal_note_markdown_for_display(
                                         &extracted,

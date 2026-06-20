@@ -230,7 +230,11 @@ pub struct HestiaApp {
     image_generation: Arc<AtomicU64>,
     translation_request_tx: WorkerTx<TranslationRequest>,
     translation_event_rx: WorkerRx<TranslationEvent>,
-    translation_inflight: HashSet<(u64, String, String)>,
+    translation_inflight: HashMap<(u64, String, String), u64>,
+    unlinked_translation_inflight: HashMap<(String, String, String), u64>,
+    unlinked_translation_cancellations: HashMap<u64, Arc<AtomicBool>>,
+    translation_request_nonce: u64,
+    cancelled_translation_requests: HashSet<u64>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
     mod_card_display_cache: HashMap<String, ModCardDisplayCache>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
@@ -375,12 +379,15 @@ struct BrowseDetailCache {
     translation_loading: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct MyModTranslationState {
     translated_profile: Option<gamebanana::ProfileResponse>,
     translation_lang: Option<String>,
     translation_source_hash: Option<String>,
     translation_loading: bool,
+    unlinked_translations: HashMap<String, String>,
+    unlinked_loading: HashSet<String>,
+    unlinked_translation_enabled: bool,
 }
 
 // Cache for pre-computed card display data to reduce per-frame string operations

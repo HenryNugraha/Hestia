@@ -573,7 +573,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Uses 'Segoe UI' typeface", // SettingsAdvancedAppearanceFontClassicTooltip
     "Uses 'Selawik' typeface", // SettingsAdvancedAppearanceFontModernTooltip
     "Always translate mod details", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "When enabled, mod titles and descriptions are automatically translated to the selected language when viewing details.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "When enabled, mod descriptions and metadata are automatically translated to the selected language when viewing details.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Content Restriction", // SettingsAdvancedContentRestrictionSection

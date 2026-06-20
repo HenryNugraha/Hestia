@@ -573,7 +573,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Использует шрифт «Segoe UI»", // SettingsAdvancedAppearanceFontClassicTooltip
     "Использует шрифт «Selawik»", // SettingsAdvancedAppearanceFontModernTooltip
     "Всегда переводить сведения о моде", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "При включении названия и описания модов автоматически переводятся на выбранный язык при просмотре сведений.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "При включении описания и метаданные модов автоматически переводятся на выбранный язык при просмотре сведений.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
     // Window: Settings > Advanced > Content Restriction
     "Ограничения содержимого", // SettingsAdvancedContentRestrictionSection
     "NSFW-контент:", // SettingsAdvancedContentRestrictionHideUnsafeContents

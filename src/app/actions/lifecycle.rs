@@ -342,7 +342,11 @@ impl HestiaApp {
             image_generation,
             translation_request_tx,
             translation_event_rx,
-            translation_inflight: HashSet::new(),
+            translation_inflight: HashMap::new(),
+            unlinked_translation_inflight: HashMap::new(),
+            unlinked_translation_cancellations: HashMap::new(),
+            translation_request_nonce: 0,
+            cancelled_translation_requests: HashSet::new(),
             my_mods_translation_state: HashMap::new(),
             mod_card_display_cache: HashMap::new(),
             update_check_tx,
@@ -1532,6 +1536,7 @@ impl HestiaApp {
                             .as_ref()
                             .and_then(|source| source.gamebanana.as_ref())
                             .is_some()
+                            || !self.unlinked_texts_to_translate(&mod_entry.id).is_empty()
                     })
             }
         }
@@ -1548,16 +1553,7 @@ impl HestiaApp {
                 }
             }
             ViewMode::Library => {
-                let mod_id = self
-                    .selected_mod()
-                    .filter(|mod_entry| {
-                        mod_entry
-                            .source
-                            .as_ref()
-                            .and_then(|source| source.gamebanana.as_ref())
-                            .is_some()
-                    })
-                    .map(|mod_entry| mod_entry.id.clone());
+                let mod_id = self.selected_mod().map(|mod_entry| mod_entry.id.clone());
                 if self.mod_detail_open {
                     if let Some(mod_id) = mod_id {
                         self.toggle_my_mods_translation(mod_id);

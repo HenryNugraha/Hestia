@@ -573,7 +573,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "使用 Segoe UI 字体", // SettingsAdvancedAppearanceFontClassicTooltip
     "使用 Selawik 字体", // SettingsAdvancedAppearanceFontModernTooltip
     "始终翻译 Mod 详情", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "启用后，查看 Mod 详情时会自动将标题和描述翻译为所选语言。", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "启用后，查看 Mod 详情时会自动将描述和元数据翻译为所选语言。", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "内容限制", // SettingsAdvancedContentRestrictionSection
