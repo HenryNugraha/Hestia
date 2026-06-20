@@ -3207,6 +3207,7 @@ impl HestiaApp {
                             });
                             if self.state.static_prefs.language != previous_language {
                                 should_save = true;
+                                self.retranslate_visible_detail_after_language_change();
                             }
                             if self.state.static_prefs.always_translate_mod_details
                                 != always_translate_mod_details

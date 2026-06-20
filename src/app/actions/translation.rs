@@ -286,6 +286,66 @@ impl HestiaApp {
         self.request_translation_for_mod_entry(&mod_id, true);
     }
 
+    pub(crate) fn retranslate_visible_detail_after_language_change(&mut self) {
+        if !self.state.static_prefs.always_translate_mod_details {
+            return;
+        }
+
+        match self.current_view {
+            ViewMode::Browse => {
+                let Some(mod_id) = self.browse_state.selected_mod_id else {
+                    return;
+                };
+                if !self.browse_detail_open {
+                    return;
+                }
+
+                let translation_active = self
+                    .browse_state
+                    .details
+                    .get(&mod_id)
+                    .map(|detail| detail.translation_lang.is_some())
+                    .unwrap_or(false);
+                if !translation_active {
+                    return;
+                }
+
+                let lang = self.current_translation_lang();
+                self.request_translation_for_gamebanana_mod(mod_id, lang, false);
+            }
+            ViewMode::Library => {
+                if !self.mod_detail_open {
+                    return;
+                }
+
+                let Some(mod_entry_id) = self
+                    .selected_mod()
+                    .filter(|mod_entry| {
+                        mod_entry
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some()
+                    })
+                    .map(|mod_entry| mod_entry.id.clone())
+                else {
+                    return;
+                };
+
+                let translation_active = self
+                    .my_mods_translation_state
+                    .get(&mod_entry_id)
+                    .map(|state| state.translation_lang.is_some())
+                    .unwrap_or(false);
+                if !translation_active {
+                    return;
+                }
+
+                self.request_translation_for_mod_entry(&mod_entry_id, false);
+            }
+        }
+    }
+
     pub(crate) fn handle_translation_events(&mut self) {
         while let Ok(event) = self.translation_event_rx.try_recv() {
             self.translation_inflight.remove(&(
@@ -295,13 +355,21 @@ impl HestiaApp {
             ));
 
             if event.lang != self.current_translation_lang() {
-                self.set_translation_loading_for_gamebanana_mod(event.mod_id, false);
+                let still_loading = self
+                    .translation_inflight
+                    .iter()
+                    .any(|(mod_id, _, _)| *mod_id == event.mod_id);
+                self.set_translation_loading_for_gamebanana_mod(event.mod_id, still_loading);
                 continue;
             }
 
             let current_source_hash = self.known_translation_source_hash_for_gamebanana_mod(event.mod_id);
             if event.source_hash != current_source_hash {
-                self.set_translation_loading_for_gamebanana_mod(event.mod_id, false);
+                let still_loading = self
+                    .translation_inflight
+                    .iter()
+                    .any(|(mod_id, _, _)| *mod_id == event.mod_id);
+                self.set_translation_loading_for_gamebanana_mod(event.mod_id, still_loading);
                 continue;
             }
 
