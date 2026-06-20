@@ -323,6 +323,19 @@ mod tests {
 
         assert_eq!(profile_category_name(&profile), None);
     }
+
+    #[test]
+    fn browse_json_cache_keys_are_deterministic_and_versioned() {
+        let first = browse_page_cache_key("genshin", 1, crate::model::BrowseSort::Popular);
+        let second = browse_page_cache_key("genshin", 1, crate::model::BrowseSort::Popular);
+
+        assert_eq!(first, second);
+        assert!(first.starts_with("gb-json:v2:"));
+        assert_eq!(
+            search_page_cache_key("genshin", "  Furina  ", 1, crate::model::SearchSort::BestMatch),
+            search_page_cache_key("genshin", "Furina", 1, crate::model::SearchSort::BestMatch),
+        );
+    }
 }
 
 pub fn trashed_by_owner(profile: &ProfileResponse) -> Option<&SubmissionAuthor> {
@@ -437,6 +450,7 @@ pub async fn fetch_browse_page_async(
     game_id: u64,
     page: usize,
     sort: crate::model::BrowseSort,
+    nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
     let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
     {
@@ -446,6 +460,9 @@ pub async fn fetch_browse_page_async(
         query.append_pair("_aFilters[Generic_Game]", &game_id.to_string());
         if sort == crate::model::BrowseSort::Popular {
             query.append_pair("_sSort", "Generic_MostDownloaded");
+        }
+        if nocache {
+            query.append_pair("nocache", "1");
         }
     }
     let response = client
@@ -464,6 +481,7 @@ pub async fn fetch_browse_page_async(
 pub async fn fetch_character_categories_async(
     client: &ClientWithMiddleware,
     super_category_id: u64,
+    nocache: bool,
 ) -> Result<Vec<CharacterCategory>> {
     let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Categories")?;
     {
@@ -471,6 +489,9 @@ pub async fn fetch_character_categories_async(
         query.append_pair("_idCategoryRow", &super_category_id.to_string());
         query.append_pair("_sSort", "a_to_z");
         query.append_pair("_bShowEmpty", "true");
+        if nocache {
+            query.append_pair("nocache", "1");
+        }
     }
     let response = client
         .get(url.as_str())
@@ -491,6 +512,7 @@ pub async fn fetch_character_browse_page_async(
     query: Option<&str>,
     page: usize,
     sort: crate::model::BrowseSort,
+    nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
     let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Index")?;
     let sort = match sort {
@@ -505,6 +527,9 @@ pub async fn fetch_character_browse_page_async(
         query_pairs.append_pair("_sSort", sort);
         if let Some(q) = query.map(str::trim).filter(|q| !q.is_empty()) {
             query_pairs.append_pair("_aFilters[Generic_Name]", &format!("contains,{}", q));
+        }
+        if nocache {
+            query_pairs.append_pair("nocache", "1");
         }
     }
     let response = client
@@ -558,6 +583,7 @@ pub async fn fetch_search_page_async(
     query: &str,
     page: usize,
     sort: crate::model::SearchSort,
+    nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
     let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
     let order = match sort {
@@ -573,6 +599,9 @@ pub async fn fetch_search_page_async(
         query_pairs.append_pair("_csvFields", "name,description,article,attribs,studio,owner,credits");
         query_pairs.append_pair("_nPerpage", &SEARCH_PAGE_SIZE.to_string());
         query_pairs.append_pair("_nPage", &page.to_string());
+        if nocache {
+            query_pairs.append_pair("nocache", "1");
+        }
     }
     let response = client
         .get(url.as_str())
@@ -697,22 +726,20 @@ fn client() -> Result<&'static Client> {
 }
 
 pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::BrowseSort) -> String {
-    let mut tags = HashMap::with_capacity(4);
-    tags.insert("kind", "browse".to_string());
-    tags.insert("game", game_id.to_string());
-    tags.insert("page", page.to_string());
-    tags.insert("sort", format!("{sort:?}"));
-    let serialized = serde_json::to_string(&tags).unwrap_or_default();
-    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+    json_cache_key_v2(&[
+        ("kind", "browse".to_string()),
+        ("game", game_id.to_string()),
+        ("page", page.to_string()),
+        ("sort", format!("{sort:?}")),
+    ])
 }
 
 pub fn character_categories_cache_key(game_id: &str, super_category_id: u64) -> String {
-    let mut tags = HashMap::with_capacity(3);
-    tags.insert("kind", "character-categories".to_string());
-    tags.insert("game", game_id.to_string());
-    tags.insert("super_category", super_category_id.to_string());
-    let serialized = serde_json::to_string(&tags).unwrap_or_default();
-    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+    json_cache_key_v2(&[
+        ("kind", "character-categories".to_string()),
+        ("game", game_id.to_string()),
+        ("super_category", super_category_id.to_string()),
+    ])
 }
 
 pub fn character_browse_page_cache_key(
@@ -722,15 +749,14 @@ pub fn character_browse_page_cache_key(
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> String {
-    let mut tags = HashMap::with_capacity(6);
-    tags.insert("kind", "character-browse".to_string());
-    tags.insert("game", game_id.to_string());
-    tags.insert("category", category_id.to_string());
-    tags.insert("query", query.unwrap_or_default().trim().to_string());
-    tags.insert("page", page.to_string());
-    tags.insert("sort", format!("{sort:?}"));
-    let serialized = serde_json::to_string(&tags).unwrap_or_default();
-    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+    json_cache_key_v2(&[
+        ("kind", "character-browse".to_string()),
+        ("game", game_id.to_string()),
+        ("category", category_id.to_string()),
+        ("query", query.unwrap_or_default().trim().to_string()),
+        ("page", page.to_string()),
+        ("sort", format!("{sort:?}")),
+    ])
 }
 
 pub fn search_page_cache_key(
@@ -739,22 +765,24 @@ pub fn search_page_cache_key(
     page: usize,
     sort: crate::model::SearchSort,
 ) -> String {
-    let mut tags = HashMap::with_capacity(5);
-    tags.insert("kind", "search".to_string());
-    tags.insert("game", game_id.to_string());
-    tags.insert("query", query.trim().to_string());
-    tags.insert("page", page.to_string());
-    tags.insert("sort", format!("{sort:?}"));
-    let serialized = serde_json::to_string(&tags).unwrap_or_default();
-    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+    json_cache_key_v2(&[
+        ("kind", "search".to_string()),
+        ("game", game_id.to_string()),
+        ("query", query.trim().to_string()),
+        ("page", page.to_string()),
+        ("sort", format!("{sort:?}")),
+    ])
 }
 
 pub fn updates_cache_key(mod_id: u64) -> String {
-    let mut tags = HashMap::with_capacity(2);
-    tags.insert("kind", "updates".to_string());
-    tags.insert("mod", mod_id.to_string());
-    let serialized = serde_json::to_string(&tags).unwrap_or_default();
-    format!("gb-json:{:016x}", xxh3_64(serialized.as_bytes()))
+    json_cache_key_v2(&[("kind", "updates".to_string()), ("mod", mod_id.to_string())])
+}
+
+/// Cache identity must be deterministic. Serializing `HashMap` values made the key depend on
+/// randomized iteration order, creating duplicate files instead of replacing cached responses.
+fn json_cache_key_v2(tags: &[(&str, String)]) -> String {
+    let serialized = serde_json::to_string(tags).expect("cache-key tags must serialize");
+    format!("gb-json:v2:{:016x}", xxh3_64(serialized.as_bytes()))
 }
 
 pub fn profile_cache_key(mod_id: u64) -> String {

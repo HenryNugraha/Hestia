@@ -273,6 +273,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Game ini tidak memiliki daftar kategori karakter GameBanana yang diatur.", // BrowseNoConfiguredCharacterCategoryList
     "Karakter tidak tersedia", // BrowseCharactersUnavailable
     "Koneksi gagal", // BrowseConnectionFailed
+    "Waktu koneksi habis", // BrowseConnectionTimedOut
     "Jelajah gagal", // BrowseFailed
     "Karakter gagal dimuat", // BrowseCharactersFailed
     "Detail jelajah gagal", // BrowseDetailFailed

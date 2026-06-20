@@ -272,6 +272,7 @@ enum TextKey {
     BrowseNoConfiguredCharacterCategoryList,
     BrowseCharactersUnavailable,
     BrowseConnectionFailed,
+    BrowseConnectionTimedOut,
     BrowseFailed,
     BrowseCharactersFailed,
     BrowseDetailFailed,
@@ -1675,6 +1676,10 @@ impl TextCatalog {
 
     fn connection_failed(self) -> &'static str {
         self.get(TextKey::BrowseConnectionFailed)
+    }
+
+    fn connection_timed_out(self) -> &'static str {
+        self.get(TextKey::BrowseConnectionTimedOut)
     }
 
     fn browse_failed(self) -> &'static str {

@@ -273,6 +273,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "This game has no configured GameBanana character category list.", // BrowseNoConfiguredCharacterCategoryList
     "Characters unavailable", // BrowseCharactersUnavailable
     "Connection failed", // BrowseConnectionFailed
+    "Connection timed out", // BrowseConnectionTimedOut
     "Browse failed", // BrowseFailed
     "Characters failed", // BrowseCharactersFailed
     "Browse detail failed", // BrowseDetailFailed

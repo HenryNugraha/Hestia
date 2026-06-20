@@ -104,6 +104,7 @@ impl eframe::App for HestiaApp {
         // Always run these - they have internal checks or are always needed
         self.update_gif_animations(ctx);
         self.evict_textures_to_budget(ctx.input(|i| i.time));
+        self.enforce_browse_page_timeout();
         self.detect_drag_and_drop(ctx);
         self.handle_shortcuts(ctx);
         

@@ -273,6 +273,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Для этой игры не настроен список категорий персонажей GameBanana.", // BrowseNoConfiguredCharacterCategoryList
     "Персонажи недоступны", // BrowseCharactersUnavailable
     "Ошибка подключения", // BrowseConnectionFailed
+    "Время ожидания подключения истекло", // BrowseConnectionTimedOut
     "Ошибка загрузки каталога", // BrowseFailed
     "Ошибка загрузки персонажей", // BrowseCharactersFailed
     "Ошибка загрузки сведений", // BrowseDetailFailed

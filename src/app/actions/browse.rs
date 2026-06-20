@@ -67,6 +67,8 @@ impl HestiaApp {
         self.browse_state.next_page = 1;
         self.browse_state.has_more = true;
         self.browse_state.loading_page = false;
+        self.browse_state.page_request_nonce = None;
+        self.browse_state.page_request_started_at = None;
         self.browse_state.page_error = None;
         self.browse_state.refresh_page_cache_for_session = false;
         self.browse_state.selected_mod_id = None;
@@ -333,18 +335,29 @@ impl HestiaApp {
             self.browse_page_generation = self.browse_page_generation.wrapping_add(1);
             self.browse_state.page_error = None;
         }
+        let query = self.current_browse_query();
+        let character_category_id = self
+            .browse_state
+            .selected_character_category
+            .as_ref()
+            .map(|category| category.id);
+        if page == 1 {
+            // Page-one refreshes establish their own response context. This keeps Retry,
+            // Reload, search, sorting, and filtering on the same deterministic path.
+            self.browse_state.active_game_id = Some(game.definition.id.clone());
+            self.browse_state.active_query = query.clone();
+            self.browse_state.active_character_category_id = character_category_id;
+        }
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
+        self.browse_state.page_request_nonce = Some(self.browse_request_nonce);
         self.browse_state.loading_page = true;
+        self.browse_state.page_request_started_at = Some(Instant::now());
         let request = BrowseRequest::FetchPage {
             nonce: self.browse_request_nonce,
             generation: self.browse_page_generation,
             game_id: game.definition.id.clone(),
-            query: self.current_browse_query(),
-            character_category_id: self
-                .browse_state
-                .selected_character_category
-                .as_ref()
-                .map(|category| category.id),
+            query,
+            character_category_id,
             page,
             browse_sort: self.state.static_prefs.browse_sort,
             search_sort: self.state.static_prefs.search_sort,
@@ -370,6 +383,8 @@ impl HestiaApp {
         self.browse_state.next_page = 1;
         self.browse_state.has_more = true;
         self.browse_state.loading_page = false;
+        self.browse_state.page_request_nonce = None;
+        self.browse_state.page_request_started_at = None;
         self.browse_state.page_error = None;
         self.browse_state.selected_mod_id = None;
         self.browse_detail_open = false;
@@ -377,6 +392,30 @@ impl HestiaApp {
         self.cancel_browse_full_image_requests();
         self.clear_translation_caches();
         self.request_browse_page_with_mode(1, true);
+    }
+
+    fn enforce_browse_page_timeout(&mut self) {
+        const BROWSE_PAGE_HARD_TIMEOUT: Duration = Duration::from_secs(7);
+
+        let Some(started_at) = self.browse_state.page_request_started_at else {
+            return;
+        };
+        if !self.browse_state.loading_page || started_at.elapsed() < BROWSE_PAGE_HARD_TIMEOUT {
+            return;
+        }
+
+        self.browse_page_generation = self.browse_page_generation.wrapping_add(1);
+        self.browse_state.loading_page = false;
+        self.browse_state.page_request_nonce = None;
+        self.browse_state.page_request_started_at = None;
+        self.browse_state.has_more = false;
+        let error = self.text().connection_timed_out().to_string();
+        self.browse_state.page_error = Some(error.clone());
+        let _ = self.browse_request_tx.send(BrowseRequest::CancelPage);
+        self.report_error_message(
+            self.text().browse_page_failed_message(&error),
+            Some(self.text().browse_failed()),
+        );
     }
 
     fn request_browse_character_categories(&mut self, force_refresh: bool) {
@@ -429,6 +468,7 @@ impl HestiaApp {
         self.browse_state.next_page = 1;
         self.browse_state.has_more = true;
         self.browse_state.loading_page = false;
+        self.browse_state.page_request_started_at = None;
         self.browse_state.selected_mod_id = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
@@ -450,6 +490,7 @@ impl HestiaApp {
         self.browse_state.next_page = 1;
         self.browse_state.has_more = true;
         self.browse_state.loading_page = false;
+        self.browse_state.page_request_started_at = None;
         self.browse_state.selected_mod_id = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
@@ -826,7 +867,7 @@ impl HestiaApp {
         while let Ok(event) = self.browse_event_rx.try_recv() {
             match event {
                 BrowseEvent::PageLoaded {
-                    _nonce: _,
+                    _nonce: nonce,
                     generation,
                     game_id,
                     query,
@@ -837,22 +878,11 @@ impl HestiaApp {
                     if generation != self.browse_page_generation {
                         continue;
                     }
-                    if self.browse_state.active_game_id.as_deref() != Some(game_id.as_str()) {
-                        continue;
-                    }
-                    if self
-                        .browse_state
-                        .selected_character_category
-                        .as_ref()
-                        .map(|category| category.id)
-                        != character_category_id
-                    {
-                        continue;
-                    }
-                    if self.current_browse_query() != query {
+                    if self.browse_state.page_request_nonce != Some(nonce) {
                         continue;
                     }
                     self.browse_state.loading_page = false;
+                    self.browse_state.page_request_started_at = None;
                     if page == 1 {
                         self.browse_state.page_error = None;
                     }
@@ -909,11 +939,15 @@ impl HestiaApp {
                     }
                 }
                 BrowseEvent::PageWarning {
+                    _nonce: nonce,
                     generation,
                     warning,
                     ..
                 } => {
                     if generation != self.browse_page_generation {
+                        continue;
+                    }
+                    if self.browse_state.page_request_nonce != Some(nonce) {
                         continue;
                     }
                     self.report_warn(
@@ -922,6 +956,7 @@ impl HestiaApp {
                     );
                 }
                 BrowseEvent::PageFailed {
+                    _nonce: nonce,
                     generation,
                     page,
                     error,
@@ -930,7 +965,12 @@ impl HestiaApp {
                     if generation != self.browse_page_generation {
                         continue;
                     }
+                    if self.browse_state.page_request_nonce != Some(nonce) {
+                        continue;
+                    }
                     self.browse_state.loading_page = false;
+                    self.browse_state.page_request_nonce = None;
+                    self.browse_state.page_request_started_at = None;
                     if page > 1 {
                         self.browse_state.has_more = false;
                         self.log_warn(format!(

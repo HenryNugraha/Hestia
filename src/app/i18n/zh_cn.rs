@@ -273,6 +273,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "此游戏未设置 GameBanana 角色分类列表。", // BrowseNoConfiguredCharacterCategoryList
     "角色不可用", // BrowseCharactersUnavailable
     "连接失败", // BrowseConnectionFailed
+    "连接超时", // BrowseConnectionTimedOut
     "浏览失败", // BrowseFailed
     "角色加载失败", // BrowseCharactersFailed
     "浏览详情失败", // BrowseDetailFailed

@@ -352,6 +352,34 @@ impl HestiaApp {
 
         let left_padding = 12.0;
         ui.add_space(8.0);
+        if let Some(error) = self.browse_state.page_error.clone() {
+            let error_label = if error == text.connection_timed_out() {
+                error.as_str()
+            } else {
+                text.connection_failed()
+            };
+            ui.horizontal(|ui| {
+                ui.add_space(left_padding);
+                ui.vertical(|ui| {
+                    static_label(
+                        ui,
+                        RichText::new(error_label)
+                            .size(14.0)
+                            .color(Color32::from_rgb(213, 139, 139)),
+                    );
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(text.task_retry()).size(12.0))
+                                .corner_radius(egui::CornerRadius::same(2)),
+                        )
+                        .clicked()
+                    {
+                        self.restart_browse_query();
+                    }
+                });
+            });
+            ui.add_space(8.0);
+        }
         let scroll_rect = ui.available_rect_before_wrap();
         let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
         ScrollArea::vertical()
@@ -463,27 +491,6 @@ impl HestiaApp {
                             .size(16.0)
                             .color(Color32::from_gray(180)),
                     );
-                });
-            }
-
-            if let Some(error) = self.browse_state.page_error.clone() {
-                ui.add_space(12.0);
-                ui.centered_and_justified(|ui| {
-                    ui.horizontal(|ui| {
-                        static_label(
-                            ui,
-                            RichText::new(text.connection_failed())
-                                .size(14.0)
-                                .color(Color32::from_rgb(213, 139, 139)),
-                        );
-                        if ui
-                            .button(RichText::new(text.task_retry()).size(12.0))
-                            .on_hover_text(error)
-                            .clicked()
-                        {
-                            self.request_browse_page_with_mode(1, true);
-                        }
-                    });
                 });
             }
 

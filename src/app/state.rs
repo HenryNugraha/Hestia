@@ -325,6 +325,8 @@ struct BrowseState {
     next_page: usize,
     has_more: bool,
     loading_page: bool,
+    page_request_nonce: Option<u64>,
+    page_request_started_at: Option<Instant>,
     page_error: Option<String>,
     refresh_page_cache_for_session: bool,
     selected_mod_id: Option<u64>,
@@ -558,6 +560,7 @@ struct MyModOverlayImage {
 }
 
 enum BrowseRequest {
+    CancelPage,
     FetchPage {
         nonce: u64,
         generation: u64,

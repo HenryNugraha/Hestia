@@ -10,6 +10,13 @@ fn spawn_browse_worker(
     runtime_services.spawn(async move {
         while let Some(request) = rx.recv().await {
             match request {
+                BrowseRequest::CancelPage => {
+                    if let Ok(mut active_task) = active_page_task.lock() {
+                        if let Some(task) = active_task.take() {
+                            task.abort();
+                        }
+                    }
+                }
                 BrowseRequest::FetchPage {
                     nonce,
                     generation,
@@ -31,7 +38,6 @@ fn spawn_browse_worker(
                     }
                     let page_tx = tx.clone();
                     let page_portable = portable.clone();
-                    let page_client = client.clone();
                     let page_task = tokio::spawn(async move {
                         let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
                             let _ = page_tx.send(BrowseEvent::PageFailed {
@@ -74,7 +80,7 @@ fn spawn_browse_worker(
 
                         let started = Instant::now();
                         let result = load_browse_page_with_cache(
-                            &page_portable, &page_client, gamebanana_id, &game_id,
+                            &page_portable, gamebanana_id, &game_id,
                             query.as_deref(), character_category_id, page, browse_sort,
                             search_sort, force_refresh, &cache_key,
                         ).await;
@@ -123,39 +129,44 @@ fn spawn_browse_worker(
                     super_category_id,
                     force_refresh,
                 } => {
-                    let cache_key =
-                        gamebanana::character_categories_cache_key(&game_id, super_category_id);
-                    match load_character_categories_with_cache(
-                        &portable,
-                        &client,
-                        super_category_id,
-                        force_refresh,
-                        &cache_key,
-                    )
-                    .await
-                    {
-                        Ok((categories, used_cache_fallback)) => {
-                            if used_cache_fallback {
-                                let _ = tx.send(BrowseEvent::CharacterCategoriesWarning {
+                    let category_tx = tx.clone();
+                    let category_portable = portable.clone();
+                    tokio::spawn(async move {
+                        let cache_key = gamebanana::character_categories_cache_key(
+                            &game_id,
+                            super_category_id,
+                        );
+                        match load_character_categories_with_cache(
+                            &category_portable,
+                            super_category_id,
+                            force_refresh,
+                            &cache_key,
+                        )
+                        .await
+                        {
+                            Ok((categories, used_cache_fallback)) => {
+                                if used_cache_fallback {
+                                    let _ = category_tx.send(BrowseEvent::CharacterCategoriesWarning {
+                                        _nonce: nonce,
+                                        game_id: game_id.clone(),
+                                        warning: "Connection failed".to_string(),
+                                    });
+                                }
+                                let _ = category_tx.send(BrowseEvent::CharacterCategoriesLoaded {
                                     _nonce: nonce,
-                                    game_id: game_id.clone(),
-                                    warning: "Connection failed".to_string(),
+                                    game_id,
+                                    categories,
                                 });
                             }
-                            let _ = tx.send(BrowseEvent::CharacterCategoriesLoaded {
-                                _nonce: nonce,
-                                game_id,
-                                categories,
-                            });
+                            Err(err) => {
+                                let _ = category_tx.send(BrowseEvent::CharacterCategoriesFailed {
+                                    _nonce: nonce,
+                                    game_id,
+                                    error: format!("{err:#}"),
+                                });
+                            }
                         }
-                        Err(err) => {
-                            let _ = tx.send(BrowseEvent::CharacterCategoriesFailed {
-                                _nonce: nonce,
-                                game_id,
-                                error: format!("{err:#}"),
-                            });
-                        }
-                    }
+                    });
                 }
                 BrowseRequest::FetchDetail {
                     nonce,
@@ -163,76 +174,160 @@ fn spawn_browse_worker(
                     force_refresh,
                     cached_profile_json,
                 } => {
-                    let _permit = json_limiter.acquire().await.ok();
-                    let cache_key = gamebanana::profile_cache_key(mod_id);
-                    match load_profile_with_cache(
-                        &portable,
-                        &client,
-                        mod_id,
-                        force_refresh,
-                        &cache_key,
-                        cached_profile_json.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok((profile, used_cache_fallback)) => {
-                            if used_cache_fallback {
-                                let _ = tx.send(BrowseEvent::DetailWarning {
+                    let detail_tx = tx.clone();
+                    let detail_portable = portable.clone();
+                    let detail_client = client.clone();
+                    let detail_limiter = Arc::clone(&json_limiter);
+                    tokio::spawn(async move {
+                        let _permit = detail_limiter.acquire().await.ok();
+                        let cache_key = gamebanana::profile_cache_key(mod_id);
+                        match load_profile_with_cache(
+                            &detail_portable,
+                            &detail_client,
+                            mod_id,
+                            force_refresh,
+                            &cache_key,
+                            cached_profile_json.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok((profile, used_cache_fallback)) => {
+                                if used_cache_fallback {
+                                    let _ = detail_tx.send(BrowseEvent::DetailWarning {
+                                        _nonce: nonce,
+                                        mod_id,
+                                        warning: "Connection failed".to_string(),
+                                    });
+                                }
+                                let _ = detail_tx.send(BrowseEvent::DetailLoaded {
                                     _nonce: nonce,
                                     mod_id,
-                                    warning: "Connection failed".to_string(),
+                                    profile,
                                 });
                             }
-                            let _ = tx.send(BrowseEvent::DetailLoaded {
-                                _nonce: nonce,
-                                mod_id,
-                                profile,
-                            });
+                            Err(err) => {
+                                let _ = detail_tx.send(BrowseEvent::DetailFailed {
+                                    _nonce: nonce,
+                                    mod_id,
+                                    error: format!("{err:#}"),
+                                });
+                            }
                         }
-                        Err(err) => {
-                            let _ = tx.send(BrowseEvent::DetailFailed {
-                                _nonce: nonce,
-                                mod_id,
-                                error: format!("{err:#}"),
-                            });
-                        }
-                    }
+                    });
                 }
                 BrowseRequest::FetchUpdates { nonce, mod_id, force_refresh } => {
-                    let _permit = json_limiter.acquire().await.ok();
-                    let cache_key = gamebanana::updates_cache_key(mod_id);
-                    match load_updates_with_cache(&portable, &client, mod_id, force_refresh, &cache_key).await {
-                        Ok((updates, used_cache_fallback)) => {
-                            if used_cache_fallback {
-                                let _ = tx.send(BrowseEvent::UpdatesWarning {
+                    let updates_tx = tx.clone();
+                    let updates_portable = portable.clone();
+                    let updates_client = client.clone();
+                    let updates_limiter = Arc::clone(&json_limiter);
+                    tokio::spawn(async move {
+                        let _permit = updates_limiter.acquire().await.ok();
+                        let cache_key = gamebanana::updates_cache_key(mod_id);
+                        match load_updates_with_cache(
+                            &updates_portable,
+                            &updates_client,
+                            mod_id,
+                            force_refresh,
+                            &cache_key,
+                        )
+                        .await
+                        {
+                            Ok((updates, used_cache_fallback)) => {
+                                if used_cache_fallback {
+                                    let _ = updates_tx.send(BrowseEvent::UpdatesWarning {
+                                        _nonce: nonce,
+                                        mod_id,
+                                        warning: "Connection failed".to_string(),
+                                    });
+                                }
+                                let _ = updates_tx.send(BrowseEvent::UpdatesLoaded {
                                     _nonce: nonce,
                                     mod_id,
-                                    warning: "Connection failed".to_string(),
+                                    updates,
                                 });
                             }
-                            let _ = tx.send(BrowseEvent::UpdatesLoaded {
-                                _nonce: nonce,
-                                mod_id,
-                                updates,
-                            });
+                            Err(err) => {
+                                let _ = updates_tx.send(BrowseEvent::UpdatesFailed {
+                                    _nonce: nonce,
+                                    mod_id,
+                                    error: format!("{err:#}"),
+                                });
+                            }
                         }
-                        Err(err) => {
-                            let _ = tx.send(BrowseEvent::UpdatesFailed {
-                                _nonce: nonce,
-                                mod_id,
-                                error: format!("{err:#}"),
-                            });
-                        }
-                    }
+                    });
                 }
             }
         }
     });
 }
 
+/// Race up to three equivalent interactive JSON requests. The second request starts after
+/// two seconds; the third starts two seconds later with a cache-busting query parameter.
+/// The first valid response wins and all slower attempts are aborted.
+async fn race_interactive_json<T, F, Fut>(fetch: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: Fn(bool) -> Fut,
+    Fut: std::future::Future<Output = Result<T>> + Send + 'static,
+{
+    const DUPLICATE_DELAY: Duration = Duration::from_secs(2);
+
+    let mut attempts = tokio::task::JoinSet::new();
+    attempts.spawn(fetch(false));
+    let mut started_attempts = 1;
+    let first_duplicate = tokio::time::sleep(DUPLICATE_DELAY);
+    let cache_busting_duplicate = tokio::time::sleep(DUPLICATE_DELAY * 2);
+    tokio::pin!(first_duplicate);
+    tokio::pin!(cache_busting_duplicate);
+    let mut errors = Vec::new();
+
+    loop {
+        if started_attempts == 3 && attempts.is_empty() {
+            bail!(
+                "all interactive JSON attempts failed: {}",
+                errors.join(" | ")
+            );
+        }
+
+        tokio::select! {
+            result = attempts.join_next(), if !attempts.is_empty() => match result {
+                Some(Ok(Ok(value))) => {
+                    attempts.abort_all();
+                    return Ok(value);
+                }
+                Some(Ok(Err(err))) => errors.push(format!("{err:#}")),
+                Some(Err(err)) => errors.push(format!("request task failed: {err}")),
+                None => {}
+            },
+            _ = &mut first_duplicate, if started_attempts == 1 => {
+                attempts.spawn(fetch(false));
+                started_attempts = 2;
+            }
+            _ = &mut cache_busting_duplicate, if started_attempts == 2 => {
+                attempts.spawn(fetch(true));
+                started_attempts = 3;
+            }
+        }
+    }
+}
+
+/// The stalled-request race must not queue behind the shared application's HTTP/1.1 pool.
+/// Each attempt gets an isolated client and therefore its own connection pool/socket.
+fn isolated_browse_json_client() -> Result<ClientWithMiddleware> {
+    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+    let client = reqwest::Client::builder()
+        .user_agent(gamebanana::USER_AGENT)
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(0)
+        .build()
+        .context("failed to initialize isolated Browse JSON client")?;
+    Ok(MiddlewareClientBuilder::new(client)
+        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .build())
+}
+
 async fn load_browse_page_with_cache(
     portable: &PortablePaths,
-    client: &ClientWithMiddleware,
     gamebanana_id: u64,
     _game_id: &str,
     query: Option<&str>,
@@ -253,45 +348,47 @@ async fn load_browse_page_with_cache(
         }
     }
 
-    const MAX_ATTEMPTS: usize = 3;
-    let mut attempt = 0;
-    let fetch_result = loop {
-        attempt += 1;
-        let result = if let Some(category_id) = character_category_id {
-            gamebanana::fetch_character_browse_page_async(
-                client,
-                category_id,
-                query,
-                page,
-                browse_sort,
-            )
-            .await
-        } else {
-            match query {
-                Some(query) if !query.trim().is_empty() => {
-                    gamebanana::fetch_search_page_async(
-                        client,
-                        gamebanana_id,
-                        query,
-                        page,
-                        search_sort,
-                    )
-                    .await
-                }
-                _ => {
-                    gamebanana::fetch_browse_page_async(client, gamebanana_id, page, browse_sort)
+    let query = query.map(str::to_owned);
+    let fetch_result = race_interactive_json(move |nocache| {
+        let query = query.clone();
+        async move {
+            let client = isolated_browse_json_client()?;
+            if let Some(category_id) = character_category_id {
+                gamebanana::fetch_character_browse_page_async(
+                    &client,
+                    category_id,
+                    query.as_deref(),
+                    page,
+                    browse_sort,
+                    nocache,
+                )
+                .await
+            } else {
+                match query.as_deref() {
+                    Some(query) if !query.trim().is_empty() => {
+                        gamebanana::fetch_search_page_async(
+                            &client,
+                            gamebanana_id,
+                            query,
+                            page,
+                            search_sort,
+                            nocache,
+                        )
                         .await
+                    }
+                    _ => gamebanana::fetch_browse_page_async(
+                        &client,
+                        gamebanana_id,
+                        page,
+                        browse_sort,
+                        nocache,
+                    )
+                    .await,
                 }
             }
-        };
-        match result {
-            Ok(payload) => break Ok(payload),
-            Err(err) if attempt >= MAX_ATTEMPTS => {
-                break Err(err.context(format!("Browse request exhausted {MAX_ATTEMPTS} attempts")));
-            }
-            Err(_) => tokio::time::sleep(Duration::from_secs(1_u64 << (attempt - 1))).await,
         }
-    };
+    })
+    .await;
 
     match fetch_result {
         Ok(payload) => {
@@ -317,7 +414,6 @@ async fn load_browse_page_with_cache(
 
 async fn load_character_categories_with_cache(
     portable: &PortablePaths,
-    client: &ClientWithMiddleware,
     super_category_id: u64,
     force_refresh: bool,
     cache_key: &str,
@@ -332,7 +428,14 @@ async fn load_character_categories_with_cache(
         }
     }
 
-    match gamebanana::fetch_character_categories_async(client, super_category_id).await {
+    match race_interactive_json(move |nocache| {
+        async move {
+            let client = isolated_browse_json_client()?;
+            gamebanana::fetch_character_categories_async(&client, super_category_id, nocache).await
+        }
+    })
+    .await
+    {
         Ok(categories) => {
             if let Ok(bytes) = serde_json::to_vec(&categories) {
                 let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
