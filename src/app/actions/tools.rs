@@ -33,7 +33,11 @@ impl HestiaApp {
     }
 
     fn selected_game_tools(&self) -> Vec<ToolEntry> {
-        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+        let Some(game_id) = self
+            .selected_game()
+            .filter(|game| game.enabled)
+            .map(|game| game.definition.id.clone())
+        else {
             return Vec::new();
         };
         let mut items: Vec<_> = self
@@ -385,7 +389,11 @@ impl HestiaApp {
     }
 
     fn add_manual_tool_for_selected_game(&mut self, path: PathBuf) {
-        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+        let Some(game_id) = self
+            .selected_game()
+            .filter(|game| game.enabled)
+            .map(|game| game.definition.id.clone())
+        else {
             self.report_warn(
                 self.text().no_game_selected_for_tool_add(),
                 Some(self.text().no_game_selected()),

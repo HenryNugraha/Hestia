@@ -870,7 +870,7 @@ impl HestiaApp {
         let mut add_card_rect: Option<egui::Rect> = None;
 
         window.show(ctx, |ui| {
-            let Some(_game) = self.selected_game().cloned() else {
+            let Some(_game) = self.selected_game().filter(|game| game.enabled).cloned() else {
                 static_label(
                     ui,
                     RichText::new(text.no_game_selected()).color(Color32::from_gray(160)),
