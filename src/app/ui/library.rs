@@ -22,6 +22,23 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn format_mod_content_size(size: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let size = size as f64;
+    if size >= GB {
+        format!("{:.1} GB", size / GB)
+    } else if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else if size >= KB {
+        format!("{:.1} KB", size / KB)
+    } else {
+        format!("{size:.0} B")
+    }
+}
+
 fn text_edit_has_focus(ctx: &egui::Context) -> bool {
     ctx.memory(|memory| memory.focused())
         .is_some_and(|focused_id| egui::TextEdit::load_state(ctx, focused_id).is_some())
@@ -440,6 +457,14 @@ mod library_selection_tests {
         assert!(markdown.contains("one&nbsp;&nbsp;two"));
         assert!(markdown.contains("&nbsp;  \nthree"));
         assert!(markdown.contains("three&nbsp;&nbsp;&nbsp;&nbsp;four"));
+    }
+
+    #[test]
+    fn mod_content_size_uses_one_decimal_and_binary_units() {
+        assert_eq!(format_mod_content_size(999), "999 B");
+        assert_eq!(format_mod_content_size(1024), "1.0 KB");
+        assert_eq!(format_mod_content_size(54 * 1024 * 1024 + 209_715), "54.2 MB");
+        assert_eq!(format_mod_content_size(1024_u64.pow(3)), "1.0 GB");
     }
 
     #[test]
@@ -6979,6 +7004,15 @@ impl HestiaApp {
                     static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
                     ui.add_space(-4.0);
                     self.render_mod_category_label(ui, &selected);
+                    ui.add_space(-4.0);
+                    static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
+                    ui.add_space(-4.0);
+                    static_label(
+                        ui,
+                        RichText::new(format_mod_content_size(selected.content_size_bytes))
+                            .size(12.0)
+                            .color(Color32::from_gray(176)),
+                    );
                 });
                 ui.add_space(-4.0);
                 ui.horizontal(|ui| {

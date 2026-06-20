@@ -731,6 +731,8 @@ pub struct ModEntry {
     #[serde(default)]
     pub ini_hash: Option<String>,
     #[serde(default)]
+    pub content_size_bytes: u64,
+    #[serde(default)]
     pub unsafe_content: bool,
     #[serde(default)]
     pub source: Option<ModSourceData>,

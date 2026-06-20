@@ -823,7 +823,7 @@ fn load_mod_entry(
         .map(|stored| stored.id.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    let (content_mtime, ini_hash) = compute_mod_fingerprint(&root_path)?;
+    let (content_mtime, ini_hash, content_size_bytes) = compute_mod_fingerprint(&root_path)?;
 
     let (created_at, updated_at, unsafe_content) = match &portable {
         Some(stored) => (
@@ -851,6 +851,7 @@ fn load_mod_entry(
         updated_at,
         content_mtime,
         ini_hash,
+        content_size_bytes,
         unsafe_content,
         source: portable.as_ref().and_then(|stored| stored.source.clone()),
         update_state: crate::model::ModUpdateState::Unlinked,
@@ -944,7 +945,7 @@ fn substantive_entries(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(entries)
 }
 
-fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option<String>)> {
+fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option<String>, u64)> {
     let disabled_root = root.join(DISABLED_CONTAINER);
     let content_root = if disabled_root.exists() && substantive_entries(root)?.is_empty() {
         disabled_root.as_path()
@@ -954,6 +955,7 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
     let mut max_mtime: Option<SystemTime> = None;
     let mut hasher = Xxh3::new();
     let mut found_ini = false;
+    let mut content_size_bytes = 0_u64;
 
     for entry in walkdir::WalkDir::new(content_root) {
         let entry = entry?;
@@ -975,6 +977,7 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
             continue;
         }
         let metadata = entry.metadata()?;
+        content_size_bytes = content_size_bytes.saturating_add(metadata.len());
         if let Ok(modified) = metadata.modified() {
             max_mtime = match max_mtime {
                 Some(current) => Some(current.max(modified)),
@@ -996,7 +999,7 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
     } else {
         None
     };
-    Ok((mtime, hash))
+    Ok((mtime, hash, content_size_bytes))
 }
 
 fn legacy_disabled_ini_hash(root: &Path) -> Result<Option<String>> {
