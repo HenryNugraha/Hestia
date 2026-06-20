@@ -2461,9 +2461,9 @@ impl HestiaApp {
                     {
                         action = Some(NavAction::Next);
                     }
-                    if i.smooth_scroll_delta.y > 0.0 {
+                    if i.raw_scroll_delta.y > 0.0 {
                         action = Some(NavAction::Prev);
-                    } else if i.smooth_scroll_delta.y < 0.0 {
+                    } else if i.raw_scroll_delta.y < 0.0 {
                         action = Some(NavAction::Next);
                     }
                 });
