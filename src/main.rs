@@ -121,7 +121,7 @@ fn main() -> anyhow::Result<()> {
                 cc,
                 portable.clone(),
                 state,
-                runtime_services.clone(),
+                runtime_services,
                 startup_path_scan_due,
             )))
         }),

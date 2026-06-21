@@ -210,48 +210,55 @@ fn spawn_install_workers(
                         let custom_proxy = runtime_services.custom_proxy();
                         let result = handle
                             .spawn_blocking(move || -> Result<Vec<String>> {
-                                let builder = reqwest::blocking::Client::builder()
-                                    .user_agent(gamebanana::USER_AGENT)
-                                    .timeout(Duration::from_secs(60));
-                                let builder = match custom_proxy {
-                                    Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
-                                    None => builder,
-                                };
-                                let blocking_http_client = builder
-                                    .build()
-                                    .context("failed to create blocking image-sync client")?;
-                                let snapshot = profile_to_snapshot(&profile_for_work);
-                                let meta_dir = mod_root_path.join(crate::model::MOD_META_DIR);
-                                fs::create_dir_all(&meta_dir)?;
-                                let valid_names: HashSet<String> = snapshot
-                                    .preview_urls
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, url)| {
-                                        let path_no_query = url.split('?').next().unwrap_or(url);
-                                        let ext = Path::new(path_no_query)
-                                            .extension()
-                                            .and_then(|s| s.to_str())
-                                            .unwrap_or("jpg");
-                                        format!("gb_{}_{}.{ext}", profile_for_work.id, idx + 1)
+                                std::thread::Builder::new()
+                                    .name("hestia-image-sync".to_string())
+                                    .spawn(move || -> Result<Vec<String>> {
+                                        let builder = reqwest::blocking::Client::builder()
+                                            .user_agent(gamebanana::USER_AGENT)
+                                            .timeout(Duration::from_secs(60));
+                                        let builder = match custom_proxy {
+                                            Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
+                                            None => builder,
+                                        };
+                                        let blocking_http_client = builder
+                                            .build()
+                                            .context("failed to create blocking image-sync client")?;
+                                        let snapshot = profile_to_snapshot(&profile_for_work);
+                                        let meta_dir = mod_root_path.join(crate::model::MOD_META_DIR);
+                                        fs::create_dir_all(&meta_dir)?;
+                                        let valid_names: HashSet<String> = snapshot
+                                            .preview_urls
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(idx, url)| {
+                                                let path_no_query = url.split('?').next().unwrap_or(url);
+                                                let ext = Path::new(path_no_query)
+                                                    .extension()
+                                                    .and_then(|s| s.to_str())
+                                                    .unwrap_or("jpg");
+                                                format!("gb_{}_{}.{ext}", profile_for_work.id, idx + 1)
+                                            })
+                                            .collect();
+                                        for entry in fs::read_dir(&meta_dir)? {
+                                            let entry = entry?;
+                                            let name = entry.file_name().to_string_lossy().to_string();
+                                            if name.starts_with("gb_")
+                                                && !valid_names.contains(&name)
+                                                && !valid_names.is_empty()
+                                            {
+                                                let _ = fs::remove_file(entry.path());
+                                            }
+                                        }
+                                        persist_source_images_bg(
+                                            &portable,
+                                            &mod_root_path,
+                                            &profile_for_work,
+                                            &blocking_http_client,
+                                        )
                                     })
-                                    .collect();
-                                for entry in fs::read_dir(&meta_dir)? {
-                                    let entry = entry?;
-                                    let name = entry.file_name().to_string_lossy().to_string();
-                                    if name.starts_with("gb_")
-                                        && !valid_names.contains(&name)
-                                        && !valid_names.is_empty()
-                                    {
-                                        let _ = fs::remove_file(entry.path());
-                                    }
-                                }
-                                persist_source_images_bg(
-                                    &portable,
-                                    &mod_root_path,
-                                    &profile_for_work,
-                                    &blocking_http_client,
-                                )
+                                    .map_err(|err| anyhow!("failed to start image-sync thread: {err}"))?
+                                    .join()
+                                    .map_err(|_| anyhow!("image-sync thread panicked"))?
                             })
                             .await;
                         match result {

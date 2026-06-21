@@ -29,9 +29,11 @@ impl ThumbnailByteCache {
     }
 }
 
-#[derive(Clone)]
 pub struct RuntimeServices {
-    runtime: Arc<tokio::runtime::Runtime>,
+    // Only the app instance owns this Arc. Clones captured by Tokio tasks keep a Handle, not
+    // the runtime owner, so shutdown cannot occur from one of its own worker threads.
+    _runtime_owner: Option<Arc<tokio::runtime::Runtime>>,
+    runtime_handle: tokio::runtime::Handle,
     http_client: Arc<RwLock<ClientWithMiddleware>>,
     custom_proxy: Arc<RwLock<Option<CustomProxyConfig>>>,
     full_image_limiter: Arc<Semaphore>,
@@ -39,6 +41,22 @@ pub struct RuntimeServices {
     json_limiter: Arc<Semaphore>,
     full_decode_limiter: Arc<Semaphore>,
     thumbnail_byte_cache: ThumbnailByteCache,
+}
+
+impl Clone for RuntimeServices {
+    fn clone(&self) -> Self {
+        Self {
+            _runtime_owner: None,
+            runtime_handle: self.runtime_handle.clone(),
+            http_client: Arc::clone(&self.http_client),
+            custom_proxy: Arc::clone(&self.custom_proxy),
+            full_image_limiter: Arc::clone(&self.full_image_limiter),
+            thumb_image_limiter: Arc::clone(&self.thumb_image_limiter),
+            json_limiter: Arc::clone(&self.json_limiter),
+            full_decode_limiter: Arc::clone(&self.full_decode_limiter),
+            thumbnail_byte_cache: self.thumbnail_byte_cache.clone(),
+        }
+    }
 }
 
 impl RuntimeServices {
@@ -63,9 +81,11 @@ impl RuntimeServices {
             .enable_all()
             .build()
             .map_err(|err| anyhow!("failed to create tokio runtime: {err}"))?;
+        let runtime = Arc::new(runtime);
         let http_client = Self::http_client_for(&custom_proxy)?;
         Ok(Self {
-            runtime: Arc::new(runtime),
+            _runtime_owner: Some(Arc::clone(&runtime)),
+            runtime_handle: runtime.handle().clone(),
             http_client: Arc::new(RwLock::new(http_client)),
             custom_proxy: Arc::new(RwLock::new(custom_proxy)),
             full_image_limiter: Arc::new(Semaphore::new(FULL_IMAGE_LIMIT)),
@@ -80,11 +100,11 @@ impl RuntimeServices {
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        self.runtime.spawn(fut);
+        self.runtime_handle.spawn(fut);
     }
 
     fn handle(&self) -> tokio::runtime::Handle {
-        self.runtime.handle().clone()
+        self.runtime_handle.clone()
     }
 
     pub(crate) fn async_client_builder_for(
@@ -130,5 +150,17 @@ impl RuntimeServices {
             .write()
             .expect("custom proxy lock must not be poisoned") = custom_proxy;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+
+    #[test]
+    fn worker_clones_do_not_own_the_tokio_runtime() {
+        let services = RuntimeServices::new(None).unwrap();
+        assert!(services._runtime_owner.is_some());
+        assert!(services.clone()._runtime_owner.is_none());
     }
 }

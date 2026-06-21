@@ -14,19 +14,26 @@ async fn validate_proxy_manifest(proxy: &Option<CustomProxyConfig>) -> Result<()
 
 async fn validate_blocking_proxy_client(proxy: &Option<CustomProxyConfig>) -> Result<()> {
     let proxy = proxy.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30));
-        let builder = match &proxy {
-            Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
-            None => builder,
-        };
-        let _client = builder
-            .build()
-            .map_err(|err| anyhow!("failed to create blocking proxy client: {err}"))?;
-        Ok(())
-    })
-    .await
-    .map_err(|err| anyhow!("blocking proxy validation task failed: {err}"))?
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("hestia-proxy-client-check".to_string())
+        .spawn(move || {
+            let result = (|| -> Result<()> {
+                let builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30));
+                let builder = match &proxy {
+                    Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
+                    None => builder,
+                };
+                let _client = builder
+                    .build()
+                    .map_err(|err| anyhow!("failed to create blocking proxy client: {err}"))?;
+                Ok(())
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|err| anyhow!("failed to start blocking proxy validation thread: {err}"))?;
+    rx.await
+        .map_err(|_| anyhow!("blocking proxy validation thread stopped unexpectedly"))?
 }
 
 fn proxy_socket_address(proxy: &CustomProxyConfig) -> Option<String> {
