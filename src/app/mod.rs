@@ -36,6 +36,7 @@ use crate::{
     model::{
         AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseDownloadTaskFile,
         BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier, ConflictChoice, DeleteBehavior,
+        CustomProxyConfig,
         FileSetRecipe, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot, GameInstall,
         IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource, LaunchBehavior,
         LibraryCategoryDisplayMode, LibraryGroupMode, LibrarySort, MOD_META_DIR,

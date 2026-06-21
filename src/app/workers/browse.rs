@@ -5,6 +5,7 @@ fn spawn_browse_worker(
     tx: WorkerTx<BrowseEvent>,
 ) {
     let client = runtime_services.http_client.clone();
+    let custom_proxy = runtime_services.custom_proxy();
     let json_limiter = Arc::clone(&runtime_services.json_limiter);
     let active_page_task = Arc::new(Mutex::new(None::<tokio::task::AbortHandle>));
     runtime_services.spawn(async move {
@@ -38,6 +39,7 @@ fn spawn_browse_worker(
                     }
                     let page_tx = tx.clone();
                     let page_portable = portable.clone();
+                    let page_proxy = custom_proxy.clone();
                     let page_task = tokio::spawn(async move {
                         let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
                             let _ = page_tx.send(BrowseEvent::PageFailed {
@@ -80,7 +82,7 @@ fn spawn_browse_worker(
 
                         let started = Instant::now();
                         let result = load_browse_page_with_cache(
-                            &page_portable, gamebanana_id, &game_id,
+                            &page_portable, page_proxy, gamebanana_id, &game_id,
                             query.as_deref(), character_category_id, page, browse_sort,
                             search_sort, force_refresh, &cache_key,
                         ).await;
@@ -131,6 +133,7 @@ fn spawn_browse_worker(
                 } => {
                     let category_tx = tx.clone();
                     let category_portable = portable.clone();
+                    let category_proxy = custom_proxy.clone();
                     tokio::spawn(async move {
                         let cache_key = gamebanana::character_categories_cache_key(
                             &game_id,
@@ -138,6 +141,7 @@ fn spawn_browse_worker(
                         );
                         match load_character_categories_with_cache(
                             &category_portable,
+                            category_proxy,
                             super_category_id,
                             force_refresh,
                             &cache_key,
@@ -313,9 +317,11 @@ where
 
 /// The stalled-request race must not queue behind the shared application's HTTP/1.1 pool.
 /// Each attempt gets an isolated client and therefore its own connection pool/socket.
-fn isolated_browse_json_client() -> Result<ClientWithMiddleware> {
+fn isolated_browse_json_client(
+    custom_proxy: &Option<CustomProxyConfig>,
+) -> Result<ClientWithMiddleware> {
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-    let client = reqwest::Client::builder()
+    let client = RuntimeServices::async_client_builder_for(custom_proxy)
         .user_agent(gamebanana::USER_AGENT)
         .timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(0)
@@ -328,6 +334,7 @@ fn isolated_browse_json_client() -> Result<ClientWithMiddleware> {
 
 async fn load_browse_page_with_cache(
     portable: &PortablePaths,
+    custom_proxy: Option<CustomProxyConfig>,
     gamebanana_id: u64,
     _game_id: &str,
     query: Option<&str>,
@@ -351,8 +358,9 @@ async fn load_browse_page_with_cache(
     let query = query.map(str::to_owned);
     let fetch_result = race_interactive_json(move |nocache| {
         let query = query.clone();
+        let custom_proxy = custom_proxy.clone();
         async move {
-            let client = isolated_browse_json_client()?;
+            let client = isolated_browse_json_client(&custom_proxy)?;
             if let Some(category_id) = character_category_id {
                 gamebanana::fetch_character_browse_page_async(
                     &client,
@@ -414,6 +422,7 @@ async fn load_browse_page_with_cache(
 
 async fn load_character_categories_with_cache(
     portable: &PortablePaths,
+    custom_proxy: Option<CustomProxyConfig>,
     super_category_id: u64,
     force_refresh: bool,
     cache_key: &str,
@@ -429,8 +438,9 @@ async fn load_character_categories_with_cache(
     }
 
     match race_interactive_json(move |nocache| {
+        let custom_proxy = custom_proxy.clone();
         async move {
-            let client = isolated_browse_json_client()?;
+            let client = isolated_browse_json_client(&custom_proxy)?;
             gamebanana::fetch_character_categories_async(&client, super_category_id, nocache).await
         }
     })

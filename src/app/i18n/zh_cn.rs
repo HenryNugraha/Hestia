@@ -591,6 +591,16 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "显示但遮蔽图片", // SettingsAdvancedContentRestrictionShowImagesCensored
     "不限制显示", // SettingsAdvancedContentRestrictionShowUnrestricted
 
+    // Window: Settings > Advanced > Proxy
+    "代理", // SettingsAdvancedProxySection
+    "代理地址：", // SettingsAdvancedProxyAddress
+    "协议可省略，默认使用 HTTP。使用 socks5h:// 让 SOCKS5 代理解析 DNS。", // SettingsAdvancedProxyHelp
+    "暂不支持需要身份验证的代理。", // SettingsAdvancedProxyCredentialsUnsupported
+    "请输入有效的代理地址。", // SettingsAdvancedProxyAddressInvalid
+    "重启 Hestia", // SettingsAdvancedProxyRestartHestia
+    "以应用设置", // SettingsAdvancedProxyRestartToApply
+    "请先完成活动任务，再重启 Hestia。", // SettingsAdvancedProxyFinishTasksToRestart
+
     // Window: Settings > Advanced > Cache and Archive
     "缓存和归档", // SettingsAdvancedCacheArchiveSection
     "缓存大小：", // SettingsAdvancedCacheArchiveCacheSize

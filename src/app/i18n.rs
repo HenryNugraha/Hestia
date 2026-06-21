@@ -580,6 +580,15 @@ enum TextKey {
     SettingsAdvancedContentRestrictionShowImagesCensored,
     SettingsAdvancedContentRestrictionShowUnrestricted,
 
+    SettingsAdvancedProxySection,
+    SettingsAdvancedProxyAddress,
+    SettingsAdvancedProxyHelp,
+    SettingsAdvancedProxyCredentialsUnsupported,
+    SettingsAdvancedProxyAddressInvalid,
+    SettingsAdvancedProxyRestartHestia,
+    SettingsAdvancedProxyRestartToApply,
+    SettingsAdvancedProxyFinishTasksToRestart,
+
     SettingsAdvancedCacheArchiveSection,
     SettingsAdvancedCacheArchiveCacheSize,
     SettingsAdvancedCacheArchiveCurrentUsage,
@@ -2877,6 +2886,38 @@ impl TextCatalog {
                 self.get(TextKey::SettingsAdvancedContentRestrictionShowUnrestricted)
             }
         }
+    }
+
+    fn proxy(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxySection)
+    }
+
+    fn proxy_address(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyAddress)
+    }
+
+    fn proxy_help(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyHelp)
+    }
+
+    fn proxy_credentials_unsupported(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyCredentialsUnsupported)
+    }
+
+    fn proxy_address_invalid(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyAddressInvalid)
+    }
+
+    fn proxy_restart_hestia(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyRestartHestia)
+    }
+
+    fn proxy_restart_to_apply(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyRestartToApply)
+    }
+
+    fn proxy_finish_tasks_to_restart(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyFinishTasksToRestart)
     }
 
     fn cache_and_archive(self) -> &'static str {

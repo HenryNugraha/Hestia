@@ -590,6 +590,16 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Показывать с цензурированными изображениями", // SettingsAdvancedContentRestrictionShowImagesCensored
     "Показывать без ограничений", // SettingsAdvancedContentRestrictionShowUnrestricted
 
+    // Window: Settings > Advanced > Proxy
+    "Прокси", // SettingsAdvancedProxySection
+    "Адрес прокси:", // SettingsAdvancedProxyAddress
+    "Протокол необязателен; по умолчанию HTTP. Используйте socks5h:// для DNS через прокси SOCKS5.", // SettingsAdvancedProxyHelp
+    "Прокси с аутентификацией не поддерживаются.", // SettingsAdvancedProxyCredentialsUnsupported
+    "Введите корректный адрес прокси.", // SettingsAdvancedProxyAddressInvalid
+    "Перезапустить Hestia", // SettingsAdvancedProxyRestartHestia
+    "для применения", // SettingsAdvancedProxyRestartToApply
+    "Завершите активные задачи перед перезапуском Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+
     // Window: Settings > Advanced > Cache and Archive
     "Кэш и архив", // SettingsAdvancedCacheArchiveSection
     "Размер кэша:", // SettingsAdvancedCacheArchiveCacheSize

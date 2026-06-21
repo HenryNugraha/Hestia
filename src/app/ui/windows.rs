@@ -3263,6 +3263,145 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
+                        let restart_pending = CustomProxyConfig::from_preferences(
+                            &self.state.static_prefs,
+                        )
+                        .ok()
+                        .flatten()
+                            != self.applied_custom_proxy;
+                        let mut restart_clicked = false;
+                        ui.horizontal(|ui| {
+                            static_label(ui, bold(text.proxy(), Some(16.0)).underline());
+                            if restart_pending && !self.has_active_mod_tasks() {
+                                ui.add_space(8.0);
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                restart_clicked = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(text.proxy_restart_hestia())
+                                                .color(Color32::from_rgb(210, 189, 156))
+                                                .underline(),
+                                        )
+                                        .selectable(false)
+                                        .sense(Sense::click()),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked();
+                                static_label(ui, text.proxy_restart_to_apply());
+                            }
+                        });
+                        if restart_clicked {
+                            self.restart_to_apply_custom_proxy();
+                        }
+                        ui.indent("setting_advanced_proxy", |ui| {
+                            static_label(ui, text.proxy_address()).on_hover_text(format!(
+                                "{}\n{}",
+                                text.proxy_help(),
+                                text.proxy_credentials_unsupported(),
+                            ));
+                            ui.add_space(-4.0);
+                            let (address_response, proxy_toggle_changed) = ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                let address_response = ui.scope(|ui| {
+                                    let visuals = ui.visuals_mut();
+                                    visuals.widgets.inactive.bg_fill =
+                                        Color32::from_rgba_unmultiplied(66, 66, 66, 190);
+                                    visuals.widgets.hovered.bg_fill =
+                                        Color32::from_rgba_unmultiplied(82, 82, 82, 205);
+                                    visuals.widgets.active.bg_fill =
+                                        Color32::from_rgba_unmultiplied(66, 66, 66, 215);
+                                    visuals.widgets.inactive.corner_radius =
+                                        egui::CornerRadius::same(3);
+                                    visuals.widgets.hovered.corner_radius =
+                                        egui::CornerRadius::same(3);
+                                    visuals.widgets.active.corner_radius =
+                                        egui::CornerRadius::same(3);
+                                    ui.add_sized(
+                                        [150.0, 32.0],
+                                        TextEdit::singleline(&mut self.proxy_url_draft)
+                                            .margin(egui::Margin::symmetric(8, 5))
+                                            .hint_text(
+                                                RichText::new("127.0.0.1:7891")
+                                                    .color(Color32::from_gray(145)),
+                                            ),
+                                    )
+                                }).inner;
+                                ui.add_space(2.0);
+                                let toggle_changed = toggle_switch_sized_with_style(
+                                    ui,
+                                    &mut self.state.static_prefs.use_custom_proxy,
+                                    Vec2::new(48.0, 24.0),
+                                    8.0,
+                                    Color32::from_rgb(86, 90, 96),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .changed();
+                                (address_response, toggle_changed)
+                            }).inner;
+                            if proxy_toggle_changed {
+                                ui.ctx().request_repaint();
+                                if self.state.static_prefs.use_custom_proxy {
+                                    match CustomProxyConfig::parse(&self.proxy_url_draft) {
+                                        Ok(_) => {
+                                            self.proxy_url_validation_error = None;
+                                            should_save = true;
+                                        }
+                                        Err(error) => {
+                                            self.state.static_prefs.use_custom_proxy = false;
+                                            self.proxy_url_validation_error = Some(error);
+                                        }
+                                    }
+                                } else {
+                                    self.proxy_url_validation_error = None;
+                                    should_save = true;
+                                }
+                            }
+                            if address_response.changed() {
+                                ui.ctx().request_repaint();
+                                match CustomProxyConfig::parse(&self.proxy_url_draft) {
+                                    Ok(proxy) => {
+                                        let _ = proxy;
+                                        self.state.static_prefs.custom_proxy_url =
+                                            self.proxy_url_draft.clone();
+                                        self.proxy_url_validation_error = None;
+                                        should_save = true;
+                                    }
+                                    Err(error) if self.proxy_url_draft.trim().is_empty() => {
+                                        self.proxy_url_validation_error = if self.state.static_prefs.use_custom_proxy {
+                                            Some(error)
+                                        } else {
+                                            None
+                                        };
+                                        if !self.state.static_prefs.use_custom_proxy
+                                            && !self.state.static_prefs.custom_proxy_url.is_empty()
+                                        {
+                                            self.state.static_prefs.custom_proxy_url.clear();
+                                            should_save = true;
+                                        }
+                                    }
+                                    Err(error) => self.proxy_url_validation_error = Some(error),
+                                }
+                            }
+                            if self.proxy_url_validation_error.is_some() {
+                                static_label(
+                                    ui,
+                                    RichText::new(text.proxy_address_invalid())
+                                        .color(Color32::from_rgb(211, 93, 93)),
+                                );
+                            }
+                            if restart_pending {
+                                if self.has_active_mod_tasks() {
+                                    static_label(
+                                        ui,
+                                        RichText::new(text.proxy_finish_tasks_to_restart())
+                                            .color(Color32::from_gray(150)),
+                                    );
+                                }
+                            }
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
+
                         static_label(ui, bold(text.cache_and_archive(), Some(16.0)).underline());
                         ui.indent("setting_advanced_cache", |ui| {
                             self.refresh_usage_counters_if_needed(ui.input(|i| i.time));

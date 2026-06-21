@@ -801,6 +801,35 @@ fn static_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respons
 
 fn toggle_switch(ui: &mut Ui, value: &mut bool) -> egui::Response {
     let size = Vec2::new(32.0, 16.0);
+    toggle_switch_sized(ui, value, size)
+}
+
+fn toggle_switch_sized(ui: &mut Ui, value: &mut bool, size: Vec2) -> egui::Response {
+    toggle_switch_sized_with_radius(ui, value, size, size.y / 2.0)
+}
+
+fn toggle_switch_sized_with_radius(
+    ui: &mut Ui,
+    value: &mut bool,
+    size: Vec2,
+    track_radius: f32,
+) -> egui::Response {
+    toggle_switch_sized_with_style(
+        ui,
+        value,
+        size,
+        track_radius,
+        Color32::from_rgb(196, 82, 82),
+    )
+}
+
+fn toggle_switch_sized_with_style(
+    ui: &mut Ui,
+    value: &mut bool,
+    size: Vec2,
+    track_radius: f32,
+    inactive_fill: Color32,
+) -> egui::Response {
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
     if response.clicked() {
         *value = !*value;
@@ -812,16 +841,16 @@ fn toggle_switch(ui: &mut Ui, value: &mut bool) -> egui::Response {
     let mut fill = if *value {
         Color32::from_rgb(62, 165, 98)
     } else {
-        Color32::from_rgb(196, 82, 82)
+        inactive_fill
     };
     if response.hovered() {
         fill = fill.gamma_multiply(1.08);
     }
 
-    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_filled(rect, track_radius, fill);
     ui.painter().rect_stroke(
         rect,
-        radius,
+        track_radius,
         egui::Stroke::new(1.0, Color32::from_rgb(52, 56, 62)),
         egui::StrokeKind::Inside,
     );

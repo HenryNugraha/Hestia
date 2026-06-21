@@ -756,16 +756,3 @@ fn resolve_last_selected_game(state: &AppState) -> Option<usize> {
         .iter()
         .position(|game| &game.definition.id == target)
 }
-
-fn shared_blocking_http_client() -> Result<&'static reqwest::blocking::Client> {
-    static CLIENT: Lazy<Option<reqwest::blocking::Client>> = Lazy::new(|| {
-        reqwest::blocking::Client::builder()
-            .user_agent(gamebanana::USER_AGENT)
-            .timeout(Duration::from_secs(60))
-            .build()
-            .ok()
-    });
-    CLIENT
-        .as_ref()
-        .ok_or_else(|| anyhow!("failed to initialize shared HTTP client"))
-}

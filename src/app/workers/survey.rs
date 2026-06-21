@@ -3,7 +3,8 @@ fn spawn_feedback_survey_submit_worker(
     mut rx: WorkerRx<FeedbackSurveySubmitRequest>,
     tx: WorkerTx<FeedbackSurveySubmitEvent>,
 ) {
-    let client = match reqwest::Client::builder()
+    let client = match runtime_services
+        .async_client_builder()
         .user_agent(gamebanana::USER_AGENT)
         .timeout(Duration::from_secs(15))
         .build()

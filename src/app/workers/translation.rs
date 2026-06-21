@@ -98,12 +98,12 @@ pub(crate) fn spawn_translation_worker(
     mut rx: WorkerRx<TranslationRequest>,
     tx: WorkerTx<TranslationEvent>,
 ) {
+    let direct_client = runtime_services
+        .async_client_builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .expect("translation HTTP client configuration must be valid");
     runtime_services.spawn(async move {
-        let direct_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .expect("translation HTTP client configuration must be valid");
-
         while let Some(request) = rx.recv().await {
             let event = match request {
                 TranslationRequest::GameBanana {

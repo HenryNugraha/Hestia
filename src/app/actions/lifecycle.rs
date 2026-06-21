@@ -80,7 +80,12 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<TranslationRequest>();
         let (translation_event_tx, translation_event_rx) =
             tokio_mpsc::unbounded_channel::<TranslationEvent>();
-        let translation_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+        let translation_client = reqwest_middleware::ClientBuilder::new(
+            runtime_services
+                .async_client_builder()
+                .build()
+                .expect("translation HTTP client configuration must be valid"),
+        )
             .with(RetryTransientMiddleware::new_with_policy(
                 ExponentialBackoff::builder().build_with_max_retries(3),
             ))
@@ -189,6 +194,8 @@ impl HestiaApp {
             gif_animation_event_tx,
         );
 
+        let applied_custom_proxy = runtime_services.custom_proxy();
+        let proxy_url_draft = state.static_prefs.custom_proxy_url.clone();
         let mut app = Self {
             runtime_services,
             portable,
@@ -211,6 +218,9 @@ impl HestiaApp {
             dragging_mod_ids: Vec::new(),
             current_view: ViewMode::Library,
             settings_open: false,
+            proxy_url_draft,
+            proxy_url_validation_error: None,
+            applied_custom_proxy,
             mod_detail_open: false,
             browse_detail_open: false,
             settings_tab: SettingsTab::General,
@@ -406,6 +416,24 @@ impl HestiaApp {
                 format!("failed to save app state: {err:#}"),
                 Some(self.text().could_not_save_settings()),
             );
+        }
+    }
+
+    fn restart_to_apply_custom_proxy(&mut self) {
+        if self.has_active_mod_tasks() {
+            return;
+        }
+        self.save_state();
+        match std::env::current_exe().and_then(|exe| {
+            std::process::Command::new(exe)
+                .arg("--after-proxy-restart")
+                .spawn()
+        }) {
+            Ok(_) => std::process::exit(0),
+            Err(err) => self.report_error_message(
+                format!("failed to restart Hestia to apply proxy settings: {err}"),
+                Some(self.text().could_not_save_settings()),
+            ),
         }
     }
 

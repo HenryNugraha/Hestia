@@ -591,6 +591,16 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Show with images censored", // SettingsAdvancedContentRestrictionShowImagesCensored
     "Show unrestricted", // SettingsAdvancedContentRestrictionShowUnrestricted
 
+    // Window: Settings > Advanced > Proxy
+    "Proxy", // SettingsAdvancedProxySection
+    "Proxy address:", // SettingsAdvancedProxyAddress
+    "Protocol optional; defaults to HTTP. Use socks5h:// for SOCKS5 proxy DNS.", // SettingsAdvancedProxyHelp
+    "Authenticated proxies are not supported.", // SettingsAdvancedProxyCredentialsUnsupported
+    "Enter a valid proxy address.", // SettingsAdvancedProxyAddressInvalid
+    "Restart Hestia", // SettingsAdvancedProxyRestartHestia
+    "to apply", // SettingsAdvancedProxyRestartToApply
+    "Finish active tasks to restart Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+
     // Window: Settings > Advanced > Cache and Archive
     "Cache and Archive", // SettingsAdvancedCacheArchiveSection
     "Cache size:", // SettingsAdvancedCacheArchiveCacheSize

@@ -41,6 +41,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let after_update_launch = std::env::args_os().any(|arg| arg == "--after-update");
+    let after_proxy_restart = std::env::args_os().any(|arg| arg == "--after-proxy-restart");
 
     let portable =
         persistence::PortablePaths::discover().context("failed to discover portable paths")?;
@@ -52,12 +53,12 @@ fn main() -> anyhow::Result<()> {
     if app::apply_staged_app_update_before_gui(&portable, &mut state).unwrap_or(false) {
         return Ok(());
     }
-    let _single_instance_guard = if after_update_launch {
+    let _single_instance_guard = if after_update_launch || after_proxy_restart {
         None
     } else {
         acquire_single_instance_guard()?
     };
-    if _single_instance_guard.is_none() && !after_update_launch {
+    if _single_instance_guard.is_none() && !after_update_launch && !after_proxy_restart {
         return Ok(());
     }
     let feedback_survey_changed = state.prepare_feedback_survey_on_launch(model::feedback_survey());
@@ -85,8 +86,10 @@ fn main() -> anyhow::Result<()> {
     let icon_bytes = include_bytes!("asset/icon.png");
     let icon =
         icon_data::from_png_bytes(icon_bytes).context("failed to load app icon from icon.png")?;
-    let runtime_services =
-        app::RuntimeServices::new().context("failed to create runtime services")?;
+    let custom_proxy = model::CustomProxyConfig::from_preferences(&state.static_prefs)
+        .map_err(|err| anyhow::anyhow!("invalid custom proxy configuration: {err}"))?;
+    let runtime_services = app::RuntimeServices::new(custom_proxy)
+        .context("failed to create runtime services")?;
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1540.0, 960.0])
         .with_min_inner_size([1180.0, 760.0])

@@ -6,6 +6,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
+use url::{Host, Url};
 use uuid::Uuid;
 
 pub const DISABLED_CONTAINER: &str = "DISABLED_BY_HESTIA";
@@ -90,6 +91,10 @@ pub struct StaticPreferences {
     #[serde(default)]
     pub always_translate_mod_details: bool,
     #[serde(default)]
+    pub use_custom_proxy: bool,
+    #[serde(default)]
+    pub custom_proxy_url: String,
+    #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
@@ -130,8 +135,64 @@ impl Default for StaticPreferences {
             always_replace_on_update: true,
             automatically_check_for_update: true,
             always_translate_mod_details: false,
+            use_custom_proxy: false,
+            custom_proxy_url: String::new(),
             tool_blacklist: HashMap::new(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomProxyConfig {
+    endpoint: String,
+}
+
+impl CustomProxyConfig {
+    pub fn from_preferences(preferences: &StaticPreferences) -> Result<Option<Self>, String> {
+        if !preferences.use_custom_proxy {
+            return Ok(None);
+        }
+        Self::parse(&preferences.custom_proxy_url).map(Some)
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Err("proxy address is required".to_string());
+        }
+        let candidate = if value.contains("://") {
+            value.to_string()
+        } else {
+            format!("http://{value}")
+        };
+        let url = Url::parse(&candidate).map_err(|_| "proxy address is invalid".to_string())?;
+        let scheme = url.scheme();
+        if !matches!(scheme, "http" | "https" | "socks5" | "socks5h") {
+            return Err("proxy protocol is unsupported".to_string());
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err("proxy credentials are unsupported".to_string());
+        }
+        if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
+            return Err("proxy address must not include a path, query, or fragment".to_string());
+        }
+        let host = match url.host() {
+            Some(Host::Domain(host)) => host.to_string(),
+            Some(Host::Ipv4(host)) => host.to_string(),
+            Some(Host::Ipv6(host)) => format!("[{host}]"),
+            None => return Err("proxy host is required".to_string()),
+        };
+        let Some(port) = url.port() else {
+            return Err("proxy port is required".to_string());
+        };
+
+        Ok(Self {
+            endpoint: format!("{scheme}://{host}:{port}"),
+        })
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 }
 
@@ -2012,5 +2073,40 @@ mod feedback_survey_tests {
 
         let state: FeedbackSurveyState = toml::from_str(raw).unwrap();
         assert!(state.client_id.is_none());
+    }
+}
+
+#[cfg(test)]
+mod custom_proxy_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_a_bare_proxy_endpoint_to_http() {
+        let proxy = CustomProxyConfig::parse("127.0.0.1:7891").unwrap();
+        assert_eq!(proxy.endpoint(), "http://127.0.0.1:7891");
+    }
+
+    #[test]
+    fn preserves_supported_proxy_protocols() {
+        let proxy = CustomProxyConfig::parse("socks5h://[::1]:7891").unwrap();
+        assert_eq!(proxy.endpoint(), "socks5h://[::1]:7891");
+    }
+
+    #[test]
+    fn rejects_proxy_credentials_and_url_suffixes() {
+        for value in [
+            "http://user:password@127.0.0.1:7891",
+            "http://127.0.0.1:7891/path",
+            "http://127.0.0.1:7891?query=value",
+            "ftp://127.0.0.1:7891",
+        ] {
+            assert!(CustomProxyConfig::parse(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn disabled_proxy_does_not_require_an_endpoint() {
+        let preferences = StaticPreferences::default();
+        assert_eq!(CustomProxyConfig::from_preferences(&preferences), Ok(None));
     }
 }

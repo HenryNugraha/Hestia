@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
-use anyhow::{Context, Result, anyhow};
-use once_cell::sync::Lazy;
+use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
@@ -420,11 +419,11 @@ pub fn character_super_category_id_for_hestia(game_id: &str) -> Option<u64> {
 }
 
 pub fn fetch_browse_page(
+    client: &Client,
     game_id: u64,
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let client = client()?;
     let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
     {
         let mut query = url.query_pairs_mut();
@@ -546,12 +545,12 @@ pub async fn fetch_character_browse_page_async(
 }
 
 pub fn fetch_search_page(
+    client: &Client,
     game_id: u64,
     query: &str,
     page: usize,
     sort: crate::model::SearchSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let client = client()?;
     let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
     let order = match sort {
         crate::model::SearchSort::BestMatch => "best_match",
@@ -616,8 +615,7 @@ pub async fn fetch_search_page_async(
         .context("failed to parse GameBanana search results")
 }
 
-pub fn fetch_profile(mod_id: u64) -> Result<ProfileResponse> {
-    let client = client()?;
+pub fn fetch_profile(client: &Client, mod_id: u64) -> Result<ProfileResponse> {
     let url = format!("https://gamebanana.com/apiv11/Mod/{mod_id}/ProfilePage");
     client
         .get(url)
@@ -710,19 +708,6 @@ pub fn sanitize_inline(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn client() -> Result<&'static Client> {
-    static CLIENT: Lazy<Option<Client>> = Lazy::new(|| {
-        Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(30))
-            .build()
-            .ok()
-    });
-    CLIENT
-        .as_ref()
-        .ok_or_else(|| anyhow!("failed to initialize shared gamebanana client"))
 }
 
 pub fn browse_page_cache_key(game_id: &str, page: usize, sort: crate::model::BrowseSort) -> String {

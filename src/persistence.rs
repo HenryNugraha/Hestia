@@ -1228,6 +1228,25 @@ mod tests {
     }
 
     #[test]
+    fn custom_proxy_preferences_default_disabled_and_roundtrip() {
+        let old_config: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
+        assert!(!old_config.static_prefs.use_custom_proxy);
+        assert!(old_config.static_prefs.custom_proxy_url.is_empty());
+
+        let mut state = AppState::default();
+        state.static_prefs.use_custom_proxy = true;
+        state.static_prefs.custom_proxy_url = "socks5h://127.0.0.1:7891".to_string();
+        let raw = toml::to_string(&AppPreferences::from(&state)).unwrap();
+        let saved: AppPreferences = toml::from_str(&raw).unwrap();
+
+        assert!(saved.static_prefs.use_custom_proxy);
+        assert_eq!(
+            saved.static_prefs.custom_proxy_url,
+            "socks5h://127.0.0.1:7891"
+        );
+    }
+
+    #[test]
     fn persistent_paths_prefer_existing_fallback_before_new_portable_files() {
         let temp = tempfile::tempdir().unwrap();
         let install_dir = temp.path().join("install");

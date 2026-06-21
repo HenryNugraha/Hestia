@@ -4,6 +4,12 @@ fn spawn_install_workers(
     mut rx: WorkerRx<InstallRequest>,
     tx: WorkerTx<InstallEvent>,
 ) {
+    let blocking_http_client = runtime_services
+        .blocking_client_builder()
+        .user_agent(gamebanana::USER_AGENT)
+        .timeout(Duration::from_secs(60))
+        .build()
+        .expect("blocking HTTP client configuration must be valid");
     let prepared_cache: Arc<std::sync::Mutex<HashMap<u64, PreparedImport>>> =
         Arc::new(std::sync::Mutex::new(HashMap::new()));
     let cancel_flags: Arc<std::sync::Mutex<HashMap<u64, Arc<AtomicBool>>>> =
@@ -18,6 +24,7 @@ fn spawn_install_workers(
         let cancel_flags = Arc::clone(&cancel_flags);
         let portable = portable.clone();
         let handle = runtime_services.handle();
+        let blocking_http_client = blocking_http_client.clone();
         runtime_services.spawn(async move {
             while let Some(request) = worker_rx.recv().await {
                 match request {
@@ -205,6 +212,7 @@ fn spawn_install_workers(
                     } => {
                         let profile_for_work = profile.clone();
                         let portable = portable.clone();
+                        let blocking_http_client = blocking_http_client.clone();
                         let result = handle
                             .spawn_blocking(move || -> Result<Vec<String>> {
                                 let snapshot = profile_to_snapshot(&profile_for_work);
@@ -233,12 +241,11 @@ fn spawn_install_workers(
                                         let _ = fs::remove_file(entry.path());
                                     }
                                 }
-                                let client = shared_blocking_http_client()?;
                                 persist_source_images_bg(
                                     &portable,
                                     &mod_root_path,
                                     &profile_for_work,
-                                    &client,
+                                    &blocking_http_client,
                                 )
                             })
                             .await;

@@ -591,6 +591,16 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tampilkan gambar ditutupi sensor", // SettingsAdvancedContentRestrictionShowImagesCensored
     "Tampilkan semuanya", // SettingsAdvancedContentRestrictionShowUnrestricted
 
+    // Window: Settings > Advanced > Proxy
+    "Proksi", // SettingsAdvancedProxySection
+    "Alamat proksi:", // SettingsAdvancedProxyAddress
+    "Protokol opsional; default menggunakan HTTP. Gunakan socks5h:// untuk DNS melalui proksi SOCKS5.", // SettingsAdvancedProxyHelp
+    "Proksi dengan autentikasi belum didukung.", // SettingsAdvancedProxyCredentialsUnsupported
+    "Masukkan alamat proksi yang valid.", // SettingsAdvancedProxyAddressInvalid
+    "Mulai Ulang Hestia", // SettingsAdvancedProxyRestartHestia
+    "untuk menerapkan", // SettingsAdvancedProxyRestartToApply
+    "Selesaikan tugas aktif sebelum memulai ulang Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+
     // Window: Settings > Advanced > Cache and Archive
     "Cache dan Arsip", // SettingsAdvancedCacheArchiveSection
     "Ukuran cache:", // SettingsAdvancedCacheArchiveCacheSize

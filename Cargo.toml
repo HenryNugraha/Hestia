@@ -51,7 +51,7 @@ walkdir = "2.5"
 lucide-icons = "1.19.0"
 zip = "8.6"
 raw-window-handle = "0.6"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "socks", "stream"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "fs", "time", "io-util"] }
 rayon = "1.12"
 memmap2 = "0.9"
