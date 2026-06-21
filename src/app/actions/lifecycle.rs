@@ -1,3 +1,72 @@
+const PROXY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn validate_proxy_manifest(proxy: &Option<CustomProxyConfig>) -> Result<()> {
+    let client = RuntimeServices::http_client_for(proxy)?;
+    RuntimeServices::async_client_builder_for(proxy)
+        .timeout(PROXY_PROBE_TIMEOUT)
+        .build()
+        .map_err(|err| anyhow!("failed to create async proxy client: {err}"))?;
+    tokio::time::timeout(PROXY_PROBE_TIMEOUT, fetch_app_update_manifest(&client))
+        .await
+        .map_err(|_| anyhow!("proxy validation timed out"))??;
+    Ok(())
+}
+
+async fn validate_blocking_proxy_client(proxy: &Option<CustomProxyConfig>) -> Result<()> {
+    let proxy = proxy.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30));
+        let builder = match &proxy {
+            Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
+            None => builder,
+        };
+        let _client = builder
+            .build()
+            .map_err(|err| anyhow!("failed to create blocking proxy client: {err}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| anyhow!("blocking proxy validation task failed: {err}"))?
+}
+
+fn proxy_socket_address(proxy: &CustomProxyConfig) -> Option<String> {
+    let url = url::Url::parse(proxy.endpoint()).ok()?;
+    let host = url.host_str()?;
+    let port = url.port()?;
+    Some(if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    })
+}
+
+async fn probe_proxy_ports(candidates: &[Option<CustomProxyConfig>]) -> HashSet<String> {
+    let mut addresses = HashSet::new();
+    let mut probes = futures_util::stream::FuturesUnordered::new();
+    for address in candidates.iter().flatten().filter_map(proxy_socket_address) {
+        if !addresses.insert(address.clone()) {
+            continue;
+        }
+        probes.push(async move {
+            let open = tokio::time::timeout(
+                PROXY_PROBE_TIMEOUT,
+                tokio::net::TcpStream::connect(&address),
+            )
+            .await
+            .is_ok_and(|result| result.is_ok());
+            (address, open)
+        });
+    }
+
+    let mut open = HashSet::new();
+    while let Some((endpoint, is_open)) = probes.next().await {
+        if is_open {
+            open.insert(endpoint);
+        }
+    }
+    open
+}
+
 impl HestiaApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -67,6 +136,8 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<BrowseDownloadEvent>();
         let (app_update_event_tx, app_update_event_rx) =
             tokio_mpsc::unbounded_channel::<AppUpdateEvent>();
+        let (proxy_apply_tx, proxy_apply_rx) =
+            tokio_mpsc::unbounded_channel::<ProxyApplyEvent>();
         let (feedback_survey_submit_tx, feedback_survey_worker_rx) =
             tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitRequest>();
         let (feedback_survey_worker_tx, feedback_survey_submit_rx) =
@@ -80,20 +151,9 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<TranslationRequest>();
         let (translation_event_tx, translation_event_rx) =
             tokio_mpsc::unbounded_channel::<TranslationEvent>();
-        let translation_client = reqwest_middleware::ClientBuilder::new(
-            runtime_services
-                .async_client_builder()
-                .build()
-                .expect("translation HTTP client configuration must be valid"),
-        )
-            .with(RetryTransientMiddleware::new_with_policy(
-                ExponentialBackoff::builder().build_with_max_retries(3),
-            ))
-            .build();
         spawn_translation_worker(
             &runtime_services,
             &portable,
-            translation_client,
             translation_request_rx,
             translation_event_tx,
         );
@@ -221,6 +281,11 @@ impl HestiaApp {
             proxy_url_draft,
             proxy_url_validation_error: None,
             applied_custom_proxy,
+            proxy_apply_inflight: false,
+            proxy_apply_locks_input: false,
+            proxy_apply_silent_success: false,
+            proxy_apply_tx,
+            proxy_apply_rx,
             mod_detail_open: false,
             browse_detail_open: false,
             settings_tab: SettingsTab::General,
@@ -257,6 +322,9 @@ impl HestiaApp {
             feedback_survey_message: String::new(),
             feedback_survey_privacy_expanded: false,
             feedback_survey_submitting: false,
+            feedback_survey_cancellation: None,
+            feedback_survey_active_request: None,
+            pending_proxy_survey_resume: None,
             feedback_survey_submit_tx,
             feedback_survey_submit_rx,
             log_scroll_to_bottom,
@@ -325,6 +393,7 @@ impl HestiaApp {
             app_update_event_tx,
             app_update_event_rx,
             app_update_download_inflight: None,
+            pending_proxy_app_update_resume: None,
             app_update_manifest: None,
             app_update_verified_path: None,
             app_update_task_id: None,
@@ -343,12 +412,14 @@ impl HestiaApp {
             texture_evictions_per_minute: 0,
             browse_download_queue: VecDeque::new(),
             browse_download_inflight: HashMap::new(),
+            proxy_requeue_browse_downloads: HashSet::new(),
             pending_browse_install_safety: HashMap::new(),
             pending_browse_install_meta: HashMap::new(),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,
             browse_page_generation: 0,
             browse_detail_generation: 0,
+            browse_detail_request_nonces: HashMap::new(),
             image_generation,
             translation_request_tx,
             translation_event_rx,
@@ -361,6 +432,8 @@ impl HestiaApp {
             update_check_tx,
             update_check_rx,
             update_check_inflight: false,
+            update_check_generation: 0,
+            update_check_active_items: Vec::new(),
             pending_update_check_game: None,
             pending_update_check_mods: HashSet::new(),
             refresh_request_tx,
@@ -383,6 +456,9 @@ impl HestiaApp {
             window_was_maximized,
             selection_empty_at: None,
             startup_scan_loading: true,
+            startup_launch_pending: true,
+            startup_selected_game: selected_game,
+            startup_path_targets_pending: startup_path_targets,
             startup_scan_tx,
             startup_scan_rx,
             startup_path_scan,
@@ -398,16 +474,29 @@ impl HestiaApp {
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
-        app.retry_pending_feedback_survey_on_launch();
-        app.set_selected_game(selected_game, &cc.egui_ctx);
-        app.ensure_selected_game_enabled(&cc.egui_ctx);
-        if startup_path_targets.is_empty() {
-            app.dispatch_startup_mod_scan();
-        } else {
-            app.startup_scan_loading = false;
-            app.dispatch_startup_path_scan(startup_path_targets);
+        if app.state.static_prefs.use_custom_proxy
+            && !app.state.static_prefs.custom_proxy_url.trim().is_empty()
+        {
+            app.request_startup_custom_proxy_check();
         }
         app
+    }
+
+    fn complete_startup_launch(&mut self, ctx: &egui::Context) {
+        if !self.startup_launch_pending || self.proxy_apply_inflight {
+            return;
+        }
+        self.startup_launch_pending = false;
+        self.retry_pending_feedback_survey_on_launch();
+        self.set_selected_game(self.startup_selected_game, ctx);
+        self.ensure_selected_game_enabled(ctx);
+        let startup_path_targets = std::mem::take(&mut self.startup_path_targets_pending);
+        if startup_path_targets.is_empty() {
+            self.dispatch_startup_mod_scan();
+        } else {
+            self.startup_scan_loading = false;
+            self.dispatch_startup_path_scan(startup_path_targets);
+        }
     }
 
     fn save_state(&mut self) {
@@ -419,21 +508,249 @@ impl HestiaApp {
         }
     }
 
-    fn restart_to_apply_custom_proxy(&mut self) {
-        if self.has_active_mod_tasks() {
+    fn request_custom_proxy_apply(&mut self) {
+        if self.proxy_apply_inflight {
             return;
         }
+        if !self.state.static_prefs.use_custom_proxy {
+            self.apply_direct_networking();
+            return;
+        }
+        let mut has_saved_proxy = false;
+        let proxy_candidates = CustomProxyConfig::parse_candidates(&self.state.static_prefs.custom_proxy_url).map(
+            |mut candidates| {
+                if let Ok(saved) = CustomProxyConfig::parse(
+                    &self.state.static_prefs.custom_proxy_resolved_url,
+                ) {
+                    has_saved_proxy = true;
+                    candidates.retain(|candidate| candidate != &saved);
+                    candidates.insert(0, saved);
+                }
+                candidates.into_iter().map(Some).collect::<Vec<_>>()
+            },
+        );
+        let proxy_candidates = match proxy_candidates {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                self.proxy_url_validation_error = Some(error);
+                return;
+            }
+        };
+        self.proxy_apply_locks_input = true;
+        self.proxy_apply_inflight = true;
+        let tx = self.proxy_apply_tx.clone();
+        self.runtime_services.spawn(async move {
+            let result = async {
+                let mut candidates = proxy_candidates;
+
+                if has_saved_proxy {
+                    let saved = candidates.remove(0);
+                    match validate_proxy_manifest(&saved).await {
+                        Ok(()) => {
+                            validate_blocking_proxy_client(&saved).await?;
+                            return Ok(saved);
+                        }
+                        Err(_) => {}
+                    }
+                }
+
+                if candidates.len() <= 1 {
+                    let proxy = candidates.pop().expect("proxy candidate must exist");
+                    validate_proxy_manifest(&proxy).await?;
+                    validate_blocking_proxy_client(&proxy).await?;
+                    return Ok(proxy);
+                }
+
+                let open_endpoints = probe_proxy_ports(&candidates).await;
+                let candidates: Vec<_> = candidates
+                    .into_iter()
+                    .filter(|proxy| {
+                        proxy.as_ref().and_then(proxy_socket_address).is_some_and(|address| {
+                            open_endpoints.contains(&address)
+                        })
+                    })
+                    .collect();
+                if candidates.is_empty() {
+                    bail!("none of the configured proxy ports accepted a TCP connection");
+                }
+
+                let mut validations = futures_util::stream::FuturesUnordered::new();
+                for proxy in &candidates {
+                    let proxy = proxy.clone();
+                    validations.push(async move {
+                        validate_proxy_manifest(&proxy).await.map(|_| proxy)
+                    });
+                }
+                let mut validated = HashSet::new();
+                while let Some(result) = validations.next().await {
+                    if let Ok(Some(proxy)) = result {
+                        validated.insert(proxy.endpoint().to_string());
+                    }
+                }
+                let Some(proxy) = candidates.into_iter().find(|proxy| {
+                    proxy
+                        .as_ref()
+                        .is_some_and(|proxy| validated.contains(proxy.endpoint()))
+                }) else {
+                    bail!("none of the reachable proxy ports passed manifest validation");
+                };
+                validate_blocking_proxy_client(&proxy).await?;
+                Ok(proxy)
+            }
+            .await;
+            let event = match result {
+                Ok(proxy) => ProxyApplyEvent::Validated { proxy },
+                Err(err) => ProxyApplyEvent::Failed { error: format!("{err:#}") },
+            };
+            let _ = tx.send(event);
+        });
+    }
+
+    fn apply_direct_networking(&mut self) {
+        if let Err(err) = self.runtime_services.replace_custom_proxy(None) {
+            self.report_error_message(
+                format!("failed to disable proxy: {err:#}"),
+                Some(self.text().proxy_connection_failed()),
+            );
+            return;
+        }
+        self.applied_custom_proxy = None;
+        self.state.static_prefs.custom_proxy_resolved_url.clear();
         self.save_state();
-        match std::env::current_exe().and_then(|exe| {
-            std::process::Command::new(exe)
-                .arg("--after-proxy-restart")
-                .spawn()
-        }) {
-            Ok(_) => std::process::exit(0),
-            Err(err) => self.report_error_message(
-                format!("failed to restart Hestia to apply proxy settings: {err}"),
-                Some(self.text().could_not_save_settings()),
-            ),
+        self.restart_network_work_for_proxy_change();
+        self.set_message_ok(self.text().proxy_disabled());
+    }
+
+    fn request_startup_custom_proxy_check(&mut self) {
+        if CustomProxyConfig::parse_candidates(&self.state.static_prefs.custom_proxy_url).is_err() {
+            self.disable_proxy_after_startup_check_failure("saved proxy address is invalid");
+            return;
+        }
+        self.proxy_apply_silent_success = true;
+        self.request_custom_proxy_apply();
+    }
+
+    fn disable_proxy_after_startup_check_failure(&mut self, detail: impl Into<String>) {
+        self.state.static_prefs.use_custom_proxy = false;
+        self.state.static_prefs.custom_proxy_resolved_url.clear();
+        self.runtime_services
+            .replace_custom_proxy(None)
+            .expect("direct HTTP client must be constructible");
+        self.applied_custom_proxy = None;
+        self.settings_open = true;
+        self.settings_tab = SettingsTab::Advanced;
+        self.save_state();
+        self.report_error_message(detail, Some(self.text().proxy_connection_failed()));
+    }
+
+    fn consume_proxy_apply_events(&mut self) {
+        while let Ok(event) = self.proxy_apply_rx.try_recv() {
+            self.proxy_apply_inflight = false;
+            self.proxy_apply_locks_input = false;
+            let silent_success = std::mem::take(&mut self.proxy_apply_silent_success);
+            match event {
+                ProxyApplyEvent::Validated { proxy } => {
+                    if let Err(err) = self.runtime_services.replace_custom_proxy(proxy.clone()) {
+                        self.report_error_message(
+                            format!("failed to activate proxy: {err:#}"),
+                            Some(self.text().proxy_connection_failed()),
+                        );
+                        continue;
+                    }
+                    self.applied_custom_proxy = proxy;
+                    self.state.static_prefs.custom_proxy_resolved_url = self
+                        .applied_custom_proxy
+                        .as_ref()
+                        .map(|proxy| proxy.endpoint().to_string())
+                        .unwrap_or_default();
+                    self.save_state();
+                    self.restart_network_work_for_proxy_change();
+                    if silent_success {
+                        continue;
+                    }
+                    if self.applied_custom_proxy.is_some() {
+                        self.set_message_ok(self.text().proxy_enabled());
+                    } else {
+                        self.set_message_ok(self.text().proxy_disabled());
+                    }
+                }
+                ProxyApplyEvent::Failed { error } => {
+                    if silent_success {
+                        self.disable_proxy_after_startup_check_failure(format!(
+                            "proxy startup check failed: {error}"
+                        ));
+                        continue;
+                    }
+                    // The visible switch must describe the still-active client after a failed
+                    // candidate probe. Keep the draft text so the user can correct it.
+                    self.state.static_prefs.use_custom_proxy = self.applied_custom_proxy.is_some();
+                    self.report_error_message(
+                        format!("proxy validation failed: {error}"),
+                        Some(self.text().proxy_connection_failed()),
+                    );
+                }
+            }
+        }
+    }
+
+    fn restart_network_work_for_proxy_change(&mut self) {
+        // Never touch extraction, installation, archive moves, or scans. Only the requests
+        // that own network sockets are cancelled, and resumable transfers retain their partials.
+        if let Some(inflight) = &self.app_update_download_inflight {
+            self.pending_proxy_app_update_resume = Some(inflight.manifest.clone());
+            inflight.cancel.store(true, Ordering::Relaxed);
+        }
+
+        for task_id in self.browse_download_inflight.keys().copied().collect::<Vec<_>>() {
+            self.proxy_requeue_browse_downloads.insert(task_id);
+            if let Some(inflight) = self.browse_download_inflight.get(&task_id) {
+                inflight.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let image_requests: Vec<_> = self
+            .browse_image_inflight
+            .drain()
+            .map(|(_, inflight)| {
+                inflight.cancel.store(true, Ordering::Relaxed);
+                let mut request = inflight.request;
+                request.cancel = Arc::new(AtomicBool::new(false));
+                request
+            })
+            .collect();
+        self.browse_image_queue.extend(image_requests);
+        for request in &mut self.browse_image_queue {
+            if request.cancel.load(Ordering::Relaxed) {
+                request.cancel = Arc::new(AtomicBool::new(false));
+            }
+        }
+
+        self.browse_request_tx.send(BrowseRequest::CancelPage).ok();
+        self.browse_page_generation = self.browse_page_generation.wrapping_add(1);
+        if self.browse_state.loading_page || self.current_view == ViewMode::Browse {
+            let page = self.browse_state.next_page.saturating_sub(1).max(1);
+            self.request_browse_page_with_mode(page, true);
+        }
+        if self.browse_state.character_categories_loading {
+            self.request_browse_character_categories(true);
+        }
+        if let Some(mod_id) = self
+            .browse_state
+            .selected_mod_id
+            .filter(|mod_id| self.browse_detail_open && self.browse_state.loading_details.contains(mod_id))
+        {
+            self.browse_state.loading_details.remove(&mod_id);
+            self.request_browse_detail(mod_id);
+        }
+
+        self.restart_active_translations_for_proxy_change();
+        self.restart_active_update_check_for_proxy_change();
+        if let (Some(cancel), Some(request)) = (
+            self.feedback_survey_cancellation.as_ref(),
+            self.feedback_survey_active_request.clone(),
+        ) {
+            self.pending_proxy_survey_resume = Some(request);
+            cancel.store(true, Ordering::Relaxed);
         }
     }
 
@@ -2278,6 +2595,7 @@ impl HestiaApp {
             || !self.browse_image_result_rx.is_empty()
             || !self.browse_download_event_rx.is_empty()
             || !self.app_update_event_rx.is_empty()
+            || !self.proxy_apply_rx.is_empty()
             || !self.feedback_survey_submit_rx.is_empty()
             || !self.update_check_rx.is_empty()
             || !self.startup_path_scan_rx.is_empty()

@@ -485,9 +485,23 @@ impl HestiaApp {
         if items.is_empty() {
             return;
         }
-        if self.update_check_tx.send(UpdateCheckRequest { items }).is_ok() {
+        self.update_check_active_items = items.clone();
+        if self.update_check_tx.send(UpdateCheckRequest {
+            generation: self.update_check_generation,
+            items,
+        }).is_ok() {
             self.update_check_inflight = true;
         }
+    }
+
+    fn restart_active_update_check_for_proxy_change(&mut self) {
+        if !self.update_check_inflight || self.update_check_active_items.is_empty() {
+            return;
+        }
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
+        let items = self.update_check_active_items.clone();
+        self.update_check_inflight = false;
+        self.dispatch_update_check_items(items);
     }
 
     fn queue_update_check_for_mod(&mut self, mod_entry_id: &str) {
@@ -619,7 +633,11 @@ impl HestiaApp {
 
     fn consume_update_check_results(&mut self) {
         while let Ok(result) = self.update_check_rx.try_recv() {
+            if result.generation != self.update_check_generation {
+                continue;
+            }
             self.update_check_inflight = false;
+            self.update_check_active_items.clear();
             let mut warn_lines: Vec<String> = Vec::new();
             let mut auto_update_ids: Vec<String> = Vec::new();
             let active_update_tasks: HashSet<(String, String)> = self

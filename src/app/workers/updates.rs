@@ -4,10 +4,12 @@ fn spawn_update_check_worker(
     mut rx: WorkerRx<UpdateCheckRequest>,
     tx: WorkerTx<UpdateCheckResult>,
 ) {
-    let client = runtime_services.http_client.clone();
+    let runtime_services = runtime_services.clone();
     let json_limiter = Arc::clone(&runtime_services.json_limiter);
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
+            let client = runtime_services.http_client();
+            let generation = request.generation;
             let mut grouped: HashMap<u64, Vec<(usize, String, Option<i64>, FileSetRecipe)>> =
                 HashMap::with_capacity(request.items.len());
             for (idx, (local_mod_id, _game_id, gb_id, local_sync_ts, file_set)) in
@@ -96,7 +98,7 @@ fn spawn_update_check_worker(
             let mut ordered: Vec<_> = stream.collect::<Vec<_>>().await.into_iter().flatten().collect();
             ordered.sort_by_key(|(idx, _)| *idx);
             let states = ordered.into_iter().map(|(_, state)| state).collect();
-            let _ = tx.send(UpdateCheckResult { states });
+            let _ = tx.send(UpdateCheckResult { generation, states });
         }
     });
 }

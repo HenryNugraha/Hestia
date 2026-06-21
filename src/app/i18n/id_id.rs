@@ -594,12 +594,13 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > Advanced > Proxy
     "Proksi", // SettingsAdvancedProxySection
     "Alamat proksi:", // SettingsAdvancedProxyAddress
-    "Protokol opsional; default menggunakan HTTP. Gunakan socks5h:// untuk DNS melalui proksi SOCKS5.", // SettingsAdvancedProxyHelp
+    "Protokol opsional; alamat tanpa protokol dideteksi otomatis. Gunakan socks5h:// atau socks4a:// untuk DNS melalui proksi.", // SettingsAdvancedProxyHelp
     "Proksi dengan autentikasi belum didukung.", // SettingsAdvancedProxyCredentialsUnsupported
     "Masukkan alamat proksi yang valid.", // SettingsAdvancedProxyAddressInvalid
-    "Mulai Ulang Hestia", // SettingsAdvancedProxyRestartHestia
-    "untuk menerapkan", // SettingsAdvancedProxyRestartToApply
-    "Selesaikan tugas aktif sebelum memulai ulang Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+    "Proksi putus", // SettingsAdvancedProxyDisabled
+    "Proksi terhubung", // SettingsAdvancedProxyEnabled
+    "Tidak dapat terhubung ke proksi", // SettingsAdvancedProxyConnectionFailed
+    "Saat aplikasi dibuka, Hestia memverifikasi \nkoneksi proksi sebelum memulai operasi. \nJika gagal, Hestia melanjutkan tanpa proksi.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
     "Cache dan Arsip", // SettingsAdvancedCacheArchiveSection

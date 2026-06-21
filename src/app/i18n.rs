@@ -585,9 +585,10 @@ enum TextKey {
     SettingsAdvancedProxyHelp,
     SettingsAdvancedProxyCredentialsUnsupported,
     SettingsAdvancedProxyAddressInvalid,
-    SettingsAdvancedProxyRestartHestia,
-    SettingsAdvancedProxyRestartToApply,
-    SettingsAdvancedProxyFinishTasksToRestart,
+    SettingsAdvancedProxyDisabled,
+    SettingsAdvancedProxyEnabled,
+    SettingsAdvancedProxyConnectionFailed,
+    SettingsAdvancedProxyStartupBehavior,
 
     SettingsAdvancedCacheArchiveSection,
     SettingsAdvancedCacheArchiveCacheSize,
@@ -2908,16 +2909,20 @@ impl TextCatalog {
         self.get(TextKey::SettingsAdvancedProxyAddressInvalid)
     }
 
-    fn proxy_restart_hestia(self) -> &'static str {
-        self.get(TextKey::SettingsAdvancedProxyRestartHestia)
+    fn proxy_disabled(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyDisabled)
     }
 
-    fn proxy_restart_to_apply(self) -> &'static str {
-        self.get(TextKey::SettingsAdvancedProxyRestartToApply)
+    fn proxy_enabled(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyEnabled)
     }
 
-    fn proxy_finish_tasks_to_restart(self) -> &'static str {
-        self.get(TextKey::SettingsAdvancedProxyFinishTasksToRestart)
+    fn proxy_connection_failed(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyConnectionFailed)
+    }
+
+    fn proxy_startup_behavior(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedProxyStartupBehavior)
     }
 
     fn cache_and_archive(self) -> &'static str {

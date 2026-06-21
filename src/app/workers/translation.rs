@@ -94,17 +94,18 @@ struct CachedUnlinkedTranslation {
 pub(crate) fn spawn_translation_worker(
     runtime_services: &RuntimeServices,
     _portable: &PortablePaths,
-    client: ClientWithMiddleware,
     mut rx: WorkerRx<TranslationRequest>,
     tx: WorkerTx<TranslationEvent>,
 ) {
-    let direct_client = runtime_services
-        .async_client_builder()
-        .timeout(Duration::from_secs(120))
-        .build()
-        .expect("translation HTTP client configuration must be valid");
-    runtime_services.spawn(async move {
+    let runtime_services = runtime_services.clone();
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
+            let client = runtime_services.http_client();
+            let direct_client = runtime_services
+                .async_client_builder()
+                .timeout(Duration::from_secs(120))
+                .build()
+                .expect("translation HTTP client configuration must be valid");
             let event = match request {
                 TranslationRequest::GameBanana {
                     request_id,

@@ -27,12 +27,16 @@ impl HestiaApp {
         self.feedback_survey_privacy_expanded = false;
         self.save_state();
 
-        let _ = self.feedback_survey_submit_tx.send(FeedbackSurveySubmitRequest {
+        let request = FeedbackSurveySubmitRequest {
             version: survey.version.to_string(),
             payload_json,
             pending_path,
             discard_on_failure: false,
-        });
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        self.feedback_survey_cancellation = Some(Arc::clone(&request.cancel));
+        self.feedback_survey_active_request = Some(request.clone());
+        let _ = self.feedback_survey_submit_tx.send(request);
     }
 
     fn retry_pending_feedback_survey_on_launch(&mut self) {
@@ -74,12 +78,16 @@ impl HestiaApp {
         self.state.mark_feedback_survey_submit_pending(survey);
         self.save_state();
         self.feedback_survey_submitting = true;
-        let _ = self.feedback_survey_submit_tx.send(FeedbackSurveySubmitRequest {
+        let request = FeedbackSurveySubmitRequest {
             version: survey.version.to_string(),
             payload_json,
             pending_path,
             discard_on_failure: true,
-        });
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        self.feedback_survey_cancellation = Some(Arc::clone(&request.cancel));
+        self.feedback_survey_active_request = Some(request.clone());
+        let _ = self.feedback_survey_submit_tx.send(request);
         let text = self.text();
         self.log_action(
             text.survey_action(),
@@ -90,7 +98,18 @@ impl HestiaApp {
     fn consume_feedback_survey_events(&mut self) {
         while let Ok(event) = self.feedback_survey_submit_rx.try_recv() {
             self.feedback_survey_submitting = false;
+            self.feedback_survey_cancellation = None;
+            self.feedback_survey_active_request = None;
             match event {
+                FeedbackSurveySubmitEvent::Canceled => {
+                    if let Some(mut request) = self.pending_proxy_survey_resume.take() {
+                        request.cancel = Arc::new(AtomicBool::new(false));
+                        self.feedback_survey_submitting = true;
+                        self.feedback_survey_cancellation = Some(Arc::clone(&request.cancel));
+                        self.feedback_survey_active_request = Some(request.clone());
+                        let _ = self.feedback_survey_submit_tx.send(request);
+                    }
+                }
                 FeedbackSurveySubmitEvent::Submitted {
                     version,
                     pending_path,

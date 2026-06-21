@@ -32,8 +32,8 @@ impl ThumbnailByteCache {
 #[derive(Clone)]
 pub struct RuntimeServices {
     runtime: Arc<tokio::runtime::Runtime>,
-    http_client: ClientWithMiddleware,
-    custom_proxy: Option<CustomProxyConfig>,
+    http_client: Arc<RwLock<ClientWithMiddleware>>,
+    custom_proxy: Arc<RwLock<Option<CustomProxyConfig>>>,
     full_image_limiter: Arc<Semaphore>,
     thumb_image_limiter: Arc<Semaphore>,
     json_limiter: Arc<Semaphore>,
@@ -42,14 +42,12 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
-    pub fn new(custom_proxy: Option<CustomProxyConfig>) -> Result<Self> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| anyhow!("failed to create tokio runtime: {err}"))?;
+    pub(crate) fn http_client_for(
+        custom_proxy: &Option<CustomProxyConfig>,
+    ) -> Result<ClientWithMiddleware> {
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-        let http_client = MiddlewareClientBuilder::new(
-            Self::async_client_builder_for(&custom_proxy)
+        let client = MiddlewareClientBuilder::new(
+            Self::async_client_builder_for(custom_proxy)
                 .user_agent(gamebanana::USER_AGENT)
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -57,10 +55,19 @@ impl RuntimeServices {
         )
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
         .build();
+        Ok(client)
+    }
+
+    pub fn new(custom_proxy: Option<CustomProxyConfig>) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| anyhow!("failed to create tokio runtime: {err}"))?;
+        let http_client = Self::http_client_for(&custom_proxy)?;
         Ok(Self {
             runtime: Arc::new(runtime),
-            http_client,
-            custom_proxy,
+            http_client: Arc::new(RwLock::new(http_client)),
+            custom_proxy: Arc::new(RwLock::new(custom_proxy)),
             full_image_limiter: Arc::new(Semaphore::new(FULL_IMAGE_LIMIT)),
             thumb_image_limiter: Arc::new(Semaphore::new(THUMB_IMAGE_LIMIT)),
             json_limiter: Arc::new(Semaphore::new(JSON_LIMIT)),
@@ -94,21 +101,34 @@ impl RuntimeServices {
     }
 
     pub(crate) fn async_client_builder(&self) -> reqwest::ClientBuilder {
-        Self::async_client_builder_for(&self.custom_proxy)
-    }
-
-    pub(crate) fn blocking_client_builder(&self) -> reqwest::blocking::ClientBuilder {
-        let builder = reqwest::blocking::Client::builder();
-        match &self.custom_proxy {
-            Some(proxy) => builder.proxy(
-                reqwest::Proxy::all(proxy.endpoint())
-                    .expect("custom proxy configuration was validated before startup"),
-            ),
-            None => builder,
-        }
+        let custom_proxy = self.custom_proxy();
+        Self::async_client_builder_for(&custom_proxy)
     }
 
     pub(crate) fn custom_proxy(&self) -> Option<CustomProxyConfig> {
-        self.custom_proxy.clone()
+        self.custom_proxy.read().ok().and_then(|proxy| proxy.clone())
+    }
+
+    pub(crate) fn http_client(&self) -> ClientWithMiddleware {
+        self.http_client
+            .read()
+            .expect("HTTP client lock must not be poisoned")
+            .clone()
+    }
+
+    pub(crate) fn replace_custom_proxy(
+        &self,
+        custom_proxy: Option<CustomProxyConfig>,
+    ) -> Result<()> {
+        let http_client = Self::http_client_for(&custom_proxy)?;
+        *self
+            .http_client
+            .write()
+            .expect("HTTP client lock must not be poisoned") = http_client;
+        *self
+            .custom_proxy
+            .write()
+            .expect("custom proxy lock must not be poisoned") = custom_proxy;
+        Ok(())
     }
 }

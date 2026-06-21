@@ -26,6 +26,7 @@ use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMid
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use rfd::FileDialog;
 use tokio::sync::{Semaphore, mpsc as tokio_mpsc};
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
@@ -93,6 +94,7 @@ impl eframe::App for HestiaApp {
             self.consume_browse_image_results();
             self.consume_browse_download_events();
             self.consume_app_update_events();
+            self.consume_proxy_apply_events();
             self.consume_feedback_survey_events();
             self.consume_update_check_results();
             self.consume_startup_path_scan_events(ctx);
@@ -101,6 +103,7 @@ impl eframe::App for HestiaApp {
             self.consume_install_events();
             self.consume_refresh_events();
         }
+        self.complete_startup_launch(ctx);
         
         // Always run these - they have internal checks or are always needed
         self.update_gif_animations(ctx);

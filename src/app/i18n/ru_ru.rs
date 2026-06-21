@@ -593,12 +593,13 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > Advanced > Proxy
     "Прокси", // SettingsAdvancedProxySection
     "Адрес прокси:", // SettingsAdvancedProxyAddress
-    "Протокол необязателен; по умолчанию HTTP. Используйте socks5h:// для DNS через прокси SOCKS5.", // SettingsAdvancedProxyHelp
+    "Протокол необязателен; адрес без протокола определяется автоматически. Используйте socks5h:// или socks4a:// для DNS через прокси.", // SettingsAdvancedProxyHelp
     "Прокси с аутентификацией не поддерживаются.", // SettingsAdvancedProxyCredentialsUnsupported
     "Введите корректный адрес прокси.", // SettingsAdvancedProxyAddressInvalid
-    "Перезапустить Hestia", // SettingsAdvancedProxyRestartHestia
-    "для применения", // SettingsAdvancedProxyRestartToApply
-    "Завершите активные задачи перед перезапуском Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+    "Прокси отключен", // SettingsAdvancedProxyDisabled
+    "Прокси включен", // SettingsAdvancedProxyEnabled
+    "Не удалось подключиться к прокси", // SettingsAdvancedProxyConnectionFailed
+    "При запуске Hestia проверяет подключение \nк прокси перед началом операций. \nПри ошибке Hestia продолжит работу без прокси.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
     "Кэш и архив", // SettingsAdvancedCacheArchiveSection

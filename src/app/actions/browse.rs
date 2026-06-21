@@ -1,5 +1,3 @@
-use tokio::io::AsyncWriteExt as _;
-
 const BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const BROWSE_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
@@ -506,6 +504,8 @@ impl HestiaApp {
             return;
         }
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
+        self.browse_detail_request_nonces
+            .insert(mod_id, self.browse_request_nonce);
         self.browse_state.loading_details.insert(mod_id);
         let cached_profile_json = if self.browse_state.refresh_page_cache_for_session {
             None
@@ -1031,8 +1031,12 @@ impl HestiaApp {
                     );
                 }
                 BrowseEvent::DetailLoaded {
-                    mod_id, profile, ..
+                    _nonce, mod_id, profile
                 } => {
+                    if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
+                        continue;
+                    }
+                    self.browse_detail_request_nonces.remove(&mod_id);
                     self.browse_state.loading_details.remove(&mod_id);
                     // let html = profile.html_text.as_deref().unwrap_or_default();
                     // // Clean up HTML: Remove detective placeholder and strip attributes from img tags to ensure markdown conversion
@@ -1109,8 +1113,11 @@ impl HestiaApp {
                     }
                 }
                 BrowseEvent::DetailWarning {
-                    mod_id, warning, ..
+                    _nonce, mod_id, warning
                 } => {
+                    if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
+                        continue;
+                    }
                     if self.browse_state.selected_mod_id == Some(mod_id) {
                         self.report_warn(
                             self.text().browse_detail_warning(mod_id, &warning),
@@ -1120,7 +1127,11 @@ impl HestiaApp {
                         self.report_warn(self.text().browse_detail_warning(mod_id, &warning), None);
                     }
                 }
-                BrowseEvent::DetailFailed { mod_id, error, .. } => {
+                BrowseEvent::DetailFailed { _nonce, mod_id, error } => {
+                    if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
+                        continue;
+                    }
+                    self.browse_detail_request_nonces.remove(&mod_id);
                     self.browse_state.loading_details.remove(&mod_id);
                     let mut i = 0;
                     while i < self.browse_state.pending_installs.len() {
@@ -1291,6 +1302,7 @@ impl HestiaApp {
             self.browse_image_inflight.insert(
                 job.texture_key.clone(),
                 BrowseImageInflight {
+                    request: job.clone(),
                     cancel: job.cancel.clone(),
                     cancel_key: job.cancel_key,
                     skip_texture: job.skip_texture,
@@ -1457,7 +1469,7 @@ impl HestiaApp {
                 .clone();
             let tx = self.browse_download_result_tx.clone();
             let portable = self.portable.clone();
-            let client = self.runtime_services.http_client.clone();
+            let client = self.runtime_services.http_client();
             let full_limiter = Arc::clone(&self.runtime_services.full_image_limiter);
             let handle = self.runtime_services.handle();
             self.runtime_services.spawn(async move {
@@ -1588,7 +1600,11 @@ impl HestiaApp {
                     self.browse_download_inflight.remove(&task_id);
                     self.mark_usage_counters_dirty();
                     self.update_task_status(task_id, TaskStatus::Canceled);
-                    self.set_message_ok(self.text().download_canceled(&title));
+                    if self.proxy_requeue_browse_downloads.remove(&task_id) {
+                        let _ = self.retry_browse_download_task(task_id);
+                    } else {
+                        self.set_message_ok(self.text().download_canceled(&title));
+                    }
                 }
             }
         }

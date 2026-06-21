@@ -3263,36 +3263,9 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
-                        let restart_pending = CustomProxyConfig::from_preferences(
-                            &self.state.static_prefs,
-                        )
-                        .ok()
-                        .flatten()
-                            != self.applied_custom_proxy;
-                        let mut restart_clicked = false;
                         ui.horizontal(|ui| {
                             static_label(ui, bold(text.proxy(), Some(16.0)).underline());
-                            if restart_pending && !self.has_active_mod_tasks() {
-                                ui.add_space(8.0);
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                restart_clicked = ui
-                                    .add(
-                                        egui::Label::new(
-                                            RichText::new(text.proxy_restart_hestia())
-                                                .color(Color32::from_rgb(210, 189, 156))
-                                                .underline(),
-                                        )
-                                        .selectable(false)
-                                        .sense(Sense::click()),
-                                    )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked();
-                                static_label(ui, text.proxy_restart_to_apply());
-                            }
                         });
-                        if restart_clicked {
-                            self.restart_to_apply_custom_proxy();
-                        }
                         ui.indent("setting_advanced_proxy", |ui| {
                             static_label(ui, text.proxy_address()).on_hover_text(format!(
                                 "{}\n{}",
@@ -3300,9 +3273,9 @@ impl HestiaApp {
                                 text.proxy_credentials_unsupported(),
                             ));
                             ui.add_space(-4.0);
-                            let (address_response, proxy_toggle_changed) = ui.horizontal(|ui| {
+                            let (address_response, proxy_toggle_changed, proxy_address_submitted) = ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                let address_response = ui.scope(|ui| {
+                                let address_response = ui.add_enabled_ui(!self.proxy_apply_locks_input, |ui| {
                                     let visuals = ui.visuals_mut();
                                     visuals.widgets.inactive.bg_fill =
                                         Color32::from_rgba_unmultiplied(66, 66, 66, 190);
@@ -3326,17 +3299,25 @@ impl HestiaApp {
                                             ),
                                     )
                                 }).inner;
-                                ui.add_space(2.0);
-                                let toggle_changed = toggle_switch_sized_with_style(
-                                    ui,
-                                    &mut self.state.static_prefs.use_custom_proxy,
-                                    Vec2::new(48.0, 24.0),
-                                    8.0,
-                                    Color32::from_rgb(86, 90, 96),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .changed();
-                                (address_response, toggle_changed)
+                                ui.add_space(3.0);
+                                let toggle_changed = ui.add_enabled_ui(!self.proxy_apply_inflight, |ui| {
+                                    toggle_switch_sized_with_style(
+                                        ui,
+                                        &mut self.state.static_prefs.use_custom_proxy,
+                                        Vec2::new(48.0, 24.0),
+                                        8.0,
+                                        Color32::from_rgb(86, 90, 96),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .changed()
+                                }).inner;
+                                if self.proxy_apply_inflight {
+                                    ui.spinner();
+                                    ui.ctx().request_repaint_after(Duration::from_millis(16));
+                                }
+                                let submitted = address_response.lost_focus()
+                                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                                (address_response, toggle_changed, submitted)
                             }).inner;
                             if proxy_toggle_changed {
                                 ui.ctx().request_repaint();
@@ -3345,6 +3326,7 @@ impl HestiaApp {
                                         Ok(_) => {
                                             self.proxy_url_validation_error = None;
                                             should_save = true;
+                                            self.request_custom_proxy_apply();
                                         }
                                         Err(error) => {
                                             self.state.static_prefs.use_custom_proxy = false;
@@ -3354,30 +3336,38 @@ impl HestiaApp {
                                 } else {
                                     self.proxy_url_validation_error = None;
                                     should_save = true;
+                                    self.request_custom_proxy_apply();
                                 }
                             }
                             if address_response.changed() {
                                 ui.ctx().request_repaint();
+                                let was_using_custom_proxy = self.state.static_prefs.use_custom_proxy;
+                                self.state.static_prefs.custom_proxy_url = self.proxy_url_draft.clone();
+                                self.state.static_prefs.custom_proxy_resolved_url.clear();
+                                should_save = true;
+                                if was_using_custom_proxy {
+                                    self.state.static_prefs.use_custom_proxy = false;
+                                    self.request_custom_proxy_apply();
+                                }
                                 match CustomProxyConfig::parse(&self.proxy_url_draft) {
                                     Ok(proxy) => {
                                         let _ = proxy;
-                                        self.state.static_prefs.custom_proxy_url =
-                                            self.proxy_url_draft.clone();
                                         self.proxy_url_validation_error = None;
-                                        should_save = true;
                                     }
                                     Err(error) if self.proxy_url_draft.trim().is_empty() => {
-                                        self.proxy_url_validation_error = if self.state.static_prefs.use_custom_proxy {
-                                            Some(error)
-                                        } else {
-                                            None
-                                        };
-                                        if !self.state.static_prefs.use_custom_proxy
-                                            && !self.state.static_prefs.custom_proxy_url.is_empty()
-                                        {
-                                            self.state.static_prefs.custom_proxy_url.clear();
-                                            should_save = true;
-                                        }
+                                        let _ = error;
+                                        self.proxy_url_validation_error = None;
+                                    }
+                                    Err(error) => self.proxy_url_validation_error = Some(error),
+                                }
+                            }
+                            if proxy_address_submitted && !self.proxy_apply_inflight {
+                                match CustomProxyConfig::parse_candidates(&self.proxy_url_draft) {
+                                    Ok(_) => {
+                                        self.state.static_prefs.use_custom_proxy = true;
+                                        self.proxy_url_validation_error = None;
+                                        should_save = true;
+                                        self.request_custom_proxy_apply();
                                     }
                                     Err(error) => self.proxy_url_validation_error = Some(error),
                                 }
@@ -3389,15 +3379,13 @@ impl HestiaApp {
                                         .color(Color32::from_rgb(211, 93, 93)),
                                 );
                             }
-                            if restart_pending {
-                                if self.has_active_mod_tasks() {
-                                    static_label(
-                                        ui,
-                                        RichText::new(text.proxy_finish_tasks_to_restart())
-                                            .color(Color32::from_gray(150)),
-                                    );
-                                }
-                            }
+                            static_label(
+                                ui,
+                                RichText::new(text.proxy_startup_behavior())
+                                    .color(Color32::from_gray(128))
+                                    .italics()
+                                    .size(12.0),
+                            );
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);

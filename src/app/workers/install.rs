@@ -4,12 +4,7 @@ fn spawn_install_workers(
     mut rx: WorkerRx<InstallRequest>,
     tx: WorkerTx<InstallEvent>,
 ) {
-    let blocking_http_client = runtime_services
-        .blocking_client_builder()
-        .user_agent(gamebanana::USER_AGENT)
-        .timeout(Duration::from_secs(60))
-        .build()
-        .expect("blocking HTTP client configuration must be valid");
+    let runtime_services = runtime_services.clone();
     let prepared_cache: Arc<std::sync::Mutex<HashMap<u64, PreparedImport>>> =
         Arc::new(std::sync::Mutex::new(HashMap::new()));
     let cancel_flags: Arc<std::sync::Mutex<HashMap<u64, Arc<AtomicBool>>>> =
@@ -24,8 +19,8 @@ fn spawn_install_workers(
         let cancel_flags = Arc::clone(&cancel_flags);
         let portable = portable.clone();
         let handle = runtime_services.handle();
-        let blocking_http_client = blocking_http_client.clone();
-        runtime_services.spawn(async move {
+        let runtime_services = runtime_services.clone();
+        runtime_services.clone().spawn(async move {
             while let Some(request) = worker_rx.recv().await {
                 match request {
                     InstallRequest::Inspect {
@@ -212,9 +207,19 @@ fn spawn_install_workers(
                     } => {
                         let profile_for_work = profile.clone();
                         let portable = portable.clone();
-                        let blocking_http_client = blocking_http_client.clone();
+                        let custom_proxy = runtime_services.custom_proxy();
                         let result = handle
                             .spawn_blocking(move || -> Result<Vec<String>> {
+                                let builder = reqwest::blocking::Client::builder()
+                                    .user_agent(gamebanana::USER_AGENT)
+                                    .timeout(Duration::from_secs(60));
+                                let builder = match custom_proxy {
+                                    Some(proxy) => builder.proxy(reqwest::Proxy::all(proxy.endpoint())?),
+                                    None => builder,
+                                };
+                                let blocking_http_client = builder
+                                    .build()
+                                    .context("failed to create blocking image-sync client")?;
                                 let snapshot = profile_to_snapshot(&profile_for_work);
                                 let meta_dir = mod_root_path.join(crate::model::MOD_META_DIR);
                                 fs::create_dir_all(&meta_dir)?;

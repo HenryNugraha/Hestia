@@ -94,6 +94,10 @@ pub struct StaticPreferences {
     pub use_custom_proxy: bool,
     #[serde(default)]
     pub custom_proxy_url: String,
+    /// Internally selected endpoint for a bare proxy address. This never changes the text the
+    /// user entered, but lets the same detected protocol be used after a restart.
+    #[serde(default)]
+    pub custom_proxy_resolved_url: String,
     #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
@@ -137,6 +141,7 @@ impl Default for StaticPreferences {
             always_translate_mod_details: false,
             use_custom_proxy: false,
             custom_proxy_url: String::new(),
+            custom_proxy_resolved_url: String::new(),
             tool_blacklist: HashMap::new(),
         }
     }
@@ -148,26 +153,81 @@ pub struct CustomProxyConfig {
 }
 
 impl CustomProxyConfig {
+    const AUTO_DETECT_PORTS: [u16; 11] = [
+        80, 8080, 8085, 7890, 7891, 3128, 999, 1080, 3129, 5678, 8089,
+    ];
+    const AUTO_DETECT_SCHEMES: [&str; 6] = ["socks5h", "socks5", "socks4a", "socks4", "http", "https"];
     pub fn from_preferences(preferences: &StaticPreferences) -> Result<Option<Self>, String> {
         if !preferences.use_custom_proxy {
             return Ok(None);
         }
-        Self::parse(&preferences.custom_proxy_url).map(Some)
+        if !preferences.custom_proxy_url.contains("://")
+            && !preferences.custom_proxy_resolved_url.trim().is_empty()
+        {
+            Self::parse(&preferences.custom_proxy_resolved_url).map(Some)
+        } else {
+            Self::parse(&preferences.custom_proxy_url).map(Some)
+        }
     }
 
     pub fn parse(value: &str) -> Result<Self, String> {
+        let (host, scheme, port, explicit_scheme) = Self::parse_template(value)?;
+        let scheme = scheme.as_deref().unwrap_or("http");
+        let port = port.unwrap_or_else(|| {
+            if explicit_scheme {
+                Self::default_port_for_scheme(scheme)
+            } else {
+                80
+            }
+        });
+        Ok(Self {
+            endpoint: format!("{scheme}://{host}:{port}"),
+        })
+    }
+
+    pub fn parse_candidates(value: &str) -> Result<Vec<Self>, String> {
+        let (host, scheme, port, _explicit_scheme) = Self::parse_template(value)?;
+        let schemes: Vec<String> = match scheme {
+            Some(scheme) => vec![scheme],
+            None => Self::AUTO_DETECT_SCHEMES
+                .iter()
+                .map(|scheme| (*scheme).to_string())
+                .collect(),
+        };
+        let ports: Vec<u16> = match port {
+            Some(port) => vec![port],
+            None => Self::AUTO_DETECT_PORTS.to_vec(),
+        };
+        let mut candidates = Vec::with_capacity(schemes.len() * ports.len());
+        // Port order is user-visible policy. Within each port, keep the DNS-safe SOCKS
+        // variants ahead of HTTP(S). An explicitly supplied scheme has one entry per port.
+        for port in ports {
+            for scheme in &schemes {
+                candidates.push(Self {
+                    endpoint: format!("{scheme}://{host}:{port}"),
+                });
+            }
+        }
+        Ok(candidates)
+    }
+
+    fn parse_template(value: &str) -> Result<(String, Option<String>, Option<u16>, bool), String> {
         let value = value.trim();
         if value.is_empty() {
             return Err("proxy address is required".to_string());
         }
-        let candidate = if value.contains("://") {
+        if value.contains('\\') {
+            return Err("proxy address must not contain a backslash".to_string());
+        }
+        let explicit_scheme = value.contains("://");
+        let candidate = if explicit_scheme {
             value.to_string()
         } else {
             format!("http://{value}")
         };
         let url = Url::parse(&candidate).map_err(|_| "proxy address is invalid".to_string())?;
         let scheme = url.scheme();
-        if !matches!(scheme, "http" | "https" | "socks5" | "socks5h") {
+        if !matches!(scheme, "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h") {
             return Err("proxy protocol is unsupported".to_string());
         }
         if !url.username().is_empty() || url.password().is_some() {
@@ -182,13 +242,20 @@ impl CustomProxyConfig {
             Some(Host::Ipv6(host)) => format!("[{host}]"),
             None => return Err("proxy host is required".to_string()),
         };
-        let Some(port) = url.port() else {
-            return Err("proxy port is required".to_string());
-        };
+        Ok((
+            host,
+            explicit_scheme.then(|| scheme.to_string()),
+            url.port(),
+            explicit_scheme,
+        ))
+    }
 
-        Ok(Self {
-            endpoint: format!("{scheme}://{host}:{port}"),
-        })
+    fn default_port_for_scheme(scheme: &str) -> u16 {
+        match scheme {
+            "http" => 80,
+            "https" => 443,
+            _ => 1080,
+        }
     }
 
     pub fn endpoint(&self) -> &str {
@@ -2088,8 +2155,41 @@ mod custom_proxy_tests {
 
     #[test]
     fn preserves_supported_proxy_protocols() {
-        let proxy = CustomProxyConfig::parse("socks5h://[::1]:7891").unwrap();
-        assert_eq!(proxy.endpoint(), "socks5h://[::1]:7891");
+        for scheme in ["socks4", "socks4a", "socks5", "socks5h"] {
+            let proxy = CustomProxyConfig::parse(&format!("{scheme}://[::1]:7891")).unwrap();
+            assert_eq!(proxy.endpoint(), format!("{scheme}://[::1]:7891"));
+        }
+    }
+
+    #[test]
+    fn bare_proxy_candidates_follow_the_protocol_priority() {
+        let candidates = CustomProxyConfig::parse_candidates("127.0.0.1:7891").unwrap();
+        let endpoints: Vec<_> = candidates.iter().map(|proxy| proxy.endpoint()).collect();
+        assert_eq!(
+            endpoints,
+            [
+                "socks5h://127.0.0.1:7891",
+                "socks5://127.0.0.1:7891",
+                "socks4a://127.0.0.1:7891",
+                "socks4://127.0.0.1:7891",
+                "http://127.0.0.1:7891",
+                "https://127.0.0.1:7891",
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_proxy_port_scans_the_configured_port_order() {
+        let candidates = CustomProxyConfig::parse_candidates("proxy.example").unwrap();
+        assert_eq!(candidates.len(), 66);
+        assert_eq!(candidates[0].endpoint(), "socks5h://proxy.example:80");
+        assert_eq!(candidates[5].endpoint(), "https://proxy.example:80");
+        assert_eq!(candidates[6].endpoint(), "socks5h://proxy.example:8080");
+
+        let socks5 = CustomProxyConfig::parse_candidates("socks5://proxy.example").unwrap();
+        assert_eq!(socks5.len(), 11);
+        assert_eq!(socks5[0].endpoint(), "socks5://proxy.example:80");
+        assert_eq!(socks5[1].endpoint(), "socks5://proxy.example:8080");
     }
 
     #[test]
@@ -2098,6 +2198,7 @@ mod custom_proxy_tests {
             "http://user:password@127.0.0.1:7891",
             "http://127.0.0.1:7891/path",
             "http://127.0.0.1:7891?query=value",
+            "18.139.224.252\\",
             "ftp://127.0.0.1:7891",
         ] {
             assert!(CustomProxyConfig::parse(value).is_err(), "{value}");

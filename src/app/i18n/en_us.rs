@@ -594,12 +594,13 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > Advanced > Proxy
     "Proxy", // SettingsAdvancedProxySection
     "Proxy address:", // SettingsAdvancedProxyAddress
-    "Protocol optional; defaults to HTTP. Use socks5h:// for SOCKS5 proxy DNS.", // SettingsAdvancedProxyHelp
+    "Protocol optional; bare addresses are detected automatically. Use socks5h:// or socks4a:// for proxy DNS.", // SettingsAdvancedProxyHelp
     "Authenticated proxies are not supported.", // SettingsAdvancedProxyCredentialsUnsupported
     "Enter a valid proxy address.", // SettingsAdvancedProxyAddressInvalid
-    "Restart Hestia", // SettingsAdvancedProxyRestartHestia
-    "to apply", // SettingsAdvancedProxyRestartToApply
-    "Finish active tasks to restart Hestia.", // SettingsAdvancedProxyFinishTasksToRestart
+    "Proxy disabled", // SettingsAdvancedProxyDisabled
+    "Proxy enabled", // SettingsAdvancedProxyEnabled
+    "Could not connect to proxy", // SettingsAdvancedProxyConnectionFailed
+    "On app launch, Hestia verifies the proxy connection \nbefore starting operations. If it fails, \nHestia continues without the proxy.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
     "Cache and Archive", // SettingsAdvancedCacheArchiveSection

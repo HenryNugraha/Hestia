@@ -1,4 +1,41 @@
 impl HestiaApp {
+    fn restart_active_translations_for_proxy_change(&mut self) {
+        let gamebanana: Vec<(u64, String)> = self
+            .translation_inflight
+            .keys()
+            .map(|(mod_id, lang, _)| (*mod_id, lang.clone()))
+            .collect();
+        let unlinked: HashSet<String> = self
+            .unlinked_translation_inflight
+            .keys()
+            .map(|(mod_entry_id, _, _)| mod_entry_id.clone())
+            .collect();
+
+        self.cancelled_translation_requests
+            .extend(self.translation_inflight.values().copied());
+        self.cancelled_translation_requests
+            .extend(self.unlinked_translation_inflight.values().copied());
+        for cancellation in self.unlinked_translation_cancellations.values() {
+            cancellation.store(true, Ordering::Relaxed);
+        }
+        self.translation_inflight.clear();
+        self.unlinked_translation_inflight.clear();
+        self.unlinked_translation_cancellations.clear();
+
+        for (mod_id, lang) in gamebanana {
+            self.request_translation_for_gamebanana_mod(mod_id, &lang, true);
+        }
+        for mod_entry_id in unlinked {
+            if self
+                .my_mods_translation_state
+                .get(&mod_entry_id)
+                .is_some_and(|state| state.unlinked_translation_enabled)
+            {
+                self.enable_unlinked_translation(&mod_entry_id, true);
+            }
+        }
+    }
+
     fn current_translation_lang(&self) -> &'static str {
         match self.state.static_prefs.language {
             AppLanguage::English => "en",

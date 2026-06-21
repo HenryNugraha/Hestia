@@ -3,7 +3,7 @@ fn spawn_icon_worker(
     mut rx: WorkerRx<IconRequest>,
     tx: WorkerTx<IconResult>,
 ) {
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
             let Some(bytes) = game_icon_bytes(&request.game_id) else {
                 continue;
@@ -23,12 +23,12 @@ fn spawn_gif_preview_worker(
     mut rx: WorkerRx<GifPreviewRequest>,
     tx: WorkerTx<GifPreviewEvent>,
 ) {
-    let client = runtime_services.http_client.clone();
+    let runtime_services = runtime_services.clone();
     let handle = runtime_services.handle();
     let limiter = Arc::clone(&runtime_services.full_decode_limiter);
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
-            let client = client.clone();
+            let client = runtime_services.http_client();
             let handle = handle.clone();
             let tx = tx.clone();
             let limiter = limiter.clone();
@@ -157,12 +157,12 @@ fn spawn_gif_animation_worker(
     mut rx: WorkerRx<GifAnimationRequest>,
     tx: WorkerTx<GifAnimationEvent>,
 ) {
-    let client = runtime_services.http_client.clone();
+    let runtime_services = runtime_services.clone();
     let handle = runtime_services.handle();
     let limiter = Arc::clone(&runtime_services.full_decode_limiter);
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
-            let client = client.clone();
+            let client = runtime_services.http_client();
             let handle = handle.clone();
             let tx = tx.clone();
             let limiter = limiter.clone();

@@ -17,7 +17,7 @@ impl HestiaApp {
         self.app_update_button_state = AppUpdateButtonState::Checking;
         self.app_update_button_spin_until = now + 1.5;
         let tx = self.app_update_event_tx.clone();
-        let client = self.runtime_services.http_client.clone();
+        let client = self.runtime_services.http_client();
         self.runtime_services.spawn(async move {
             let result = async {
                 let manifest = fetch_app_update_manifest(&client).await?;
@@ -122,7 +122,11 @@ impl HestiaApp {
                     self.app_update_verified_path = None;
                     self.update_task_status(task_id, TaskStatus::Canceled);
                     self.app_update_button_state = AppUpdateButtonState::Check;
-                    self.set_message_ok(self.text().app_update_download_canceled());
+                    if let Some(manifest) = self.pending_proxy_app_update_resume.take() {
+                        self.queue_app_update_download(manifest);
+                    } else {
+                        self.set_message_ok(self.text().app_update_download_canceled());
+                    }
                 }
             }
         }
@@ -195,7 +199,7 @@ impl HestiaApp {
 
         self.update_task_status(inflight.task_id, TaskStatus::Downloading);
         let tx = self.app_update_event_tx.clone();
-        let client = self.runtime_services.http_client.clone();
+        let client = self.runtime_services.http_client();
         self.runtime_services.spawn(async move {
             let result = download_app_update_file(&client, &inflight).await;
             let event = match result {
@@ -575,18 +579,16 @@ async fn download_app_update_file(
     if let Some(parent) = inflight.destination.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let bytes = download_update_bytes(
+    let partial = inflight.destination.with_extension("exe.partial");
+    let byte_size = download_update_file_to_partial(
         client,
         &inflight.manifest.download,
+        &partial,
+        inflight.manifest.bytes,
         &inflight.cancel,
         Arc::clone(&inflight.progress),
     )
     .await?;
-    let byte_size = bytes.len() as u64;
-    let partial = inflight.destination.with_extension("exe.partial");
-    tokio::fs::write(&partial, bytes)
-        .await
-        .with_context(|| format!("failed to write {}", partial.display()))?;
     if tokio::fs::rename(&partial, &inflight.destination).await.is_err() {
         let _ = tokio::fs::remove_file(&inflight.destination).await;
         tokio::fs::rename(&partial, &inflight.destination)
@@ -605,12 +607,14 @@ async fn download_app_update_file(
     Ok(byte_size)
 }
 
-async fn download_update_bytes(
+async fn download_update_file_to_partial(
     client: &ClientWithMiddleware,
     downloads: &[String],
+    partial: &Path,
+    expected_size: u64,
     cancel: &Arc<AtomicBool>,
     progress: Arc<RwLock<DownloadProgress>>,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<u64> {
     let links = downloads
         .iter()
         .map(String::as_str)
@@ -619,7 +623,16 @@ async fn download_update_bytes(
     let mut last_error: Option<anyhow::Error> = None;
 
     for url in links {
-        match download_update_bytes_from_url(client, url, cancel, Arc::clone(&progress)).await {
+        match download_update_file_from_url(
+            client,
+            url,
+            partial,
+            expected_size,
+            cancel,
+            Arc::clone(&progress),
+        )
+        .await
+        {
             Ok(bytes) => return Ok(bytes),
             Err(err) if err.to_string() == importing::CANCELLED_ERROR => return Err(err),
             Err(err) => {
@@ -634,26 +647,74 @@ async fn download_update_bytes(
     }
 }
 
-async fn download_update_bytes_from_url(
+async fn download_update_file_from_url(
     client: &ClientWithMiddleware,
     url: &str,
+    partial: &Path,
+    expected_size: u64,
     cancel: &Arc<AtomicBool>,
     progress: Arc<RwLock<DownloadProgress>>,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<u64> {
     if let Some(path) = file_url_to_path(url) {
         if cancel.load(Ordering::Relaxed) {
             bail!(importing::CANCELLED_ERROR);
         }
-        let bytes = tokio::fs::read(&path)
+        tokio::fs::copy(&path, partial)
             .await
-            .with_context(|| format!("failed to read update file {}", path.display()))?;
+            .with_context(|| format!("failed to copy update file {}", path.display()))?;
         if let Ok(mut guard) = progress.write() {
-            guard.total = Some(bytes.len() as u64);
-            guard.downloaded = bytes.len() as u64;
+            guard.total = Some(expected_size);
+            guard.downloaded = expected_size;
         }
-        return Ok(bytes);
+        return Ok(expected_size);
     }
-    download_to_bytes_async(client, url, cancel, progress).await
+    let resume_from = tokio::fs::metadata(partial)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if resume_from > expected_size {
+        let _ = tokio::fs::remove_file(partial).await;
+    }
+    if let Ok(mut guard) = progress.write() {
+        guard.total = Some(expected_size);
+        guard.downloaded = resume_from;
+        guard.speed = 0.0;
+        guard.bytes_since_last = 0;
+    }
+    let mut request = client.get(url);
+    if resume_from > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+    }
+    let response = request.send().await?;
+    let append = resume_from > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    if resume_from > 0 && !append {
+        if response.status() != reqwest::StatusCode::OK {
+            response.error_for_status_ref()?;
+        }
+    }
+    let mut file = if append {
+        tokio::fs::OpenOptions::new().create(true).append(true).open(partial).await?
+    } else {
+        tokio::fs::OpenOptions::new().create(true).write(true).truncate(true).open(partial).await?
+    };
+    let mut stream = response.error_for_status()?.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::Relaxed) {
+            bail!(importing::CANCELLED_ERROR);
+        }
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        if let Ok(mut guard) = progress.write() {
+            guard.downloaded = guard.downloaded.saturating_add(chunk.len() as u64);
+            guard.bytes_since_last = guard.bytes_since_last.saturating_add(chunk.len() as u64);
+        }
+    }
+    file.flush().await?;
+    let actual = tokio::fs::metadata(partial).await?.len();
+    if actual != expected_size {
+        bail!("update download ended at {actual} bytes, expected {expected_size}");
+    }
+    Ok(actual)
 }
 
 fn verify_app_update_file(path: &Path, manifest: &AppUpdateManifest) -> anyhow::Result<()> {

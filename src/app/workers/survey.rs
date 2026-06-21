@@ -3,31 +3,38 @@ fn spawn_feedback_survey_submit_worker(
     mut rx: WorkerRx<FeedbackSurveySubmitRequest>,
     tx: WorkerTx<FeedbackSurveySubmitEvent>,
 ) {
-    let client = match runtime_services
-        .async_client_builder()
-        .user_agent(gamebanana::USER_AGENT)
-        .timeout(Duration::from_secs(15))
-        .build()
-    {
-        Ok(client) => client,
-        Err(err) => {
-            runtime_services.spawn(async move {
-                while let Some(request) = rx.recv().await {
+    let runtime_services = runtime_services.clone();
+    runtime_services.clone().spawn(async move {
+        while let Some(request) = rx.recv().await {
+            let client = match runtime_services
+                .async_client_builder()
+                .user_agent(gamebanana::USER_AGENT)
+                .timeout(Duration::from_secs(15))
+                .build()
+            {
+                Ok(client) => client,
+                Err(err) => {
                     let _ = tx.send(FeedbackSurveySubmitEvent::Failed {
                         version: request.version,
                         pending_path: request.pending_path,
                         error: format!("failed to create survey HTTP client: {err}"),
                         discard_on_failure: request.discard_on_failure,
                     });
+                    continue;
                 }
-            });
-            return;
-        }
-    };
-
-    runtime_services.spawn(async move {
-        while let Some(request) = rx.recv().await {
-            match post_feedback_survey_with_retries(&client, &request.payload_json).await {
+            };
+            let result = tokio::select! {
+                _ = async {
+                    while !request.cancel.load(Ordering::Relaxed) {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                } => {
+                    let _ = tx.send(FeedbackSurveySubmitEvent::Canceled);
+                    continue;
+                }
+                result = post_feedback_survey_with_retries(&client, &request.payload_json) => result,
+            };
+            match result {
                 Ok(()) => {
                     let _ = tx.send(FeedbackSurveySubmitEvent::Submitted {
                         version: request.version,

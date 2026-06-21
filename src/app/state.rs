@@ -105,6 +105,11 @@ pub struct HestiaApp {
     proxy_url_draft: String,
     proxy_url_validation_error: Option<String>,
     applied_custom_proxy: Option<CustomProxyConfig>,
+    proxy_apply_inflight: bool,
+    proxy_apply_locks_input: bool,
+    proxy_apply_silent_success: bool,
+    proxy_apply_tx: WorkerTx<ProxyApplyEvent>,
+    proxy_apply_rx: WorkerRx<ProxyApplyEvent>,
     mod_detail_open: bool,
     browse_detail_open: bool,
     settings_tab: SettingsTab,
@@ -141,6 +146,9 @@ pub struct HestiaApp {
     feedback_survey_message: String,
     feedback_survey_privacy_expanded: bool,
     feedback_survey_submitting: bool,
+    feedback_survey_cancellation: Option<Arc<AtomicBool>>,
+    feedback_survey_active_request: Option<FeedbackSurveySubmitRequest>,
+    pending_proxy_survey_resume: Option<FeedbackSurveySubmitRequest>,
     feedback_survey_submit_tx: WorkerTx<FeedbackSurveySubmitRequest>,
     feedback_survey_submit_rx: WorkerRx<FeedbackSurveySubmitEvent>,
     log_scroll_to_bottom: bool,
@@ -206,6 +214,7 @@ pub struct HestiaApp {
     app_update_event_tx: WorkerTx<AppUpdateEvent>,
     app_update_event_rx: WorkerRx<AppUpdateEvent>,
     app_update_download_inflight: Option<AppUpdateDownloadInflight>,
+    pending_proxy_app_update_resume: Option<AppUpdateManifest>,
     app_update_manifest: Option<AppUpdateManifest>,
     app_update_verified_path: Option<PathBuf>,
     app_update_task_id: Option<u64>,
@@ -224,12 +233,14 @@ pub struct HestiaApp {
     texture_evictions_per_minute: u64,
     browse_download_queue: VecDeque<BrowseDownloadJob>,
     browse_download_inflight: HashMap<u64, BrowseDownloadInflight>,
+    proxy_requeue_browse_downloads: HashSet<u64>,
     pending_browse_install_safety: HashMap<u64, bool>,
     pending_browse_install_meta: HashMap<u64, PendingBrowseInstallMeta>,
     browse_commonmark_cache: CommonMarkCache,
     browse_request_nonce: u64,
     browse_page_generation: u64,
     browse_detail_generation: u64,
+    browse_detail_request_nonces: HashMap<u64, u64>,
     image_generation: Arc<AtomicU64>,
     translation_request_tx: WorkerTx<TranslationRequest>,
     translation_event_rx: WorkerRx<TranslationEvent>,
@@ -242,6 +253,8 @@ pub struct HestiaApp {
     update_check_tx: WorkerTx<UpdateCheckRequest>,
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
+    update_check_generation: u64,
+    update_check_active_items: Vec<(String, String, u64, Option<i64>, FileSetRecipe)>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
     refresh_request_tx: WorkerTx<RefreshRequest>,
@@ -263,6 +276,9 @@ pub struct HestiaApp {
     window_was_maximized: bool,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
+    startup_launch_pending: bool,
+    startup_selected_game: usize,
+    startup_path_targets_pending: Vec<StartupPathScanTarget>,
     startup_scan_tx: WorkerTx<StartupScanEvent>,
     startup_scan_rx: WorkerRx<StartupScanEvent>,
     startup_path_scan: Option<StartupPathScanState>,
@@ -430,10 +446,12 @@ struct PendingBrowseInstallMeta {
 }
 
 struct UpdateCheckRequest {
+    generation: u64,
     items: Vec<(String, String, u64, Option<i64>, FileSetRecipe)>, // mod_id, game_id, gb_id, old_update_ts, file_set
 }
 
 struct UpdateCheckResult {
+    generation: u64,
     states: Vec<(
         String,
         ModUpdateState,
@@ -523,14 +541,22 @@ enum AppUpdateEvent {
     },
 }
 
+enum ProxyApplyEvent {
+    Validated { proxy: Option<CustomProxyConfig> },
+    Failed { error: String },
+}
+
+#[derive(Clone)]
 struct FeedbackSurveySubmitRequest {
     version: String,
     payload_json: String,
     pending_path: PathBuf,
     discard_on_failure: bool,
+    cancel: Arc<AtomicBool>,
 }
 
 enum FeedbackSurveySubmitEvent {
+    Canceled,
     Submitted {
         version: String,
         pending_path: PathBuf,
@@ -748,6 +774,7 @@ struct BrowseImageResult {
 }
 
 struct BrowseImageInflight {
+    request: BrowseImageRequest,
     cancel: Arc<AtomicBool>,
     cancel_key: Option<u64>,
     skip_texture: bool,

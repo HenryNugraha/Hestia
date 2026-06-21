@@ -4,11 +4,10 @@ fn spawn_browse_worker(
     mut rx: WorkerRx<BrowseRequest>,
     tx: WorkerTx<BrowseEvent>,
 ) {
-    let client = runtime_services.http_client.clone();
-    let custom_proxy = runtime_services.custom_proxy();
+    let runtime_services = runtime_services.clone();
     let json_limiter = Arc::clone(&runtime_services.json_limiter);
     let active_page_task = Arc::new(Mutex::new(None::<tokio::task::AbortHandle>));
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
             match request {
                 BrowseRequest::CancelPage => {
@@ -39,7 +38,7 @@ fn spawn_browse_worker(
                     }
                     let page_tx = tx.clone();
                     let page_portable = portable.clone();
-                    let page_proxy = custom_proxy.clone();
+                    let page_proxy = runtime_services.custom_proxy();
                     let page_task = tokio::spawn(async move {
                         let Some(gamebanana_id) = gamebanana::game_id_for_hestia(&game_id) else {
                             let _ = page_tx.send(BrowseEvent::PageFailed {
@@ -133,7 +132,7 @@ fn spawn_browse_worker(
                 } => {
                     let category_tx = tx.clone();
                     let category_portable = portable.clone();
-                    let category_proxy = custom_proxy.clone();
+                    let category_proxy = runtime_services.custom_proxy();
                     tokio::spawn(async move {
                         let cache_key = gamebanana::character_categories_cache_key(
                             &game_id,
@@ -180,7 +179,7 @@ fn spawn_browse_worker(
                 } => {
                     let detail_tx = tx.clone();
                     let detail_portable = portable.clone();
-                    let detail_client = client.clone();
+                    let detail_client = runtime_services.http_client();
                     let detail_limiter = Arc::clone(&json_limiter);
                     tokio::spawn(async move {
                         let _permit = detail_limiter.acquire().await.ok();
@@ -222,7 +221,7 @@ fn spawn_browse_worker(
                 BrowseRequest::FetchUpdates { nonce, mod_id, force_refresh } => {
                     let updates_tx = tx.clone();
                     let updates_portable = portable.clone();
-                    let updates_client = client.clone();
+                    let updates_client = runtime_services.http_client();
                     let updates_limiter = Arc::clone(&json_limiter);
                     tokio::spawn(async move {
                         let _permit = updates_limiter.acquire().await.ok();
@@ -553,11 +552,11 @@ fn spawn_browse_image_workers(
     mut rx: WorkerRx<BrowseImageRequest>,
     tx: WorkerTx<BrowseImageResult>,
 ) {
-    let client = runtime_services.http_client.clone();
+    let runtime_services = runtime_services.clone();
     let handle = runtime_services.handle();
-    runtime_services.spawn(async move {
+    runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
-            let client = client.clone();
+            let client = runtime_services.http_client();
             let portable = portable.clone();
             let tx = tx.clone();
             let handle = handle.clone();
@@ -585,8 +584,15 @@ fn spawn_browse_image_workers(
                     let _ =
                         persistence::cache_put(&portable, &cache_key, "browse-img", &bytes, limit);
                     Ok(bytes)
-                }
-                .await;
+                };
+                let bytes_result = tokio::select! {
+                    _ = async {
+                        while !request.cancel.load(Ordering::Relaxed) {
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                    } => return,
+                    result = bytes_result => result,
+                };
 
                 match bytes_result {
                     Ok(bytes) => {
@@ -618,6 +624,9 @@ fn spawn_browse_image_workers(
                         }
                     }
                     Err(err) => {
+                        if request.cancel.load(Ordering::Relaxed) {
+                            return;
+                        }
                         let _ = tx.send(BrowseImageResult {
                             texture_key: request.texture_key,
                             thumb_texture_key: request.thumb_texture_key,
