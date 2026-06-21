@@ -309,9 +309,7 @@ pub struct AppState {
     #[serde(skip)]
     pub preferences_need_save: bool,
     #[serde(default)]
-    pub last_update_check_time: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub last_update_check_game: Option<String>,
+    pub last_update_check_time_by_game: HashMap<String, DateTime<Utc>>,
     // Static preferences inlined for backward compatibility
     #[serde(flatten)]
     pub static_prefs: StaticPreferences,
@@ -344,8 +342,7 @@ impl Default for AppState {
             auto_game_enable_done: false,
             staged_app_update: None,
             preferences_need_save: false,
-            last_update_check_time: None,
-            last_update_check_game: None,
+            last_update_check_time_by_game: HashMap::new(),
             static_prefs: StaticPreferences::default(),
         }
     }
@@ -940,6 +937,11 @@ pub struct ModSourceData {
     pub gamebanana: Option<GameBananaLink>,
     pub snapshot: Option<GameBananaSnapshot>,
     pub raw_profile_json: Option<String>,
+    /// The earliest time a transient GameBanana request failure may be retried
+    /// automatically. Terminal source states are represented by `MissingSource`
+    /// and are not retried by bulk update checks.
+    #[serde(default)]
+    pub update_check_retry_after: Option<DateTime<Utc>>,
     pub file_set: FileSetRecipe,
     pub prefs: UpdatePrefs,
     #[serde(default)]

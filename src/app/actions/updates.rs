@@ -398,6 +398,10 @@ fn determine_update_state(local_ts: Option<i64>, profile: &gamebanana::ProfileRe
     ModUpdateState::UpToDate
 }
 
+fn should_check_update_state(state: ModUpdateState) -> bool {
+    state != ModUpdateState::MissingSource
+}
+
 fn profile_to_response(snapshot: Option<&GameBananaSnapshot>) -> gamebanana::ProfileResponse {
     snapshot
         .map(|s| gamebanana::ProfileResponse {
@@ -533,35 +537,18 @@ impl HestiaApp {
         }
         self.pending_update_check_game = None;
         
-        // Check if we should skip due to cooldown (30 minutes = 1800 seconds)
+        const UPDATE_CHECK_COOLDOWN_SECS: i64 = 1800;
+        let now = chrono::Utc::now();
+
+        // Automatic checks are throttled per game. The schedule is persisted so
+        // app startup cannot bypass the cooldown.
         if !force {
-            const UPDATE_CHECK_COOLDOWN_SECS: i64 = 1800;
-            
-            let now = chrono::Utc::now();
-            let should_skip_cooldown = self.state.last_update_check_time
-                .and_then(|last_check| {
-                    let elapsed = now.signed_duration_since(last_check).num_seconds();
-                    if elapsed < UPDATE_CHECK_COOLDOWN_SECS {
-                        // Check if we're checking the same game
-                        match (target_game_id, &self.state.last_update_check_game) {
-                            (Some(current), Some(last)) if current == last => Some(true),
-                            (None, None) => Some(true),
-                            _ => Some(false),
-                        }
-                    } else {
-                        Some(false)
-                    }
-                })
-                .unwrap_or(false);
-            
-            if should_skip_cooldown {
-                // Skip the update check, use cached results
+            let schedule_key = target_game_id.unwrap_or_default();
+            if self.state.last_update_check_time_by_game.get(schedule_key).is_some_and(|last_check| {
+                now.signed_duration_since(*last_check).num_seconds() < UPDATE_CHECK_COOLDOWN_SECS
+            }) {
                 return;
             }
-            
-            // Update the timestamp
-            self.state.last_update_check_time = Some(now);
-            self.state.last_update_check_game = target_game_id.map(|id| id.to_string());
         }
         let mut items = Vec::with_capacity(self.state.mods.len());
         let update_check_statuses = self.state.static_prefs.update_check_statuses;
@@ -593,6 +580,12 @@ impl HestiaApp {
             let Some(link) = &source.gamebanana else {
                 continue;
             };
+            if !should_check_update_state(mod_entry.update_state) {
+                continue;
+            }
+            if !force && source.update_check_retry_after.is_some_and(|retry_after| retry_after > now) {
+                continue;
+            }
             if source.ignore_update_always {
                 if mod_entry.update_state != ModUpdateState::IgnoringUpdateAlways {
                     mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
@@ -637,6 +630,10 @@ impl HestiaApp {
                 continue;
             }
             self.update_check_inflight = false;
+            let checked_game_ids: HashSet<String> = self.update_check_active_items
+                .iter()
+                .map(|(_, game_id, _, _, _)| game_id.clone())
+                .collect();
             self.update_check_active_items.clear();
             let mut warn_lines: Vec<String> = Vec::new();
             let mut auto_update_ids: Vec<String> = Vec::new();
@@ -662,6 +659,7 @@ impl HestiaApp {
             let text = self.text();
             for (mod_id, state, snapshot, err, raw_json, profile) in result.states {
                 let mut mod_updated = false;
+                let mut retry_schedule_changed = false;
                 let mut should_sync_images = false;
                 let mut sync_profile: Option<Box<gamebanana::ProfileResponse>> = None;
                 let has_pending_update_finalization =
@@ -699,6 +697,10 @@ impl HestiaApp {
                             || Self::is_missing_expected_source_images(mod_entry, snap);
                     }
                     if let Some(source) = mod_entry.source.as_mut() {
+                        let retry_after = fetch_failed
+                            .then(|| chrono::Utc::now() + chrono::Duration::minutes(30));
+                        retry_schedule_changed = source.update_check_retry_after != retry_after;
+                        source.update_check_retry_after = retry_after;
                         if let Some(profile) = profile.as_deref() {
                             let _ = backfill_selected_files_meta(&mut source.file_set, profile);
                         }
@@ -725,7 +727,7 @@ impl HestiaApp {
                             }
                         }
                     }
-                    if !fetch_failed || has_local_changes {
+                    if !fetch_failed || has_local_changes || retry_schedule_changed {
                         let _ = xxmi::save_mod_metadata(mod_entry);
                         mod_updated = true;
                     }
@@ -776,6 +778,13 @@ impl HestiaApp {
                         self.enqueue_mod_image_sync(&mod_id);
                     }
                 }
+            }
+            // A completed manual or automatic request resets the automatic
+            // cooldown. This is deliberately recorded only after the worker
+            // returns, never when a request is merely queued.
+            let completed_at = chrono::Utc::now();
+            for game_id in checked_game_ids {
+                self.state.last_update_check_time_by_game.insert(game_id, completed_at);
             }
             for line in warn_lines {
                 self.log_warn(format!("update check: {line}"));
@@ -1871,6 +1880,13 @@ mod update_signature_tests {
             current_update_signature_for_state(&FileSetRecipe::default(), &profile, ModUpdateState::UpToDate)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn missing_source_is_not_retried() {
+        assert!(!should_check_update_state(ModUpdateState::MissingSource));
+        assert!(should_check_update_state(ModUpdateState::UpToDate));
+        assert!(should_check_update_state(ModUpdateState::UpdateAvailable));
     }
 
     #[test]

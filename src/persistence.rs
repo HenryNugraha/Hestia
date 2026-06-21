@@ -75,6 +75,8 @@ struct AppPreferences {
     create_downloaded_mod_category_by_game: HashMap<String, bool>,
     #[serde(default)]
     staged_app_update: Option<StagedAppUpdate>,
+    #[serde(default)]
+    last_update_check_time_by_game: HashMap<String, DateTime<Utc>>,
     // Flatten static preferences for backward compatibility
     #[serde(flatten)]
     static_prefs: StaticPreferences,
@@ -103,6 +105,7 @@ impl From<&AppState> for AppPreferences {
                 .create_downloaded_mod_category_by_game
                 .clone(),
             staged_app_update: state.staged_app_update.clone(),
+            last_update_check_time_by_game: state.last_update_check_time_by_game.clone(),
             static_prefs: state.static_prefs.clone(),
         }
     }
@@ -366,6 +369,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.categories = prefs.categories;
     state.category_sort_mode_by_game = prefs.category_sort_mode_by_game;
     state.staged_app_update = prefs.staged_app_update;
+    state.last_update_check_time_by_game = prefs.last_update_check_time_by_game;
 
     // Move static preferences (single assignment, no field-by-field copying)
     state.static_prefs = prefs.static_prefs;
@@ -1393,6 +1397,29 @@ mod tests {
         save_app_state(&paths, &state).unwrap();
 
         assert!(paths.state_archive.exists());
+    }
+
+    #[test]
+    fn update_check_cooldowns_roundtrip_per_game() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PortablePaths {
+            state_archive: temp.path().join("state.toml"),
+            state_source: None,
+            history_db: temp.path().join("history.db"),
+        };
+        let checked_at = Utc::now();
+        let mut state = AppState::default();
+        state
+            .last_update_check_time_by_game
+            .insert("genshin-impact".to_string(), checked_at);
+
+        save_app_state(&paths, &state).unwrap();
+        let loaded = load_app_state(&paths).unwrap();
+
+        assert_eq!(
+            loaded.last_update_check_time_by_game.get("genshin-impact"),
+            Some(&checked_at)
+        );
     }
 
     #[test]
