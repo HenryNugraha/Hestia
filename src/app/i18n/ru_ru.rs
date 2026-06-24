@@ -460,7 +460,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Открыть в проводнике", // LibraryOpenInFileExplorer
     "Источник", // LibrarySource
     "• Последняя синхронизация: {age}", // LibraryLastSynced
-    "Повторить синхронизацию", // LibraryResync
+    "Ресинхр.", // LibraryResync
     "Отвязать", // LibraryUnlink
     "Страница GameBanana", // LibraryGameBananaPage
     "Привяжите мод к GameBanana, чтобы включить отслеживание обновлений и синхронизацию метаданных.", // LibraryLinkGameBananaPrompt

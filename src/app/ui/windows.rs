@@ -469,12 +469,18 @@ impl HestiaApp {
                             if last_date.is_some() {
                                 ui.add_space(12.0);
                             }
-                            static_label(ui, bold(date.clone(), None).underline());
+                            ui.add(
+                                egui::Label::new(bold(date.clone(), None).underline())
+                                    .selectable(true),
+                            );
                             last_date = Some(date);
                             ui.add_space(-4.0);
                         }
                         let summary = sanitize_log_subject(&entry.summary);
-                        static_label(ui, format!("[{}] {}", time, summary));
+                        ui.add(
+                            egui::Label::new(format!("[{}] {}", time, summary))
+                                .selectable(true),
+                        );
                     }
                 });
         });
