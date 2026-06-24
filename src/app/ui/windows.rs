@@ -3216,11 +3216,10 @@ impl HestiaApp {
                             }
                             ui.add_space(8.0);
 
-                            if classic_font_style_available() {
-                                static_label(ui, text.font_style());
-                                ui.add_space(-4.0);
-                                let previous_font_style = self.state.static_prefs.font_style;
-                                ui.horizontal(|ui| {
+                            static_label(ui, text.font_style());
+                            ui.add_space(-4.0);
+                            let previous_font_style = self.state.static_prefs.font_style;
+                            ui.horizontal(|ui| {
                                     ui.radio_value(
                                         &mut self.state.static_prefs.font_style,
                                         AppFontStyle::Classic,
@@ -3234,13 +3233,27 @@ impl HestiaApp {
                                         text.font_modern(),
                                     )
                                     .on_hover_text(text.font_modern_tooltip());
-                                });
-                                if self.state.static_prefs.font_style != previous_font_style {
-                                    install_app_fonts(ctx, self.state.static_prefs.font_style);
-                                    should_save = true;
-                                }
-                                ui.add_space(8.0);
+                            });
+                            ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.state.static_prefs.font_style,
+                                        AppFontStyle::Elegant,
+                                        text.font_elegant(),
+                                    )
+                                    .on_hover_text(text.font_elegant_tooltip());
+                                    ui.add_space(12.0);
+                                    ui.radio_value(
+                                        &mut self.state.static_prefs.font_style,
+                                        AppFontStyle::Traditional,
+                                        text.font_traditional(),
+                                    )
+                                    .on_hover_text(text.font_traditional_tooltip());
+                            });
+                            if self.state.static_prefs.font_style != previous_font_style {
+                                install_app_fonts(ctx, self.state.static_prefs.font_style);
+                                should_save = true;
                             }
+                            ui.add_space(8.0);
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);

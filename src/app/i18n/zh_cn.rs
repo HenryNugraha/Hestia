@@ -578,8 +578,12 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "字体样式：", // SettingsAdvancedAppearanceFontStyle
     "经典", // SettingsAdvancedAppearanceFontClassic
     "现代", // SettingsAdvancedAppearanceFontModern
-    "使用 Segoe UI 字体", // SettingsAdvancedAppearanceFontClassicTooltip
+    "优雅", // SettingsAdvancedAppearanceFontElegant
+    "传统", // SettingsAdvancedAppearanceFontTraditional
+    "使用系统 UI 字体", // SettingsAdvancedAppearanceFontClassicTooltip
     "使用 Selawik 字体", // SettingsAdvancedAppearanceFontModernTooltip
+    "使用 Diphylleia 字体，粗体使用 Gabriela", // SettingsAdvancedAppearanceFontElegantTooltip
+    "使用 New Tegomin 字体，粗体使用 Coustard", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "始终翻译 Mod 详情", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
     "启用后，查看 Mod 详情时会自动将描述和元数据翻译为所选语言。", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 

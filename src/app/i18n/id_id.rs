@@ -578,8 +578,12 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Gaya Font:", // SettingsAdvancedAppearanceFontStyle
     "Klasik", // SettingsAdvancedAppearanceFontClassic
     "Modern", // SettingsAdvancedAppearanceFontModern
-    "Menggunakan font Segoe UI", // SettingsAdvancedAppearanceFontClassicTooltip
+    "Elegan", // SettingsAdvancedAppearanceFontElegant
+    "Tradisional", // SettingsAdvancedAppearanceFontTraditional
+    "Menggunakan font UI sistem", // SettingsAdvancedAppearanceFontClassicTooltip
     "Menggunakan font Selawik", // SettingsAdvancedAppearanceFontModernTooltip
+    "Menggunakan Diphylleia dengan Gabriela untuk teks tebal", // SettingsAdvancedAppearanceFontElegantTooltip
+    "Menggunakan New Tegomin dengan Coustard untuk teks tebal", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Selalu terjemahkan detail mod", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
     "Jika diaktifkan, deskripsi dan metadata mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 

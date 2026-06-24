@@ -578,8 +578,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Стиль шрифта:", // SettingsAdvancedAppearanceFontStyle
     "Классический", // SettingsAdvancedAppearanceFontClassic
     "Современный", // SettingsAdvancedAppearanceFontModern
-    "Использует шрифт «Segoe UI»", // SettingsAdvancedAppearanceFontClassicTooltip
+    "Элегантный", // SettingsAdvancedAppearanceFontElegant
+    "Традиционный", // SettingsAdvancedAppearanceFontTraditional
+    "Использует системный шрифт интерфейса", // SettingsAdvancedAppearanceFontClassicTooltip
     "Использует шрифт «Selawik»", // SettingsAdvancedAppearanceFontModernTooltip
+    "Использует Diphylleia, для жирного текста — Gabriela", // SettingsAdvancedAppearanceFontElegantTooltip
+    "Использует New Tegomin, для жирного текста — Coustard", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Всегда переводить сведения о моде", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
     "При включении описания и метаданные модов автоматически переводятся на выбранный язык при просмотре сведений.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
     // Window: Settings > Advanced > Content Restriction

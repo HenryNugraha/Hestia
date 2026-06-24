@@ -578,8 +578,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Font Style:", // SettingsAdvancedAppearanceFontStyle
     "Classic", // SettingsAdvancedAppearanceFontClassic
     "Modern", // SettingsAdvancedAppearanceFontModern
-    "Uses 'Segoe UI' typeface", // SettingsAdvancedAppearanceFontClassicTooltip
+    "Elegant", // SettingsAdvancedAppearanceFontElegant
+    "Traditional", // SettingsAdvancedAppearanceFontTraditional
+    "Uses the system UI typeface", // SettingsAdvancedAppearanceFontClassicTooltip
     "Uses 'Selawik' typeface", // SettingsAdvancedAppearanceFontModernTooltip
+    "Uses Diphylleia with Gabriela for bold text", // SettingsAdvancedAppearanceFontElegantTooltip
+    "Uses New Tegomin with Coustard for bold text", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Always translate mod details", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
     "When enabled, mod descriptions and metadata are automatically translated to the selected language when viewing details.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 

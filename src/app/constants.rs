@@ -5,6 +5,10 @@ const CJK_FONT_FAMILY: &str = "noto_sans_sc";
 const CJK_BOLD_FONT_FAMILY: &str = "noto_sans_sc_bold";
 const CLASSIC_FONT_FAMILY: &str = "segoe_ui";
 const CLASSIC_BOLD_FONT_FAMILY: &str = "segoe_ui_bold";
+const ELEGANT_FONT_FAMILY: &str = "diphylleia";
+const ELEGANT_BOLD_FONT_FAMILY: &str = "gabriela";
+const TRADITIONAL_FONT_FAMILY: &str = "new_tegomin";
+const TRADITIONAL_BOLD_FONT_FAMILY: &str = "coustard";
 const BOLD_FONT_FAMILY: &str = "Bold";
 const LUCIDE_FAMILY: &str = "lucide";
 

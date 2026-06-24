@@ -26,6 +26,38 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
         .into(),
     );
     fonts.font_data.insert(
+        ELEGANT_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/Diphylleia-Regular.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
+        ELEGANT_BOLD_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/Gabriela-Regular.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
+        TRADITIONAL_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/NewTegomin-Regular.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
+        TRADITIONAL_BOLD_FONT_FAMILY.to_string(),
+        FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/asset/font/Coustard-Regular.ttf"
+        )))
+        .into(),
+    );
+    fonts.font_data.insert(
         CJK_FONT_FAMILY.to_string(),
         FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -46,16 +78,17 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
         FontData::from_static(LUCIDE_FONT_BYTES).into(),
     );
 
-    let classic_available =
-        load_system_font(&mut fonts, CLASSIC_FONT_FAMILY, CLASSIC_FONT_PATH, 0)
-            && load_system_font(&mut fonts, CLASSIC_BOLD_FONT_FAMILY, CLASSIC_BOLD_FONT_PATH, 0);
+    let classic_available = load_classic_fonts(&mut fonts);
     let font_style = match preferred_style {
         AppFontStyle::Classic if classic_available => AppFontStyle::Classic,
-        AppFontStyle::Classic | AppFontStyle::Modern => AppFontStyle::Modern,
+        AppFontStyle::Classic => AppFontStyle::Modern,
+        AppFontStyle::Modern | AppFontStyle::Elegant | AppFontStyle::Traditional => preferred_style,
     };
     let (primary_family, bold_family) = match font_style {
         AppFontStyle::Classic => (CLASSIC_FONT_FAMILY, CLASSIC_BOLD_FONT_FAMILY),
         AppFontStyle::Modern => (APP_FONT_FAMILY, APP_BOLD_FONT_FAMILY),
+        AppFontStyle::Elegant => (ELEGANT_FONT_FAMILY, ELEGANT_BOLD_FONT_FAMILY),
+        AppFontStyle::Traditional => (TRADITIONAL_FONT_FAMILY, TRADITIONAL_BOLD_FONT_FAMILY),
     };
 
     fonts
@@ -102,19 +135,66 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
     ctx.set_fonts(fonts);
 }
 
-fn classic_font_style_available() -> bool {
-    static AVAILABLE: Lazy<bool> = Lazy::new(|| {
-        system_font_is_available(CLASSIC_FONT_PATH, 0)
-            && system_font_is_available(CLASSIC_BOLD_FONT_PATH, 0)
-    });
-    *AVAILABLE
+#[cfg(windows)]
+fn load_classic_fonts(fonts: &mut FontDefinitions) -> bool {
+    load_system_font(fonts, CLASSIC_FONT_FAMILY, CLASSIC_FONT_PATH, 0)
+        && load_system_font(fonts, CLASSIC_BOLD_FONT_FAMILY, CLASSIC_BOLD_FONT_PATH, 0)
 }
 
-fn system_font_is_available(path: &str, index: u32) -> bool {
-    let Ok(bytes) = fs::read(path) else {
+#[cfg(not(windows))]
+fn load_classic_fonts(fonts: &mut FontDefinitions) -> bool {
+    use font_kit::{
+        properties::{Properties, Weight},
+        source::SystemSource,
+    };
+
+    let mut regular_properties = Properties::new();
+    regular_properties.weight(Weight::NORMAL);
+    let mut bold_properties = Properties::new();
+    bold_properties.weight(Weight::BOLD);
+    let source = SystemSource::new();
+    let families = classic_font_families();
+    let Ok(regular) = source.select_best_match(&families, &regular_properties) else {
         return false;
     };
-    ab_glyph::FontRef::try_from_slice_and_index(&bytes, index).is_ok()
+    let Ok(bold) = source.select_best_match(&families, &bold_properties) else {
+        return false;
+    };
+
+    load_font_handle(fonts, CLASSIC_FONT_FAMILY, regular)
+        && load_font_handle(fonts, CLASSIC_BOLD_FONT_FAMILY, bold)
+}
+
+#[cfg(target_os = "macos")]
+fn classic_font_families() -> Vec<font_kit::family_name::FamilyName> {
+    use font_kit::family_name::FamilyName;
+
+    vec![
+        FamilyName::Title("SF Pro Text".to_owned()),
+        FamilyName::Title("Helvetica Neue".to_owned()),
+        FamilyName::SansSerif,
+    ]
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn classic_font_families() -> Vec<font_kit::family_name::FamilyName> {
+    vec![font_kit::family_name::FamilyName::SansSerif]
+}
+
+#[cfg(not(windows))]
+fn load_font_handle(
+    fonts: &mut FontDefinitions,
+    name: &'static str,
+    handle: font_kit::handle::Handle,
+) -> bool {
+    use font_kit::handle::Handle;
+
+    match handle {
+        Handle::Path { path, font_index } => load_system_font_path(fonts, name, &path, font_index),
+        Handle::Memory { bytes, font_index } => {
+            load_font_bytes(fonts, name, (*bytes).clone(), font_index)
+        }
+    }
 }
 
 fn load_system_font(
@@ -123,9 +203,27 @@ fn load_system_font(
     path: &'static str,
     index: u32,
 ) -> bool {
+    load_system_font_path(fonts, name, Path::new(path), index)
+}
+
+fn load_system_font_path(
+    fonts: &mut FontDefinitions,
+    name: &'static str,
+    path: &Path,
+    index: u32,
+) -> bool {
     let Ok(bytes) = fs::read(path) else {
         return false;
     };
+    load_font_bytes(fonts, name, bytes, index)
+}
+
+fn load_font_bytes(
+    fonts: &mut FontDefinitions,
+    name: &'static str,
+    bytes: Vec<u8>,
+    index: u32,
+) -> bool {
     if ab_glyph::FontRef::try_from_slice_and_index(&bytes, index).is_err() {
         return false;
     }

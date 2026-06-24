@@ -697,6 +697,8 @@ pub enum AppFontStyle {
     Classic,
     #[default]
     Modern,
+    Elegant,
+    Traditional,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

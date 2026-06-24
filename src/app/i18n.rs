@@ -568,8 +568,12 @@ enum TextKey {
     SettingsAdvancedAppearanceFontStyle,
     SettingsAdvancedAppearanceFontClassic,
     SettingsAdvancedAppearanceFontModern,
+    SettingsAdvancedAppearanceFontElegant,
+    SettingsAdvancedAppearanceFontTraditional,
     SettingsAdvancedAppearanceFontClassicTooltip,
     SettingsAdvancedAppearanceFontModernTooltip,
+    SettingsAdvancedAppearanceFontElegantTooltip,
+    SettingsAdvancedAppearanceFontTraditionalTooltip,
     SettingsAdvancedAppearanceAlwaysTranslateModDetails,
     SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip,
 
@@ -2856,12 +2860,28 @@ impl TextCatalog {
         self.get(TextKey::SettingsAdvancedAppearanceFontModern)
     }
 
+    fn font_elegant(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedAppearanceFontElegant)
+    }
+
+    fn font_traditional(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedAppearanceFontTraditional)
+    }
+
     fn font_classic_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsAdvancedAppearanceFontClassicTooltip)
     }
 
     fn font_modern_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsAdvancedAppearanceFontModernTooltip)
+    }
+
+    fn font_elegant_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedAppearanceFontElegantTooltip)
+    }
+
+    fn font_traditional_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedAppearanceFontTraditionalTooltip)
     }
 
     fn content_restriction(self) -> &'static str {
