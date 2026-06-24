@@ -9,7 +9,7 @@ impl ThumbnailByteCache {
         use std::num::NonZeroUsize;
         Self {
             inner: Arc::new(Mutex::new(lru::LruCache::new(
-                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap())
+                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap()),
             ))),
         }
     }
@@ -35,6 +35,7 @@ pub struct RuntimeServices {
     _runtime_owner: Option<Arc<tokio::runtime::Runtime>>,
     runtime_handle: tokio::runtime::Handle,
     http_client: Arc<RwLock<ClientWithMiddleware>>,
+    download_http_client: Arc<RwLock<ClientWithMiddleware>>,
     custom_proxy: Arc<RwLock<Option<CustomProxyConfig>>>,
     full_image_limiter: Arc<Semaphore>,
     thumb_image_limiter: Arc<Semaphore>,
@@ -49,6 +50,7 @@ impl Clone for RuntimeServices {
             _runtime_owner: None,
             runtime_handle: self.runtime_handle.clone(),
             http_client: Arc::clone(&self.http_client),
+            download_http_client: Arc::clone(&self.download_http_client),
             custom_proxy: Arc::clone(&self.custom_proxy),
             full_image_limiter: Arc::clone(&self.full_image_limiter),
             thumb_image_limiter: Arc::clone(&self.thumb_image_limiter),
@@ -76,6 +78,23 @@ impl RuntimeServices {
         Ok(client)
     }
 
+    pub(crate) fn download_http_client_for(
+        custom_proxy: &Option<CustomProxyConfig>,
+    ) -> Result<ClientWithMiddleware> {
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = MiddlewareClientBuilder::new(
+            Self::async_client_builder_for(custom_proxy)
+                .user_agent(gamebanana::USER_AGENT)
+                .connect_timeout(Duration::from_secs(15))
+                .read_timeout(Duration::from_secs(120))
+                .build()
+                .map_err(|err| anyhow!("failed to create download client: {err}"))?,
+        )
+        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .build();
+        Ok(client)
+    }
+
     pub fn new(custom_proxy: Option<CustomProxyConfig>) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -83,10 +102,12 @@ impl RuntimeServices {
             .map_err(|err| anyhow!("failed to create tokio runtime: {err}"))?;
         let runtime = Arc::new(runtime);
         let http_client = Self::http_client_for(&custom_proxy)?;
+        let download_http_client = Self::download_http_client_for(&custom_proxy)?;
         Ok(Self {
             _runtime_owner: Some(Arc::clone(&runtime)),
             runtime_handle: runtime.handle().clone(),
             http_client: Arc::new(RwLock::new(http_client)),
+            download_http_client: Arc::new(RwLock::new(download_http_client)),
             custom_proxy: Arc::new(RwLock::new(custom_proxy)),
             full_image_limiter: Arc::new(Semaphore::new(FULL_IMAGE_LIMIT)),
             thumb_image_limiter: Arc::new(Semaphore::new(THUMB_IMAGE_LIMIT)),
@@ -126,7 +147,10 @@ impl RuntimeServices {
     }
 
     pub(crate) fn custom_proxy(&self) -> Option<CustomProxyConfig> {
-        self.custom_proxy.read().ok().and_then(|proxy| proxy.clone())
+        self.custom_proxy
+            .read()
+            .ok()
+            .and_then(|proxy| proxy.clone())
     }
 
     pub(crate) fn http_client(&self) -> ClientWithMiddleware {
@@ -136,15 +160,27 @@ impl RuntimeServices {
             .clone()
     }
 
+    pub(crate) fn download_http_client(&self) -> ClientWithMiddleware {
+        self.download_http_client
+            .read()
+            .expect("download HTTP client lock must not be poisoned")
+            .clone()
+    }
+
     pub(crate) fn replace_custom_proxy(
         &self,
         custom_proxy: Option<CustomProxyConfig>,
     ) -> Result<()> {
         let http_client = Self::http_client_for(&custom_proxy)?;
+        let download_http_client = Self::download_http_client_for(&custom_proxy)?;
         *self
             .http_client
             .write()
             .expect("HTTP client lock must not be poisoned") = http_client;
+        *self
+            .download_http_client
+            .write()
+            .expect("download HTTP client lock must not be poisoned") = download_http_client;
         *self
             .custom_proxy
             .write()
@@ -162,5 +198,10 @@ mod runtime_tests {
         let services = RuntimeServices::new(None).unwrap();
         assert!(services._runtime_owner.is_some());
         assert!(services.clone()._runtime_owner.is_none());
+    }
+
+    #[test]
+    fn download_client_uses_a_separate_configuration() {
+        assert!(RuntimeServices::download_http_client_for(&None).is_ok());
     }
 }

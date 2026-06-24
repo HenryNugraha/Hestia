@@ -1031,7 +1031,9 @@ impl HestiaApp {
                     );
                 }
                 BrowseEvent::DetailLoaded {
-                    _nonce, mod_id, profile
+                    _nonce,
+                    mod_id,
+                    profile,
                 } => {
                     if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
                         continue;
@@ -1113,7 +1115,9 @@ impl HestiaApp {
                     }
                 }
                 BrowseEvent::DetailWarning {
-                    _nonce, mod_id, warning
+                    _nonce,
+                    mod_id,
+                    warning,
                 } => {
                     if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
                         continue;
@@ -1127,7 +1131,11 @@ impl HestiaApp {
                         self.report_warn(self.text().browse_detail_warning(mod_id, &warning), None);
                     }
                 }
-                BrowseEvent::DetailFailed { _nonce, mod_id, error } => {
+                BrowseEvent::DetailFailed {
+                    _nonce,
+                    mod_id,
+                    error,
+                } => {
                     if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
                         continue;
                     }
@@ -1469,7 +1477,7 @@ impl HestiaApp {
                 .clone();
             let tx = self.browse_download_result_tx.clone();
             let portable = self.portable.clone();
-            let client = self.runtime_services.http_client();
+            let client = self.runtime_services.download_http_client();
             let full_limiter = Arc::clone(&self.runtime_services.full_image_limiter);
             let handle = self.runtime_services.handle();
             self.runtime_services.spawn(async move {
@@ -2135,30 +2143,27 @@ async fn cache_completed_browse_download(
         bail!(importing::CANCELLED_ERROR);
     }
 
-    let bytes = tokio::fs::read(partial_path).await?;
-    let byte_size = bytes.len() as u64;
+    let byte_size = tokio::fs::metadata(partial_path).await?.len();
     if let Some(expected) = expected_size {
         if byte_size != expected {
             bail!("download cache size mismatch: expected {expected}, got {byte_size}");
         }
     }
 
-    let portable_for_put = portable.clone();
+    let portable_for_promotion = portable.clone();
     let key = cache_key.to_string();
+    let partial_path = partial_path.to_path_buf();
     handle
         .spawn_blocking(move || {
-            persistence::cache_put(
-                &portable_for_put,
+            persistence::cache_promote_file(
+                &portable_for_promotion,
                 &key,
-                "download",
-                &bytes,
+                &partial_path,
                 cache_limit_bytes,
             )
         })
         .await
-        .map_err(|err| anyhow!("download cache write join error: {err}"))??;
-
-    let _ = tokio::fs::remove_file(partial_path).await;
+        .map_err(|err| anyhow!("download cache promotion join error: {err}"))??;
     Ok(byte_size)
 }
 

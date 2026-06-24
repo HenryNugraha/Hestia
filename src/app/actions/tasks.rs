@@ -5,12 +5,11 @@ impl HestiaApp {
             timestamp: Utc::now(),
             summary,
         };
-        self.state.operations.insert(
-            0,
-            entry.clone(),
-        );
+        self.state.operations.insert(0, entry.clone());
         if self.state.operations.len() > persistence::LOG_HISTORY_LIMIT {
-            self.state.operations.truncate(persistence::LOG_HISTORY_LIMIT);
+            self.state
+                .operations
+                .truncate(persistence::LOG_HISTORY_LIMIT);
         }
         if let Err(err) = persistence::append_operation_log(&self.portable, &entry) {
             self.report_error_message(
@@ -44,17 +43,10 @@ impl HestiaApp {
         cache_key: &str,
         file_name: &str,
     ) -> Result<PathBuf> {
-        let Some(bytes) = persistence::cache_get(&self.portable, cache_key)? else {
-            bail!("cached download not found");
-        };
         let temp_dir = Self::runtime_temp_downloads_dir();
         fs::create_dir_all(&temp_dir)?;
-        let path = temp_dir.join(format!(
-            "{}-{}",
-            task_id,
-            sanitize_folder_name(file_name)
-        ));
-        fs::write(&path, bytes)?;
+        let path = temp_dir.join(format!("{}-{}", task_id, sanitize_folder_name(file_name)));
+        persistence::cache_link_or_copy_to_file(&self.portable, cache_key, &path)?;
         Ok(path)
     }
 
@@ -66,7 +58,16 @@ impl HestiaApp {
             .to_string()
     }
 
-    fn add_task(&mut self, id: u64, kind: TaskKind, status: TaskStatus, title: String, game_id: Option<String>, total_size: Option<u64>, unsafe_content: bool) {
+    fn add_task(
+        &mut self,
+        id: u64,
+        kind: TaskKind,
+        status: TaskStatus,
+        title: String,
+        game_id: Option<String>,
+        total_size: Option<u64>,
+        unsafe_content: bool,
+    ) {
         let now = Utc::now();
         let task = TaskEntry {
             id,
@@ -102,9 +103,7 @@ impl HestiaApp {
 
     fn add_install_task(&mut self, job: &InstallJob) {
         let now = Utc::now();
-        let game_id = self
-            .selected_game()
-            .map(|game| game.definition.id.clone());
+        let game_id = self.selected_game().map(|game| game.definition.id.clone());
         let total_size = match &job.source {
             ImportSource::Archive(path) => fs::metadata(path).ok().map(|m| m.len()),
             _ => None,
@@ -119,7 +118,9 @@ impl HestiaApp {
                     .unwrap_or_else(|| Self::task_title_for_source(&job.source));
                 task.game_id = game_id;
                 task.updated_at = now;
-                if task.total_size.is_none() { task.total_size = total_size; }
+                if task.total_size.is_none() {
+                    task.total_size = total_size;
+                }
                 self.tasks_scroll_to_edge = true;
                 let task_snapshot = task.clone();
                 if let Err(err) = persistence::replace_task(&self.portable, &task_snapshot) {
@@ -225,7 +226,9 @@ impl HestiaApp {
         self.state
             .games
             .iter()
-            .filter_map(|g| Self::game_archive_root(g, self.state.static_prefs.use_default_mods_path))
+            .filter_map(|g| {
+                Self::game_archive_root(g, self.state.static_prefs.use_default_mods_path)
+            })
             .map(|root| Self::directory_size_bytes(&root))
             .sum()
     }
@@ -240,18 +243,18 @@ impl HestiaApp {
 
     fn directory_size_bytes(root: &Path) -> u64 {
         use rayon::prelude::*;
-        
+
         if !root.exists() {
             return 0;
         }
-        
+
         // Collect entries first
         let entries: Vec<_> = WalkDir::new(root)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
             .collect();
-        
+
         // Sum in parallel
         entries
             .par_iter()
@@ -263,7 +266,9 @@ impl HestiaApp {
     fn clear_archives(&mut self) -> Result<usize> {
         let mut removed = 0_usize;
         for game in &self.state.games {
-            let Some(root) = Self::game_archive_root(game, self.state.static_prefs.use_default_mods_path) else {
+            let Some(root) =
+                Self::game_archive_root(game, self.state.static_prefs.use_default_mods_path)
+            else {
                 continue;
             };
             if !root.exists() {
@@ -395,8 +400,7 @@ impl HestiaApp {
                         );
                     }
                 } else {
-                    let (rect, _) =
-                        ui.allocate_exact_size(Vec2::splat(icon_size), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(icon_size), Sense::hover());
                     ui.painter().rect_filled(
                         rect,
                         6.0,
@@ -435,10 +439,9 @@ impl HestiaApp {
                             | TaskStatus::Downloading
                             | TaskStatus::Canceling
                     );
-                    let retryable_browse_download = matches!(
-                        task.status,
-                        TaskStatus::Failed | TaskStatus::Canceled
-                    ) && Self::browse_download_retry_payload_for_task(task).is_some();
+                    let retryable_browse_download =
+                        matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
+                            && Self::browse_download_retry_payload_for_task(task).is_some();
                     let has_badge_action = cancellable || retryable_browse_download;
                     ui.allocate_ui_with_layout(
                         Vec2::new(92.0, 42.0),
@@ -483,8 +486,9 @@ impl HestiaApp {
                                                     .sense(Sense::click()),
                                             );
                                             if enabled {
-                                                let response = response
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                let response = response.on_hover_cursor(
+                                                    egui::CursorIcon::PointingHand,
+                                                );
                                                 if response.clicked() {
                                                     self.cancel_task(task.id);
                                                 }
@@ -540,12 +544,11 @@ impl HestiaApp {
                     | TaskStatus::Downloading
                     | TaskStatus::Canceling
             ) {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 18.0),
-                    Sense::hover(),
-                );
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
 
-                ui.painter().rect_filled(rect, egui::CornerRadius::same(4), Color32::from_gray(45));
+                ui.painter()
+                    .rect_filled(rect, egui::CornerRadius::same(4), Color32::from_gray(45));
 
                 let text_left;
                 let mut text_right = String::new();
@@ -561,12 +564,25 @@ impl HestiaApp {
                     {
                         let progress = progress.read().unwrap();
                         ratio = if let Some(total) = progress.total {
-                            if total > 0 { progress.downloaded as f32 / total as f32 } else { 0.0 }
-                        } else { 0.0 };
+                            if total > 0 {
+                                progress.downloaded as f32 / total as f32
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        };
                         is_indeterminate = false;
                         text_left = if let Some(total) = progress.total {
-                            format!("{} / {} ({:.1}%)", format_file_size(progress.downloaded), format_file_size(total), ratio * 100.0)
-                        } else { format_file_size(progress.downloaded) };
+                            format!(
+                                "{} / {} ({:.1}%)",
+                                format_file_size(progress.downloaded),
+                                format_file_size(total),
+                                ratio * 100.0
+                            )
+                        } else {
+                            format_file_size(progress.downloaded)
+                        };
                         text_right = format!("↓ {}", format_speed(progress.speed));
                     } else {
                         text_left = text.task_starting_download().to_string();
@@ -590,19 +606,43 @@ impl HestiaApp {
                     let x = -seg_width + (rect.width() + seg_width) * t as f32;
                     let filled_rect = egui::Rect::from_min_max(
                         egui::pos2(rect.min.x + x.max(0.0), rect.min.y),
-                        egui::pos2(rect.min.x + (x + seg_width).min(rect.width()), rect.max.y)
-                    ).intersect(rect);
-                    ui.painter().rect_filled(filled_rect, egui::CornerRadius::same(4), Color32::from_rgb(60, 140, 200).linear_multiply(0.6));
+                        egui::pos2(rect.min.x + (x + seg_width).min(rect.width()), rect.max.y),
+                    )
+                    .intersect(rect);
+                    ui.painter().rect_filled(
+                        filled_rect,
+                        egui::CornerRadius::same(4),
+                        Color32::from_rgb(60, 140, 200).linear_multiply(0.6),
+                    );
                     ui.ctx().request_repaint();
                 } else {
-                    let filled_rect = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * ratio.clamp(0.0, 1.0), rect.height()));
-                    ui.painter().rect_filled(filled_rect, egui::CornerRadius::same(4), Color32::from_rgb(60, 140, 200));
+                    let filled_rect = egui::Rect::from_min_size(
+                        rect.min,
+                        Vec2::new(rect.width() * ratio.clamp(0.0, 1.0), rect.height()),
+                    );
+                    ui.painter().rect_filled(
+                        filled_rect,
+                        egui::CornerRadius::same(4),
+                        Color32::from_rgb(60, 140, 200),
+                    );
                     ui.ctx().request_repaint();
                 }
 
                 let text_color = Color32::WHITE;
-                ui.painter().text(rect.min + Vec2::new(6.0, 9.0), egui::Align2::LEFT_CENTER, text_left, egui::FontId::proportional(11.5), text_color);
-                ui.painter().text(rect.max + Vec2::new(-6.0, -9.0), egui::Align2::RIGHT_CENTER, text_right, egui::FontId::proportional(11.5), text_color);
+                ui.painter().text(
+                    rect.min + Vec2::new(6.0, 9.0),
+                    egui::Align2::LEFT_CENTER,
+                    text_left,
+                    egui::FontId::proportional(11.5),
+                    text_color,
+                );
+                ui.painter().text(
+                    rect.max + Vec2::new(-6.0, -9.0),
+                    egui::Align2::RIGHT_CENTER,
+                    text_right,
+                    egui::FontId::proportional(11.5),
+                    text_color,
+                );
             }
         });
     }
@@ -639,7 +679,9 @@ impl HestiaApp {
             if self.install_batch_active {
                 self.install_batch_stats.skipped += 1;
             }
-            let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+            let _ = self
+                .install_request_tx
+                .send(InstallRequest::Drop { job_id });
             self.set_message_ok(self.text().install_canceled_label());
             return;
         }
@@ -655,14 +697,17 @@ impl HestiaApp {
                 .any(|conflict| conflict.job_id == job_id);
 
             if pending_import || pending_conflict {
-                self.pending_imports.retain(|pending| pending.job_id != job_id);
+                self.pending_imports
+                    .retain(|pending| pending.job_id != job_id);
                 self.pending_conflicts
                     .retain(|conflict| conflict.job_id != job_id);
                 if let Some(current) = self.install_inflight.remove(&job_id) {
                     Self::cleanup_runtime_temp_for_source(&current.source);
                 }
                 self.update_task_status(job_id, TaskStatus::Canceled);
-                let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+                let _ = self
+                    .install_request_tx
+                    .send(InstallRequest::Drop { job_id });
                 self.set_message_ok(self.text().install_canceled_label());
             } else {
                 self.update_task_status(job_id, TaskStatus::Canceling);
@@ -678,5 +723,4 @@ impl HestiaApp {
             return;
         }
     }
-
 }

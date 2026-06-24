@@ -1,13 +1,16 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     ffi::{OsStr, OsString},
     fs,
+    io::{self, Read},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use once_cell::sync::Lazy;
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -24,7 +27,23 @@ pub type CancelFlag = Arc<AtomicBool>;
 pub struct PreparedImport {
     pub _temp_dir: Option<TempDir>,
     pub inspection: ImportInspection,
+    pub source_is_archive: bool,
 }
+
+const ZIP_COPY_BUFFER_BYTES: usize = 256 * 1024;
+const ZIP_EXTRACT_WORKERS: usize = 4;
+
+static ZIP_EXTRACT_POOL: Lazy<ThreadPool> = Lazy::new(|| {
+    let worker_count = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(ZIP_EXTRACT_WORKERS);
+    ThreadPoolBuilder::new()
+        .num_threads(worker_count)
+        .thread_name(|index| format!("hestia-zip-{index}"))
+        .build()
+        .expect("failed to create ZIP extraction pool")
+});
 
 fn check_cancel(flag: &CancelFlag) -> Result<()> {
     if flag.load(Ordering::Relaxed) {
@@ -275,6 +294,7 @@ pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImp
             Ok(PreparedImport {
                 _temp_dir: None,
                 inspection,
+                source_is_archive: false,
             })
         }
         ImportSource::Archive(path) => {
@@ -290,6 +310,7 @@ pub fn inspect_source(game_id: &str, source: ImportSource) -> Result<PreparedImp
             Ok(PreparedImport {
                 _temp_dir: Some(temp_dir),
                 inspection,
+                source_is_archive: true,
             })
         }
     }
@@ -308,6 +329,7 @@ pub fn inspect_source_cancelable(
             Ok(PreparedImport {
                 _temp_dir: None,
                 inspection,
+                source_is_archive: false,
             })
         }
         ImportSource::Archive(path) => {
@@ -326,6 +348,7 @@ pub fn inspect_source_cancelable(
             Ok(PreparedImport {
                 _temp_dir: Some(temp_dir),
                 inspection,
+                source_is_archive: true,
             })
         }
     }
@@ -547,11 +570,41 @@ fn extract_archive_cancelable(
 
 #[allow(dead_code)]
 fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
-    let file = fs::File::open(archive)?;
+    extract_zip_with_cancel(archive, destination, None)
+}
+
+fn extract_zip_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
+    extract_zip_with_cancel(archive, destination, Some(cancel))
+}
+
+#[derive(Clone)]
+struct ZipFileEntry {
+    index: usize,
+    outpath: PathBuf,
+}
+
+fn extract_zip_with_cancel(
+    archive_path: &Path,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    if let Some(cancel) = cancel {
+        check_cancel(cancel)?;
+    }
+
+    let file = fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     let sanitized_top_level = zip_top_level_sanitize_map(&mut archive)?;
+    let mut directories = HashSet::new();
+    let mut files = Vec::new();
+    let mut known_output_kinds = HashMap::<String, bool>::new();
+    let mut has_conflicting_paths = false;
+
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index)?;
+        if let Some(cancel) = cancel {
+            check_cancel(cancel)?;
+        }
+        let entry = archive.by_index(index)?;
         let enclosed = entry
             .enclosed_name()
             .ok_or_else(|| anyhow!("archive contains invalid path"))?;
@@ -561,44 +614,152 @@ fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
         let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
         let outpath = destination.join(relative);
         if entry.name().ends_with('/') {
-            fs::create_dir_all(&outpath)?;
+            if !register_zip_output(&mut known_output_kinds, &outpath, true) {
+                has_conflicting_paths = true;
+            }
+            directories.insert(outpath);
         } else {
             if let Some(parent) = outpath.parent() {
-                fs::create_dir_all(parent)?;
+                directories.insert(parent.to_path_buf());
             }
-            let mut outfile = fs::File::create(&outpath)?;
-            std::io::copy(&mut entry, &mut outfile)?;
+            if !register_zip_output(&mut known_output_kinds, &outpath, false) {
+                has_conflicting_paths = true;
+            }
+            files.push(ZipFileEntry { index, outpath });
+        }
+    }
+
+    if zip_outputs_overlap(&known_output_kinds) {
+        has_conflicting_paths = true;
+    }
+
+    if has_conflicting_paths {
+        return extract_zip_serial(
+            archive_path,
+            destination,
+            sanitized_top_level.as_ref(),
+            cancel,
+        );
+    }
+
+    let mut created_dirs = HashSet::new();
+    ensure_directory(destination, &mut created_dirs)?;
+    for directory in directories {
+        ensure_directory(&directory, &mut created_dirs)?;
+    }
+
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let chunk_size = (files.len() + ZIP_EXTRACT_POOL.current_num_threads() - 1)
+        / ZIP_EXTRACT_POOL.current_num_threads();
+    ZIP_EXTRACT_POOL.install(|| {
+        files.par_chunks(chunk_size).try_for_each(|chunk| {
+            let file = fs::File::open(archive_path)?;
+            let mut archive = zip::ZipArchive::new(file)?;
+            for work in chunk {
+                if let Some(cancel) = cancel {
+                    check_cancel(cancel)?;
+                }
+                let mut entry = archive.by_index(work.index)?;
+                copy_zip_entry(&mut entry, &work.outpath, cancel)?;
+            }
+            Ok(())
+        })
+    })
+}
+
+fn register_zip_output(
+    outputs: &mut HashMap<String, bool>,
+    path: &Path,
+    is_directory: bool,
+) -> bool {
+    let key = path.to_string_lossy().to_lowercase();
+    outputs.insert(key, is_directory).is_none()
+}
+
+fn zip_outputs_overlap(outputs: &HashMap<String, bool>) -> bool {
+    outputs.iter().any(|(path, is_directory)| {
+        let prefix = format!("{path}{}", std::path::MAIN_SEPARATOR);
+        !is_directory && outputs.keys().any(|other| other.starts_with(&prefix))
+    })
+}
+
+fn extract_zip_serial(
+    archive_path: &Path,
+    destination: &Path,
+    sanitized_top_level: Option<&HashMap<OsString, OsString>>,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    let file = fs::File::open(archive_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut created_dirs = HashSet::new();
+    ensure_directory(destination, &mut created_dirs)?;
+    for index in 0..archive.len() {
+        if let Some(cancel) = cancel {
+            check_cancel(cancel)?;
+        }
+        let mut entry = archive.by_index(index)?;
+        let enclosed = entry
+            .enclosed_name()
+            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
+        if zip_entry_is_ignored_metadata(&enclosed) {
+            continue;
+        }
+        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level)?;
+        let outpath = destination.join(relative);
+        if entry.name().ends_with('/') {
+            ensure_directory(&outpath, &mut created_dirs)?;
+        } else {
+            if let Some(parent) = outpath.parent() {
+                ensure_directory(parent, &mut created_dirs)?;
+            }
+            copy_zip_entry(&mut entry, &outpath, cancel)?;
         }
     }
     Ok(())
 }
 
-fn extract_zip_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
-    let file = fs::File::open(archive)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let sanitized_top_level = zip_top_level_sanitize_map(&mut archive)?;
-    for index in 0..archive.len() {
-        check_cancel(cancel)?;
-        let mut entry = archive.by_index(index)?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        if zip_entry_is_ignored_metadata(&enclosed) {
-            continue;
+fn copy_zip_entry<R: Read>(
+    entry: &mut R,
+    outpath: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    let mut outfile = create_file_with_parent_recovery(outpath)?;
+    let mut buffer = vec![0; ZIP_COPY_BUFFER_BYTES];
+    loop {
+        if let Some(cancel) = cancel {
+            check_cancel(cancel)?;
         }
-        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
-        let outpath = destination.join(relative);
-        if entry.name().ends_with('/') {
-            fs::create_dir_all(&outpath)?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&outpath)?;
-            std::io::copy(&mut entry, &mut outfile)?;
+        let bytes_read = entry.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
         }
+        std::io::Write::write_all(&mut outfile, &buffer[..bytes_read])?;
     }
     Ok(())
+}
+
+fn ensure_directory(path: &Path, created_dirs: &mut HashSet<PathBuf>) -> Result<()> {
+    if created_dirs.insert(path.to_path_buf()) {
+        fs::create_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn create_file_with_parent_recovery(path: &Path) -> Result<fs::File> {
+    match fs::File::create(path) {
+        Ok(file) => Ok(file),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow!("file has no parent directory: {}", path.display()))?;
+            fs::create_dir_all(parent)?;
+            Ok(fs::File::create(path)?)
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 #[allow(dead_code)]
@@ -745,7 +906,8 @@ pub fn copy_dir(source: &Path, destination: &Path, replace_existing: bool) -> Re
     if destination.exists() && replace_existing {
         fs::remove_dir_all(destination)?;
     }
-    fs::create_dir_all(destination)?;
+    let mut created_dirs = HashSet::new();
+    ensure_directory(destination, &mut created_dirs)?;
     for entry in WalkDir::new(source) {
         let entry = entry?;
         let relative = entry.path().strip_prefix(source)?;
@@ -755,12 +917,12 @@ pub fn copy_dir(source: &Path, destination: &Path, replace_existing: bool) -> Re
         validate_windows_relative_path(relative)?;
         let target = destination.join(relative);
         if entry.file_type().is_dir() {
-            fs::create_dir_all(&target)?;
+            ensure_directory(&target, &mut created_dirs)?;
         } else {
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
+                ensure_directory(parent, &mut created_dirs)?;
             }
-            fs::copy(entry.path(), target)?;
+            copy_file_with_parent_recovery(entry.path(), &target)?;
         }
     }
     Ok(())
@@ -776,7 +938,8 @@ pub fn copy_dir_cancelable(
     if destination.exists() && replace_existing {
         fs::remove_dir_all(destination)?;
     }
-    fs::create_dir_all(destination)?;
+    let mut created_dirs = HashSet::new();
+    ensure_directory(destination, &mut created_dirs)?;
     for entry in WalkDir::new(source) {
         check_cancel(cancel)?;
         let entry = entry?;
@@ -787,15 +950,55 @@ pub fn copy_dir_cancelable(
         validate_windows_relative_path(relative)?;
         let target = destination.join(relative);
         if entry.file_type().is_dir() {
-            fs::create_dir_all(&target)?;
+            ensure_directory(&target, &mut created_dirs)?;
         } else {
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
+                ensure_directory(parent, &mut created_dirs)?;
             }
-            fs::copy(entry.path(), target)?;
+            copy_file_with_parent_recovery(entry.path(), &target)?;
         }
     }
     Ok(())
+}
+
+fn copy_file_with_parent_recovery(source: &Path, destination: &Path) -> Result<u64> {
+    match fs::copy(source, destination) {
+        Ok(bytes) => Ok(bytes),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            let parent = destination.parent().ok_or_else(|| {
+                anyhow!("file has no parent directory: {}", destination.display())
+            })?;
+            fs::create_dir_all(parent)?;
+            Ok(fs::copy(source, destination)?)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub fn move_or_copy_archive_candidate_cancelable(
+    source: &Path,
+    destination: &Path,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    check_cancel(cancel)?;
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(err) if is_cross_device_rename_error(&err) => {
+            copy_dir_cancelable(source, destination, false, cancel)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn is_cross_device_rename_error(err: &io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        err.raw_os_error() == Some(17) // ERROR_NOT_SAME_DEVICE
+    }
+    #[cfg(not(windows))]
+    {
+        err.raw_os_error() == Some(18) // EXDEV
+    }
 }
 
 pub fn install_candidate_cancelable(
@@ -803,6 +1006,7 @@ pub fn install_candidate_cancelable(
     preferred_name: &str,
     target_root: &Path,
     choice: ConflictChoice,
+    source_is_archive: bool,
     cancel: &CancelFlag,
 ) -> Result<Option<PathBuf>> {
     validate_install_folder_name(preferred_name)?;
@@ -822,13 +1026,21 @@ pub fn install_candidate_cancelable(
             }
             ConflictChoice::KeepBoth => {
                 let target = next_available_name(target_root, preferred_name);
-                copy_dir_cancelable(candidate_path, &target, false, cancel)?;
+                if source_is_archive {
+                    move_or_copy_archive_candidate_cancelable(candidate_path, &target, cancel)?;
+                } else {
+                    copy_dir_cancelable(candidate_path, &target, false, cancel)?;
+                }
                 Ok(Some(target))
             }
         };
     }
 
-    copy_dir_cancelable(candidate_path, &initial_target, false, cancel)?;
+    if source_is_archive {
+        move_or_copy_archive_candidate_cancelable(candidate_path, &initial_target, cancel)?;
+    } else {
+        copy_dir_cancelable(candidate_path, &initial_target, false, cancel)?;
+    }
     Ok(Some(initial_target))
 }
 
@@ -945,5 +1157,96 @@ mod tests {
             "unexpected error: {err:#}"
         );
         assert!(!destination.join("GoodMod").join("Bad:Name").exists());
+    }
+
+    #[test]
+    fn zip_extracts_independent_files_with_parallel_workers() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("parallel.zip");
+        {
+            let file = fs::File::create(&archive_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            for index in 0..24 {
+                writer
+                    .start_file(format!("Mod/files/{index}.txt"), options)
+                    .unwrap();
+                writer
+                    .write_all(format!("payload-{index}").as_bytes())
+                    .unwrap();
+            }
+            writer.finish().unwrap();
+        }
+
+        let destination = temp.path().join("extract");
+        extract_zip(&archive_path, &destination).unwrap();
+        for index in 0..24 {
+            assert_eq!(
+                fs::read_to_string(
+                    destination
+                        .join("Mod")
+                        .join("files")
+                        .join(format!("{index}.txt"))
+                )
+                .unwrap(),
+                format!("payload-{index}")
+            );
+        }
+    }
+
+    #[test]
+    fn archive_candidate_moves_when_target_is_on_same_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("extracted");
+        let target_root = temp.path().join("mods");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested").join("mod.ini"), "demo").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let installed = install_candidate_cancelable(
+            &source,
+            "Installed",
+            &target_root,
+            ConflictChoice::KeepBoth,
+            true,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(installed, target_root.join("Installed"));
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read_to_string(installed.join("nested").join("mod.ini")).unwrap(),
+            "demo"
+        );
+    }
+
+    #[test]
+    fn folder_candidate_is_copied_without_moving_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target_root = temp.path().join("mods");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("mod.ini"), "demo").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let installed = install_candidate_cancelable(
+            &source,
+            "Installed",
+            &target_root,
+            ConflictChoice::KeepBoth,
+            false,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(source.exists());
+        assert_eq!(fs::read_to_string(source.join("mod.ini")).unwrap(), "demo");
+        assert_eq!(
+            fs::read_to_string(installed.join("mod.ini")).unwrap(),
+            "demo"
+        );
     }
 }

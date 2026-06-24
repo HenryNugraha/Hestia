@@ -105,6 +105,7 @@ fn spawn_install_workers(
                                 let mut installed_candidate_labels = Vec::new();
                                 let mut target_cleaned =
                                     HashSet::with_capacity(preferred_names.len());
+                                let source_is_archive = prepared.source_is_archive;
 
                                 for (i, &idx) in candidate_indices.iter().enumerate() {
                                     let preferred_name = &preferred_names[i];
@@ -131,12 +132,20 @@ fn spawn_install_workers(
                                         if temp_target.exists() {
                                             fs::remove_dir_all(&temp_target)?;
                                         }
-                                        importing::copy_dir_cancelable(
-                                            &candidate.path,
-                                            &temp_target,
-                                            false,
-                                            &cancel,
-                                        )?;
+                                        if source_is_archive {
+                                            importing::move_or_copy_archive_candidate_cancelable(
+                                                &candidate.path,
+                                                &temp_target,
+                                                &cancel,
+                                            )?;
+                                        } else {
+                                            importing::copy_dir_cancelable(
+                                                &candidate.path,
+                                                &temp_target,
+                                                false,
+                                                &cancel,
+                                            )?;
+                                        }
                                         if cancel.load(Ordering::Relaxed) {
                                             let _ = fs::remove_dir_all(&temp_target);
                                             bail!(importing::CANCELLED_ERROR);
@@ -153,6 +162,7 @@ fn spawn_install_workers(
                                             preferred_name,
                                             &target_root,
                                             current_choice,
+                                            source_is_archive,
                                             &cancel,
                                         )?
                                         .ok_or_else(|| anyhow!("Import cancelled"))?
@@ -317,4 +327,3 @@ fn spawn_install_workers(
         }
     });
 }
-

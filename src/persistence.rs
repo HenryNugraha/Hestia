@@ -938,6 +938,128 @@ pub fn cache_put(
     evict_lru_if_needed_path(max_bytes)
 }
 
+pub fn cache_promote_file(
+    _paths: &PortablePaths,
+    cache_key: &str,
+    source: &Path,
+    max_bytes: u64,
+) -> Result<()> {
+    let cache_path = cache_file_path(cache_key);
+    promote_file_atomically(source, &cache_path)?;
+    evict_lru_if_needed_path(max_bytes)
+}
+
+pub fn cache_link_or_copy_to_file(
+    _paths: &PortablePaths,
+    cache_key: &str,
+    destination: &Path,
+) -> Result<()> {
+    let source = cache_file_path(cache_key);
+    if !source.is_file() {
+        anyhow::bail!("cached download not found");
+    }
+    link_or_copy_file(&source, destination)?;
+    let now = FileTime::from_system_time(SystemTime::now());
+    let _ = set_file_mtime(&source, now);
+    Ok(())
+}
+
+fn promote_file_atomically(source: &Path, destination: &Path) -> Result<()> {
+    let parent = destination.parent().ok_or_else(|| {
+        anyhow::anyhow!("cache destination has no parent: {}", destination.display())
+    })?;
+    fs::create_dir_all(parent)?;
+    let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    let staging = destination.with_file_name(format!(
+        "{}.{}.tmp",
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("cache"),
+        now_ns
+    ));
+
+    let moved_source = match fs::rename(source, &staging) {
+        Ok(()) => true,
+        Err(err) if is_cross_device_error(&err) => {
+            fs::copy(source, &staging)?;
+            false
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    let previous = destination.exists().then(|| {
+        destination.with_file_name(format!(
+            "{}.{}.previous.tmp",
+            destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("cache"),
+            now_ns
+        ))
+    });
+    if let Some(previous) = &previous {
+        let _ = fs::remove_file(previous);
+        if let Err(err) = fs::rename(destination, previous) {
+            restore_staged_source(source, &staging, moved_source);
+            return Err(err.into());
+        }
+    }
+    if let Err(err) = fs::rename(&staging, destination) {
+        if let Some(previous) = previous {
+            let _ = fs::rename(previous, destination);
+        }
+        restore_staged_source(source, &staging, moved_source);
+        return Err(err.into());
+    }
+    if let Some(previous) = previous {
+        let _ = fs::remove_file(previous);
+    }
+    if !moved_source {
+        fs::remove_file(source)?;
+    }
+    Ok(())
+}
+
+fn restore_staged_source(source: &Path, staging: &Path, moved_source: bool) {
+    if moved_source {
+        let _ = fs::rename(staging, source);
+    } else {
+        let _ = fs::remove_file(staging);
+    }
+}
+
+fn link_or_copy_file(source: &Path, destination: &Path) -> Result<()> {
+    let parent = destination.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "download destination has no parent: {}",
+            destination.display()
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    if destination.exists() {
+        fs::remove_file(destination)?;
+    }
+    match fs::hard_link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(source, destination)?;
+            Ok(())
+        }
+    }
+}
+
+fn is_cross_device_error(err: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        err.raw_os_error() == Some(17) // ERROR_NOT_SAME_DEVICE
+    }
+    #[cfg(not(windows))]
+    {
+        err.raw_os_error() == Some(18) // EXDEV
+    }
+}
+
 pub fn evict_lru_if_needed(_paths: &PortablePaths, max_bytes: u64) -> Result<()> {
     evict_lru_if_needed_path(max_bytes)
 }
@@ -1439,5 +1561,34 @@ mod tests {
         assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
         assert_eq!(paths.state_source, None);
         assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn promote_file_atomically_replaces_cache_without_buffering_contents() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("partial.bin");
+        let destination = temp.path().join("cache").join("download.bin");
+        fs::write(&source, b"new download").unwrap();
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"old download").unwrap();
+
+        promote_file_atomically(&source, &destination).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"new download");
+    }
+
+    #[test]
+    fn link_or_copy_file_materializes_archive_without_consuming_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("cache").join("download.bin");
+        let destination = temp.path().join("final").join("download.zip");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"archive payload").unwrap();
+
+        link_or_copy_file(&source, &destination).unwrap();
+
+        assert_eq!(fs::read(&source).unwrap(), b"archive payload");
+        assert_eq!(fs::read(&destination).unwrap(), b"archive payload");
     }
 }
