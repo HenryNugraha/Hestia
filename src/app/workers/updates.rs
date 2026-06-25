@@ -44,17 +44,25 @@ fn spawn_update_check_worker(
                                     );
                                 }
                                 let err_msg = gamebanana::unavailable_reason(&profile);
+                                let group_items: Vec<_> = local_items
+                                    .iter()
+                                    .map(|(_, _, local_sync_ts, file_set)| {
+                                        (*local_sync_ts, file_set.clone())
+                                    })
+                                    .collect();
+                                let evaluations =
+                                    evaluate_file_set_update_group(&group_items, &profile);
                                 local_items
                                     .into_iter()
-                                    .map(|(idx, local_mod_id, local_sync_ts, file_set)| {
+                                    .enumerate()
+                                    .map(|(local_idx, (idx, local_mod_id, _, _))| {
                                         let state = if is_unavailable {
                                             ModUpdateState::MissingSource
                                         } else {
-                                            determine_file_set_update_state(
-                                                &file_set,
-                                                local_sync_ts,
-                                                &profile,
-                                            )
+                                            evaluations
+                                                .get(local_idx)
+                                                .map(|evaluation| evaluation.state)
+                                                .unwrap_or(ModUpdateState::MissingSource)
                                         };
                                         (
                                             idx,

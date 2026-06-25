@@ -2,6 +2,18 @@ const BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const BROWSE_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
 
+fn browse_selected_files_for_queued_download(
+    file: &gamebanana::ModFile,
+    selected_files: &[gamebanana::ModFile],
+    update_target_mod_id: Option<&str>,
+) -> Vec<gamebanana::ModFile> {
+    if update_target_mod_id.is_some() {
+        selected_files.to_vec()
+    } else {
+        vec![file.clone()]
+    }
+}
+
 impl HestiaApp {
     fn is_imported_mod_placeholder_name(&self, sanitized: &str) -> bool {
         AppLanguage::ALL
@@ -1667,53 +1679,73 @@ impl HestiaApp {
             .filter(|file| file.download_url.is_some())
             .cloned()
             .collect();
-        // Check if this is an update for an existing mod with a file set
-        let existing_mod = self
-            .state
-            .mods
-            .iter()
-            .find(|m| {
-                m.game_id == pending.game_id
-                    && m.source
-                        .as_ref()
-                        .and_then(|s| s.gamebanana.as_ref())
-                        .is_some_and(|l| l.mod_id == pending.mod_id)
-            })
-            .cloned();
+        // Check if this is an update for the exact existing mod that requested it.
+        // Same GameBanana-ID siblings can track different source files, so they must
+        // not be used as a fallback target here.
+        let existing_mod = pending.update_target_id.as_deref().and_then(|target_id| {
+            self.state
+                .mods
+                .iter()
+                .find(|m| {
+                    m.id == target_id
+                        && m.game_id == pending.game_id
+                        && m.source
+                            .as_ref()
+                            .and_then(|s| s.gamebanana.as_ref())
+                            .is_some_and(|l| l.mod_id == pending.mod_id)
+                })
+                .cloned()
+        });
         if let Some(existing_mod) = existing_mod {
             let file_set = existing_mod.source.as_ref().map(|source| &source.file_set);
             if let Some(file_set) = file_set {
-                let baseline_ts = file_set
-                    .selected_files_meta
-                    .iter()
-                    .map(|file| file.date_added)
-                    .max();
-                let newer_files: Vec<_> = baseline_ts
-                    .map(|baseline| {
-                        selectable
-                            .iter()
-                            .filter(|file| file.date_added > baseline)
-                            .cloned()
-                            .collect::<Vec<_>>()
+                let mut group_items = Vec::new();
+                let mut target_index = None;
+                for mod_entry in self.state.mods.iter().filter(|m| {
+                    m.game_id == pending.game_id
+                        && m.source
+                            .as_ref()
+                            .and_then(|s| s.gamebanana.as_ref())
+                            .is_some_and(|l| l.mod_id == pending.mod_id)
+                }) {
+                    let Some(source) = mod_entry.source.as_ref() else {
+                        continue;
+                    };
+                    if mod_entry.id == existing_mod.id {
+                        target_index = Some(group_items.len());
+                    }
+                    group_items.push((
+                        selected_file_baseline_ts(&source.file_set),
+                        source.file_set.clone(),
+                    ));
+                }
+                let evaluations = evaluate_file_set_update_group(&group_items, &detail.profile);
+                let update_files = target_index
+                    .and_then(|idx| evaluations.get(idx))
+                    .map(|evaluation| {
+                        update_candidate_files_from_signature(
+                            evaluation.signature.as_ref(),
+                            &selectable,
+                        )
                     })
                     .unwrap_or_default();
-                if !newer_files.is_empty() {
-                    let mut newer_selected = newer_files.clone();
-                    newer_selected.sort_by_key(|file| std::cmp::Reverse(file.date_added));
+                if !update_files.is_empty() {
                     if !Self::should_show_local_change_update_prefs(&existing_mod) {
-                        let selected_set = vec![newer_selected[0].clone()];
-                        self.queue_browse_download(
-                            pending.game_id,
-                            pending.mod_id,
-                            newer_selected[0].clone(),
-                            selected_set,
-                            Some(pending.task_id),
-                            detail.unsafe_content,
-                            update_folder_name,
-                            pending.update_target_id.clone(),
-                            pending.install_disabled,
-                            post_install_rename_to.clone(),
-                        );
+                        for (i, file) in update_files.iter().cloned().enumerate() {
+                            let tid = if i == 0 { Some(pending.task_id) } else { None };
+                            self.queue_browse_download(
+                                pending.game_id.clone(),
+                                pending.mod_id,
+                                file,
+                                update_files.clone(),
+                                tid,
+                                detail.unsafe_content,
+                                update_folder_name.clone(),
+                                pending.update_target_id.clone(),
+                                pending.install_disabled,
+                                post_install_rename_to.clone(),
+                            );
+                        }
                     } else {
                         self.remove_task(pending.task_id);
                         self.browse_state.file_prompt = Some(BrowseFilePrompt {
@@ -1722,7 +1754,7 @@ impl HestiaApp {
                             files: selectable
                                 .into_iter()
                                 .map(|file| BrowseSelectableFile {
-                                    selected: file.date_added > baseline_ts.unwrap_or_default(),
+                                    selected: update_files.iter().any(|update| update.id == file.id),
                                     file,
                                 })
                                 .collect(),
@@ -1908,14 +1940,18 @@ impl HestiaApp {
             self.set_message_ok(self.text().no_files_selected());
             return;
         }
-        let selected_set = selected_files.clone();
-        for file in selected_files {
+        for file in selected_files.iter().cloned() {
             let unsafe_content = self
                 .browse_state
                 .details
                 .get(&prompt.mod_id)
                 .map(|detail| detail.unsafe_content)
                 .unwrap_or(false);
+            let selected_set = browse_selected_files_for_queued_download(
+                &file,
+                &selected_files,
+                prompt.update_target_mod_id.as_deref(),
+            );
             self.queue_browse_download(
                 prompt.game_id.clone(),
                 prompt.mod_id,
@@ -1930,6 +1966,63 @@ impl HestiaApp {
             );
         }
         self.set_message_ok(self.text().download_queued());
+    }
+}
+
+#[cfg(test)]
+mod browse_file_prompt_tests {
+    use super::*;
+
+    fn mod_file(id: u64, file_name: &str) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id,
+            file_name: file_name.to_string(),
+            file_size: 1,
+            date_added: id as i64,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: Some(format!("https://example.com/{file_name}")),
+            is_archived: false,
+        }
+    }
+
+    #[test]
+    fn fresh_multi_file_prompt_tracks_only_each_queued_file() {
+        let body = mod_file(1, "covencarlottabody.zip");
+        let hair = mod_file(2, "covencarlottahair.zip");
+        let selected = vec![body.clone(), hair.clone()];
+
+        let tracked = browse_selected_files_for_queued_download(&hair, &selected, None);
+
+        assert_eq!(
+            tracked
+                .iter()
+                .map(|file| (file.id, file.file_name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(hair.id, hair.file_name.as_str())]
+        );
+    }
+
+    #[test]
+    fn update_prompt_keeps_full_selected_file_set_for_target_entry() {
+        let body = mod_file(1, "covencarlottabody.zip");
+        let hair = mod_file(2, "covencarlottahair.zip");
+        let selected = vec![body.clone(), hair.clone()];
+
+        let tracked =
+            browse_selected_files_for_queued_download(&hair, &selected, Some("local-mod-id"));
+
+        assert_eq!(
+            tracked
+                .iter()
+                .map(|file| (file.id, file.file_name.as_str()))
+                .collect::<Vec<_>>(),
+            selected
+                .iter()
+                .map(|file| (file.id, file.file_name.as_str()))
+                .collect::<Vec<_>>()
+        );
     }
 }
 

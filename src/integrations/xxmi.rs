@@ -402,6 +402,9 @@ pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
                 if !mod_entry.root_path.exists() {
                     return Ok(());
                 }
+                if cleanup_metadata_only_mod_dir(&mod_entry.root_path)? {
+                    return Ok(());
+                }
                 trash_err = Some(anyhow!(err));
                 thread::sleep(Duration::from_millis(delay_ms));
             }
@@ -416,6 +419,9 @@ pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
                 Ok(()) => return Ok(()),
                 Err(err) => {
                     if !mod_entry.root_path.exists() {
+                        return Ok(());
+                    }
+                    if cleanup_metadata_only_mod_dir(&mod_entry.root_path)? {
                         return Ok(());
                     }
                     shell_err = Some(err);
@@ -710,12 +716,7 @@ fn scan_live_mods(
         return Ok(Vec::new());
     }
 
-    // Collect mod directories first
-    let mod_dirs: Vec<PathBuf> = fs::read_dir(&root)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
+    let mod_dirs = collect_scannable_mod_dirs(&root)?;
 
     // Process each mod directory in parallel
     let mods: Result<Vec<ModEntry>> = mod_dirs
@@ -739,12 +740,7 @@ fn scan_archived_mods(
         return Ok(Vec::new());
     }
 
-    // Collect mod directories first
-    let mod_dirs: Vec<PathBuf> = fs::read_dir(&root)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
+    let mod_dirs = collect_scannable_mod_dirs(&root)?;
 
     // Process each mod directory in parallel
     let mods: Result<Vec<ModEntry>> = mod_dirs
@@ -763,6 +759,22 @@ fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> Result<Path
         .parent()
         .ok_or_else(|| anyhow!("invalid game mods path"))?;
     Ok(parent.join("Mods_Archived"))
+}
+
+fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut mod_dirs = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if mod_dir_has_payload(&path)? {
+            mod_dirs.push(path);
+        } else {
+            cleanup_metadata_only_mod_dir(&path)?;
+        }
+    }
+    Ok(mod_dirs)
 }
 
 fn load_mod_entry(
@@ -943,6 +955,32 @@ fn substantive_entries(root: &Path) -> Result<Vec<PathBuf>> {
         entries.push(path);
     }
     Ok(entries)
+}
+
+fn mod_dir_has_payload(root: &Path) -> Result<bool> {
+    if !substantive_entries(root)?.is_empty() {
+        return Ok(true);
+    }
+    directory_has_entries(&root.join(DISABLED_CONTAINER))
+}
+
+fn directory_has_entries(root: &Path) -> Result<bool> {
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(root)? {
+        entry?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn cleanup_metadata_only_mod_dir(root: &Path) -> Result<bool> {
+    if root.is_dir() && root.join(MOD_META_DIR).is_dir() && !mod_dir_has_payload(root)? {
+        fs::remove_dir_all(root)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option<String>, u64)> {
@@ -1309,5 +1347,74 @@ mod tests {
         let after = compute_mod_fingerprint(root).unwrap();
 
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn metadata_only_folder_is_not_scannable_mod_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let meta_dir = root.join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(meta_dir.join("metadata.json"), "{}").unwrap();
+
+        assert!(!mod_dir_has_payload(root).unwrap());
+    }
+
+    #[test]
+    fn disabled_container_counts_as_scannable_mod_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let meta_dir = root.join(MOD_META_DIR);
+        let disabled_dir = root.join(DISABLED_CONTAINER);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::create_dir_all(&disabled_dir).unwrap();
+        fs::write(meta_dir.join("metadata.json"), "{}").unwrap();
+        fs::write(
+            disabled_dir.join("mod.ini"),
+            "[TextureOverride]\nhash = abc",
+        )
+        .unwrap();
+
+        assert!(mod_dir_has_payload(root).unwrap());
+    }
+
+    #[test]
+    fn cleanup_removes_metadata_only_mod_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Deleted Mod");
+        let meta_dir = root.join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(meta_dir.join("metadata.json"), "{}").unwrap();
+
+        assert!(cleanup_metadata_only_mod_dir(&root).unwrap());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn scan_collection_deletes_metadata_only_mod_folders() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods_root = temp.path();
+        let orphan = mods_root.join("Deleted Mod");
+        let meta_dir = orphan.join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(meta_dir.join("metadata.json"), "{}").unwrap();
+
+        let mod_dirs = collect_scannable_mod_dirs(mods_root).unwrap();
+
+        assert!(mod_dirs.is_empty());
+        assert!(!orphan.exists());
+    }
+
+    #[test]
+    fn scan_collection_preserves_empty_non_hestia_folders() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods_root = temp.path();
+        let empty = mods_root.join("Empty Folder");
+        fs::create_dir_all(&empty).unwrap();
+
+        let mod_dirs = collect_scannable_mod_dirs(mods_root).unwrap();
+
+        assert!(mod_dirs.is_empty());
+        assert!(empty.exists());
     }
 }

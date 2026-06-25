@@ -12,10 +12,38 @@ fn selected_file_baseline_ts(file_set: &FileSetRecipe) -> Option<i64> {
     file_set.selected_files_meta.iter().map(|file| file.date_added).max()
 }
 
-fn candidate_signature(candidates: Vec<TrackedFileMeta>) -> Option<IgnoredUpdateSignature> {
+#[derive(Debug, Clone, Default)]
+struct FileSetUpdateEvaluation {
+    state: ModUpdateState,
+    signature: Option<IgnoredUpdateSignature>,
+}
+
+#[derive(Debug, Clone)]
+enum ResolvedTrackedFiles {
+    Tracked(Vec<TrackedFileMeta>),
+    MissingSource,
+    Untracked,
+}
+
+const FILE_LINEAGE_AUTO_MATCH_THRESHOLD: f32 = 0.72;
+const FILE_LINEAGE_AUTO_MATCH_MARGIN: f32 = 0.18;
+const FILE_LINEAGE_COMMON_PREFIX_MIN_CHARS: usize = 6;
+const FILE_LINEAGE_MIN_DISTINCTIVE_CHARS: usize = 3;
+
+fn candidate_signature(mut candidates: Vec<TrackedFileMeta>) -> Option<IgnoredUpdateSignature> {
     if candidates.is_empty() {
         None
     } else {
+        candidates.sort_by(|a, b| {
+            b.date_added
+                .cmp(&a.date_added)
+                .then_with(|| a.file_name.cmp(&b.file_name))
+                .then_with(|| a.file_id.cmp(&b.file_id))
+        });
+        candidates.dedup_by(|a, b| {
+            a.file_id == b.file_id
+                || (a.file_name == b.file_name && a.date_added == b.date_added)
+        });
         Some(IgnoredUpdateSignature {
             files: candidates,
             profile_update_ts: None,
@@ -24,56 +52,78 @@ fn candidate_signature(candidates: Vec<TrackedFileMeta>) -> Option<IgnoredUpdate
     }
 }
 
-fn tracked_update_signature(
-    tracked_files: &[TrackedFileMeta],
-    all_remote_files: &[&gamebanana::ModFile],
-) -> (ModUpdateState, Option<IgnoredUpdateSignature>) {
-    let installed_baseline_ts = tracked_files.iter().map(|file| file.date_added).max();
-    let latest_remote_ts = all_remote_files.iter().map(|file| file.date_added).max();
-
-    let tracked_files_still_exist = tracked_files.iter().all(|tracked| {
-        all_remote_files.iter().any(|file| {
-            file.id == tracked.file_id
-                || (file.file_name == tracked.file_name && file.date_added == tracked.date_added)
-        })
-    });
-
-    match (installed_baseline_ts, latest_remote_ts) {
-        (Some(installed), Some(latest)) if latest > installed => {
-            let candidates = all_remote_files
-                .iter()
-                .copied()
-                .filter(|file| file.date_added == latest)
-                .map(tracked_file_meta_from_mod_file)
-                .collect();
-            (ModUpdateState::UpdateAvailable, candidate_signature(candidates))
+fn update_candidate_files_from_signature(
+    signature: Option<&IgnoredUpdateSignature>,
+    selectable: &[gamebanana::ModFile],
+) -> Vec<gamebanana::ModFile> {
+    let Some(signature) = signature else {
+        return Vec::new();
+    };
+    let mut files = Vec::with_capacity(signature.files.len());
+    for tracked in &signature.files {
+        if let Some(file) = selectable
+            .iter()
+            .find(|file| {
+                (tracked.file_id != 0 && file.id == tracked.file_id)
+                    || (file.file_name == tracked.file_name
+                        && file.date_added == tracked.date_added)
+            })
+            .cloned()
+        {
+            files.push(file);
         }
-        (_, Some(_)) if tracked_files_still_exist => (ModUpdateState::UpToDate, None),
-        (_, Some(_)) => (ModUpdateState::MissingSource, None),
-        _ => (ModUpdateState::MissingSource, None),
     }
+    files.sort_by(|a, b| {
+        b.date_added
+            .cmp(&a.date_added)
+            .then_with(|| a.file_name.cmp(&b.file_name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    files.dedup_by(|a, b| a.id == b.id || (a.file_name == b.file_name && a.date_added == b.date_added));
+    files
 }
 
-fn determine_tracked_meta_update_state(
-    tracked_files: &[TrackedFileMeta],
-    all_remote_files: &[&gamebanana::ModFile],
-) -> ModUpdateState {
-    tracked_update_signature(tracked_files, all_remote_files).0
+fn downloadable_active_files(profile: &gamebanana::ProfileResponse) -> Vec<&gamebanana::ModFile> {
+    profile
+        .files
+        .iter()
+        .filter(|file| file.download_url.is_some() && !file.is_archived)
+        .collect()
 }
 
-fn compute_update_signature(
-    file_set: &FileSetRecipe,
-    profile: &gamebanana::ProfileResponse,
-) -> Option<IgnoredUpdateSignature> {
-    let all_remote_files: Vec<&gamebanana::ModFile> = profile
+fn downloadable_all_files(profile: &gamebanana::ProfileResponse) -> Vec<&gamebanana::ModFile> {
+    profile
         .files
         .iter()
         .chain(profile.archived_files.iter())
         .filter(|file| file.download_url.is_some())
-        .collect();
+        .collect()
+}
+
+fn remote_file_matches_tracked(file: &gamebanana::ModFile, tracked: &TrackedFileMeta) -> bool {
+    (tracked.file_id != 0 && file.id == tracked.file_id)
+        || (file.file_name == tracked.file_name && file.date_added == tracked.date_added)
+}
+
+fn tracked_files_still_exist(
+    tracked_files: &[TrackedFileMeta],
+    all_remote_files: &[&gamebanana::ModFile],
+) -> bool {
+    tracked_files.iter().all(|tracked| {
+        all_remote_files
+            .iter()
+            .any(|file| remote_file_matches_tracked(file, tracked))
+    })
+}
+
+fn resolve_tracked_files(
+    file_set: &FileSetRecipe,
+    all_remote_files: &[&gamebanana::ModFile],
+) -> ResolvedTrackedFiles {
     if !file_set.selected_files_meta.is_empty() {
-        return tracked_update_signature(&file_set.selected_files_meta, &all_remote_files).1;
+        return ResolvedTrackedFiles::Tracked(file_set.selected_files_meta.clone());
     }
+
     if !file_set.selected_file_ids.is_empty() {
         let selected_ids: HashSet<u64> = file_set.selected_file_ids.iter().copied().collect();
         let tracked_files: Vec<_> = all_remote_files
@@ -82,27 +132,358 @@ fn compute_update_signature(
             .filter(|file| selected_ids.contains(&file.id))
             .map(tracked_file_meta_from_mod_file)
             .collect();
-        if tracked_files.len() == selected_ids.len() {
-            return tracked_update_signature(&tracked_files, &all_remote_files).1;
+        return if tracked_files.len() == selected_ids.len() {
+            ResolvedTrackedFiles::Tracked(tracked_files)
+        } else {
+            ResolvedTrackedFiles::MissingSource
+        };
+    }
+
+    if !file_set.selected_file_names.is_empty() {
+        let mut tracked_files = Vec::with_capacity(file_set.selected_file_names.len());
+        for selected_name in &file_set.selected_file_names {
+            if let Some(file) = all_remote_files
+                .iter()
+                .copied()
+                .find(|file| file.file_name == *selected_name)
+            {
+                tracked_files.push(tracked_file_meta_from_mod_file(file));
+            } else {
+                tracked_files.push(TrackedFileMeta {
+                    file_id: 0,
+                    file_name: selected_name.clone(),
+                    date_added: 0,
+                    version: None,
+                    archived: false,
+                });
+            }
+        }
+        return ResolvedTrackedFiles::Tracked(tracked_files);
+    }
+
+    ResolvedTrackedFiles::Untracked
+}
+
+fn normalized_file_stem_for_lineage(file_name: &str) -> String {
+    let without_extension = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name);
+    without_extension
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+fn longest_common_prefix_len(values: &[String]) -> usize {
+    let Some(first) = values.first() else {
+        return 0;
+    };
+    let mut prefix_len = first.chars().count();
+    for value in values.iter().skip(1) {
+        let common = first
+            .chars()
+            .zip(value.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        prefix_len = prefix_len.min(common);
+        if prefix_len == 0 {
+            break;
         }
     }
-    if !file_set.selected_file_names.is_empty() {
-        let selected_names: HashSet<&str> = file_set
-            .selected_file_names
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let tracked_files: Vec<_> = all_remote_files
-            .iter()
-            .copied()
-            .filter(|file| selected_names.contains(file.file_name.as_str()))
-            .map(tracked_file_meta_from_mod_file)
-            .collect();
-        if tracked_files.len() == selected_names.len() {
-            return tracked_update_signature(&tracked_files, &all_remote_files).1;
+    prefix_len
+}
+
+fn lineage_common_prefix(tracked_files: &[TrackedFileMeta]) -> String {
+    let mut stems: Vec<String> = tracked_files
+        .iter()
+        .map(|file| normalized_file_stem_for_lineage(&file.file_name))
+        .filter(|stem| stem.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS)
+        .collect();
+    stems.sort();
+    stems.dedup();
+
+    if stems.len() < 2 {
+        return String::new();
+    }
+
+    let prefix_len = longest_common_prefix_len(&stems);
+    let shortest_len = stems.iter().map(|stem| stem.chars().count()).min().unwrap_or(0);
+    if prefix_len < FILE_LINEAGE_COMMON_PREFIX_MIN_CHARS
+        || shortest_len.saturating_sub(prefix_len) < FILE_LINEAGE_MIN_DISTINCTIVE_CHARS
+    {
+        return String::new();
+    }
+
+    stems[0].chars().take(prefix_len).collect()
+}
+
+fn strip_lineage_common_prefix(value: &str, common_prefix: &str) -> String {
+    if common_prefix.is_empty() || !value.starts_with(common_prefix) {
+        return value.to_string();
+    }
+    let stripped: String = value.chars().skip(common_prefix.chars().count()).collect();
+    if stripped.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+        stripped
+    } else {
+        value.to_string()
+    }
+}
+
+fn split_version_marker_prefix(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix('v')?;
+    if rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        let remaining = rest.trim_start_matches(|ch: char| ch.is_ascii_digit());
+        if remaining.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+            return Some(remaining);
         }
     }
     None
+}
+
+fn split_version_marker_suffix(value: &str) -> Option<&str> {
+    let digit_start = value
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !ch.is_ascii_digit())
+        .map(|(idx, ch)| idx + ch.len_utf8())?;
+    if digit_start >= value.len() {
+        return None;
+    }
+    let before_digits = &value[..digit_start];
+    let marker_start = before_digits.strip_suffix('v')?;
+    if marker_start.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+        Some(marker_start)
+    } else {
+        None
+    }
+}
+
+fn strip_release_marker_once(value: &str) -> Option<String> {
+    if let Some(rest) = split_version_marker_prefix(value) {
+        return Some(rest.to_string());
+    }
+    if let Some(rest) = split_version_marker_suffix(value) {
+        return Some(rest.to_string());
+    }
+
+    const WORD_MARKERS: &[&str] = &[
+        "hotfix", "updated", "update", "fixed", "fix", "new", "final",
+    ];
+    for marker in WORD_MARKERS {
+        if let Some(rest) = value.strip_prefix(marker) {
+            if rest.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+                return Some(rest.to_string());
+            }
+        }
+        if let Some(rest) = value.strip_suffix(marker) {
+            if rest.chars().count() >= FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+                return Some(rest.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn strip_release_markers(value: &str) -> String {
+    let mut current = value.to_string();
+    while let Some(next) = strip_release_marker_once(&current) {
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
+fn lineage_match_core(file_name: &str, common_prefix: &str) -> String {
+    let normalized = normalized_file_stem_for_lineage(file_name);
+    let distinctive = strip_lineage_common_prefix(&normalized, common_prefix);
+    strip_release_markers(&distinctive)
+}
+
+fn longest_common_subsequence_len(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
+
+    let mut previous = vec![0usize; b.len() + 1];
+    let mut current = vec![0usize; b.len() + 1];
+    for a_ch in &a {
+        for (b_idx, b_ch) in b.iter().enumerate() {
+            current[b_idx + 1] = if a_ch == b_ch {
+                previous[b_idx] + 1
+            } else {
+                current[b_idx].max(previous[b_idx + 1])
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+        current.fill(0);
+    }
+    previous[b.len()]
+}
+
+fn lineage_core_similarity(source_core: &str, candidate_core: &str) -> f32 {
+    let source_len = source_core.chars().count();
+    let candidate_len = candidate_core.chars().count();
+    if source_len == 0 || candidate_len == 0 {
+        return 0.0;
+    }
+    if source_core == candidate_core {
+        return 1.0;
+    }
+
+    let matched = longest_common_subsequence_len(source_core, candidate_core);
+    if matched < FILE_LINEAGE_MIN_DISTINCTIVE_CHARS {
+        return 0.0;
+    }
+    let unmatched_source = source_len.saturating_sub(matched);
+    let unmatched_candidate = candidate_len.saturating_sub(matched);
+    let denominator = source_len.max(candidate_len) as f32;
+    ((matched as f32
+        - 0.65 * unmatched_source as f32
+        - 0.65 * unmatched_candidate as f32)
+        / denominator)
+        .clamp(0.0, 1.0)
+}
+
+fn file_lineage_similarity(
+    source_name: &str,
+    candidate_name: &str,
+    common_prefix: &str,
+) -> f32 {
+    let source_core = lineage_match_core(source_name, common_prefix);
+    let candidate_core = lineage_match_core(candidate_name, common_prefix);
+    let distinctive_score = lineage_core_similarity(&source_core, &candidate_core);
+
+    let source_full = strip_release_markers(&normalized_file_stem_for_lineage(source_name));
+    let candidate_full = strip_release_markers(&normalized_file_stem_for_lineage(candidate_name));
+    let full_score = lineage_core_similarity(&source_full, &candidate_full);
+
+    distinctive_score.max(full_score)
+}
+
+fn evaluate_file_set_update_group(
+    items: &[(Option<i64>, FileSetRecipe)],
+    profile: &gamebanana::ProfileResponse,
+) -> Vec<FileSetUpdateEvaluation> {
+    if gamebanana::is_unavailable(profile) {
+        return items
+            .iter()
+            .map(|_| FileSetUpdateEvaluation {
+                state: ModUpdateState::MissingSource,
+                signature: None,
+            })
+            .collect();
+    }
+
+    let all_remote_files = downloadable_all_files(profile);
+    let active_remote_files = downloadable_active_files(profile);
+    let resolved: Vec<_> = items
+        .iter()
+        .map(|(_, file_set)| resolve_tracked_files(file_set, &all_remote_files))
+        .collect();
+    let all_tracked_files: Vec<_> = resolved
+        .iter()
+        .filter_map(|resolved| match resolved {
+            ResolvedTrackedFiles::Tracked(files) => Some(files.as_slice()),
+            ResolvedTrackedFiles::MissingSource | ResolvedTrackedFiles::Untracked => None,
+        })
+        .flatten()
+        .cloned()
+        .collect();
+    let common_prefix = lineage_common_prefix(&all_tracked_files);
+    let mut assigned_candidates: Vec<Vec<TrackedFileMeta>> = vec![Vec::new(); items.len()];
+
+    for candidate in active_remote_files {
+        let mut scores = Vec::with_capacity(resolved.len());
+        for (idx, resolved_files) in resolved.iter().enumerate() {
+            let best_score = match resolved_files {
+                ResolvedTrackedFiles::Tracked(tracked_files) => tracked_files
+                    .iter()
+                    .filter(|tracked| {
+                        candidate.date_added > tracked.date_added
+                            && !remote_file_matches_tracked(candidate, tracked)
+                    })
+                    .map(|tracked| {
+                        file_lineage_similarity(
+                            &tracked.file_name,
+                            &candidate.file_name,
+                            &common_prefix,
+                        )
+                    })
+                    .fold(0.0_f32, f32::max),
+                ResolvedTrackedFiles::MissingSource | ResolvedTrackedFiles::Untracked => 0.0,
+            };
+            scores.push((idx, best_score));
+        }
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let Some((best_idx, best_score)) = scores.first().copied() else {
+            continue;
+        };
+        if best_score < FILE_LINEAGE_AUTO_MATCH_THRESHOLD {
+            continue;
+        }
+        let runner_up_score = scores.get(1).map(|(_, score)| *score).unwrap_or(0.0);
+        if runner_up_score > 0.0 && best_score - runner_up_score < FILE_LINEAGE_AUTO_MATCH_MARGIN {
+            continue;
+        }
+
+        assigned_candidates[best_idx].push(tracked_file_meta_from_mod_file(candidate));
+    }
+
+    items
+        .iter()
+        .zip(resolved.iter())
+        .enumerate()
+        .map(|(idx, ((local_ts, _), resolved_files))| {
+            if !assigned_candidates[idx].is_empty() {
+                return FileSetUpdateEvaluation {
+                    state: ModUpdateState::UpdateAvailable,
+                    signature: candidate_signature(assigned_candidates[idx].clone()),
+                };
+            }
+
+            match resolved_files {
+                ResolvedTrackedFiles::Tracked(tracked_files) => {
+                    if tracked_files_still_exist(tracked_files, &all_remote_files) {
+                        FileSetUpdateEvaluation {
+                            state: ModUpdateState::UpToDate,
+                            signature: None,
+                        }
+                    } else {
+                        FileSetUpdateEvaluation {
+                            state: ModUpdateState::MissingSource,
+                            signature: None,
+                        }
+                    }
+                }
+                ResolvedTrackedFiles::MissingSource => FileSetUpdateEvaluation {
+                    state: ModUpdateState::MissingSource,
+                    signature: None,
+                },
+                ResolvedTrackedFiles::Untracked => FileSetUpdateEvaluation {
+                    state: determine_update_state(*local_ts, profile),
+                    signature: None,
+                },
+            }
+        })
+        .collect()
+}
+
+fn compute_update_signature(
+    file_set: &FileSetRecipe,
+    profile: &gamebanana::ProfileResponse,
+) -> Option<IgnoredUpdateSignature> {
+    evaluate_file_set_update_group(&[(selected_file_baseline_ts(file_set), file_set.clone())], profile)
+        .into_iter()
+        .next()
+        .and_then(|evaluation| evaluation.signature)
 }
 
 fn profile_update_signature(
@@ -331,40 +712,11 @@ fn determine_file_set_update_state(
     local_ts: Option<i64>,
     profile: &gamebanana::ProfileResponse,
 ) -> ModUpdateState {
-    if gamebanana::is_unavailable(profile) {
-        return ModUpdateState::MissingSource;
-    }
-
-    let all_remote_files: Vec<&gamebanana::ModFile> = profile
-        .files
-        .iter()
-        .chain(profile.archived_files.iter())
-        .filter(|file| file.download_url.is_some())
-        .collect();
-
-    if !file_set.selected_files_meta.is_empty() {
-        return determine_tracked_meta_update_state(&file_set.selected_files_meta, &all_remote_files);
-    }
-
-    if !file_set.selected_file_ids.is_empty()
-        && file_set
-            .selected_file_ids
-            .iter()
-            .any(|id| !all_remote_files.iter().any(|file| file.id == *id))
-    {
-        return ModUpdateState::MissingSource;
-    }
-
-    if !file_set.selected_file_names.is_empty()
-        && file_set
-            .selected_file_names
-            .iter()
-            .any(|name| !all_remote_files.iter().any(|file| &file.file_name == name))
-    {
-        return ModUpdateState::MissingSource;
-    }
-
-    determine_update_state(local_ts, profile)
+    evaluate_file_set_update_group(&[(local_ts, file_set.clone())], profile)
+        .into_iter()
+        .next()
+        .map(|evaluation| evaluation.state)
+        .unwrap_or(ModUpdateState::MissingSource)
 }
 
 fn backfill_selected_files_meta(file_set: &mut FileSetRecipe, profile: &gamebanana::ProfileResponse) -> bool {
@@ -1846,7 +2198,7 @@ mod update_signature_tests {
 
     #[test]
     fn update_signature_uses_legacy_selected_file_ids() {
-        let profile = profile(vec![mod_file(10, "old.zip", 100), mod_file(20, "new.zip", 200)], 200);
+        let profile = profile(vec![mod_file(10, "old.zip", 100), mod_file(20, "old v2.zip", 200)], 200);
         let file_set = FileSetRecipe {
             selected_file_ids: vec![10],
             ..Default::default()
@@ -1858,6 +2210,202 @@ mod update_signature_tests {
         assert_eq!(signature.profile_update_ts, None);
         assert_eq!(signature.files.len(), 1);
         assert_eq!(signature.files[0].file_id, 20);
+    }
+
+    #[test]
+    fn unrelated_new_file_does_not_update_tracked_file() {
+        let current = mod_file(10, "old.zip", 100);
+        let unrelated = mod_file(20, "new.zip", 200);
+        let profile = profile(vec![current.clone(), unrelated], 200);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&current)],
+            ..Default::default()
+        };
+
+        assert!(compute_update_signature(&file_set, &profile).is_none());
+        assert_eq!(
+            determine_file_set_update_state(&file_set, Some(100), &profile),
+            ModUpdateState::UpToDate
+        );
+    }
+
+    #[test]
+    fn sibling_file_lineage_maps_hair_update_to_hair_entry_only() {
+        let body = mod_file(1357843, "covencarlottabody.zip", 100);
+        let hair = mod_file(1357842, "covencarlottahair.zip", 100);
+        let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
+        let hair_update = mod_file(2000001, "covencarlottahair v2.zip", 200);
+        let profile = profile(
+            vec![body.clone(), hair.clone(), crystal.clone(), hair_update.clone()],
+            200,
+        );
+        let items = vec![
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&body)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&hair)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&crystal)],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        let evaluations = evaluate_file_set_update_group(&items, &profile);
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[1].state, ModUpdateState::UpdateAvailable);
+        assert_eq!(evaluations[2].state, ModUpdateState::UpToDate);
+        assert_eq!(
+            evaluations[1]
+                .signature
+                .as_ref()
+                .and_then(|signature| signature.files.first())
+                .map(|file| file.file_id),
+            Some(hair_update.id)
+        );
+    }
+
+    #[test]
+    fn sibling_file_lineage_handles_new_prefix_after_shared_name() {
+        let body = mod_file(1357843, "covencarlottabody.zip", 100);
+        let hair = mod_file(1357842, "covencarlottahair.zip", 100);
+        let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
+        let hair_update = mod_file(2000001, "covencarlottanewhair.zip", 200);
+        let profile = profile(
+            vec![body.clone(), hair.clone(), crystal.clone(), hair_update.clone()],
+            200,
+        );
+        let items = vec![
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&body)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&hair)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&crystal)],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        let evaluations = evaluate_file_set_update_group(&items, &profile);
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[1].state, ModUpdateState::UpdateAvailable);
+        assert_eq!(evaluations[2].state, ModUpdateState::UpToDate);
+        assert_eq!(
+            evaluations[1]
+                .signature
+                .as_ref()
+                .and_then(|signature| signature.files.first())
+                .map(|file| file.file_id),
+            Some(hair_update.id)
+        );
+    }
+
+    #[test]
+    fn sibling_file_lineage_maps_crystal_update_to_crystal_entry_only() {
+        let body = mod_file(1357843, "covencarlottabody.zip", 100);
+        let hair = mod_file(1357842, "covencarlottahair.zip", 100);
+        let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
+        let crystal_update = mod_file(2000001, "covencarlottacrystalhair FIX.zip", 200);
+        let profile = profile(
+            vec![body.clone(), hair.clone(), crystal.clone(), crystal_update.clone()],
+            200,
+        );
+        let items = vec![
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&body)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&hair)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&crystal)],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        let evaluations = evaluate_file_set_update_group(&items, &profile);
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[1].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[2].state, ModUpdateState::UpdateAvailable);
+        assert_eq!(
+            evaluations[2]
+                .signature
+                .as_ref()
+                .and_then(|signature| signature.files.first())
+                .map(|file| file.file_id),
+            Some(crystal_update.id)
+        );
+    }
+
+    #[test]
+    fn duplicated_full_file_sets_are_ambiguous_and_not_auto_assigned() {
+        let body = mod_file(1357843, "covencarlottabody.zip", 100);
+        let hair = mod_file(1357842, "covencarlottahair.zip", 100);
+        let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
+        let hair_update = mod_file(2000001, "covencarlottahair v2.zip", 200);
+        let profile = profile(
+            vec![body.clone(), hair.clone(), crystal.clone(), hair_update],
+            200,
+        );
+        let duplicated_file_set = FileSetRecipe {
+            selected_files_meta: vec![
+                tracked_file_meta_from_mod_file(&body),
+                tracked_file_meta_from_mod_file(&hair),
+                tracked_file_meta_from_mod_file(&crystal),
+            ],
+            ..Default::default()
+        };
+        let items = vec![
+            (Some(100), duplicated_file_set.clone()),
+            (Some(100), duplicated_file_set.clone()),
+            (Some(100), duplicated_file_set),
+        ];
+
+        let evaluations = evaluate_file_set_update_group(&items, &profile);
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[1].state, ModUpdateState::UpToDate);
+        assert_eq!(evaluations[2].state, ModUpdateState::UpToDate);
+        assert!(evaluations.iter().all(|evaluation| evaluation.signature.is_none()));
     }
 
     #[test]
@@ -1917,7 +2465,7 @@ mod update_signature_tests {
     #[test]
     fn prearmed_ignore_once_converts_to_next_update_signature() {
         let current = mod_file(10, "current.zip", 100);
-        let update = mod_file(20, "update.zip", 200);
+        let update = mod_file(20, "current v2.zip", 200);
         let current_profile = profile(vec![current.clone()], 100);
         let update_profile = profile(vec![current.clone(), update], 200);
         let file_set = FileSetRecipe {
@@ -1943,7 +2491,7 @@ mod update_signature_tests {
     #[test]
     fn prearmed_ignore_once_converts_for_modified_local_update() {
         let current = mod_file(10, "current.zip", 100);
-        let update = mod_file(20, "update.zip", 200);
+        let update = mod_file(20, "current v2.zip", 200);
         let current_profile = profile(vec![current.clone()], 100);
         let update_profile = profile(vec![current.clone(), update], 200);
         let file_set = FileSetRecipe {
@@ -1969,8 +2517,8 @@ mod update_signature_tests {
     #[test]
     fn normal_ignore_once_clears_on_subsequent_update() {
         let installed = mod_file(10, "installed.zip", 100);
-        let ignored = mod_file(20, "ignored.zip", 200);
-        let newer = mod_file(30, "newer.zip", 300);
+        let ignored = mod_file(20, "installed v2.zip", 200);
+        let newer = mod_file(30, "installed v3.zip", 300);
         let update_profile = profile(vec![installed.clone(), ignored.clone(), newer], 300);
         let file_set = FileSetRecipe {
             selected_files_meta: vec![tracked_file_meta_from_mod_file(&installed)],

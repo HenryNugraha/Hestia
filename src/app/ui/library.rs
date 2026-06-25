@@ -1857,8 +1857,8 @@ impl HestiaApp {
                 self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
                 self.set_message_ok(text.action_count_message(action, deleted_count));
                 self.save_state();
-                self.refresh();
             }
+            self.refresh();
             self.report_error(err, Some(self.text().delete_failed()));
             return;
         }
