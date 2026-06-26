@@ -758,8 +758,14 @@ impl HestiaApp {
                 InlineMarkdownEmbed::Image { texture_key } => {
                     if let Some(texture) = self.browse_image_textures.get(&texture_key) {
                         ui.add_space(8.0);
-                        render_inline_markdown_image(ui, texture);
+                        let response = render_inline_markdown_image(ui, texture);
+                        let is_visible = response
+                            .as_ref()
+                            .is_some_and(|response| response.rect.intersects(ui.clip_rect()));
                         ui.add_space(8.0);
+                        if is_visible {
+                            self.mark_gif_preview_visible(ui.ctx(), &texture_key);
+                        }
                     }
                 }
                 InlineMarkdownEmbed::Youtube { url } => {
@@ -892,22 +898,6 @@ impl HestiaApp {
                     );
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key.clone(), 3, texture);
 
-                    // Queue full animation decode for this GIF (if not already queued)
-                    if !self.pending_gif_animations.contains(&texture_key) {
-                        self.pending_gif_animations.insert(texture_key.clone());
-                        if let Some(path) = file_uri_to_path(&gif_dest) {
-                            let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromFile {
-                                src_path: path,
-                                texture_key: texture_key.clone(),
-                            });
-                        } else if gif_dest.starts_with("http://") || gif_dest.starts_with("https://") {
-                            let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromUrl {
-                                url: gif_dest.clone(),
-                                texture_key: texture_key.clone(),
-                            });
-                        }
-                    }
-
                     self.browse_commonmark_cache = CommonMarkCache::default();
                 }
                 GifPreviewEvent::Failed { out_png } => {
@@ -961,11 +951,64 @@ impl HestiaApp {
         }
     }
 
-    fn update_gif_animations(&mut self, ctx: &egui::Context) {
-        let now = ctx.input(|i| i.time);
-        let mut texture_updates = Vec::with_capacity(self.animated_gif_state.len());
+    fn mark_gif_preview_visible(&mut self, ctx: &egui::Context, texture_key: &str) {
+        self.visible_gif_texture_keys
+            .insert(texture_key.to_string());
+        let was_visible_last_frame = self.last_visible_gif_texture_keys.contains(texture_key);
+        if self.animated_gif_state.contains_key(texture_key) {
+            if !was_visible_last_frame {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
+            return;
+        }
+        if self.pending_gif_animations.contains(texture_key) {
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        }
 
-        for (texture_key, state) in self.animated_gif_state.iter_mut() {
+        let Some(dest) = self.gif_dest_by_texture_key.get(texture_key).cloned() else {
+            return;
+        };
+
+        let request = if let Some(path) = file_uri_to_path(&dest) {
+            Some(GifAnimationRequest::FromFile {
+                src_path: path,
+                texture_key: texture_key.to_string(),
+            })
+        } else if dest.starts_with("http://") || dest.starts_with("https://") {
+            Some(GifAnimationRequest::FromUrl {
+                url: dest,
+                texture_key: texture_key.to_string(),
+            })
+        } else {
+            None
+        };
+
+        if let Some(request) = request {
+            let texture_key = texture_key.to_string();
+            self.pending_gif_animations.insert(texture_key.clone());
+            if self.gif_animation_request_tx.send(request).is_err() {
+                self.pending_gif_animations.remove(&texture_key);
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+        }
+    }
+
+    fn update_gif_animations(&mut self, ctx: &egui::Context) {
+        if self.visible_gif_texture_keys.is_empty() || self.animated_gif_state.is_empty() {
+            return;
+        }
+
+        let now = ctx.input(|i| i.time);
+        let visible_keys: Vec<String> = self.visible_gif_texture_keys.iter().cloned().collect();
+        let mut texture_updates = Vec::new();
+        let mut next_repaint_ms: Option<u64> = None;
+
+        for texture_key in visible_keys {
+            let Some(state) = self.animated_gif_state.get_mut(&texture_key) else {
+                continue;
+            };
             let elapsed_ms = ((now - state.frame_start_time) * 1000.0) as u32;
             
             // Calculate total animation duration
@@ -984,6 +1027,13 @@ impl HestiaApp {
                 time_accum += frame.delay_ms;
                 if loop_elapsed < time_accum {
                     new_frame = i;
+                    let until_next_frame = time_accum.saturating_sub(loop_elapsed).max(1);
+                    next_repaint_ms = Some(
+                        next_repaint_ms
+                            .map_or(until_next_frame as u64, |current| {
+                                current.min(until_next_frame as u64)
+                            }),
+                    );
                     break;
                 }
             }
@@ -1005,14 +1055,12 @@ impl HestiaApp {
                         egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
-                    ctx.request_repaint();
                 }
             }
         }
 
-        // Request continuous repaints while animations are active
-        if !self.animated_gif_state.is_empty() {
-            ctx.request_repaint();
+        if let Some(next_repaint_ms) = next_repaint_ms {
+            ctx.request_repaint_after(Duration::from_millis(next_repaint_ms));
         }
     }
 
@@ -1024,6 +1072,8 @@ impl HestiaApp {
             }
             let out_png = gif_preview_out_path(&dest, mod_root);
             let texture_key = format!("gif-preview-{}", hash64_hex(dest.as_bytes()));
+            self.gif_dest_by_texture_key
+                .insert(texture_key.clone(), dest.clone());
 
             if out_png.exists() {
                 // If preview exists on disk but isn't in memory as a texture, load it immediately.
@@ -1038,38 +1088,6 @@ impl HestiaApp {
                             );
                             self.insert_tracked_texture(TextureKind::BrowseFull, texture_key.clone(), 3, texture);
                             self.browse_commonmark_cache = CommonMarkCache::default();
-
-                            // Queue full animation decode for this GIF (if not already queued)
-                            if !self.pending_gif_animations.contains(&texture_key) {
-                                self.pending_gif_animations.insert(texture_key.clone());
-                                if let Some(path) = file_uri_to_path(&dest) {
-                                    let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromFile {
-                                        src_path: path,
-                                        texture_key: texture_key.clone(),
-                                    });
-                                } else if dest.starts_with("http://") || dest.starts_with("https://") {
-                                    let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromUrl {
-                                        url: dest.clone(),
-                                        texture_key: texture_key.clone(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Still queue animation decode if not already animating or queued
-                    if !self.animated_gif_state.contains_key(&texture_key) && !self.pending_gif_animations.contains(&texture_key) {
-                        self.pending_gif_animations.insert(texture_key.clone());
-                        if let Some(path) = file_uri_to_path(&dest) {
-                            let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromFile {
-                                src_path: path,
-                                texture_key: texture_key.clone(),
-                            });
-                        } else if dest.starts_with("http://") || dest.starts_with("https://") {
-                            let _ = self.gif_animation_request_tx.send(GifAnimationRequest::FromUrl {
-                                url: dest.clone(),
-                                texture_key: texture_key.clone(),
-                            });
                         }
                     }
                 }
@@ -1200,13 +1218,16 @@ impl HestiaApp {
 
 }
 
-fn render_inline_markdown_image(ui: &mut Ui, texture: &egui::TextureHandle) {
+fn render_inline_markdown_image(
+    ui: &mut Ui,
+    texture: &egui::TextureHandle,
+) -> Option<egui::Response> {
     let size = texture.size_vec2();
     if size.x <= 0.0 || size.y <= 0.0 {
-        return;
+        return None;
     }
 
     let max_width = ui.available_width().max(1.0);
     let scale = (max_width / size.x).min(1.0);
-    ui.add(egui::Image::new(texture).fit_to_exact_size(size * scale));
+    Some(ui.add(egui::Image::new(texture).fit_to_exact_size(size * scale)))
 }

@@ -81,6 +81,8 @@ include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let update_started_at = Instant::now();
+        let frame_time = ctx.input(|i| i.time);
         set_current_language(self.state.static_prefs.language);
 
         // Batch worker event consumption - only poll channels when flagged
@@ -108,6 +110,7 @@ impl eframe::App for HestiaApp {
         
         // Always run these - they have internal checks or are always needed
         self.update_gif_animations(ctx);
+        self.last_visible_gif_texture_keys = std::mem::take(&mut self.visible_gif_texture_keys);
         self.evict_textures_to_budget(ctx.input(|i| i.time));
         self.enforce_browse_page_timeout();
         self.detect_drag_and_drop(ctx);
@@ -160,6 +163,8 @@ impl eframe::App for HestiaApp {
             self.render_pending_import(ctx);
             self.update_main_window_state(ctx);
         });
+        self.record_perf_diagnostics(ctx, frame_time, update_started_at.elapsed());
+        self.render_perf_diagnostics_overlay(ctx);
         
         // Control repaint behavior to reduce CPU usage on idle
         // Only request continuous repaints when necessary
@@ -168,8 +173,7 @@ impl eframe::App for HestiaApp {
             || !self.browse_state.loading_details.is_empty();
         let relative_time_visible = matches!(self.current_view, ViewMode::Library | ViewMode::Browse);
         let needs_continuous_repaint = 
-            !self.animated_gif_state.is_empty()
-            || self.app_update_download_inflight.is_some()
+            self.app_update_download_inflight.is_some()
             || !self.browse_download_inflight.is_empty()
             || !self.install_inflight.is_empty()
             || self.reload_spin_until > ctx.input(|i| i.time)

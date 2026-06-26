@@ -78,6 +78,32 @@ impl Default for LibraryCardCache {
     }
 }
 
+#[derive(Default)]
+struct PerfDiagnosticsState {
+    last_frame_time: Option<f64>,
+    frame_interval_ms_ema: Option<f64>,
+    update_ms_ema: Option<f64>,
+    fps_ema: Option<f64>,
+    max_frame_interval_ms: f64,
+    max_update_ms: f64,
+    slow_frame_streak: u32,
+    last_slow_log_time: f64,
+    last_periodic_log_time: f64,
+    periodic_logging: bool,
+    overlay_enabled: bool,
+    last_summary: String,
+}
+
+impl PerfDiagnosticsState {
+    fn from_env() -> Self {
+        Self {
+            periodic_logging: std::env::var_os("HESTIA_PERF_LOG").is_some(),
+            overlay_enabled: std::env::var_os("HESTIA_PERF_OVERLAY").is_some(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
     Library,
@@ -327,9 +353,13 @@ pub struct HestiaApp {
     gif_preview_event_rx: WorkerRx<GifPreviewEvent>,
     gif_animation_request_tx: WorkerTx<GifAnimationRequest>,
     gif_animation_event_rx: WorkerRx<GifAnimationEvent>,
+    gif_dest_by_texture_key: HashMap<String, String>,
     pending_gif_previews: HashSet<String>,
     pending_gif_animations: HashSet<String>,
     animated_gif_state: HashMap<String, AnimatedGifState>,
+    visible_gif_texture_keys: HashSet<String>,
+    last_visible_gif_texture_keys: HashSet<String>,
+    perf_diagnostics: PerfDiagnosticsState,
     pending_events: PendingEventsFlags,
 }
 

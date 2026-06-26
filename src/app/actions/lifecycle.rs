@@ -477,8 +477,12 @@ impl HestiaApp {
             pending_gif_previews: HashSet::new(),
             gif_animation_request_tx,
             gif_animation_event_rx,
+            gif_dest_by_texture_key: HashMap::new(),
             pending_gif_animations: HashSet::new(),
             animated_gif_state: HashMap::new(),
+            visible_gif_texture_keys: HashSet::new(),
+            last_visible_gif_texture_keys: HashSet::new(),
+            perf_diagnostics: PerfDiagnosticsState::from_env(),
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
