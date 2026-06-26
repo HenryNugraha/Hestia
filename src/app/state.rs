@@ -40,6 +40,44 @@ enum InlineMarkdownEmbed {
     Youtube { url: String },
 }
 
+#[derive(Clone, Copy)]
+enum IgnoredUpdateKind {
+    Once,
+    Always,
+}
+
+type LibraryCardRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    PathBuf,
+    ModStatus,
+    DateTime<Utc>,
+    bool,
+    ModUpdateState,
+    bool,
+    bool,
+    bool,
+    Option<IgnoredUpdateKind>,
+    Option<String>,
+    String,
+);
+
+struct LibraryCardCache {
+    key: Option<u64>,
+    rows: Arc<Vec<LibraryCardRow>>,
+}
+
+impl Default for LibraryCardCache {
+    fn default() -> Self {
+        Self {
+            key: None,
+            rows: Arc::new(Vec::new()),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
     Library,
@@ -99,6 +137,7 @@ pub struct HestiaApp {
     show_modified_locally_mods: bool,
     show_ignoring_update_mods: bool,
     selected_category_folder_id: Option<String>,
+    library_card_cache: LibraryCardCache,
     dragging_mod_ids: Vec<String>,
     current_view: ViewMode,
     settings_open: bool,
@@ -1021,13 +1060,6 @@ enum PendingTextureUpload {
 }
 
 impl PendingTextureUpload {
-    fn is_thumb(&self) -> bool {
-        matches!(
-            self,
-            PendingTextureUpload::ModThumb { .. } | PendingTextureUpload::BrowseThumb { .. }
-        )
-    }
-
     fn priority_class(&self) -> u8 {
         match self {
             PendingTextureUpload::BrowseThumb { .. } | PendingTextureUpload::ModThumb { .. } => 0,

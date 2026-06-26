@@ -1,8 +1,9 @@
 pub(crate) mod content;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher},
     fs,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     sync::{Arc, Mutex, RwLock},

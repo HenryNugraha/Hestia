@@ -282,6 +282,7 @@ impl HestiaApp {
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
             selected_category_folder_id: None,
+            library_card_cache: LibraryCardCache::default(),
             dragging_mod_ids: Vec::new(),
             current_view: ViewMode::Library,
             settings_open: false,
@@ -1589,6 +1590,249 @@ impl HestiaApp {
                 .vanilla_exe_path_override
                 .as_ref()
                 .is_some_and(|path| path.is_file())
+    }
+
+    fn library_cards_for_selected_game(&mut self) -> Arc<Vec<LibraryCardRow>> {
+        let key = self.library_card_cache_key();
+        if self.library_card_cache.key != Some(key) {
+            let rows: Vec<LibraryCardRow> = self
+                .mods_for_selected_game()
+                .into_iter()
+                .map(|mod_entry| {
+                    (
+                        mod_entry.id.clone(),
+                        mod_entry.folder_name.clone(),
+                        mod_entry.metadata.user.title.clone(),
+                        mod_entry.metadata.user.cover_image.clone(),
+                        mod_entry.root_path.clone(),
+                        mod_entry.status.clone(),
+                        mod_entry.updated_at,
+                        mod_entry.unsafe_content,
+                        mod_entry.update_state,
+                        mod_entry
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .map(|link| link.mod_id > 0 || !link.url.trim().is_empty())
+                            .unwrap_or(false),
+                        Self::has_modified_update_available(mod_entry),
+                        mod_has_local_changes_for_update_check(mod_entry),
+                        Self::ignored_update_kind(mod_entry),
+                        mod_entry.metadata.user.category_id.clone(),
+                        self.mod_category_label(mod_entry),
+                    )
+                })
+                .collect();
+            self.library_card_cache = LibraryCardCache {
+                key: Some(key),
+                rows: Arc::new(rows),
+            };
+        }
+        Arc::clone(&self.library_card_cache.rows)
+    }
+
+    fn library_card_cache_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        self.selected_game.hash(&mut hasher);
+        self.mods_search_query.hash(&mut hasher);
+        self.show_enabled_mods.hash(&mut hasher);
+        self.show_unlinked_mods.hash(&mut hasher);
+        self.show_up_to_date_mods.hash(&mut hasher);
+        self.show_update_available_mods.hash(&mut hasher);
+        self.show_check_skipped_mods.hash(&mut hasher);
+        self.show_missing_source_mods.hash(&mut hasher);
+        self.show_modified_locally_mods.hash(&mut hasher);
+        self.show_ignoring_update_mods.hash(&mut hasher);
+
+        let prefs = &self.state.static_prefs;
+        prefs.hide_disabled.hash(&mut hasher);
+        prefs.hide_archived.hash(&mut hasher);
+        prefs.library_sort_status_first.hash(&mut hasher);
+        prefs.library_sort_category_first.hash(&mut hasher);
+        prefs.library_uncategorized_first.hash(&mut hasher);
+        prefs.library_status_group_show_category.hash(&mut hasher);
+        prefs.library_category_group_show_status.hash(&mut hasher);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.unsafe_content_mode);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_sort);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_group_mode);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_category_display_mode);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.modified_update_behavior);
+        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.language);
+
+        let selected_game_id = self.selected_game().map(|game| {
+            game.definition.id.hash(&mut hasher);
+            game.definition.name.hash(&mut hasher);
+            game.enabled.hash(&mut hasher);
+            game.definition.id.as_str()
+        });
+
+        if let Some(game_id) = selected_game_id {
+            let mut category_count = 0usize;
+            for category in self
+                .state
+                .categories
+                .iter()
+                .filter(|category| category.game_id == game_id)
+            {
+                category_count += 1;
+                category.id.hash(&mut hasher);
+                category.game_id.hash(&mut hasher);
+                category.name.hash(&mut hasher);
+                category.order.hash(&mut hasher);
+            }
+            category_count.hash(&mut hasher);
+
+            let mut mod_count = 0usize;
+            for mod_entry in self
+                .state
+                .mods
+                .iter()
+                .filter(|mod_entry| mod_entry.game_id == game_id)
+            {
+                mod_count += 1;
+                Self::hash_mod_for_library_cache(&mut hasher, mod_entry);
+            }
+            mod_count.hash(&mut hasher);
+        }
+
+        hasher.finish()
+    }
+
+    fn hash_discriminant_for_library_cache<T>(hasher: &mut DefaultHasher, value: &T) {
+        std::mem::discriminant(value).hash(hasher);
+    }
+
+    fn hash_datetime_for_library_cache(hasher: &mut DefaultHasher, value: &DateTime<Utc>) {
+        value.timestamp().hash(hasher);
+        value.timestamp_subsec_nanos().hash(hasher);
+    }
+
+    fn hash_optional_datetime_for_library_cache(
+        hasher: &mut DefaultHasher,
+        value: Option<&DateTime<Utc>>,
+    ) {
+        value.is_some().hash(hasher);
+        if let Some(value) = value {
+            Self::hash_datetime_for_library_cache(hasher, value);
+        }
+    }
+
+    fn hash_mod_for_library_cache(hasher: &mut DefaultHasher, mod_entry: &ModEntry) {
+        mod_entry.id.hash(hasher);
+        mod_entry.game_id.hash(hasher);
+        mod_entry.folder_name.hash(hasher);
+        mod_entry.root_path.hash(hasher);
+        Self::hash_discriminant_for_library_cache(hasher, &mod_entry.status);
+        mod_entry.metadata.user.title.hash(hasher);
+        mod_entry.metadata.user.cover_image.hash(hasher);
+        mod_entry.metadata.user.category.hash(hasher);
+        mod_entry.metadata.user.category_id.hash(hasher);
+        Self::hash_datetime_for_library_cache(hasher, &mod_entry.created_at);
+        Self::hash_datetime_for_library_cache(hasher, &mod_entry.updated_at);
+        Self::hash_optional_datetime_for_library_cache(hasher, mod_entry.content_mtime.as_ref());
+        mod_entry.ini_hash.hash(hasher);
+        mod_entry.content_size_bytes.hash(hasher);
+        mod_entry.unsafe_content.hash(hasher);
+        Self::hash_discriminant_for_library_cache(hasher, &mod_entry.update_state);
+        mod_has_local_changes_for_update_check(mod_entry).hash(hasher);
+        if let Some(ignored_kind) = Self::ignored_update_kind(mod_entry) {
+            true.hash(hasher);
+            Self::hash_discriminant_for_library_cache(hasher, &ignored_kind);
+        } else {
+            false.hash(hasher);
+        }
+        Self::hash_mod_source_for_library_cache(hasher, mod_entry.source.as_ref());
+    }
+
+    fn hash_mod_source_for_library_cache(
+        hasher: &mut DefaultHasher,
+        source: Option<&ModSourceData>,
+    ) {
+        let Some(source) = source else {
+            false.hash(hasher);
+            return;
+        };
+        true.hash(hasher);
+
+        if let Some(link) = source.gamebanana.as_ref() {
+            true.hash(hasher);
+            link.mod_id.hash(hasher);
+            link.url.hash(hasher);
+        } else {
+            false.hash(hasher);
+        }
+
+        if let Some(snapshot) = source.snapshot.as_ref() {
+            true.hash(hasher);
+            snapshot.title.hash(hasher);
+            snapshot.authors.hash(hasher);
+            snapshot.version.hash(hasher);
+            snapshot.publish_ts.hash(hasher);
+            snapshot.update_ts.hash(hasher);
+            snapshot.description.hash(hasher);
+            snapshot.preview_urls.hash(hasher);
+            snapshot.is_private.hash(hasher);
+            snapshot.is_deleted.hash(hasher);
+            snapshot.is_trashed.hash(hasher);
+            snapshot.is_withheld.hash(hasher);
+            snapshot.unsafe_content.hash(hasher);
+            snapshot.files.len().hash(hasher);
+            for file in &snapshot.files {
+                file.file_id.hash(hasher);
+                file.file_name.hash(hasher);
+                file.file_size.hash(hasher);
+                file.date_added.hash(hasher);
+                file.download_count.hash(hasher);
+                file.description.hash(hasher);
+                file.download_url.hash(hasher);
+                file.archived.hash(hasher);
+            }
+        } else {
+            false.hash(hasher);
+        }
+
+        source
+            .raw_profile_json
+            .as_ref()
+            .map(|raw| (raw.len(), xxh3_64(raw.as_bytes())))
+            .hash(hasher);
+        Self::hash_optional_datetime_for_library_cache(
+            hasher,
+            source.update_check_retry_after.as_ref(),
+        );
+        source.file_set.selected_file_ids.hash(hasher);
+        source.file_set.selected_file_names.hash(hasher);
+        source.file_set.selected_candidate_labels.hash(hasher);
+        source.file_set.selected_files_meta.len().hash(hasher);
+        for file in &source.file_set.selected_files_meta {
+            file.file_id.hash(hasher);
+            file.file_name.hash(hasher);
+            file.date_added.hash(hasher);
+            file.version.hash(hasher);
+            file.archived.hash(hasher);
+        }
+        if let Some(signature) = source.ignored_update_signature.as_ref() {
+            true.hash(hasher);
+            signature.profile_update_ts.hash(hasher);
+            signature.prearmed_next_update.hash(hasher);
+            signature.files.len().hash(hasher);
+            for file in &signature.files {
+                file.file_id.hash(hasher);
+                file.file_name.hash(hasher);
+                file.date_added.hash(hasher);
+                file.version.hash(hasher);
+                file.archived.hash(hasher);
+            }
+        } else {
+            false.hash(hasher);
+        }
+        source.ignore_update_always.hash(hasher);
+        Self::hash_optional_datetime_for_library_cache(
+            hasher,
+            source.baseline_content_mtime.as_ref(),
+        );
+        source.baseline_ini_hash.hash(hasher);
     }
 
     fn mods_for_selected_game(&self) -> Vec<&ModEntry> {

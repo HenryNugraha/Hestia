@@ -1104,55 +1104,91 @@ impl HestiaApp {
             uploads.sort_by_key(PendingTextureUpload::priority_class);
             self.pending_texture_uploads = uploads.into();
         }
-        let thumb_count = self
-            .pending_texture_uploads
-            .iter()
-            .filter(|item| item.is_thumb())
-            .count();
-        let full_count = self.pending_texture_uploads.len().saturating_sub(thumb_count);
-        let budget = if full_count == 0 {
-            thumb_count.clamp(TEXTURE_UPLOADS_PER_FRAME, 192)
-        } else {
-            (TEXTURE_UPLOADS_PER_FRAME + thumb_count.min(48)).min(96)
-        };
+        let mut thumb_uploads = 0;
+        let mut full_uploads = 0;
+        let mut inspected = 0;
+        let pending_count = self.pending_texture_uploads.len();
         let mut uploaded_any = false;
-        for _ in 0..budget {
+        while inspected < pending_count
+            && (thumb_uploads < TEXTURE_THUMB_UPLOADS_PER_FRAME
+                || full_uploads < TEXTURE_FULL_UPLOADS_PER_FRAME)
+        {
             let Some(item) = self.pending_texture_uploads.pop_front() else {
                 break;
             };
-            uploaded_any = true;
+            inspected += 1;
             match item {
                 PendingTextureUpload::ModThumb { texture_key, image } => {
+                    if self.mod_cover_textures.contains_key(&texture_key) {
+                        continue;
+                    }
+                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME {
+                        self.pending_texture_uploads
+                            .push_back(PendingTextureUpload::ModThumb { texture_key, image });
+                        continue;
+                    }
                     let texture = ctx.load_texture(
                         format!("mod-thumb-{}", texture_key),
                         image,
                         egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::ModThumb, texture_key, 2, texture);
+                    thumb_uploads += 1;
+                    uploaded_any = true;
                 }
                 PendingTextureUpload::ModFull { texture_key, image } => {
+                    if self.mod_full_textures.contains_key(&texture_key) {
+                        continue;
+                    }
+                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME {
+                        self.pending_texture_uploads
+                            .push_back(PendingTextureUpload::ModFull { texture_key, image });
+                        continue;
+                    }
                     let texture = ctx.load_texture(
                         texture_key.clone(),
                         image,
                         egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::ModFull, texture_key, 3, texture);
+                    full_uploads += 1;
+                    uploaded_any = true;
                 }
                 PendingTextureUpload::BrowseThumb { texture_key, image } => {
+                    if self.browse_thumb_textures.contains_key(&texture_key) {
+                        continue;
+                    }
+                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME {
+                        self.pending_texture_uploads
+                            .push_back(PendingTextureUpload::BrowseThumb { texture_key, image });
+                        continue;
+                    }
                     let texture = ctx.load_texture(
                         format!("browse-image-thumb-{}", texture_key),
                         image,
                         egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::BrowseThumb, texture_key, 2, texture);
+                    thumb_uploads += 1;
+                    uploaded_any = true;
                 }
                 PendingTextureUpload::BrowseFull { texture_key, image } => {
+                    if self.browse_image_textures.contains_key(&texture_key) {
+                        continue;
+                    }
+                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME {
+                        self.pending_texture_uploads
+                            .push_back(PendingTextureUpload::BrowseFull { texture_key, image });
+                        continue;
+                    }
                     let texture = ctx.load_texture(
                         texture_key.clone(),
                         image,
                         egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
+                    full_uploads += 1;
+                    uploaded_any = true;
                 }
             }
         }

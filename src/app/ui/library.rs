@@ -114,12 +114,6 @@ struct CategoryFolderTile {
     representative_cover_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy)]
-enum IgnoredUpdateKind {
-    Once,
-    Always,
-}
-
 #[cfg(test)]
 mod category_tests {
     use super::*;
@@ -3395,34 +3389,7 @@ impl HestiaApp {
     fn render_mod_grid(&mut self, ui: &mut Ui) {
         let text = self.text();
         let age_now = Local::now();
-        let cards: Vec<_> = self
-            .mods_for_selected_game()
-            .into_iter()
-            .map(|mod_entry| {
-                (
-                    mod_entry.id.clone(),
-                    mod_entry.folder_name.clone(),
-                    mod_entry.metadata.user.title.clone(),
-                    mod_entry.metadata.user.cover_image.clone(),
-                    mod_entry.root_path.clone(),
-                    mod_entry.status.clone(),
-                    mod_entry.updated_at,
-                    mod_entry.unsafe_content,
-                    mod_entry.update_state,
-                    mod_entry
-                        .source
-                        .as_ref()
-                        .and_then(|s| s.gamebanana.as_ref())
-                        .map(|g| g.mod_id > 0 || !g.url.trim().is_empty())
-                        .unwrap_or(false),
-                    Self::has_modified_update_available(mod_entry),
-                    mod_has_local_changes_for_update_check(mod_entry),
-                    Self::ignored_update_kind(mod_entry),
-                    mod_entry.metadata.user.category_id.clone(),
-                    self.mod_category_label(mod_entry),
-                )
-            })
-            .collect();
+        let cards = self.library_cards_for_selected_game();
 
         let selected_context_titles: Vec<String> = cards
             .iter()
@@ -3456,7 +3423,7 @@ impl HestiaApp {
             _,
             _,
             _,
-        ) in &cards
+        ) in cards.iter()
         {
             if self.selected_mods.contains(mod_id) {
                 match status {
@@ -4243,7 +4210,7 @@ impl HestiaApp {
                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                                         .on_hover_text(text.select_all_visible_mods());
                                     if count_response.clicked() {
-                                        for card in &cards {
+                                        for card in cards.iter() {
                                             self.selected_mods.insert(card.0.clone());
                                         }
                                     }
@@ -4732,25 +4699,7 @@ impl HestiaApp {
                         let row_height = CARD_HEIGHT + card_spacing;
                         
                         let mut render_cards = |ui: &mut Ui,
-                                                section_cards: Vec<
-                            &(
-                                String,
-                                String,
-                                Option<String>,
-                                Option<String>,
-                                PathBuf,
-                                ModStatus,
-                                DateTime<Utc>,
-                                bool,
-                                ModUpdateState,
-                                bool,
-                                bool,
-                                bool,
-                                Option<IgnoredUpdateKind>,
-                                Option<String>,
-                                String,
-                            ),
-                        >| {
+                                                section_cards: Vec<&LibraryCardRow>| {
                             // Get viewport for culling
                             let viewport = ui.clip_rect();
                             let viewport_top = viewport.top();
