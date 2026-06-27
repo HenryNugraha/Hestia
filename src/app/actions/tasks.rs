@@ -364,6 +364,50 @@ impl HestiaApp {
         }
     }
 
+    fn task_row_height(task: &TaskEntry) -> f32 {
+        if matches!(
+            task.status,
+            TaskStatus::Queued | TaskStatus::Installing | TaskStatus::Downloading | TaskStatus::Canceling
+        ) {
+            68.0
+        } else {
+            50.0
+        }
+    }
+
+    fn render_task_list(
+        &mut self,
+        ui: &mut Ui,
+        tasks: &[TaskEntry],
+        empty_text: RichText,
+        scroll_to_top: bool,
+    ) {
+        if tasks.is_empty() {
+            static_label(ui, empty_text);
+            return;
+        }
+
+        let viewport = ui.clip_rect().expand(180.0);
+        for task in tasks {
+            let row_height = Self::task_row_height(task);
+            let row_top = ui.cursor().top();
+            let row_bottom = row_top + row_height;
+            if row_bottom < viewport.top() || row_top > viewport.bottom() {
+                ui.add_space(row_height);
+                continue;
+            }
+
+            ui.push_id(task.id, |ui| {
+                self.render_task_row(ui, task);
+            });
+            ui.add_space(8.0);
+        }
+
+        if scroll_to_top {
+            ui.scroll_to_cursor(Some(egui::Align::Min));
+        }
+    }
+
     fn render_task_row(&mut self, ui: &mut Ui, task: &TaskEntry) {
         const TASK_BADGE_ACTION_GAP: f32 = -9.0;
         let text = self.text();

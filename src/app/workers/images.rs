@@ -33,21 +33,23 @@ fn spawn_gif_preview_worker(
             let tx = tx.clone();
             let limiter = limiter.clone();
             tokio::spawn(async move {
-                let (out_png, gif_dest, res) = match &request {
+                let (out_png, gif_dest, max_width, res) = match &request {
                     GifPreviewRequest::FromFile {
                         src_path,
                         out_png,
                         gif_dest,
+                        max_width,
                     } => {
                         let bytes_res = tokio::fs::read(&src_path).await.map_err(|err| {
                             anyhow!("failed to read gif file {}: {err}", src_path.display())
                         });
-                        (out_png.clone(), gif_dest.clone(), bytes_res)
+                        (out_png.clone(), gif_dest.clone(), *max_width, bytes_res)
                     }
                     GifPreviewRequest::FromUrl {
                         url,
                         out_png,
                         gif_dest,
+                        max_width,
                     } => {
                         let cache_path = gif_anim_cache_path(url);
                         let bytes_res = async {
@@ -88,7 +90,7 @@ fn spawn_gif_preview_worker(
                             }
                         }
                         .await;
-                        (out_png.clone(), gif_dest.clone(), bytes_res)
+                        (out_png.clone(), gif_dest.clone(), *max_width, bytes_res)
                     }
                 };
                 let res = match res {
@@ -109,17 +111,29 @@ fn spawn_gif_preview_worker(
                                 .map_err(|err| anyhow!("failed to decode gif frame: {err}"))?;
                             let dynamic_img = DynamicImage::ImageRgba8(frame.into_buffer());
                             let rgba_buf = dynamic_img.to_rgba8();
+                            let width = rgba_buf.width();
+                            let height = rgba_buf.height();
+                            let (width, height, rgba) = resize_rgba_to_fit_rgba(
+                                width,
+                                height,
+                                rgba_buf.into_raw(),
+                                [max_width, height],
+                            )
+                            .unwrap_or_else(|| (width, height, Vec::new()));
+                            if rgba.is_empty() {
+                                bail!("failed to resize gif preview");
+                            }
                             let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                [rgba_buf.width() as usize, rgba_buf.height() as usize],
-                                rgba_buf.as_raw(),
+                                [width as usize, height as usize],
+                                &rgba,
                             );
                             let mut out = Vec::new();
                             let encoder = image::codecs::png::PngEncoder::new(&mut out);
                             encoder
                                 .write_image(
-                                    rgba_buf.as_raw(),
-                                    rgba_buf.width(),
-                                    rgba_buf.height(),
+                                    &rgba,
+                                    width,
+                                    height,
                                     image::ExtendedColorType::Rgba8,
                                 )
                                 .map_err(|err| {
@@ -167,17 +181,22 @@ fn spawn_gif_animation_worker(
             let tx = tx.clone();
             let limiter = limiter.clone();
             tokio::spawn(async move {
-                let (texture_key, res) = match &request {
+                let (texture_key, max_size, res) = match &request {
                     GifAnimationRequest::FromFile {
                         src_path,
                         texture_key,
+                        max_size,
                     } => {
                         let bytes_res = tokio::fs::read(&src_path).await.map_err(|err| {
                             anyhow!("failed to read gif file {}: {err}", src_path.display())
                         });
-                        (texture_key.clone(), bytes_res)
+                        (texture_key.clone(), *max_size, bytes_res)
                     }
-                    GifAnimationRequest::FromUrl { url, texture_key } => {
+                    GifAnimationRequest::FromUrl {
+                        url,
+                        texture_key,
+                        max_size,
+                    } => {
                         let cache_path = gif_anim_cache_path(url);
                         let bytes_res = async {
                             if cache_path.exists() {
@@ -246,7 +265,7 @@ fn spawn_gif_animation_worker(
                             }
                         }
                         .await;
-                        (texture_key.clone(), bytes_res)
+                        (texture_key.clone(), *max_size, bytes_res)
                     }
                 };
                 let res = match res {
@@ -273,9 +292,20 @@ fn spawn_gif_animation_worker(
                                 let dynamic_img =
                                     image::DynamicImage::ImageRgba8(frame.into_buffer());
                                 let rgba_buf = dynamic_img.to_rgba8();
+                                let width = rgba_buf.width();
+                                let height = rgba_buf.height();
+                                let (width, height, rgba) = resize_rgba_to_fit_rgba(
+                                    width,
+                                    height,
+                                    rgba_buf.into_raw(),
+                                    max_size,
+                                )
+                                .ok_or_else(|| {
+                                    anyhow!("failed to resize gif frame {}", frame_num)
+                                })?;
                                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                    [rgba_buf.width() as usize, rgba_buf.height() as usize],
-                                    rgba_buf.as_raw(),
+                                    [width as usize, height as usize],
+                                    &rgba,
                                 );
                                 frames.push(GifAnimationFrame {
                                     image: color_image,
@@ -763,10 +793,23 @@ fn resize_rgba_to_thumbnail_rgba(
     rgba: Vec<u8>,
     profile: ThumbnailProfile,
 ) -> Option<(u32, u32, Vec<u8>)> {
+    let (target_w, target_h) = profile.dimensions();
+    resize_rgba_to_fit_rgba(src_w, src_h, rgba, [target_w, target_h])
+}
+
+fn resize_rgba_to_fit_rgba(
+    src_w: u32,
+    src_h: u32,
+    rgba: Vec<u8>,
+    max_size: [u32; 2],
+) -> Option<(u32, u32, Vec<u8>)> {
     if src_w == 0 || src_h == 0 {
         return None;
     }
-    let (target_w, target_h) = profile.dimensions();
+    let [target_w, target_h] = max_size;
+    if target_w == 0 || target_h == 0 {
+        return None;
+    }
     if src_w <= target_w && src_h <= target_h {
         return Some((src_w, src_h, rgba));
     }

@@ -81,8 +81,6 @@ include!("util/mod.rs");
 
 impl eframe::App for HestiaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let update_started_at = Instant::now();
-        let frame_time = ctx.input(|i| i.time);
         set_current_language(self.state.static_prefs.language);
 
         // Batch worker event consumption - only poll channels when flagged
@@ -163,9 +161,6 @@ impl eframe::App for HestiaApp {
             self.render_pending_import(ctx);
             self.update_main_window_state(ctx);
         });
-        self.record_perf_diagnostics(ctx, frame_time, update_started_at.elapsed());
-        self.render_perf_diagnostics_overlay(ctx);
-        
         // Control repaint behavior to reduce CPU usage on idle
         // Only request continuous repaints when necessary
         let has_pending_browse_request = self.browse_state.loading_page

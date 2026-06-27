@@ -78,32 +78,6 @@ impl Default for LibraryCardCache {
     }
 }
 
-#[derive(Default)]
-struct PerfDiagnosticsState {
-    last_frame_time: Option<f64>,
-    frame_interval_ms_ema: Option<f64>,
-    update_ms_ema: Option<f64>,
-    fps_ema: Option<f64>,
-    max_frame_interval_ms: f64,
-    max_update_ms: f64,
-    slow_frame_streak: u32,
-    last_slow_log_time: f64,
-    last_periodic_log_time: f64,
-    periodic_logging: bool,
-    overlay_enabled: bool,
-    last_summary: String,
-}
-
-impl PerfDiagnosticsState {
-    fn from_env() -> Self {
-        Self {
-            periodic_logging: std::env::var_os("HESTIA_PERF_LOG").is_some(),
-            overlay_enabled: std::env::var_os("HESTIA_PERF_OVERLAY").is_some(),
-            ..Default::default()
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
     Library,
@@ -301,6 +275,7 @@ pub struct HestiaApp {
     proxy_requeue_browse_downloads: HashSet<u64>,
     pending_browse_install_safety: HashMap<u64, bool>,
     pending_browse_install_meta: HashMap<u64, PendingBrowseInstallMeta>,
+    gif_rewritten_markdown_cache: HashMap<String, String>,
     browse_commonmark_cache: CommonMarkCache,
     browse_request_nonce: u64,
     browse_page_generation: u64,
@@ -359,7 +334,6 @@ pub struct HestiaApp {
     animated_gif_state: HashMap<String, AnimatedGifState>,
     visible_gif_texture_keys: HashSet<String>,
     last_visible_gif_texture_keys: HashSet<String>,
-    perf_diagnostics: PerfDiagnosticsState,
     pending_events: PendingEventsFlags,
 }
 
@@ -692,11 +666,13 @@ enum GifPreviewRequest {
         src_path: PathBuf,
         out_png: PathBuf,
         gif_dest: String,
+        max_width: u32,
     },
     FromUrl {
         url: String,
         out_png: PathBuf,
         gif_dest: String,
+        max_width: u32,
     },
 }
 
@@ -726,10 +702,12 @@ enum GifAnimationRequest {
     FromFile {
         src_path: PathBuf,
         texture_key: String,
+        max_size: [u32; 2],
     },
     FromUrl {
         url: String,
         texture_key: String,
+        max_size: [u32; 2],
     },
 }
 

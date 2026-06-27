@@ -777,10 +777,12 @@ impl HestiaApp {
     }
 
     fn queue_overlay_full_texture(&mut self, texture_key: &str) {
-        if self.mod_full_textures.contains_key(texture_key)
-            || self.browse_image_textures.contains_key(texture_key)
-        {
+        if self.mod_full_textures.contains_key(texture_key) {
             self.touch_texture(TextureKind::ModFull, texture_key, 3);
+            return;
+        }
+        if self.browse_image_textures.contains_key(texture_key) {
+            self.touch_texture(TextureKind::BrowseFull, texture_key, 3);
             return;
         }
 

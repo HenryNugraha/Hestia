@@ -8020,8 +8020,16 @@ impl HestiaApp {
                         {
                             self.render_personal_note_editor(ui, &selected.id);
                         } else {
-                            self.queue_gif_previews_for_markdown(ui.ctx(), &markdown, Some(&selected.root_path));
-                            let markdown = rewrite_markdown_gif_images(&markdown, Some(&selected.root_path));
+                            self.queue_gif_previews_for_markdown(
+                                ui.ctx(),
+                                &markdown,
+                                Some(&selected.root_path),
+                                ui.available_width(),
+                            );
+                            let markdown = self.cached_rewrite_markdown_gif_images(
+                                &markdown,
+                                Some(&selected.root_path),
+                            );
                             self.prewarm_markdown_images(&markdown);
                             self.render_markdown_with_inline_images(ui, &markdown);
                         }
@@ -8375,8 +8383,9 @@ impl HestiaApp {
                                         ui.ctx(),
                                         &markdown,
                                         Some(&selected.root_path),
+                                        ui.available_width(),
                                     );
-                                    let markdown = rewrite_markdown_gif_images(
+                                    let markdown = self.cached_rewrite_markdown_gif_images(
                                         &markdown,
                                         Some(&selected.root_path),
                                     );

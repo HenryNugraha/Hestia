@@ -3,7 +3,6 @@ include!("library.rs");
 include!("browse.rs");
 include!("install.rs");
 include!("media.rs");
-include!("perf.rs");
 include!("survey.rs");
 include!("tasks.rs");
 include!("tools.rs");

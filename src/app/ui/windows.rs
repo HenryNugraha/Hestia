@@ -457,30 +457,53 @@ impl HestiaApp {
         }
 
         let log_response = window.show(ctx, |ui| {
+            const LOG_DATE_ROW_HEIGHT: f32 = 22.0;
+            const LOG_ENTRY_ROW_HEIGHT: f32 = 19.0;
+            const LOG_DATE_GAP: f32 = 12.0;
             let use_24h = system_uses_24h_time();
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(stick_to_bottom)
                 .show(ui, |ui| {
+                    let viewport = ui.clip_rect().expand(90.0);
                     let mut last_date: Option<String> = None;
                     for entry in self.state.operations.iter().rev() {
                         let (date, time) = format_log_timestamp(entry.timestamp, use_24h);
                         if last_date.as_deref() != Some(date.as_str()) {
                             if last_date.is_some() {
-                                ui.add_space(12.0);
+                                ui.add_space(LOG_DATE_GAP);
                             }
-                            ui.add(
-                                egui::Label::new(bold(date.clone(), None).underline())
+                            let row_top = ui.cursor().top();
+                            let row_bottom = row_top + LOG_DATE_ROW_HEIGHT;
+                            if row_bottom < viewport.top() || row_top > viewport.bottom() {
+                                ui.add_space(LOG_DATE_ROW_HEIGHT);
+                            } else {
+                                let response = ui.add(
+                                    egui::Label::new(bold(date.clone(), None).underline())
+                                        .selectable(true),
+                                );
+                                let used_height = response.rect.height();
+                                if used_height < LOG_DATE_ROW_HEIGHT {
+                                    ui.add_space(LOG_DATE_ROW_HEIGHT - used_height);
+                                }
+                            }
+                            last_date = Some(date);
+                        }
+                        let row_top = ui.cursor().top();
+                        let row_bottom = row_top + LOG_ENTRY_ROW_HEIGHT;
+                        if row_bottom < viewport.top() || row_top > viewport.bottom() {
+                            ui.add_space(LOG_ENTRY_ROW_HEIGHT);
+                        } else {
+                            let summary = sanitize_log_subject(&entry.summary);
+                            let response = ui.add(
+                                egui::Label::new(format!("[{}] {}", time, summary))
                                     .selectable(true),
                             );
-                            last_date = Some(date);
-                            ui.add_space(-4.0);
+                            let used_height = response.rect.height();
+                            if used_height < LOG_ENTRY_ROW_HEIGHT {
+                                ui.add_space(LOG_ENTRY_ROW_HEIGHT - used_height);
+                            }
                         }
-                        let summary = sanitize_log_subject(&entry.summary);
-                        ui.add(
-                            egui::Label::new(format!("[{}] {}", time, summary))
-                                .selectable(true),
-                        );
                     }
                 });
         });
@@ -636,12 +659,13 @@ impl HestiaApp {
                                             .color(Color32::from_gray(140)),
                                     );
                                 } else {
-                                    for task in ongoing {
-                                        ui.push_id(task.id, |ui| {
-                                            self.render_task_row(ui, &task);
-                                        });
-                                        ui.add_space(8.0);
-                                    }
+                                    self.render_task_list(
+                                        ui,
+                                        &ongoing,
+                                        RichText::new(text.no_active_tasks())
+                                            .color(Color32::from_gray(140)),
+                                        false,
+                                    );
                                 }
                             });
                     },
@@ -668,12 +692,13 @@ impl HestiaApp {
                                             .color(Color32::from_gray(140)),
                                     );
                                 } else {
-                                    for task in completed {
-                                        ui.push_id(task.id, |ui| {
-                                            self.render_task_row(ui, &task);
-                                        });
-                                        ui.add_space(8.0);
-                                    }
+                                    self.render_task_list(
+                                        ui,
+                                        &completed,
+                                        RichText::new(text.no_completed_tasks())
+                                            .color(Color32::from_gray(140)),
+                                        false,
+                                    );
                                 }
                             });
                     },
@@ -773,12 +798,12 @@ impl HestiaApp {
                                 RichText::new(text.no_tasks()).color(Color32::from_gray(140)),
                             );
                         } else {
-                            for task in items {
-                                ui.push_id(task.id, |ui| {
-                                    self.render_task_row(ui, &task);
-                                });
-                                ui.add_space(8.0);
-                            }
+                            self.render_task_list(
+                                ui,
+                                &items,
+                                RichText::new(text.no_tasks()).color(Color32::from_gray(140)),
+                                false,
+                            );
                         }
                     });
             }
@@ -798,15 +823,12 @@ impl HestiaApp {
                                 RichText::new(text.no_tasks()).color(Color32::from_gray(140)),
                             );
                         } else {
-                            for task in items {
-                                ui.push_id(task.id, |ui| {
-                                    self.render_task_row(ui, &task);
-                                });
-                                ui.add_space(8.0);
-                            }
-                            if scroll_to_top {
-                                ui.scroll_to_cursor(Some(egui::Align::Min));
-                            }
+                            self.render_task_list(
+                                ui,
+                                &items,
+                                RichText::new(text.no_tasks()).color(Color32::from_gray(140)),
+                                scroll_to_top,
+                            );
                         }
                     });
                 if self.tasks_scroll_to_edge {

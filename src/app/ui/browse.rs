@@ -1827,9 +1827,18 @@ impl HestiaApp {
                                             );
                                         });
                                         if !entry.markdown.trim().is_empty() {
-                                            self.queue_gif_previews_for_markdown(ui.ctx(), &entry.markdown, None);
-                                            self.prewarm_markdown_images(&entry.markdown);
-                                            self.render_markdown_with_inline_images(ui, &entry.markdown);
+                                            self.queue_gif_previews_for_markdown(
+                                                ui.ctx(),
+                                                &entry.markdown,
+                                                None,
+                                                ui.available_width(),
+                                            );
+                                            let markdown = self.cached_rewrite_markdown_gif_images(
+                                                &entry.markdown,
+                                                None,
+                                            );
+                                            self.prewarm_markdown_images(&markdown);
+                                            self.render_markdown_with_inline_images(ui, &markdown);
                                         }
                                     }
                                     ui.add_space(1.0);
@@ -2053,8 +2062,14 @@ impl HestiaApp {
                             });
                         }
 
-                        self.queue_gif_previews_for_markdown(ui.ctx(), &detail.markdown, None);
-                        let markdown = rewrite_markdown_gif_images(&detail.markdown, None);
+                        self.queue_gif_previews_for_markdown(
+                            ui.ctx(),
+                            &detail.markdown,
+                            None,
+                            ui.available_width(),
+                        );
+                        let markdown =
+                            self.cached_rewrite_markdown_gif_images(&detail.markdown, None);
                         self.prewarm_markdown_images(&markdown);
                         self.render_markdown_with_inline_images(ui, &markdown);
 
@@ -2471,7 +2486,23 @@ impl HestiaApp {
                 });
 
                 self.queue_overlay_full_texture(&current_key);
-                let texture = if let Some(texture) = self.get_browse_full_texture(&current_key, 3) {
+                let animation_key = gif_animation_texture_key(&current_key);
+                if self.gif_dest_by_texture_key.contains_key(&current_key) {
+                    self.ensure_gif_animation_requested(
+                        ui.ctx(),
+                        &current_key,
+                        [
+                            rect.width().round().max(1.0) as u32,
+                            rect.height().round().max(1.0) as u32,
+                        ],
+                    );
+                    if self.animated_gif_state.contains_key(&current_key) {
+                        self.mark_gif_animation_visible(ui.ctx(), &current_key);
+                    }
+                }
+                let texture = if let Some(texture) = self.get_browse_full_texture(&animation_key, 3) {
+                    Some(texture)
+                } else if let Some(texture) = self.get_browse_full_texture(&current_key, 3) {
                     Some(texture)
                 } else if let Some(texture) = self.get_mod_full_texture(&current_key, 3) {
                     Some(texture)

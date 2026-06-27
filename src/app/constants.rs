@@ -51,11 +51,6 @@ const LOCAL_IMAGE_DISPATCH_BATCH: usize = 64;
 const FULL_IMAGE_DECODE_LIMIT: usize = 3;
 const TEXTURE_RAM_BUDGET_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 const TEXTURE_RAM_BUDGET_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const PERF_SLOW_FRAME_INTERVAL_MS: f64 = 50.0;
-const PERF_SLOW_FRAME_EMA_MS: f64 = 33.0;
-const PERF_SLOW_UPDATE_MS: f64 = 24.0;
-const PERF_LOG_MIN_INTERVAL_SECS: f64 = 5.0;
-const PERF_PERIODIC_LOG_INTERVAL_SECS: f64 = 5.0;
 
 // App identity and stable internal IDs.
 const APP_NAME: &str = "Hestia";

@@ -423,6 +423,7 @@ impl HestiaApp {
             proxy_requeue_browse_downloads: HashSet::new(),
             pending_browse_install_safety: HashMap::new(),
             pending_browse_install_meta: HashMap::new(),
+            gif_rewritten_markdown_cache: HashMap::new(),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,
             browse_page_generation: 0,
@@ -482,7 +483,6 @@ impl HestiaApp {
             animated_gif_state: HashMap::new(),
             visible_gif_texture_keys: HashSet::new(),
             last_visible_gif_texture_keys: HashSet::new(),
-            perf_diagnostics: PerfDiagnosticsState::from_env(),
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();

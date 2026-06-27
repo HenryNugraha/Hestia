@@ -697,6 +697,26 @@ impl HestiaApp {
         // No need to prewarm for texture keys - they're already loaded or loading
     }
 
+    fn cached_rewrite_markdown_gif_images(
+        &mut self,
+        markdown: &str,
+        mod_root: Option<&Path>,
+    ) -> String {
+        let root_key = mod_root
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let key = format!("{}:{}", hash64_hex(markdown.as_bytes()), hash64_hex(root_key.as_bytes()));
+        if let Some(cached) = self.gif_rewritten_markdown_cache.get(&key) {
+            return cached.clone();
+        }
+        if self.gif_rewritten_markdown_cache.len() >= 64 {
+            self.gif_rewritten_markdown_cache.clear();
+        }
+        let rewritten = rewrite_markdown_gif_images(markdown, mod_root);
+        self.gif_rewritten_markdown_cache.insert(key, rewritten.clone());
+        rewritten
+    }
+
     fn render_youtube_card(&mut self, ui: &mut Ui, url: &str) {
         let url = url.to_string();
         let button_response = egui::Frame::new()
@@ -759,12 +779,41 @@ impl HestiaApp {
                     if let Some(texture) = self.browse_image_textures.get(&texture_key) {
                         ui.add_space(8.0);
                         let response = render_inline_markdown_image(ui, texture);
-                        let is_visible = response
-                            .as_ref()
-                            .is_some_and(|response| response.rect.intersects(ui.clip_rect()));
                         ui.add_space(8.0);
-                        if is_visible {
-                            self.mark_gif_preview_visible(ui.ctx(), &texture_key);
+                        if let Some(response) = response {
+                            let clip_rect = ui.clip_rect();
+                            let is_partially_visible = response.rect.intersects(clip_rect);
+                            let is_mostly_visible =
+                                visible_rect_fraction(response.rect, clip_rect) >= 0.85;
+                            if is_partially_visible
+                                && self.gif_dest_by_texture_key.contains_key(&texture_key)
+                            {
+                                self.ensure_gif_animation_requested(
+                                    ui.ctx(),
+                                    &texture_key,
+                                    [
+                                        response.rect.width().round().max(1.0) as u32,
+                                        response.rect.height().round().max(1.0) as u32,
+                                    ],
+                                );
+                            }
+                            if is_mostly_visible
+                                && self.animated_gif_state.contains_key(&texture_key)
+                            {
+                                let animation_key = gif_animation_texture_key(&texture_key);
+                                if let Some(texture) = self.browse_image_textures.get(&animation_key) {
+                                    egui::Image::new(texture)
+                                        .fit_to_exact_size(response.rect.size())
+                                        .paint_at(ui, response.rect);
+                                }
+                                self.mark_gif_animation_visible(ui.ctx(), &texture_key);
+                            }
+                            if response.clicked() {
+                                self.browse_state.screenshot_overlay = Some(BrowseOverlayImage {
+                                    texture_key: texture_key.clone(),
+                                    caption: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -920,12 +969,18 @@ impl HestiaApp {
                     
                     // Load the first frame as an immediate texture
                     if let Some(first_frame) = animation.frames.first() {
+                        let anim_texture_key = gif_animation_texture_key(&texture_key);
                         let texture = ctx.load_texture(
-                            &texture_key,
+                            &anim_texture_key,
                             first_frame.image.clone(),
                             egui::TextureOptions::LINEAR,
                         );
-                        self.insert_tracked_texture(TextureKind::BrowseFull, texture_key.clone(), 3, texture);
+                        self.insert_tracked_texture(
+                            TextureKind::BrowseFull,
+                            anim_texture_key,
+                            3,
+                            texture,
+                        );
                     }
 
                     // Store animation state
@@ -951,14 +1006,13 @@ impl HestiaApp {
         }
     }
 
-    fn mark_gif_preview_visible(&mut self, ctx: &egui::Context, texture_key: &str) {
-        self.visible_gif_texture_keys
-            .insert(texture_key.to_string());
-        let was_visible_last_frame = self.last_visible_gif_texture_keys.contains(texture_key);
+    fn ensure_gif_animation_requested(
+        &mut self,
+        ctx: &egui::Context,
+        texture_key: &str,
+        max_size: [u32; 2],
+    ) {
         if self.animated_gif_state.contains_key(texture_key) {
-            if !was_visible_last_frame {
-                ctx.request_repaint_after(Duration::from_millis(16));
-            }
             return;
         }
         if self.pending_gif_animations.contains(texture_key) {
@@ -974,11 +1028,13 @@ impl HestiaApp {
             Some(GifAnimationRequest::FromFile {
                 src_path: path,
                 texture_key: texture_key.to_string(),
+                max_size,
             })
         } else if dest.starts_with("http://") || dest.starts_with("https://") {
             Some(GifAnimationRequest::FromUrl {
                 url: dest,
                 texture_key: texture_key.to_string(),
+                max_size,
             })
         } else {
             None
@@ -992,6 +1048,14 @@ impl HestiaApp {
             } else {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
+        }
+    }
+
+    fn mark_gif_animation_visible(&mut self, ctx: &egui::Context, texture_key: &str) {
+        self.visible_gif_texture_keys
+            .insert(texture_key.to_string());
+        if !self.last_visible_gif_texture_keys.contains(texture_key) {
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
 
@@ -1049,12 +1113,18 @@ impl HestiaApp {
         for (texture_key, frame_index) in texture_updates {
             if let Some(state) = self.animated_gif_state.get(&texture_key) {
                 if let Some(frame) = state.animation.frames.get(frame_index) {
+                    let anim_texture_key = gif_animation_texture_key(&texture_key);
                     let texture = ctx.load_texture(
-                        &texture_key,
+                        &anim_texture_key,
                         frame.image.clone(),
                         egui::TextureOptions::LINEAR,
                     );
-                    self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
+                    self.insert_tracked_texture(
+                        TextureKind::BrowseFull,
+                        anim_texture_key,
+                        3,
+                        texture,
+                    );
                 }
             }
         }
@@ -1064,22 +1134,40 @@ impl HestiaApp {
         }
     }
 
-    fn queue_gif_previews_for_markdown(&mut self, ctx: &egui::Context, markdown: &str, mod_root: Option<&Path>) {
+    fn queue_gif_previews_for_markdown(
+        &mut self,
+        ctx: &egui::Context,
+        markdown: &str,
+        mod_root: Option<&Path>,
+        max_width: f32,
+    ) {
+        let max_width = gif_preview_max_width(max_width);
         let dests = extract_markdown_image_dests(markdown);
         for dest in dests {
             if !is_gif_dest(&dest) {
                 continue;
             }
-            let out_png = gif_preview_out_path(&dest, mod_root);
+            let out_png = sized_gif_preview_out_path(
+                gif_preview_out_path(&dest, mod_root),
+                max_width,
+            );
             let texture_key = format!("gif-preview-{}", hash64_hex(dest.as_bytes()));
             self.gif_dest_by_texture_key
                 .insert(texture_key.clone(), dest.clone());
+            if self
+                .browse_image_textures
+                .get(&texture_key)
+                .is_some_and(|texture| texture.size()[0] as u32 >= max_width)
+            {
+                continue;
+            }
 
             if out_png.exists() {
                 // If preview exists on disk but isn't in memory as a texture, load it immediately.
                 if !self.browse_image_textures.contains_key(&texture_key) {
                     if let Ok(bytes) = std::fs::read(&out_png) {
                         if let Some(image) = load_cover_color_image(&bytes) {
+                            let image = downscale_color_image_to_width(image, max_width);
 
                             let texture = ctx.load_texture(
                                 &texture_key,
@@ -1105,12 +1193,14 @@ impl HestiaApp {
                     src_path: path,
                     out_png,
                     gif_dest: dest,
+                    max_width,
                 });
             } else if dest.starts_with("http://") || dest.starts_with("https://") {
                 let _ = self.gif_preview_request_tx.send(GifPreviewRequest::FromUrl {
                     url: dest.clone(),
                     out_png,
                     gif_dest: dest,
+                    max_width,
                 });
             }
         }
@@ -1229,5 +1319,78 @@ fn render_inline_markdown_image(
 
     let max_width = ui.available_width().max(1.0);
     let scale = (max_width / size.x).min(1.0);
-    Some(ui.add(egui::Image::new(texture).fit_to_exact_size(size * scale)))
+    Some(
+        ui.add(
+            egui::Image::new(texture)
+                .fit_to_exact_size(size * scale)
+                .sense(Sense::click()),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand),
+    )
+}
+
+fn gif_preview_max_width(width: f32) -> u32 {
+    let width = width.ceil().clamp(1.0, 4096.0) as u32;
+    width.div_ceil(64).saturating_mul(64).min(4096)
+}
+
+fn gif_animation_texture_key(texture_key: &str) -> String {
+    format!("{texture_key}:anim")
+}
+
+fn sized_gif_preview_out_path(path: PathBuf, max_width: u32) -> PathBuf {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return path;
+    };
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    let file_name = match extension {
+        Some(extension) if !extension.is_empty() => {
+            format!("{stem}_w{max_width}.{extension}")
+        }
+        _ => format!("{stem}_w{max_width}"),
+    };
+    path.with_file_name(file_name)
+}
+
+fn visible_rect_fraction(rect: egui::Rect, clip_rect: egui::Rect) -> f32 {
+    let area = (rect.width().max(0.0) * rect.height().max(0.0)).max(1.0);
+    let intersection_min = egui::pos2(
+        rect.min.x.max(clip_rect.min.x),
+        rect.min.y.max(clip_rect.min.y),
+    );
+    let intersection_max = egui::pos2(
+        rect.max.x.min(clip_rect.max.x),
+        rect.max.y.min(clip_rect.max.y),
+    );
+    let width = (intersection_max.x - intersection_min.x).max(0.0);
+    let height = (intersection_max.y - intersection_min.y).max(0.0);
+    (width * height / area).clamp(0.0, 1.0)
+}
+
+fn downscale_color_image_to_width(image: egui::ColorImage, max_width: u32) -> egui::ColorImage {
+    let [width, height] = image.size;
+    let Ok(width_u32) = u32::try_from(width) else {
+        return image;
+    };
+    let Ok(height_u32) = u32::try_from(height) else {
+        return image;
+    };
+    if width_u32 <= max_width || width_u32 == 0 || height_u32 == 0 {
+        return image;
+    }
+
+    let rgba: Vec<u8> = image
+        .pixels
+        .iter()
+        .flat_map(|color| [color.r(), color.g(), color.b(), color.a()])
+        .collect();
+    let Some((scaled_width, scaled_height, scaled_rgba)) =
+        resize_rgba_to_fit_rgba(width_u32, height_u32, rgba, [max_width, height_u32])
+    else {
+        return image;
+    };
+    egui::ColorImage::from_rgba_unmultiplied(
+        [scaled_width as usize, scaled_height as usize],
+        &scaled_rgba,
+    )
 }
