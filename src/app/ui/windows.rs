@@ -461,10 +461,13 @@ impl HestiaApp {
             const LOG_ENTRY_ROW_HEIGHT: f32 = 19.0;
             const LOG_DATE_GAP: f32 = 12.0;
             let use_24h = system_uses_24h_time();
+            let scroll_rect = ui.available_rect_before_wrap();
+            let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(stick_to_bottom)
                 .show(ui, |ui| {
+                    apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                     let viewport = ui.clip_rect().expand(90.0);
                     let mut last_date: Option<String> = None;
                     for entry in self.state.operations.iter().rev() {
@@ -505,6 +508,7 @@ impl HestiaApp {
                             }
                         }
                     }
+                    apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
         });
 
@@ -648,10 +652,13 @@ impl HestiaApp {
                     Vec2::new(ui.available_width(), ongoing_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
+                        let scroll_rect = ui.available_rect_before_wrap();
+                        let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
                         ScrollArea::vertical()
                             .id_salt("tasks_ongoing")
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
+                                apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                                 if ongoing.is_empty() {
                                     static_label(
                                         ui,
@@ -667,6 +674,7 @@ impl HestiaApp {
                                         false,
                                     );
                                 }
+                                apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                             });
                     },
                 );
@@ -681,10 +689,13 @@ impl HestiaApp {
                     Vec2::new(ui.available_width(), completed_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
+                        let scroll_rect = ui.available_rect_before_wrap();
+                        let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
                         ScrollArea::vertical()
                             .id_salt("tasks_completed")
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
+                                apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                                 if completed.is_empty() {
                                     static_label(
                                         ui,
@@ -700,6 +711,7 @@ impl HestiaApp {
                                         false,
                                     );
                                 }
+                                apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                             });
                     },
                 );
@@ -764,9 +776,12 @@ impl HestiaApp {
                 });
                 ui.add_space(6.0);
 
+                let scroll_rect = ui.available_rect_before_wrap();
+                let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
                 ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                         let items = match self.tasks_tab {
                             TasksTab::Downloads => self.sorted_tasks(|task| {
                                 self.browse_download_queue
@@ -805,6 +820,7 @@ impl HestiaApp {
                                 false,
                             );
                         }
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
             }
             TasksLayout::SingleList => {
@@ -812,10 +828,13 @@ impl HestiaApp {
                     self.state.tasks_order == TasksOrder::OldestFirst && self.tasks_scroll_to_edge;
                 let scroll_to_top =
                     self.state.tasks_order == TasksOrder::NewestFirst && self.tasks_scroll_to_edge;
+                let scroll_rect = ui.available_rect_before_wrap();
+                let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
                 ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .stick_to_bottom(stick_to_bottom)
                     .show(ui, |ui| {
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                         let items = self.sorted_tasks(|_| true);
                         if items.is_empty() {
                             static_label(
@@ -830,6 +849,7 @@ impl HestiaApp {
                                 scroll_to_top,
                             );
                         }
+                        apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
                 if self.tasks_scroll_to_edge {
                     self.tasks_scroll_to_edge = false;
@@ -2297,7 +2317,10 @@ impl HestiaApp {
             ui.separator();
             ui.add_space(8.0);
 
+            let scroll_rect = ui.available_rect_before_wrap();
+            let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
             ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+                apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                 match self.settings_tab {
                     SettingsTab::General => {
                         let radius = egui::CornerRadius::same(3);
@@ -3582,6 +3605,7 @@ impl HestiaApp {
                         ui.add_space(24.0);
                     }
                 }
+                apply_vertical_scroll_navigation(ui, scroll_navigation, true);
             });
         });
         let _ = settings_response;
