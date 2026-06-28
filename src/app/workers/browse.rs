@@ -267,7 +267,7 @@ fn spawn_browse_worker(
 /// Race up to three equivalent interactive JSON requests. The second request starts after
 /// two seconds; the third starts two seconds later with a cache-busting query parameter.
 /// The first valid response wins and all slower attempts are aborted.
-async fn race_interactive_json<T, F, Fut>(fetch: F) -> Result<T>
+async fn race_interactive_json<T, F, Fut>(cache_bust_first: bool, fetch: F) -> Result<T>
 where
     T: Send + 'static,
     F: Fn(bool) -> Fut,
@@ -276,7 +276,7 @@ where
     const DUPLICATE_DELAY: Duration = Duration::from_secs(2);
 
     let mut attempts = tokio::task::JoinSet::new();
-    attempts.spawn(fetch(false));
+    attempts.spawn(fetch(cache_bust_first));
     let mut started_attempts = 1;
     let first_duplicate = tokio::time::sleep(DUPLICATE_DELAY);
     let cache_busting_duplicate = tokio::time::sleep(DUPLICATE_DELAY * 2);
@@ -303,7 +303,7 @@ where
                 None => {}
             },
             _ = &mut first_duplicate, if started_attempts == 1 => {
-                attempts.spawn(fetch(false));
+                attempts.spawn(fetch(cache_bust_first));
                 started_attempts = 2;
             }
             _ = &mut cache_busting_duplicate, if started_attempts == 2 => {
@@ -311,6 +311,35 @@ where
                 started_attempts = 3;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod browse_worker_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn forced_interactive_json_race_starts_with_cache_busting_request() {
+        let used_nocache =
+            race_interactive_json(
+                true,
+                |nocache| async move { Ok::<bool, anyhow::Error>(nocache) },
+            )
+            .await
+            .unwrap();
+
+        assert!(used_nocache);
+    }
+
+    #[tokio::test]
+    async fn normal_interactive_json_race_starts_without_cache_busting_request() {
+        let used_nocache = race_interactive_json(false, |nocache| async move {
+            Ok::<bool, anyhow::Error>(nocache)
+        })
+        .await
+        .unwrap();
+
+        assert!(!used_nocache);
     }
 }
 
@@ -343,7 +372,10 @@ async fn load_browse_page_with_cache(
     search_sort: SearchSort,
     force_refresh: bool,
     cache_key: &str,
-) -> Result<(gamebanana::ApiEnvelope<gamebanana::BrowseRecord>, Option<String>)> {
+) -> Result<(
+    gamebanana::ApiEnvelope<gamebanana::BrowseRecord>,
+    Option<String>,
+)> {
     if !force_refresh {
         if let Some(cached) = persistence::cache_get(portable, cache_key)? {
             if let Ok(payload) =
@@ -355,7 +387,7 @@ async fn load_browse_page_with_cache(
     }
 
     let query = query.map(str::to_owned);
-    let fetch_result = race_interactive_json(move |nocache| {
+    let fetch_result = race_interactive_json(force_refresh, move |nocache| {
         let query = query.clone();
         let custom_proxy = custom_proxy.clone();
         async move {
@@ -383,14 +415,16 @@ async fn load_browse_page_with_cache(
                         )
                         .await
                     }
-                    _ => gamebanana::fetch_browse_page_async(
-                        &client,
-                        gamebanana_id,
-                        page,
-                        browse_sort,
-                        nocache,
-                    )
-                    .await,
+                    _ => {
+                        gamebanana::fetch_browse_page_async(
+                            &client,
+                            gamebanana_id,
+                            page,
+                            browse_sort,
+                            nocache,
+                        )
+                        .await
+                    }
                 }
             }
         }
@@ -436,7 +470,7 @@ async fn load_character_categories_with_cache(
         }
     }
 
-    match race_interactive_json(move |nocache| {
+    match race_interactive_json(force_refresh, move |nocache| {
         let custom_proxy = custom_proxy.clone();
         async move {
             let client = isolated_browse_json_client(&custom_proxy)?;

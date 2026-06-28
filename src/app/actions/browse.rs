@@ -312,11 +312,13 @@ impl HestiaApp {
         if self.browse_state.active_game_id.as_deref() != Some(current_game_id.as_str()) {
             self.reset_browse_for_game(&current_game_id);
         }
-        if self.browse_state.cards.is_empty()
-            && !self.browse_state.loading_page
-            && self.browse_state.page_error.is_none()
-        {
+        if self.browse_state.loading_page || self.browse_state.page_error.is_some() {
+            return;
+        }
+        if self.browse_state.cards.is_empty() {
             self.request_browse_page_with_mode(1, true);
+        } else if !self.browse_state.refresh_page_cache_for_session {
+            self.restart_browse_query();
         }
     }
 
