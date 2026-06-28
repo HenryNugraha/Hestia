@@ -43,9 +43,10 @@ use windows::{
 };
 
 use crate::{
+    integrations::unrealengine,
     model::{
         AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata,
-        ExtractedMetadataTextSource, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus,
+        ExtractedMetadataTextSource, GameBackend, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus,
         PERSONAL_NOTE_FILE, PortableModState,
     },
     persistence,
@@ -85,18 +86,21 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
     };
 
     for game in &games_to_scan {
-        // Auto-create mods directory if both executables exist but folder is missing
+        // Auto-create mods directory if the backend's required executable exists but folder is missing
         if let Some(mods_path) = game.mods_path(state.static_prefs.use_default_mods_path) {
             if !mods_path.exists() {
                 let vanilla_exists = game
                     .vanilla_exe_path()
                     .as_ref()
                     .is_some_and(|p| p.is_file());
-                let modded_exists = state
-                    .static_prefs.modded_launcher_path_override
-                    .as_ref()
-                    .or(game.modded_exe_path_override.as_ref())
-                    .is_some_and(|p| p.is_file());
+                let modded_exists = match game.definition.backend {
+                    GameBackend::Xxmi => state
+                        .static_prefs.modded_launcher_path_override
+                        .as_ref()
+                        .or(game.modded_exe_path_override.as_ref())
+                        .is_some_and(|p| p.is_file()),
+                    GameBackend::UnrealEngine => true,
+                };
 
                 if vanilla_exists && modded_exists {
                     fs::create_dir_all(&mods_path).with_context(|| {
@@ -105,16 +109,26 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
                 }
             }
         }
-        newly_scanned.extend(scan_live_mods(
-            game,
-            state.static_prefs.use_default_mods_path,
-            state.static_prefs.scan_rabbitfx_requirement,
-        )?);
-        newly_scanned.extend(scan_archived_mods(
-            game,
-            state.static_prefs.use_default_mods_path,
-            state.static_prefs.scan_rabbitfx_requirement,
-        )?);
+        match game.definition.backend {
+            GameBackend::Xxmi => {
+                newly_scanned.extend(scan_live_mods(
+                    game,
+                    state.static_prefs.use_default_mods_path,
+                    state.static_prefs.scan_rabbitfx_requirement,
+                )?);
+                newly_scanned.extend(scan_archived_mods(
+                    game,
+                    state.static_prefs.use_default_mods_path,
+                    state.static_prefs.scan_rabbitfx_requirement,
+                )?);
+            }
+            GameBackend::UnrealEngine => {
+                newly_scanned.extend(unrealengine::scan_game_mods(
+                    game,
+                    state.static_prefs.use_default_mods_path,
+                )?);
+            }
+        }
     }
 
     repair_duplicate_scanned_mod_ids(&mut newly_scanned, state, target_game_id);
@@ -122,8 +136,22 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
     for discovered in &mut newly_scanned {
         // Hydrate from existing memory state to preserve non-portable flags (like update_state)
         // and ensure we don't overwrite portable flags with defaults if they aren't in the JSON yet.
-        hydrate_from_existing_state(discovered, state);
-        write_portable_metadata(discovered)?;
+        let backend = state
+            .games
+            .iter()
+            .find(|game| game.definition.id == discovered.game_id)
+            .map(|game| game.definition.backend)
+            .unwrap_or_default();
+        match backend {
+            GameBackend::Xxmi => {
+                hydrate_from_existing_state(discovered, state);
+                write_portable_metadata(discovered)?;
+            }
+            GameBackend::UnrealEngine => {
+                unrealengine::hydrate_from_existing_state(discovered, state);
+                unrealengine::write_portable_metadata(discovered)?;
+            }
+        }
     }
 
     if let Some(id) = target_game_id {
@@ -515,7 +543,7 @@ pub fn launch_path_with_raw_args(path: &Path, raw_args: &str) -> Result<()> {
 }
 
 pub fn launch_vanilla_executable(path: &Path) -> Result<()> {
-    launch_executable_with_args(path, &[], false, "vanilla executable")
+    launch_executable_with_args(path, &[], true, "vanilla executable")
 }
 
 fn launch_executable_with_args(

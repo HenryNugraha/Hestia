@@ -163,6 +163,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Dengan mod", // AppModded
     "Tanpa mod", // AppVanilla
     "Path {label} belum diatur untuk {game}", // AppLaunchPathNotSetForGame
+    "Menjalankan {game}", // AppLaunchedGame
     "Menjalankan {game} ({mode})", // AppLaunchedGameMode
     "Tidak ada survei masukan yang dikonfigurasi untuk versi ini.", // AppNoFeedbackSurveyConfigured
     "Menambahkan gambar dari clipboard...", // AppAddingClipboardImage
@@ -304,6 +305,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Temukan game dan perbaiki path", // LibraryFindGamesAndFixPaths
     "Temukan lokasi instalasi XXMI dan game di komputer ini.", // LibraryPathScanDescription
     "Setelan Game & Path", // LibraryGamePathSettings
+    "Signature bypasser belum terpasang", // LibraryNteBypasserMissingTitle
+    "Mod NTE tidak akan dimuat sampai AyakaNTEModLoader.asi atau UniversalSigBypasser.asi terpasang.", // LibraryNteBypasserMissingDescription
+    "AyakaNTEBypasser", // LibraryNteBypasserAyaka
+    "UniversalSigBypasser", // LibraryNteBypasserUniversal
     "Filter nama mod...", // LibrarySearchHint
     "Mod Terpasang", // LibraryInstalledMods
     "{count} dipilih", // LibrarySelectedCount
@@ -571,6 +576,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Game", // SettingsPathGameSection
     "File EXE game:", // SettingsPathGameExeFile
     "Folder Mod {code}:", // SettingsPathGameModsFolder
+    "Folder mod (~mods):", // SettingsPathUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Tampilan", // SettingsAdvancedAppearanceSection

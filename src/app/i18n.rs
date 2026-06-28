@@ -164,6 +164,7 @@ enum TextKey {
     AppModded,
     AppVanilla,
     AppLaunchPathNotSetForGame,
+    AppLaunchedGame,
     AppLaunchedGameMode,
     AppNoFeedbackSurveyConfigured,
     AppAddingClipboardImage,
@@ -302,6 +303,10 @@ enum TextKey {
     LibraryFindGamesAndFixPaths,
     LibraryPathScanDescription,
     LibraryGamePathSettings,
+    LibraryNteBypasserMissingTitle,
+    LibraryNteBypasserMissingDescription,
+    LibraryNteBypasserAyaka,
+    LibraryNteBypasserUniversal,
     LibrarySearchHint,
     LibraryInstalledMods,
     LibrarySelectedCount,
@@ -562,6 +567,7 @@ enum TextKey {
     SettingsPathGameSection,
     SettingsPathGameExeFile,
     SettingsPathGameModsFolder,
+    SettingsPathUnrealModFolder,
 
     SettingsAdvancedAppearanceSection,
     SettingsAdvancedAppearanceLanguage,
@@ -1258,6 +1264,10 @@ impl TextCatalog {
             .replace("{game}", game)
     }
 
+    fn launched_game(self, game: &str) -> String {
+        self.get(TextKey::AppLaunchedGame).replace("{game}", game)
+    }
+
     fn launched_game_mode(self, game: &str, mode: &str) -> String {
         self.get(TextKey::AppLaunchedGameMode)
             .replace("{game}", game)
@@ -1829,6 +1839,22 @@ impl TextCatalog {
 
     fn game_path_settings(self) -> &'static str {
         self.get(TextKey::LibraryGamePathSettings)
+    }
+
+    fn nte_bypasser_missing_title(self) -> &'static str {
+        self.get(TextKey::LibraryNteBypasserMissingTitle)
+    }
+
+    fn nte_bypasser_missing_description(self) -> &'static str {
+        self.get(TextKey::LibraryNteBypasserMissingDescription)
+    }
+
+    fn nte_bypasser_ayaka(self) -> &'static str {
+        self.get(TextKey::LibraryNteBypasserAyaka)
+    }
+
+    fn nte_bypasser_universal(self) -> &'static str {
+        self.get(TextKey::LibraryNteBypasserUniversal)
     }
 
     fn library_search_hint(self) -> &'static str {
@@ -2792,6 +2818,10 @@ impl TextCatalog {
     fn path_game_mods_folder(self, xxmi_code: &str) -> String {
         self.get(TextKey::SettingsPathGameModsFolder)
             .replace("{code}", xxmi_code)
+    }
+
+    fn path_unreal_mod_folder(self) -> &'static str {
+        self.get(TextKey::SettingsPathUnrealModFolder)
     }
 
     fn when_launching_game(self) -> &'static str {

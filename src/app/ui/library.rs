@@ -22,6 +22,10 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+const AYAKA_NTE_BYPASSER_URL: &str =
+    "https://ayakamods.com/mods/ayakantebypasser-nte-signature-bypass.2325/";
+const UNIVERSAL_SIG_BYPASSER_URL: &str = "https://gamebanana.com/tuts/19765";
+
 fn format_mod_content_size(size: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -3386,6 +3390,129 @@ impl HestiaApp {
             });
     }
 
+    fn selected_nte_bypasser_paths(&self) -> Option<Vec<PathBuf>> {
+        let game = self.selected_game()?;
+        if !game.enabled || game.definition.id != "nte" {
+            return None;
+        }
+        let exe = game.vanilla_exe_path_override.as_ref()?;
+        let paths = default_unreal_bypasser_paths_from_exe(&game.definition.id, exe);
+        (!paths.is_empty()).then_some(paths)
+    }
+
+    fn missing_selected_nte_bypasser_paths(&self) -> Option<Vec<PathBuf>> {
+        self.selected_nte_bypasser_paths()
+            .filter(|paths| !paths.iter().any(|path| path.is_file()))
+    }
+
+    fn render_nte_bypasser_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
+        let bypasser_paths = self.missing_selected_nte_bypasser_paths()?;
+        let install_dir = bypasser_paths
+            .first()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf);
+        let text = self.text();
+        let warn_color = Color32::from_rgb(203, 104, 59);
+        let frame = egui::Frame::new()
+            .fill(Color32::from_rgb(43, 38, 36))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(113, 70, 48)))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .outer_margin(egui::Margin::symmetric(12, 0))
+            .corner_radius(egui::CornerRadius::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        static_label(ui, icon_rich(Icon::AlertTriangle, 18.0, warn_color));
+                        ui.add_space(4.0);
+                        ui.vertical(|ui| {
+                            static_label(
+                                ui,
+                                RichText::new(text.nte_bypasser_missing_title())
+                                    .size(13.5)
+                                    .strong()
+                                    .color(Color32::from_rgb(238, 220, 207)),
+                            );
+                            ui.add_space(-2.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.nte_bypasser_missing_description())
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(198, 176, 162)),
+                            );
+                        });
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(26.0);
+                        let universal = ui
+                            .add_sized(
+                                [178.0, 30.0],
+                                egui::Button::new(icon_text_sized(
+                                    Icon::ExternalLink,
+                                    text.nte_bypasser_universal(),
+                                    13.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if universal.clicked() {
+                            if let Err(err) = open_external_url(UNIVERSAL_SIG_BYPASSER_URL) {
+                                self.report_error(err, Some(text.app_could_not_open_browser()));
+                            }
+                        }
+
+                        let ayaka = ui
+                            .add_sized(
+                                [164.0, 30.0],
+                                egui::Button::new(icon_text_sized(
+                                    Icon::ExternalLink,
+                                    text.nte_bypasser_ayaka(),
+                                    13.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if ayaka.clicked() {
+                            if let Err(err) = open_external_url(AYAKA_NTE_BYPASSER_URL) {
+                                self.report_error(err, Some(text.app_could_not_open_browser()));
+                            }
+                        }
+
+                        if let Some(dir) = install_dir.as_deref() {
+                            let open_folder = ui
+                                .add_sized(
+                                    [126.0, 30.0],
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::FolderOpen,
+                                        text.open_folder(),
+                                        13.0,
+                                        13.0,
+                                    ))
+                                    .fill(Color32::from_rgb(54, 50, 48))
+                                    .stroke(egui::Stroke::new(
+                                        1.0,
+                                        Color32::from_rgb(96, 78, 68),
+                                    )),
+                                )
+                                .on_hover_text(dir.display().to_string())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if open_folder.clicked() {
+                                if let Err(err) = open_in_explorer(dir) {
+                                    self.report_error(err, Some(text.could_not_open_location()));
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+        Some(frame.response.rect)
+    }
+
     fn render_mod_grid(&mut self, ui: &mut Ui) {
         let text = self.text();
         let age_now = Local::now();
@@ -3995,7 +4122,7 @@ impl HestiaApp {
                                 if has_active { buttons.push(("disable", Icon::Ban, text.disable())); }
                                 if has_active || has_disabled || has_archived { buttons.push(("category", Icon::Tag, text.categories())); }
                                 if has_archived { buttons.push(("restore", Icon::ArchiveRestore, text.restore())); }
-                                if has_disabled { buttons.push(("archive", Icon::Archive, text.archive())); }
+                                if has_disabled && self.selected_game().is_some_and(|game| game.is_xxmi()) { buttons.push(("archive", Icon::Archive, text.archive())); }
                                 if has_active || has_disabled || has_archived { buttons.push(("delete", Icon::Trash2, text.delete())); }
 
                                 let max_visible_buttons = if how_expanded > 0.01 {
@@ -4251,6 +4378,10 @@ impl HestiaApp {
         mod_card_context_block_rects.push(header_frame_response.response.rect);
 
         ui.add_space(8.0);
+        if let Some(warning_rect) = self.render_nte_bypasser_warning(ui) {
+            mod_card_context_block_rects.push(warning_rect);
+            ui.add_space(8.0);
+        }
 
         let left_padding = 12.0;
         let desired_right_gap = 4.0;
@@ -5349,6 +5480,7 @@ impl HestiaApp {
                                             }
                                             self.render_mod_card_open_submenu(ui, mod_id, root_path);
                                             if (has_active || has_disabled)
+                                                && self.selected_game().is_some_and(|game| game.is_xxmi())
                                                 && ui
                                                     .button(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
                                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -5476,7 +5608,8 @@ impl HestiaApp {
                                                         category_label,
                                                     );
                                                     self.render_mod_card_open_submenu(ui, mod_id, root_path);
-                                                    if ui
+                                                    if self.selected_game().is_some_and(|game| game.is_xxmi())
+                                                        && ui
                                                         .button(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                         .clicked()
@@ -5502,7 +5635,8 @@ impl HestiaApp {
                                                         category_label,
                                                     );
                                                     self.render_mod_card_open_submenu(ui, mod_id, root_path);
-                                                    if ui
+                                                    if self.selected_game().is_some_and(|game| game.is_xxmi())
+                                                        && ui
                                                         .button(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
                                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                         .clicked()
@@ -6961,171 +7095,65 @@ impl HestiaApp {
                                 paint_modified_update_badge(ui, text, update_response.rect);
                             }
                         }
-                        let use_default_path = self.state.static_prefs.use_default_mods_path;
                         match selected.status {
                             ModStatus::Active => {
-                            if ui
-                                .add(
-                                    egui::Button::new(icon_text_sized(Icon::Ban, text.disable(), 12.0, 12.0))
-                                        .corner_radius(egui::CornerRadius::same(6)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                    let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let name = mod_entry.folder_name.clone();
-                                        (Some(xxmi::disable_mod(mod_entry)), Some(name))
-                                    } else {
-                                        (None, None)
-                                    };
-                                    if let (Some(result), Some(name)) = (result, name) {
-                                        match result {
-                                            Ok(()) => {
-                                                let action = text.action_disabled();
-                                                self.log_action(action, &name);
-                                                self.set_message_ok(text.action_message(action, &name));
-                                                self.save_state();
-                                                self.refresh();
-                                            }
-                                            Err(err) => self.report_error(err, Some(text.disable_failed())),
-                                        }
-                                    }
+                                if ui
+                                    .add(
+                                        egui::Button::new(icon_text_sized(Icon::Ban, text.disable(), 12.0, 12.0))
+                                            .corner_radius(egui::CornerRadius::same(6)),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    self.disable_selected_context();
                                 }
-                            if ui
-                                .add(
-                                    egui::Button::new(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
-                                        .corner_radius(egui::CornerRadius::same(6)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                    if let Some(snapshot) = self.selected_mod().cloned() {
-                                        self.clear_mod_image_runtime_state(&snapshot);
-                                    }
-                                    let game = self.selected_game().cloned();
-                                    let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let name = mod_entry.folder_name.clone();
-                                        let result = (|| -> Result<()> {
-                                            let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                            xxmi::archive_mod(mod_entry, game, use_default_path)?;
-                                            Ok(())
-                                        })();
-                                        (Some(result), Some(name))
-                                    } else {
-                                        (None, None)
-                                    };
-                                    if let (Some(result), Some(name)) = (result, name) {
-                                        match result {
-                                            Ok(()) => {
-                                                let action = text.action_archived();
-                                                self.log_action(action, &name);
-                                                self.set_message_ok(text.action_message(action, &name));
-                                                self.save_state();
-                                                self.refresh();
-                                            }
-                                            Err(err) => self.report_error(err, Some(text.archive_failed())),
-                                        }
+                                if self.selected_game().is_some_and(|game| game.is_xxmi()) {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
+                                                .corner_radius(egui::CornerRadius::same(6)),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        self.archive_selected_context();
                                     }
                                 }
                             }
                             ModStatus::Disabled => {
-                            if ui
-                                .add(
-                                    egui::Button::new(icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0))
-                                        .corner_radius(egui::CornerRadius::same(6)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                    let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let name = mod_entry.folder_name.clone();
-                                        (Some(xxmi::enable_mod(mod_entry)), Some(name))
-                                    } else {
-                                        (None, None)
-                                    };
-                                    if let (Some(result), Some(name)) = (result, name) {
-                                        match result {
-                                            Ok(()) => {
-                                                let action = text.action_enabled();
-                                                self.log_action(action, &name);
-                                                self.set_message_ok(text.action_message(action, &name));
-                                                self.save_state();
-                                                self.refresh();
-                                            }
-                                            Err(err) => self.report_error(err, Some(text.enable_failed())),
-                                        }
-                                    }
+                                if ui
+                                    .add(
+                                        egui::Button::new(icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0))
+                                            .corner_radius(egui::CornerRadius::same(6)),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    self.enable_or_restore_selected_context();
                                 }
-                            if ui
-                                .add(
-                                    egui::Button::new(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
-                                        .corner_radius(egui::CornerRadius::same(6)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                    if let Some(snapshot) = self.selected_mod().cloned() {
-                                        self.clear_mod_image_runtime_state(&snapshot);
-                                    }
-                                    let game = self.selected_game().cloned();
-                                    let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let name = mod_entry.folder_name.clone();
-                                        let result = (|| -> Result<()> {
-                                            let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                            xxmi::archive_mod(mod_entry, game, use_default_path)?;
-                                            Ok(())
-                                        })();
-                                        (Some(result), Some(name))
-                                    } else {
-                                        (None, None)
-                                    };
-                                    if let (Some(result), Some(name)) = (result, name) {
-                                        match result {
-                                            Ok(()) => {
-                                                let action = text.action_archived();
-                                                self.log_action(action, &name);
-                                                self.set_message_ok(text.action_message(action, &name));
-                                                self.save_state();
-                                                self.refresh();
-                                            }
-                                            Err(err) => self.report_error(err, Some(text.archive_failed())),
-                                        }
+                                if self.selected_game().is_some_and(|game| game.is_xxmi()) {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(icon_text_sized(Icon::Archive, text.archive(), 12.0, 12.0))
+                                                .corner_radius(egui::CornerRadius::same(6)),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        self.archive_selected_context();
                                     }
                                 }
                             }
                             ModStatus::Archived => {
-                            if ui
-                                .add(
-                                    egui::Button::new(icon_text_sized(Icon::ArchiveRestore, text.restore(), 12.0, 12.0))
-                                        .corner_radius(egui::CornerRadius::same(6)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                    let game = self.selected_game().cloned();
-                                    let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let name = mod_entry.folder_name.clone();
-                                        let result = (|| -> Result<()> {
-                                            let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                            xxmi::restore_mod(mod_entry, game, use_default_path)?;
-                                            Ok(())
-                                        })();
-                                        (Some(result), Some(name))
-                                    } else {
-                                        (None, None)
-                                    };
-                                    if let (Some(result), Some(name)) = (result, name) {
-                                        match result {
-                                            Ok(()) => {
-                                                let action = text.action_unarchived();
-                                                self.log_action(action, &name);
-                                                self.set_message_ok(text.action_message(action, &name));
-                                                self.save_state();
-                                                self.refresh();
-                                            }
-                                            Err(err) => self.report_error(err, Some(text.restore_failed())),
-                                        }
-                                    }
+                                if ui
+                                    .add(
+                                        egui::Button::new(icon_text_sized(Icon::ArchiveRestore, text.restore(), 12.0, 12.0))
+                                            .corner_radius(egui::CornerRadius::same(6)),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    self.enable_or_restore_selected_context();
                                 }
                             }
                         }
@@ -7272,222 +7300,6 @@ impl HestiaApp {
                 let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
                 ScrollArea::vertical().id_salt(scroll_id_salt).show(ui, |ui| {
                     apply_vertical_scroll_navigation(ui, scroll_navigation, false);
-                    if false { ui.horizontal(|ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            let use_default_path = self.state.static_prefs.use_default_mods_path;
-                            match selected.status {
-                                ModStatus::Active => {
-                                    if ui.button(icon_text_sized(Icon::Ban, text.disable(), 13.0, 13.0)).clicked() {
-                                        let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let name = mod_entry.folder_name.clone();
-                                            (Some(xxmi::disable_mod(mod_entry)), Some(name))
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let (Some(result), Some(name)) = (result, name) {
-                                            match result {
-                                                Ok(()) => {
-                                                    let action = text.action_disabled();
-                                                    self.log_action(action, &name);
-                                                    self.set_message_ok(text.action_message(action, &name));
-                                                    self.save_state();
-                                                    self.refresh();
-                                                }
-                                                Err(err) => self.report_error(err, Some(text.disable_failed())),
-                                            }
-                                        }
-                                    }
-                                    if ui.button(icon_text_sized(Icon::Archive, text.archive(), 13.0, 13.0)).clicked() {
-                                        if let Some(snapshot) = self.selected_mod().cloned() {
-                                            self.clear_mod_image_runtime_state(&snapshot);
-                                        }
-                                        let game = self.selected_game().cloned();
-                                        let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let name = mod_entry.folder_name.clone();
-                                            let result = (|| -> Result<()> {
-                                                let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                                xxmi::archive_mod(mod_entry, game, use_default_path)?;
-                                                Ok(())
-                                            })();
-                                            (Some(result), Some(name))
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let (Some(result), Some(name)) = (result, name) {
-                                            match result {
-                                                Ok(()) => {
-                                                    let action = text.action_archived();
-                                                    self.log_action(action, &name);
-                                                    self.set_message_ok(text.action_message(action, &name));
-                                                    self.save_state();
-                                                    self.refresh();
-                                                }
-                                                Err(err) => self.report_error(err, Some(text.archive_failed())),
-                                            }
-                                        }
-                                    }
-                                }
-                                ModStatus::Disabled => {
-                                    if ui.button(icon_text_sized(Icon::Check, text.enable(), 13.0, 13.0)).clicked() {
-                                        let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let name = mod_entry.folder_name.clone();
-                                            (Some(xxmi::enable_mod(mod_entry)), Some(name))
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let (Some(result), Some(name)) = (result, name) {
-                                            match result {
-                                                Ok(()) => {
-                                                    let action = text.action_enabled();
-                                                    self.log_action(action, &name);
-                                                    self.set_message_ok(text.action_message(action, &name));
-                                                    self.save_state();
-                                                    self.refresh();
-                                                }
-                                                Err(err) => self.report_error(err, Some(text.enable_failed())),
-                                            }
-                                        }
-                                    }
-                                    if ui.button(icon_text_sized(Icon::Archive, text.archive(), 13.0, 13.0)).clicked() {
-                                        if let Some(snapshot) = self.selected_mod().cloned() {
-                                            self.clear_mod_image_runtime_state(&snapshot);
-                                        }
-                                        let game = self.selected_game().cloned();
-                                        let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let name = mod_entry.folder_name.clone();
-                                            let result = (|| -> Result<()> {
-                                                let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                                xxmi::archive_mod(mod_entry, game, use_default_path)?;
-                                                Ok(())
-                                            })();
-                                            (Some(result), Some(name))
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let (Some(result), Some(name)) = (result, name) {
-                                            match result {
-                                                Ok(()) => {
-                                                    let action = text.action_archived();
-                                                    self.log_action(action, &name);
-                                                    self.set_message_ok(text.action_message(action, &name));
-                                                    self.save_state();
-                                                    self.refresh();
-                                                }
-                                                Err(err) => self.report_error(err, Some(text.archive_failed())),
-                                            }
-                                        }
-                                    }
-                                }
-                                ModStatus::Archived => {
-                                    if ui.button(icon_text_sized(Icon::ArchiveRestore, text.restore(), 13.0, 13.0)).clicked() {
-                                        let game = self.selected_game().cloned();
-                                        let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let name = mod_entry.folder_name.clone();
-                                            let result = (|| -> Result<()> {
-                                                let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                                                xxmi::restore_mod(mod_entry, game, use_default_path)?;
-                                                Ok(())
-                                            })();
-                                            (Some(result), Some(name))
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let (Some(result), Some(name)) = (result, name) {
-                                            match result {
-                                                Ok(()) => {
-                                                    let action = text.action_unarchived();
-                                                    self.log_action(action, &name);
-                                                    self.set_message_ok(text.action_message(action, &name));
-                                                    self.save_state();
-                                                    self.refresh();
-                                                }
-                                                Err(err) => self.report_error(err, Some(text.restore_failed())),
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if ui.button(icon_text_sized(Icon::Trash2, text.delete(), 13.0, 13.0)).clicked() {
-                                let result = (|| -> Result<()> {
-                                    let mod_entry = self.selected_mod().cloned().ok_or_else(|| anyhow!("no mod selected"))?;
-                                    let behavior = self.delete_mod_entry(&mod_entry)?;
-                                    let action = text.delete_action(behavior);
-                                    self.log_action(action, &mod_entry.folder_name);
-                                    self.set_message_ok(text.action_message(action, &mod_entry.folder_name));
-                                    self.save_state();
-                                    self.refresh();
-                                    Ok(())
-                                })();
-                                if let Err(err) = result {
-                                    self.report_error(err, Some(text.delete_failed()));
-                                }
-                            }
-                        });
-                        ui.allocate_ui_with_layout(
-                            ui.available_size(),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                                    let linked = selected
-                                        .source
-                                        .as_ref()
-                                        .and_then(|s| s.gamebanana.as_ref())
-                                        .map(|g| g.mod_id > 0 || !g.url.trim().is_empty())
-                                        .unwrap_or(false);
-                                    if linked {
-                                        if let Some(mut job) =
-                                            Self::modified_ignoring_detail_job(text, &selected, 11.5)
-                                        {
-                                            job.append(
-                                                &format!(" ({age})"),
-                                                0.0,
-                                                TextFormat {
-                                                    font_id: egui::FontId::proportional(11.5),
-                                                    color: Color32::from_gray(145),
-                                                    ..Default::default()
-                                                },
-                                            );
-                                            ui.add(egui::Label::new(job).selectable(false))
-                                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
-                                                .on_hover_cursor(egui::CursorIcon::Default);
-                                        } else {
-                                            let (update_text, update_color) =
-                                                Self::mod_update_badge(text, &selected);
-                                            static_label(
-                                                ui,
-                                                RichText::new(format!("{update_text} ({age})"))
-                                                    .size(11.5)
-                                                    .color(update_color),
-                                            )
-                                            .on_hover_text(Self::mod_update_badge_tooltip(&selected));
-                                        }
-                                    } else {
-                                        static_label(
-                                            ui,
-                                            RichText::new(age.clone())
-                                                .size(11.5)
-                                                .color(Color32::from_gray(145)),
-                                        );
-                                    }
-                                    if let Some(author) = selected
-                                        .source
-                                        .as_ref()
-                                        .and_then(|s| s.snapshot.as_ref())
-                                        .and_then(|s| s.authors.first())
-                                    {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(author.clone())
-                                                    .size(11.0)
-                                                    .color(Color32::from_gray(168)),
-                                            )
-                                            .truncate(),
-                                        ).on_hover_cursor(egui::CursorIcon::Default);
-                                    }
-                                });
-                            },
-                        );
-                    }); }
                     ui.add_space(4.0);
                     let screenshot_paths = selected.metadata.user.screenshots.clone();
                     let snapshot_urls = selected

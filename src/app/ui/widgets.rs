@@ -382,6 +382,7 @@ fn game_icon_bytes(game_id: &str) -> Option<&'static [u8]> {
         "starrail" => Some(include_bytes!("../../asset/game-icon/hsr.png")),
         "genshin" => Some(include_bytes!("../../asset/game-icon/gi.png")),
         "honkai-impact" => Some(include_bytes!("../../asset/game-icon/hi.png")),
+        "nte" => Some(include_bytes!("../../asset/game-icon/nte.png")),
         _ => None,
     }
 }
@@ -394,6 +395,7 @@ fn game_cover_bytes(game_id: &str) -> Option<&'static [u8]> {
         "starrail" => Some(include_bytes!("../../asset/game-cover/hsr.jpg")),
         "genshin" => Some(include_bytes!("../../asset/game-cover/gi.jpg")),
         "honkai-impact" => Some(include_bytes!("../../asset/game-cover/hi.jpg")),
+        "nte" => Some(include_bytes!("../../asset/game-cover/nte.jpg")),
         _ => None,
     }
 }
@@ -605,6 +607,7 @@ fn game_grid_card(
     textures: &HashMap<String, egui::TextureHandle>,
     game_id: &str,
     label: &str,
+    backend: GameBackend,
     selected: bool,
     dragging: bool,
 ) -> egui::Response {
@@ -648,6 +651,7 @@ fn game_grid_card(
         Color32::WHITE,
         Sense::hover(),
     );
+    paint_game_backend_badge(ui, child.min_rect(), backend);
     child.add_space(4.0);
     child
         .add(
@@ -658,6 +662,37 @@ fn game_grid_card(
         .on_hover_cursor(egui::CursorIcon::Default);
 
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn paint_game_backend_badge(ui: &Ui, icon_rect: egui::Rect, backend: GameBackend) {
+    let (lines, width, height) = match backend {
+        GameBackend::Xxmi => (&["XXMI"][..], 42.0, 22.0),
+        GameBackend::UnrealEngine => (&["Unreal", "Engine"][..], 58.0, 34.0),
+    };
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(icon_rect.right() - width - 6.0, icon_rect.top() + 6.0),
+        Vec2::new(width, height),
+    );
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(7),
+        Color32::from_rgba_premultiplied(18, 20, 24, 220),
+        egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 36)),
+        egui::StrokeKind::Inside,
+    );
+    let line_height = 11.0;
+    let total_height = line_height * lines.len() as f32;
+    let mut y = rect.center().y - total_height / 2.0 + line_height / 2.0;
+    for line in lines {
+        ui.painter().text(
+            egui::pos2(rect.center().x, y),
+            egui::Align2::CENTER_CENTER,
+            *line,
+            egui::FontId::proportional(10.0),
+            Color32::from_rgb(220, 224, 230),
+        );
+        y += line_height;
+    }
 }
 
 fn install_resize_handles(ctx: &egui::Context) {
@@ -871,4 +906,15 @@ fn toggle_switch_sized_with_style(
     );
 
     response
+}
+
+#[cfg(test)]
+mod widget_asset_tests {
+    use super::*;
+
+    #[test]
+    fn nte_game_assets_are_embedded() {
+        assert!(game_icon_bytes("nte").is_some());
+        assert!(game_cover_bytes("nte").is_some());
+    }
 }

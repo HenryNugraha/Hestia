@@ -22,11 +22,28 @@ impl HestiaApp {
         }
     }
 
+    fn game_for_mod(&self, mod_entry: &ModEntry) -> Option<GameInstall> {
+        self.state
+            .games
+            .iter()
+            .find(|game| game.definition.id == mod_entry.game_id)
+            .cloned()
+    }
+
     fn disable_mod_by_id(&mut self, mod_id: &str) {
+        let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
+        let use_default = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             if mod_entry.status == ModStatus::Active {
-                (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                let result = match game.as_ref().map(|game| game.definition.backend) {
+                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::UnrealEngine) => {
+                        unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
+                    }
+                    None => Err(anyhow!("game not found")),
+                };
+                (Some(result), Some(name))
             } else {
                 (None, None)
             }
@@ -41,21 +58,30 @@ impl HestiaApp {
     }
 
     fn enable_or_restore_mod_by_id(&mut self, mod_id: &str) {
-        let game = self.selected_game().cloned();
+        let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
-                ModStatus::Disabled => (
-                    Some(xxmi::enable_mod(mod_entry)),
-                    Some(name),
-                    Some(text.action_enabled()),
-                ),
+                ModStatus::Disabled => {
+                    let result = match game.as_ref().map(|game| game.definition.backend) {
+                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::UnrealEngine) => {
+                            unrealengine::enable_mod(mod_entry, game.as_ref().expect("game checked"), use_default_path)
+                        }
+                        None => Err(anyhow!("game not found")),
+                    };
+                    (Some(result), Some(name), Some(text.action_enabled()))
+                }
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
                         let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                        xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                        if game.is_xxmi() {
+                            xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                        } else {
+                            bail!("archive is not supported for Unreal Engine games");
+                        }
                         Ok(())
                     })();
                     (Some(result), Some(name), Some(text.action_unarchived()))
@@ -90,13 +116,17 @@ impl HestiaApp {
         if let Some(snapshot) = self.state.mods.iter().find(|m| m.id == mod_id).cloned() {
             self.clear_mod_image_runtime_state(&snapshot);
         }
-        let game = self.selected_game().cloned();
+        let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
                 let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                if game.is_xxmi() {
+                    xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                } else {
+                    bail!("archive is not supported for Unreal Engine games");
+                }
                 Ok(())
             })();
             (Some(result), Some(name))
@@ -180,10 +210,19 @@ impl HestiaApp {
         }
 
         let text = self.text();
+        let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
+        let use_default = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             if mod_entry.status == ModStatus::Active {
-                (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                let result = match game.as_ref().map(|game| game.definition.backend) {
+                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::UnrealEngine) => {
+                        unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
+                    }
+                    None => Err(anyhow!("game not found")),
+                };
+                (Some(result), Some(name))
             } else {
                 (None, None)
             }
@@ -202,21 +241,30 @@ impl HestiaApp {
             return;
         }
 
-        let game = self.selected_game().cloned();
+        let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
         let (result, name, action) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
-                ModStatus::Disabled => (
-                    Some(xxmi::enable_mod(mod_entry)),
-                    Some(name),
-                    Some(text.action_enabled()),
-                ),
+                ModStatus::Disabled => {
+                    let result = match game.as_ref().map(|game| game.definition.backend) {
+                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::UnrealEngine) => {
+                            unrealengine::enable_mod(mod_entry, game.as_ref().expect("game checked"), use_default_path)
+                        }
+                        None => Err(anyhow!("game not found")),
+                    };
+                    (Some(result), Some(name), Some(text.action_enabled()))
+                }
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
                         let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                        xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                        if game.is_xxmi() {
+                            xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                        } else {
+                            bail!("archive is not supported for Unreal Engine games");
+                        }
                         Ok(())
                     })();
                     (Some(result), Some(name), Some(text.action_unarchived()))
@@ -256,13 +304,17 @@ impl HestiaApp {
         if let Some(snapshot) = self.selected_mod().cloned() {
             self.clear_mod_image_runtime_state(&snapshot);
         }
-        let game = self.selected_game().cloned();
+        let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
                 let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
-                xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                if game.is_xxmi() {
+                    xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                } else {
+                    bail!("archive is not supported for Unreal Engine games");
+                }
                 Ok(())
             })();
             (Some(result), Some(name))
@@ -300,11 +352,23 @@ impl HestiaApp {
     }
 
     fn batch_disable_selected(&mut self) {
+        let games = self.state.games.clone();
+        let use_default = self.state.static_prefs.use_default_mods_path;
         let mut disabled_count = 0;
         // Single iteration: filter selected mods and disable in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
-                if xxmi::disable_mod(mod_entry).is_ok() {
+                let game = games
+                    .iter()
+                    .find(|game| game.definition.id == mod_entry.game_id);
+                let result = match game.map(|game| game.definition.backend) {
+                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::UnrealEngine) => {
+                        unrealengine::disable_mod(mod_entry, game.expect("game checked"), use_default)
+                    }
+                    None => Err(anyhow!("game not found")),
+                };
+                if result.is_ok() {
                     disabled_count += 1;
                 }
             }
@@ -314,19 +378,32 @@ impl HestiaApp {
     }
 
     fn batch_enable_selected(&mut self) {
-        let game = self.selected_game().cloned();
+        let games = self.state.games.clone();
+        let use_default = self.state.static_prefs.use_default_mods_path;
         let mut enabled_count = 0;
         let mut unarchived_count = 0;
         // Single iteration: process all selected mods in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) {
+                let game = games
+                    .iter()
+                    .find(|game| game.definition.id == mod_entry.game_id);
                 if mod_entry.status == ModStatus::Disabled {
-                    if xxmi::enable_mod(mod_entry).is_ok() {
+                    let result = match game.map(|game| game.definition.backend) {
+                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::UnrealEngine) => {
+                            unrealengine::enable_mod(mod_entry, game.expect("game checked"), use_default)
+                        }
+                        None => Err(anyhow!("game not found")),
+                    };
+                    if result.is_ok() {
                         enabled_count += 1;
                     }
                 } else if mod_entry.status == ModStatus::Archived {
-                    if let Some(game_ref) = game.as_ref() {
-                        if xxmi::restore_mod(mod_entry, game_ref, self.state.static_prefs.use_default_mods_path).is_ok() {
+                    if let Some(game_ref) = game {
+                        if game_ref.is_xxmi()
+                            && xxmi::restore_mod(mod_entry, game_ref, use_default).is_ok()
+                        {
                             unarchived_count += 1;
                         }
                     }
@@ -353,6 +430,7 @@ impl HestiaApp {
     }
 
     fn rename_mod_folder(&mut self, mod_id: &str, new_name: &str) -> Result<()> {
+        let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
             bail!("mod not found");
         };
@@ -366,7 +444,11 @@ impl HestiaApp {
         mod_entry.root_path = new_path;
         mod_entry.folder_name = new_name.to_string();
         mod_entry.updated_at = Utc::now();
-        xxmi::save_mod_metadata(mod_entry)?;
+        let game = game.as_ref().ok_or_else(|| anyhow!("game not found"))?;
+        match game.definition.backend {
+            GameBackend::Xxmi => xxmi::save_mod_metadata(mod_entry)?,
+            GameBackend::UnrealEngine => unrealengine::write_portable_metadata(mod_entry)?,
+        }
         Ok(())
     }
 
@@ -393,12 +475,17 @@ impl HestiaApp {
     }
 
     fn batch_archive_selected(&mut self) {
-        let game = self.selected_game().cloned();
+        let games = self.state.games.clone();
+        let use_default = self.state.static_prefs.use_default_mods_path;
         // Collect mod entries to clear image state (need owned data to avoid borrow conflicts)
         let mods_to_clear: Vec<ModEntry> = self.state.mods
             .iter()
             .filter(|m| self.selected_mods.contains(&m.id) 
-                && matches!(m.status, ModStatus::Active | ModStatus::Disabled))
+                && matches!(m.status, ModStatus::Active | ModStatus::Disabled)
+                && games
+                    .iter()
+                    .find(|game| game.definition.id == m.game_id)
+                    .is_some_and(|game| game.is_xxmi()))
             .cloned()
             .collect();
         
@@ -411,8 +498,13 @@ impl HestiaApp {
         let mut archived_count = 0;
         for mod_entry in self.state.mods.iter_mut() {
             if mods_to_clear.iter().any(|m| m.id == mod_entry.id) {
-                if let Some(game_ref) = game.as_ref() {
-                    if xxmi::archive_mod(mod_entry, game_ref, self.state.static_prefs.use_default_mods_path).is_ok() {
+                if let Some(game_ref) = games
+                    .iter()
+                    .find(|game| game.definition.id == mod_entry.game_id)
+                {
+                    if game_ref.is_xxmi()
+                        && xxmi::archive_mod(mod_entry, game_ref, use_default).is_ok()
+                    {
                         archived_count += 1;
                     }
                 }

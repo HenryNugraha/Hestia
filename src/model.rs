@@ -10,6 +10,7 @@ use url::{Host, Url};
 use uuid::Uuid;
 
 pub const DISABLED_CONTAINER: &str = "DISABLED_BY_HESTIA";
+pub const UNREAL_DISABLED_MODS_DIR: &str = "~mods-disabledByHestia";
 pub const MOD_META_DIR: &str = "⬢HESTIA";
 pub const MOD_META_FILE: &str = "metadata.json";
 pub const PERSONAL_NOTE_FILE: &str = "Personal Note.txt";
@@ -649,7 +650,16 @@ pub enum ModifiedUpdateBehavior {
 pub struct GameDefinition {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub backend: GameBackend,
     pub xxmi_code: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum GameBackend {
+    #[default]
+    Xxmi,
+    UnrealEngine,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -665,13 +675,33 @@ pub struct GameInstall {
 
 impl GameInstall {
     pub fn mods_path(&self, use_default: bool) -> Option<PathBuf> {
-        if use_default {
-            self.modded_exe_path_override
-                .as_ref()
-                .and_then(|path| default_mods_path_from_launcher(path, &self.definition.xxmi_code))
-                .or_else(|| default_mods_path(&self.definition.xxmi_code))
-        } else {
-            self.mods_path_override.clone()
+        match self.definition.backend {
+            GameBackend::Xxmi => {
+                if use_default {
+                    self.modded_exe_path_override
+                        .as_ref()
+                        .and_then(|path| {
+                            default_mods_path_from_launcher(path, &self.definition.xxmi_code)
+                        })
+                        .or_else(|| default_mods_path(&self.definition.xxmi_code))
+                } else {
+                    self.mods_path_override.clone()
+                }
+            }
+            GameBackend::UnrealEngine => self.mods_path_override.clone().or_else(|| {
+                self.vanilla_exe_path_override.as_ref().and_then(|path| {
+                    default_unreal_pak_mods_path_from_exe(&self.definition.id, path)
+                })
+            }),
+        }
+    }
+
+    pub fn disabled_mods_path(&self, use_default: bool) -> Option<PathBuf> {
+        match self.definition.backend {
+            GameBackend::Xxmi => None,
+            GameBackend::UnrealEngine => self
+                .mods_path(use_default)
+                .map(|path| default_unreal_disabled_mods_path_from_mods_path(&path)),
         }
     }
 
@@ -682,6 +712,37 @@ impl GameInstall {
     pub fn vanilla_exe_path(&self) -> Option<PathBuf> {
         self.vanilla_exe_path_override.clone()
     }
+
+    pub fn is_xxmi(&self) -> bool {
+        self.definition.backend == GameBackend::Xxmi
+    }
+
+    pub fn is_unreal_engine(&self) -> bool {
+        self.definition.backend == GameBackend::UnrealEngine
+    }
+
+    pub fn backend_label(&self) -> &str {
+        match self.definition.backend {
+            GameBackend::Xxmi => self.definition.xxmi_code.as_str(),
+            GameBackend::UnrealEngine => "Unreal Engine",
+        }
+    }
+}
+
+fn default_unreal_disabled_mods_path_from_mods_path(mods_path: &Path) -> PathBuf {
+    if let Some(paks_dir) = mods_path.parent() {
+        if paks_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("Paks"))
+        {
+            if let Some(content_dir) = paks_dir.parent() {
+                return content_dir.join(UNREAL_DISABLED_MODS_DIR);
+            }
+        }
+        return paks_dir.join(UNREAL_DISABLED_MODS_DIR);
+    }
+    mods_path.with_file_name(UNREAL_DISABLED_MODS_DIR)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1377,6 +1438,77 @@ pub fn default_mods_path_from_launcher(launcher_exe: &Path, xxmi_code: &str) -> 
     Some(root.join(xxmi_code).join("Mods"))
 }
 
+pub fn default_unreal_pak_mods_path_from_exe(game_id: &str, game_exe: &Path) -> Option<PathBuf> {
+    match game_id {
+        "nte" => default_nte_pak_mods_path_from_exe(game_exe),
+        _ => None,
+    }
+}
+
+pub fn default_unreal_bypasser_paths_from_exe(game_id: &str, game_exe: &Path) -> Vec<PathBuf> {
+    match game_id {
+        "nte" => default_nte_bypasser_paths_from_exe(game_exe),
+        _ => Vec::new(),
+    }
+}
+
+fn default_nte_pak_mods_path_from_exe(game_exe: &Path) -> Option<PathBuf> {
+    for ancestor in game_exe.ancestors() {
+        if ancestor
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("HT"))
+        {
+            return Some(ancestor.join("Content").join("Paks").join("~mods"));
+        }
+    }
+
+    let root = game_exe
+        .ancestors()
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("Neverness To Everness"))
+        })
+        .or_else(|| {
+            game_exe.parent().and_then(|parent| {
+                parent
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("NTEGlobal"))
+                    .then(|| parent.parent())
+                    .flatten()
+            })
+        })
+        .or_else(|| game_exe.parent())?;
+    Some(
+        root.join("Client")
+            .join("WindowsNoEditor")
+            .join("HT")
+            .join("Content")
+            .join("Paks")
+            .join("~mods"),
+    )
+}
+
+fn default_nte_bypasser_paths_from_exe(game_exe: &Path) -> Vec<PathBuf> {
+    let Some(pak_mods) = default_nte_pak_mods_path_from_exe(game_exe) else {
+        return Vec::new();
+    };
+    let Some(ht_root) = pak_mods
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+    else {
+        return Vec::new();
+    };
+    let dir = ht_root.join("Binaries").join("Win64");
+    vec![
+        dir.join("AyakaNTEModLoader.asi"),
+        dir.join("UniversalSigBypasser.asi"),
+    ]
+}
+
 pub fn xxmi_launcher_file_names() -> &'static [&'static str] {
     &["XXMI Launcher.exe", "XXMI-Launcher.exe"]
 }
@@ -1464,6 +1596,43 @@ fn vanilla_exe_rels(game_id: &str) -> &'static [&'static str] {
             "Honkai Impact 3rd\\Games\\HonkaiImpact3.exe",
             "Honkai Impact 3rd\\Honkai Impact 3rd game\\HonkaiImpact3.exe",
             "Honkai Impact 3rd\\HonkaiImpact3.exe",
+        ],
+        "nte" => &[
+            "NevernessToEverness.exe",
+            "Neverness To Everness.exe",
+            "NTE.exe",
+            "NTEGame.exe",
+            "NTEGlobalGame.exe",
+            "NTEGlobalLauncher.exe",
+            "HT.exe",
+            "HT-Win64-Shipping.exe",
+            "HTGame.exe",
+            "NevernessToEverness\\NevernessToEverness.exe",
+            "Neverness To Everness\\Neverness To Everness.exe",
+            "NevernessToEverness\\NTE.exe",
+            "Neverness To Everness\\NTE.exe",
+            "NevernessToEverness\\NTEGame.exe",
+            "Neverness To Everness\\NTEGame.exe",
+            "NevernessToEverness\\NTEGlobalGame.exe",
+            "Neverness To Everness\\NTEGlobalGame.exe",
+            "NevernessToEverness\\NTEGlobalLauncher.exe",
+            "Neverness To Everness\\NTEGlobalLauncher.exe",
+            "NevernessToEverness\\NTEGlobal\\NTEGame.exe",
+            "Neverness To Everness\\NTEGlobal\\NTEGame.exe",
+            "NevernessToEverness\\NTEGlobal\\NTEGlobalGame.exe",
+            "Neverness To Everness\\NTEGlobal\\NTEGlobalGame.exe",
+            "NevernessToEverness\\NTEGlobal\\NTEGlobalLauncher.exe",
+            "Neverness To Everness\\NTEGlobal\\NTEGlobalLauncher.exe",
+            "NTEGlobal\\NTEGlobalGame.exe",
+            "NTEGlobal\\NTEGlobalLauncher.exe",
+            "Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HT-Win64-Shipping.exe",
+            "Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HTGame.exe",
+            "Neverness To Everness\\Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HT-Win64-Shipping.exe",
+            "Neverness To Everness\\Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HTGame.exe",
+            "NevernessToEverness\\Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HT-Win64-Shipping.exe",
+            "NevernessToEverness\\Client\\WindowsNoEditor\\HT\\Binaries\\Win64\\HTGame.exe",
+            "HT\\Binaries\\Win64\\HT-Win64-Shipping.exe",
+            "HT\\Binaries\\Win64\\HTGame.exe",
         ],
         _ => &[],
     }
@@ -1946,18 +2115,20 @@ fn build_candidates(roots: &[PathBuf], rels: &[&str]) -> Vec<PathBuf> {
 
 pub fn seeded_games() -> Vec<GameInstall> {
     [
-        ("wuwa", "Wuthering Waves", "WWMI"),
-        ("zzz", "Zenless Zone Zero", "ZZMI"),
-        ("endfield", "Arknights Endfield", "EFMI"),
-        ("starrail", "Honkai Star Rail", "SRMI"),
-        ("genshin", "Genshin Impact", "GIMI"),
-        ("honkai-impact", "Honkai Impact", "HIMI"),
+        ("wuwa", "Wuthering Waves", GameBackend::Xxmi, "WWMI"),
+        ("zzz", "Zenless Zone Zero", GameBackend::Xxmi, "ZZMI"),
+        ("endfield", "Arknights Endfield", GameBackend::Xxmi, "EFMI"),
+        ("starrail", "Honkai Star Rail", GameBackend::Xxmi, "SRMI"),
+        ("genshin", "Genshin Impact", GameBackend::Xxmi, "GIMI"),
+        ("honkai-impact", "Honkai Impact", GameBackend::Xxmi, "HIMI"),
+        ("nte", "Neverness To Everness", GameBackend::UnrealEngine, ""),
     ]
     .into_iter()
-    .map(|(id, name, xxmi_code)| GameInstall {
+    .map(|(id, name, backend, xxmi_code)| GameInstall {
         definition: GameDefinition {
             id: id.to_string(),
             name: name.to_string(),
+            backend,
             xxmi_code: xxmi_code.to_string(),
         },
         mods_path_override: None,
@@ -1966,6 +2137,82 @@ pub fn seeded_games() -> Vec<GameInstall> {
         enabled: true,
     })
     .collect()
+}
+
+#[cfg(test)]
+mod unreal_path_tests {
+    use super::*;
+
+    #[test]
+    fn nte_pak_path_derives_from_ht_game_exe() {
+        let exe = Path::new(
+            r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe",
+        );
+        let pak = default_unreal_pak_mods_path_from_exe("nte", exe).unwrap();
+        assert_eq!(
+            pak,
+            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods")
+        );
+    }
+
+    #[test]
+    fn nte_disabled_path_derives_outside_paks_from_pak_mods_path() {
+        let pak =
+            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods");
+        let disabled = default_unreal_disabled_mods_path_from_mods_path(pak);
+        assert_eq!(
+            disabled,
+            Path::new(
+                r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\~mods-disabledByHestia"
+            )
+        );
+    }
+
+    #[test]
+    fn nte_bypasser_paths_derive_from_ht_game_exe() {
+        let exe = Path::new(
+            r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe",
+        );
+        let bypassers = default_unreal_bypasser_paths_from_exe("nte", exe);
+        assert_eq!(
+            bypassers,
+            vec![
+                PathBuf::from(
+                    r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\AyakaNTEModLoader.asi"
+                ),
+                PathBuf::from(
+                    r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\UniversalSigBypasser.asi"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn nte_pak_path_derives_from_global_launcher_exe() {
+        let exe = Path::new(r"D:\Games\Neverness To Everness\NTEGlobal\NTEGlobalGame.exe");
+        let pak = default_unreal_pak_mods_path_from_exe("nte", exe).unwrap();
+        assert_eq!(
+            pak,
+            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods")
+        );
+    }
+
+    #[test]
+    fn nte_bypasser_paths_derive_from_global_launcher_exe() {
+        let exe = Path::new(r"D:\Games\Neverness To Everness\NTEGlobal\NTEGlobalGame.exe");
+        let bypassers = default_unreal_bypasser_paths_from_exe("nte", exe);
+        assert_eq!(
+            bypassers,
+            vec![
+                PathBuf::from(
+                    r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\AyakaNTEModLoader.asi"
+                ),
+                PathBuf::from(
+                    r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\UniversalSigBypasser.asi"
+                ),
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

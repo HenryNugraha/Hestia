@@ -163,6 +163,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "Modded", // AppModded
     "Vanilla", // AppVanilla
     "{game} 的 {label} 路径未设置", // AppLaunchPathNotSetForGame
+    "已启动 {game}", // AppLaunchedGame
     "已启动 {game} ({mode})", // AppLaunchedGameMode
     "此版本未设置反馈调查。", // AppNoFeedbackSurveyConfigured
     "正在添加剪贴板图片…", // AppAddingClipboardImage
@@ -304,6 +305,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "查找游戏并修复路径", // LibraryFindGamesAndFixPaths
     "扫描可访问的驱动器以查找 XXMI 和受支持游戏的安装位置。", // LibraryPathScanDescription
     "游戏和路径设置", // LibraryGamePathSettings
+    "缺少签名绕过器", // LibraryNteBypasserMissingTitle
+    "安装 AyakaNTEModLoader.asi 或 UniversalSigBypasser.asi 之前，NTE Mod 不会加载。", // LibraryNteBypasserMissingDescription
+    "AyakaNTEBypasser", // LibraryNteBypasserAyaka
+    "UniversalSigBypasser", // LibraryNteBypasserUniversal
     "筛选 Mod 名称…", // LibrarySearchHint
     "已安装 Mod", // LibraryInstalledMods
     "{count} 个已选", // LibrarySelectedCount
@@ -571,6 +576,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "游戏", // SettingsPathGameSection
     "游戏 EXE 文件：", // SettingsPathGameExeFile
     "{code} Mod 文件夹：", // SettingsPathGameModsFolder
+    "Mod 文件夹（~mods）：", // SettingsPathUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "外观", // SettingsAdvancedAppearanceSection

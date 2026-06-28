@@ -2758,6 +2758,8 @@ impl HestiaApp {
                             });
                     });
                     ui.add_space(16.0);
+                    let has_enabled_xxmi_games = self.state.games.iter().any(|game| game.enabled && game.is_xxmi());
+                    if has_enabled_xxmi_games {
                     static_label(ui, bold(text.path_xxmi_section(), Some(16.0)).underline());
                     ui.group(|ui| {
                         let warn_color = Color32::from_rgb(124, 45, 58);
@@ -2854,7 +2856,7 @@ impl HestiaApp {
                                     self.state.static_prefs.modded_launcher_path_override =
                                         non_empty(launcher_value).map(PathBuf::from);
                                     if let Some(path) = self.state.static_prefs.modded_launcher_path_override.clone() {
-                                        for game in &mut self.state.games {
+                                        for game in self.state.games.iter_mut().filter(|game| game.is_xxmi()) {
                                             game.modded_exe_path_override = Some(path.clone());
                                             game.mods_path_override = default_mods_path_from_launcher(
                                                 &path,
@@ -2878,7 +2880,7 @@ impl HestiaApp {
                                         .pick_file()
                                     {
                                         self.state.static_prefs.modded_launcher_path_override = Some(path.clone());
-                                        for game in &mut self.state.games {
+                                        for game in self.state.games.iter_mut().filter(|game| game.is_xxmi()) {
                                             game.modded_exe_path_override = Some(path.clone());
                                             game.mods_path_override = default_mods_path_from_launcher(
                                                 &path,
@@ -2904,7 +2906,7 @@ impl HestiaApp {
                                 let was_using_default_mods_path = self.state.static_prefs.use_default_mods_path;
                                 if ui.checkbox(&mut self.state.static_prefs.use_default_mods_path, text.path_use_default_xxmi_mod_path()).changed() {
                                     if was_using_default_mods_path && !self.state.static_prefs.use_default_mods_path {
-                                        for game in self.state.games.iter_mut().filter(|game| game.enabled) {
+                                        for game in self.state.games.iter_mut().filter(|game| game.enabled && game.is_xxmi()) {
                                             if game.mods_path_override.is_none() {
                                                 game.mods_path_override = game.mods_path(was_using_default_mods_path);
                                             }
@@ -2921,6 +2923,7 @@ impl HestiaApp {
                             });
                         });
                     });
+                    }
                     ui.add_space(24.0);
                     ui.label(bold(text.path_game_section(), Some(16.0)).underline())
                     .on_hover_cursor(egui::CursorIcon::Default);
@@ -2967,7 +2970,7 @@ impl HestiaApp {
                                             ).on_hover_cursor(egui::CursorIcon::PointingHand);
                                             ui.add(
                                                 egui::Label::new(
-                                                    RichText::new(&game.definition.xxmi_code)
+                                                    RichText::new(game.backend_label())
                                                         .small()
                                                         .color(Color32::from_gray(145)),
                                                 )
@@ -3085,6 +3088,19 @@ impl HestiaApp {
                                                     if vanilla_dirty && (action_clicked || submit_with_enter) {
                                                         game.vanilla_exe_path_override =
                                                             non_empty(vanilla_value).map(PathBuf::from);
+                                                        if game.is_unreal_engine()
+                                                            && game.mods_path_override.is_none()
+                                                        {
+                                                            game.mods_path_override = game
+                                                                .vanilla_exe_path_override
+                                                                .as_ref()
+                                                                .and_then(|path| {
+                                                                    default_unreal_pak_mods_path_from_exe(
+                                                                        &game.definition.id,
+                                                                        path,
+                                                                    )
+                                                                });
+                                                        }
                                                         ui.data_mut(|d| d.remove::<String>(input_id));
                                                         should_save = true;
                                                     } else if !vanilla_dirty && action_clicked {
@@ -3093,6 +3109,19 @@ impl HestiaApp {
                                                             .pick_file()
                                                         {
                                                             game.vanilla_exe_path_override = Some(path);
+                                                            if game.is_unreal_engine()
+                                                                && game.mods_path_override.is_none()
+                                                            {
+                                                                game.mods_path_override = game
+                                                                    .vanilla_exe_path_override
+                                                                    .as_ref()
+                                                                    .and_then(|path| {
+                                                                        default_unreal_pak_mods_path_from_exe(
+                                                                            &game.definition.id,
+                                                                            path,
+                                                                        )
+                                                                    });
+                                                            }
                                                             ui.data_mut(|d| d.remove::<String>(input_id));
                                                             should_save = true;
                                                         }
@@ -3101,14 +3130,19 @@ impl HestiaApp {
                                                 ui.add_space(3.0);
                                             }
 
-                                            if game.enabled && !self.state.static_prefs.use_default_mods_path {
+                                            if game.enabled && (game.is_unreal_engine() || !self.state.static_prefs.use_default_mods_path) {
                                                 let mods_invalid = game
                                                     .mods_path(self.state.static_prefs.use_default_mods_path)
                                                     .map(|path| !path.is_dir())
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
+                                                    let mods_label = if game.is_unreal_engine() {
+                                                        text.path_unreal_mod_folder().to_string()
+                                                    } else {
+                                                        text.path_game_mods_folder(&game.definition.xxmi_code)
+                                                    };
                                                     ui.label(
-                                                        RichText::new(text.path_game_mods_folder(&game.definition.xxmi_code))
+                                                        RichText::new(mods_label)
                                                             .small()
                                                             .color(Color32::from_gray(165)),
                                                     ).on_hover_cursor(egui::CursorIcon::Default);

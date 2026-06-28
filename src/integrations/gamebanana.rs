@@ -402,6 +402,7 @@ pub fn game_id_for_hestia(game_id: &str) -> Option<u64> {
         "starrail" => Some(18366),
         "honkai-impact" => Some(10349),
         "zzz" => Some(19567),
+        "nte" => Some(23012),
         _ => None,
     }
 }
@@ -414,6 +415,7 @@ pub fn character_super_category_id_for_hestia(game_id: &str) -> Option<u64> {
         "starrail" => Some(22832),
         "honkai-impact" => Some(23620),
         "zzz" => Some(30305),
+        "nte" => Some(37906),
         _ => None,
     }
 }

@@ -1297,6 +1297,9 @@ impl HestiaApp {
                     changed = true;
                 }
                 for game in &mut self.state.games {
+                    if !game.is_xxmi() {
+                        continue;
+                    }
                     if game
                         .modded_exe_path_override
                         .as_ref()
@@ -1343,6 +1346,14 @@ impl HestiaApp {
                         .is_none_or(|path| !path.is_file())
                     {
                         game.vanilla_exe_path_override = Some(path);
+                        if game.is_unreal_engine()
+                            && game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir())
+                        {
+                            game.mods_path_override = game
+                                .vanilla_exe_path_override
+                                .as_ref()
+                                .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                        }
                         game.enabled = true;
                         changed = true;
                         ctx.data_mut(|data| {
@@ -1397,6 +1408,9 @@ impl HestiaApp {
                 StartupPathTargetKind::Xxmi => {
                     self.state.static_prefs.modded_launcher_path_override = Some(path.clone());
                     for game in &mut self.state.games {
+                        if !game.is_xxmi() {
+                            continue;
+                        }
                         game.modded_exe_path_override = Some(path.clone());
                         game.mods_path_override =
                             default_mods_path_from_launcher(&path, &game.definition.xxmi_code);
@@ -1407,6 +1421,7 @@ impl HestiaApp {
                         .iter()
                         .filter(|game| {
                             game.enabled
+                                && game.is_xxmi()
                                 && game
                                     .vanilla_exe_path_override
                                     .as_ref()
@@ -1443,6 +1458,14 @@ impl HestiaApp {
                         .find(|game| game.definition.id == game_id)
                     {
                         game.vanilla_exe_path_override = Some(path);
+                        if game.is_unreal_engine()
+                            && game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir())
+                        {
+                            game.mods_path_override = game
+                                .vanilla_exe_path_override
+                                .as_ref()
+                                .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                        }
                         game.enabled = true;
                         ctx.data_mut(|data| {
                             data.remove::<String>(egui::Id::new((
@@ -1625,7 +1648,21 @@ impl HestiaApp {
                     mod_entry.unsafe_content = true;
                 }
                 if pending_meta.is_none() {
-                    let _ = xxmi::save_mod_metadata(mod_entry);
+                    let backend = self
+                        .state
+                        .games
+                        .iter()
+                        .find(|game| game.definition.id == mod_entry.game_id)
+                        .map(|game| game.definition.backend)
+                        .unwrap_or_default();
+                    match backend {
+                        GameBackend::Xxmi => {
+                            let _ = xxmi::save_mod_metadata(mod_entry);
+                        }
+                        GameBackend::UnrealEngine => {
+                            let _ = unrealengine::write_portable_metadata(mod_entry);
+                        }
+                    }
                 }
                 newly_installed_ids.push(mod_entry.id.clone());
             }
@@ -1637,6 +1674,19 @@ impl HestiaApp {
             || local_install_disabled;
         if install_disabled {
             for mod_id in &newly_installed_ids {
+                let game = self
+                    .state
+                    .mods
+                    .iter()
+                    .find(|m| m.id == *mod_id)
+                    .and_then(|m| {
+                        self.state
+                            .games
+                            .iter()
+                            .find(|game| game.definition.id == m.game_id)
+                            .cloned()
+                    });
+                let use_default = self.state.static_prefs.use_default_mods_path;
                 let (result, name) = if let Some(mod_entry) = self
                     .state
                     .mods
@@ -1644,7 +1694,14 @@ impl HestiaApp {
                     .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
                 {
                     let name = mod_entry.folder_name.clone();
-                    (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                    let result = match game.as_ref().map(|game| game.definition.backend) {
+                        Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                        Some(GameBackend::UnrealEngine) => {
+                            unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
+                        }
+                        None => Err(anyhow!("game not found")),
+                    };
+                    (Some(result), Some(name))
                 } else {
                     (None, None)
                 };
@@ -1663,6 +1720,19 @@ impl HestiaApp {
                 .as_ref()
                 .and_then(|meta| meta.update_target_mod_id.as_deref())
             {
+                let game = self
+                    .state
+                    .mods
+                    .iter()
+                    .find(|m| m.id == target_mod_id)
+                    .and_then(|m| {
+                        self.state
+                            .games
+                            .iter()
+                            .find(|game| game.definition.id == m.game_id)
+                            .cloned()
+                    });
+                let use_default = self.state.static_prefs.use_default_mods_path;
                 let (result, name) = if newly_installed_ids.iter().any(|id| id == target_mod_id) {
                     if let Some(mod_entry) = self
                         .state
@@ -1671,7 +1741,14 @@ impl HestiaApp {
                         .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
                     {
                         let name = mod_entry.folder_name.clone();
-                        (Some(xxmi::disable_mod(mod_entry)), Some(name))
+                        let result = match game.as_ref().map(|game| game.definition.backend) {
+                            Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                            Some(GameBackend::UnrealEngine) => {
+                                unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
+                            }
+                            None => Err(anyhow!("game not found")),
+                        };
+                        (Some(result), Some(name))
                     } else {
                         (None, None)
                     }

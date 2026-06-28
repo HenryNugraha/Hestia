@@ -163,6 +163,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "С модами", // AppModded
     "Без модов", // AppVanilla
     "Путь {label} не задан для {game}", // AppLaunchPathNotSetForGame
+    "Запущено {game}", // AppLaunchedGame
     "Запущено {game} ({mode})", // AppLaunchedGameMode
     "Для этой версии не настроен опрос обратной связи.", // AppNoFeedbackSurveyConfigured
     "Добавление изображения из буфера обмена…", // AppAddingClipboardImage
@@ -304,6 +305,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Найти игры и исправить пути", // LibraryFindGamesAndFixPaths
     "Найдите XXMI и поддерживаемые игры на дисках.", // LibraryPathScanDescription
     "Настройки игры и путей", // LibraryGamePathSettings
+    "Signature bypasser не установлен", // LibraryNteBypasserMissingTitle
+    "Моды NTE не будут загружаться, пока не установлен AyakaNTEModLoader.asi или UniversalSigBypasser.asi.", // LibraryNteBypasserMissingDescription
+    "AyakaNTEBypasser", // LibraryNteBypasserAyaka
+    "UniversalSigBypasser", // LibraryNteBypasserUniversal
     "Фильтр по названию мода...", // LibrarySearchHint
     "Установленные моды", // LibraryInstalledMods
     "Выбрано: {count}", // LibrarySelectedCount
@@ -571,6 +576,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Игра", // SettingsPathGameSection
     "EXE-файл игры:", // SettingsPathGameExeFile
     "Папка модов {code}:", // SettingsPathGameModsFolder
+    "Папка модов (~mods):", // SettingsPathUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Внешний вид", // SettingsAdvancedAppearanceSection

@@ -217,6 +217,9 @@ impl HestiaApp {
     }
 
     fn game_archive_root(game: &GameInstall, use_default: bool) -> Option<PathBuf> {
+        if !game.is_xxmi() {
+            return None;
+        }
         let live_root = game.mods_path(use_default)?;
         let parent = live_root.parent()?;
         Some(parent.join("Mods_Archived"))

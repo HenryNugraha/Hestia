@@ -163,6 +163,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Modded", // AppModded
     "Vanilla", // AppVanilla
     "{label} path not set for {game}", // AppLaunchPathNotSetForGame
+    "Launched {game}", // AppLaunchedGame
     "Launched {game} ({mode})", // AppLaunchedGameMode
     "No feedback survey is configured for this version.", // AppNoFeedbackSurveyConfigured
     "Adding clipboard image...", // AppAddingClipboardImage
@@ -304,6 +305,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Find games and fix paths", // LibraryFindGamesAndFixPaths
     "Scan your accessible drives for XXMI and supported game installations.", // LibraryPathScanDescription
     "Game & Path Settings", // LibraryGamePathSettings
+    "Signature bypasser is missing", // LibraryNteBypasserMissingTitle
+    "NTE mods will not load until AyakaNTEModLoader.asi or UniversalSigBypasser.asi is installed.", // LibraryNteBypasserMissingDescription
+    "AyakaNTEBypasser", // LibraryNteBypasserAyaka
+    "UniversalSigBypasser", // LibraryNteBypasserUniversal
     "Filter mod's name...", // LibrarySearchHint
     "Installed Mods", // LibraryInstalledMods
     "{count} selected", // LibrarySelectedCount
@@ -571,6 +576,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Game", // SettingsPathGameSection
     "Game EXE file:", // SettingsPathGameExeFile
     "{code} Mods Folder:", // SettingsPathGameModsFolder
+    "Mod folder (~mods):", // SettingsPathUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Appearance", // SettingsAdvancedAppearanceSection

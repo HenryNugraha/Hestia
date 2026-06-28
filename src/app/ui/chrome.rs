@@ -106,6 +106,7 @@ impl HestiaApp {
                                 buttons.iter().map(|(_, l)| l.lines().count()).max().unwrap_or(1);
 
                             let selected_game_ready = self.selected_game_is_installed_or_configured();
+                            let selected_game_is_xxmi = self.selected_game().is_some_and(|game| game.is_xxmi());
                             let play_modded_ready = self.selected_game_can_launch_modded();
                             let play_vanilla_ready = self.selected_game_can_launch_vanilla();
                             let play_ready = play_modded_ready || play_vanilla_ready;
@@ -117,11 +118,13 @@ impl HestiaApp {
                                     buttons[0].1,
                                     max_lines,
                                 );
-                                let launch_modded_by_default = play_modded_ready;
+                                let launch_modded_by_default = selected_game_is_xxmi && play_modded_ready;
                                 response.clone().on_hover_text(if launch_modded_by_default {
                                     text.launch_with_mods_tooltip()
-                                } else {
+                                } else if selected_game_is_xxmi {
                                     text.launch_without_mods_tooltip()
+                                } else {
+                                    text.play()
                                 });
                                 if !play_ready {
                                     response
@@ -129,7 +132,7 @@ impl HestiaApp {
                                         .on_hover_text(tooltip)
                                         .on_hover_cursor(egui::CursorIcon::NotAllowed);
                                 }
-                                if play_ready {
+                                if play_ready && selected_game_is_xxmi {
                                     response.context_menu(|ui| {
                                         if ui
                                             .add_enabled(
@@ -899,6 +902,7 @@ impl HestiaApp {
                                             &self.game_icon_textures,
                                             &game.definition.id,
                                             &game.definition.name,
+                                            game.definition.backend,
                                             selected,
                                             is_dragging_this,
                                         );

@@ -354,7 +354,8 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
     state.app_version = env!("CARGO_PKG_VERSION").to_string();
-    state.games = prefs.games;
+    let (games, games_need_save) = merge_seeded_games(prefs.games);
+    state.games = games;
     state.library_folders = prefs.library_folders;
     state.show_log = prefs.show_log;
     state.show_tasks = prefs.show_tasks;
@@ -382,9 +383,44 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
         );
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
     state.preferences_need_save =
-        preferences_need_save || app_version_needs_save || language_needs_save;
+        preferences_need_save || app_version_needs_save || language_needs_save || games_need_save;
     initialize_tool_orders(&mut state, loaded_version);
     Ok(state)
+}
+
+fn merge_seeded_games(saved_games: Vec<GameInstall>) -> (Vec<GameInstall>, bool) {
+    let seeded = crate::model::seeded_games();
+    let mut changed = false;
+    let mut games = saved_games
+        .into_iter()
+        .map(|mut saved| {
+            if let Some(seed) = seeded
+                .iter()
+                .find(|seed| seed.definition.id == saved.definition.id)
+            {
+                if saved.definition.name != seed.definition.name
+                    || saved.definition.backend != seed.definition.backend
+                    || saved.definition.xxmi_code != seed.definition.xxmi_code
+                {
+                    saved.definition = seed.definition.clone();
+                    changed = true;
+                }
+            }
+            saved
+        })
+        .collect::<Vec<_>>();
+
+    for seed in seeded {
+        if !games
+            .iter()
+            .any(|game| game.definition.id == seed.definition.id)
+        {
+            games.push(seed);
+            changed = true;
+        }
+    }
+
+    (games, changed)
 }
 
 fn normalize_create_downloaded_mod_category_by_game(

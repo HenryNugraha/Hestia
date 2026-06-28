@@ -1220,11 +1220,12 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
+        let has_enabled_xxmi_games = state.games.iter().any(|game| game.enabled && game.is_xxmi());
         let global_modded_needs = match state.static_prefs.modded_launcher_path_override.as_ref() {
             Some(path) => !path.is_file(),
             None => true,
         };
-        if global_modded_needs {
+        if has_enabled_xxmi_games && global_modded_needs {
             let registry_candidates = registry_modded_exe_candidates();
             let shortcut_candidates = shortcut_modded_exe_candidates();
             let fallback_candidates = default_modded_exe_candidates("");
@@ -1278,7 +1279,9 @@ impl HestiaApp {
             .cloned()
             .into_iter()
             .collect::<Vec<_>>();
-        let has_missing_xxmi = state
+        let has_enabled_xxmi_games = state.games.iter().any(|game| game.enabled && game.is_xxmi());
+        let has_missing_xxmi = has_enabled_xxmi_games
+            && state
             .static_prefs
             .modded_launcher_path_override
             .as_ref()
@@ -1318,15 +1321,17 @@ impl HestiaApp {
         }
 
         let mut targets = Vec::new();
-        targets.push(StartupPathScanTarget {
-            kind: StartupPathTargetKind::Xxmi,
-            label: "XXMI Launcher".to_string(),
-            file_names: xxmi_launcher_file_names()
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
-            initial_candidates: xxmi_existing,
-        });
+        if has_enabled_xxmi_games {
+            targets.push(StartupPathScanTarget {
+                kind: StartupPathTargetKind::Xxmi,
+                label: "XXMI Launcher".to_string(),
+                file_names: xxmi_launcher_file_names()
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+                initial_candidates: xxmi_existing,
+            });
+        }
         targets.extend(game_targets);
 
         targets
@@ -1340,6 +1345,7 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
+        let has_enabled_xxmi_games = self.state.games.iter().any(|game| game.enabled && game.is_xxmi());
         let global_modded_needs = match self
             .state
             .static_prefs
@@ -1349,7 +1355,7 @@ impl HestiaApp {
             Some(path) => !path.is_file(),
             None => true,
         };
-        if global_modded_needs {
+        if has_enabled_xxmi_games && global_modded_needs {
             let registry_candidates = registry_modded_exe_candidates();
             let shortcut_candidates = shortcut_modded_exe_candidates();
             let fallback_candidates = default_modded_exe_candidates("");
@@ -1391,7 +1397,20 @@ impl HestiaApp {
     ) -> bool {
         let mut changed = false;
 
-        if !use_default_mods_path {
+        if game.is_unreal_engine() {
+            let mods_needs = game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir());
+            if mods_needs {
+                if let Some(path) = game
+                    .vanilla_exe_path_override
+                    .as_ref()
+                    .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path))
+                    .filter(|path| path.is_dir())
+                {
+                    game.mods_path_override = Some(path);
+                    changed = true;
+                }
+            }
+        } else if !use_default_mods_path {
             let mods_needs = match game.mods_path_override.as_ref() {
                 Some(path) => !path.is_dir(),
                 None => true,
@@ -1406,10 +1425,11 @@ impl HestiaApp {
             }
         }
 
-        let modded_needs = match game.modded_exe_path_override.as_ref() {
-            Some(path) => !path.is_file(),
-            None => true,
-        };
+        let modded_needs = game.is_xxmi()
+            && match game.modded_exe_path_override.as_ref() {
+                Some(path) => !path.is_file(),
+                None => true,
+            };
         if modded_needs {
             let registry_candidates = registry_modded_exe_candidates();
             let shortcut_candidates = shortcut_modded_exe_candidates();
@@ -1429,9 +1449,13 @@ impl HestiaApp {
             None => true,
         };
         if vanilla_needs {
-            let candidates_from_config = xxmi_config
-                .map(|(_, config)| xxmi_game_exe_candidates(config, &game.definition.xxmi_code))
-                .unwrap_or_default();
+            let candidates_from_config = if game.is_xxmi() {
+                xxmi_config
+                    .map(|(_, config)| xxmi_game_exe_candidates(config, &game.definition.xxmi_code))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let fallback_candidates = default_vanilla_exe_candidates(&game.definition.id);
             let registry_candidates = registry_vanilla_exe_candidates(&game.definition.id);
             let path = pick_most_recent_existing(&candidates_from_config)
@@ -1439,6 +1463,12 @@ impl HestiaApp {
                 .or_else(|| pick_most_recent_existing(&fallback_candidates));
             if let Some(path) = path {
                 game.vanilla_exe_path_override = Some(path);
+                if game.is_unreal_engine() && game.mods_path_override.is_none() {
+                    game.mods_path_override = game
+                        .vanilla_exe_path_override
+                        .as_ref()
+                        .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                }
                 changed = true;
             }
         }
@@ -1481,7 +1511,8 @@ impl HestiaApp {
             );
             return;
         }
-        let Some(path) = (if modded {
+        let launch_modded = modded && game.is_xxmi();
+        let Some(path) = (if launch_modded {
             self.state
                 .static_prefs
                 .modded_launcher_path_override
@@ -1491,7 +1522,7 @@ impl HestiaApp {
             game.vanilla_exe_path()
         }) else {
             let text = self.text();
-            let label = if modded {
+            let label = if launch_modded {
                 text.play_modded()
             } else {
                 text.play_vanilla()
@@ -1509,20 +1540,27 @@ impl HestiaApp {
             );
             return;
         }
-        let result = if modded {
+        let result = if launch_modded {
             xxmi::launch_xxmi_launcher(&path, &game.definition.xxmi_code)
+        } else if game.is_unreal_engine() {
+            unrealengine::launch_game(&game)
         } else {
             xxmi::launch_vanilla_executable(&path)
         };
         match result {
             Ok(()) => {
                 let text = self.text();
-                let label = if modded {
-                    text.modded()
+                let message = if game.is_xxmi() {
+                    let label = if launch_modded {
+                        text.modded()
+                    } else {
+                        text.vanilla()
+                    };
+                    text.launched_game_mode(&game.definition.name, label)
                 } else {
-                    text.vanilla()
+                    text.launched_game(&game.definition.name)
                 };
-                self.set_message_ok(text.launched_game_mode(&game.definition.name, label));
+                self.set_message_ok(message);
                 Self::apply_launch_behavior(ctx, self.state.static_prefs.launch_behavior);
             }
             Err(err) => self.report_error(err, Some(self.text().launch_failed())),
@@ -1565,7 +1603,8 @@ impl HestiaApp {
 
     fn selected_game_can_launch_modded(&self) -> bool {
         self.selected_game().is_some_and(|game| {
-            Self::game_install_is_configured(game)
+            game.is_xxmi()
+                && Self::game_install_is_configured(game)
                 && self
                     .state
                     .static_prefs
