@@ -3,7 +3,12 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // l10n order: English, Bahasa Indonesia, Simplified Chinese, Russian.
 // Add empty string "" to skip a language.
 
-pub(crate) const WHATS_NEW_DATE: L10n = l10n("15 June 2026", "15 Juni 2026", "2026年 6月 15日", "15 июня 2026");
+pub(crate) const WHATS_NEW_DATE: L10n = l10n(
+    "15 June 2026",
+    "15 Juni 2026",
+    "2026年 6月 15日",
+    "15 июня 2026",
+);
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
         concat!(
@@ -51,8 +56,12 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;
-pub(crate) const FEEDBACK_SURVEY_TITLE: L10n =
-    l10n("Quick Feedback", "Survey Singkat", "小调查", "Быстрый отзыв");
+pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
+    "Quick Feedback",
+    "Survey Singkat",
+    "小调查",
+    "Быстрый отзыв",
+);
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
         "language_indonesia_quality",
@@ -66,7 +75,10 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
             a(1, l10n("Great", "Bagus", "很好", "Отлично")),
             a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
             a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
-            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
+            a(
+                4,
+                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
+            ),
         ],
     ),
     q(
@@ -81,7 +93,10 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
             a(1, l10n("Great", "Bagus", "很好", "Отлично")),
             a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
             a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
-            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
+            a(
+                4,
+                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
+            ),
         ],
     ),
 ];

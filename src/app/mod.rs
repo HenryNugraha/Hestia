@@ -88,7 +88,6 @@ impl eframe::App for HestiaApp {
             self.consume_icon_results(ctx);
             self.consume_mod_image_results();
             self.consume_manual_image_events();
-            self.consume_gif_preview_events(ctx);
             self.consume_gif_animation_events(ctx);
             self.consume_cover_results(ctx);
             self.consume_browse_events();
@@ -174,7 +173,7 @@ impl eframe::App for HestiaApp {
             || !self.install_inflight.is_empty()
             || self.reload_spin_until > ctx.input(|i| i.time)
             || self.app_update_button_spin_until > ctx.input(|i| i.time);
-        
+
         if needs_continuous_repaint {
             ctx.request_repaint();
         } else if has_pending_browse_image_work {

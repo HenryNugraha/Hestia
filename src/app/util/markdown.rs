@@ -44,21 +44,6 @@ fn file_uri_to_path(dest: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path_str))
 }
 
-fn gif_preview_out_path(dest: &str, mod_root: Option<&Path>) -> PathBuf {
-    if let (Some(root), Some(src_path)) = (mod_root, file_uri_to_path(dest)) {
-        let meta_dir = root.join(MOD_META_DIR);
-        if src_path.starts_with(&meta_dir) {
-            if let Some(stem) = src_path.file_stem().and_then(|s| s.to_str()) {
-                return meta_dir.join(format!("{stem}_preview.png"));
-            }
-        }
-    }
-    let key = hash64_hex(dest.as_bytes());
-    persistence::runtime_temp_cache_dir()
-        .join("gif_preview")
-        .join(format!("{key}.png"))
-}
-
 fn gif_anim_cache_path(dest: &str) -> PathBuf {
     let key = hash64_hex(dest.as_bytes());
     persistence::runtime_temp_cache_dir()
@@ -782,8 +767,14 @@ mod markdown_render_image_tests {
         let url = "https://images.gamebanana.com/example/cached.png";
         let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
         let _ = persistence::cache_remove(&portable, &cache_key);
-        persistence::cache_put(&portable, &cache_key, "test-image", &tiny_png_bytes(), 0)
-            .expect("test cache write should succeed");
+        persistence::cache_put(
+            &portable,
+            &cache_key,
+            "test-image",
+            &tiny_png_bytes(),
+            1024 * 1024,
+        )
+        .expect("test cache write should succeed");
 
         let markdown = format!("![alt]({url})");
         let rendered = rewrite_markdown_remote_images_for_render(&markdown, &portable, None);
@@ -805,8 +796,14 @@ mod markdown_render_image_tests {
         let markdown = format!("![alt]({url})");
 
         let missing = markdown_image_dependency_signature(&markdown, None);
-        persistence::cache_put(&portable, &cache_key, "test-image", &tiny_png_bytes(), 0)
-            .expect("test cache write should succeed");
+        persistence::cache_put(
+            &portable,
+            &cache_key,
+            "test-image",
+            &tiny_png_bytes(),
+            1024 * 1024,
+        )
+        .expect("test cache write should succeed");
         let present = markdown_image_dependency_signature(&markdown, None);
 
         assert_ne!(missing, present);

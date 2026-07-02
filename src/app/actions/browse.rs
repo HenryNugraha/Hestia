@@ -593,7 +593,6 @@ impl HestiaApp {
         self.gif_rewritten_markdown_cache.clear();
         self.render_safe_markdown_cache.clear();
         self.gif_dest_by_texture_key.clear();
-        self.pending_gif_previews.clear();
         self.pending_gif_animations.clear();
         self.animated_gif_state.clear();
     }

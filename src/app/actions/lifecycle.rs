@@ -240,16 +240,6 @@ impl HestiaApp {
             .saturating_add(1);
         let texture_ram_budget_bytes = Self::detect_texture_ram_budget_bytes();
 
-        let (gif_preview_request_tx, gif_preview_request_rx) =
-            tokio_mpsc::unbounded_channel::<GifPreviewRequest>();
-        let (gif_preview_event_tx, gif_preview_event_rx) =
-            tokio_mpsc::unbounded_channel::<GifPreviewEvent>();
-        spawn_gif_preview_worker(
-            &runtime_services,
-            gif_preview_request_rx,
-            gif_preview_event_tx,
-        );
-
         let (gif_animation_request_tx, gif_animation_request_rx) =
             tokio_mpsc::unbounded_channel::<GifAnimationRequest>();
         let (gif_animation_event_tx, gif_animation_event_rx) =
@@ -473,10 +463,6 @@ impl HestiaApp {
             startup_path_scan,
             startup_path_scan_tx,
             startup_path_scan_rx,
-            gif_preview_request_tx,
-            gif_preview_event_rx,
-            pending_gif_previews: HashSet::new(),
-            gif_preview_requests_in_flight: 0,
             gif_animation_request_tx,
             gif_animation_event_rx,
             gif_dest_by_texture_key: HashMap::new(),
@@ -2908,7 +2894,6 @@ impl HestiaApp {
         let has_events = !self.icon_result_rx.is_empty()
             || !self.mod_image_result_rx.is_empty()
             || !self.manual_image_event_rx.is_empty()
-            || !self.gif_preview_event_rx.is_empty()
             || !self.gif_animation_event_rx.is_empty()
             || !self.cover_result_rx.is_empty()
             || !self.browse_event_rx.is_empty()
