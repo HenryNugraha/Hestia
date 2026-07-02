@@ -865,8 +865,6 @@ impl HestiaApp {
                         if let Some(response) = response {
                             let clip_rect = ui.clip_rect();
                             let is_partially_visible = response.rect.intersects(clip_rect);
-                            let is_mostly_visible =
-                                visible_rect_fraction(response.rect, clip_rect) >= 0.85;
                             if is_partially_visible
                                 && self.gif_dest_by_texture_key.contains_key(&texture_key)
                             {
@@ -879,7 +877,7 @@ impl HestiaApp {
                                     ],
                                 );
                             }
-                            if is_mostly_visible
+                            if is_partially_visible
                                 && self.animated_gif_state.contains_key(&texture_key)
                             {
                                 let animation_key = gif_animation_texture_key(&texture_key);
@@ -987,8 +985,13 @@ impl HestiaApp {
             }
         }
 
-        for req in eligible {
-            if self.mod_image_request_tx.send(req).is_err() {
+        let mut dispatch = eligible.into_iter();
+        while let Some(req) = dispatch.next() {
+            if let Err(err) = self.mod_image_request_tx.send(req) {
+                for req in dispatch.rev() {
+                    self.pending_mod_image_queue.insert(0, req);
+                }
+                self.pending_mod_image_queue.insert(0, err.0);
                 break;
             }
         }
@@ -1031,6 +1034,8 @@ impl HestiaApp {
 
     fn consume_gif_preview_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.gif_preview_event_rx.try_recv() {
+            self.gif_preview_requests_in_flight =
+                self.gif_preview_requests_in_flight.saturating_sub(1);
             match event {
                 GifPreviewEvent::Ready {
                     out_png,
@@ -1066,6 +1071,8 @@ impl HestiaApp {
 
     fn consume_gif_animation_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.gif_animation_event_rx.try_recv() {
+            self.gif_animation_requests_in_flight =
+                self.gif_animation_requests_in_flight.saturating_sub(1);
             match event {
                 GifAnimationEvent::Ready {
                     texture_key,
@@ -1125,10 +1132,15 @@ impl HestiaApp {
         texture_key: &str,
         max_size: [u32; 2],
     ) {
+        let max_size = gif_animation_max_size(max_size);
         if self.animated_gif_state.contains_key(texture_key) {
             return;
         }
         if self.pending_gif_animations.contains(texture_key) {
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        }
+        if self.gif_animation_requests_in_flight >= GIF_ANIMATION_MAX_IN_FLIGHT {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
@@ -1159,6 +1171,7 @@ impl HestiaApp {
             if self.gif_animation_request_tx.send(request).is_err() {
                 self.pending_gif_animations.remove(&texture_key);
             } else {
+                self.gif_animation_requests_in_flight += 1;
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
         }
@@ -1307,27 +1320,39 @@ impl HestiaApp {
             if self.pending_gif_previews.contains(&out_key) {
                 continue;
             }
+            if self.gif_preview_requests_in_flight >= GIF_PREVIEW_MAX_IN_FLIGHT {
+                ctx.request_repaint_after(Duration::from_millis(100));
+                break;
+            }
 
-            self.pending_gif_previews.insert(out_key);
+            self.pending_gif_previews.insert(out_key.clone());
 
-            if let Some(path) = local_path {
-                let _ = self
-                    .gif_preview_request_tx
+            let sent = if let Some(path) = local_path {
+                self.gif_preview_request_tx
                     .send(GifPreviewRequest::FromFile {
                         src_path: path,
                         out_png,
                         gif_dest: dest,
                         max_width,
-                    });
+                    })
+                    .is_ok()
             } else if let Some(url) = remote_url {
-                let _ = self
-                    .gif_preview_request_tx
+                self.gif_preview_request_tx
                     .send(GifPreviewRequest::FromUrl {
                         url,
                         out_png,
                         gif_dest: dest,
                         max_width,
-                    });
+                    })
+                    .is_ok()
+            } else {
+                false
+            };
+
+            if sent {
+                self.gif_preview_requests_in_flight += 1;
+            } else {
+                self.pending_gif_previews.remove(&out_key);
             }
         }
     }
@@ -1457,6 +1482,16 @@ fn gif_animation_texture_key(texture_key: &str) -> String {
     format!("{texture_key}:anim")
 }
 
+fn gif_animation_max_size(max_size: [u32; 2]) -> [u32; 2] {
+    let width = max_size[0].max(1);
+    let height = max_size[1].max(1);
+    let scale = (GIF_ANIMATION_MAX_DIMENSION as f32 / width.max(height) as f32).min(1.0);
+    [
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    ]
+}
+
 fn sized_gif_preview_out_path(path: PathBuf, max_width: u32) -> PathBuf {
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return path;
@@ -1469,21 +1504,6 @@ fn sized_gif_preview_out_path(path: PathBuf, max_width: u32) -> PathBuf {
         _ => format!("{stem}_w{max_width}"),
     };
     path.with_file_name(file_name)
-}
-
-fn visible_rect_fraction(rect: egui::Rect, clip_rect: egui::Rect) -> f32 {
-    let area = (rect.width().max(0.0) * rect.height().max(0.0)).max(1.0);
-    let intersection_min = egui::pos2(
-        rect.min.x.max(clip_rect.min.x),
-        rect.min.y.max(clip_rect.min.y),
-    );
-    let intersection_max = egui::pos2(
-        rect.max.x.min(clip_rect.max.x),
-        rect.max.y.min(clip_rect.max.y),
-    );
-    let width = (intersection_max.x - intersection_min.x).max(0.0);
-    let height = (intersection_max.y - intersection_min.y).max(0.0);
-    (width * height / area).clamp(0.0, 1.0)
 }
 
 fn downscale_color_image_to_width(image: egui::ColorImage, max_width: u32) -> egui::ColorImage {

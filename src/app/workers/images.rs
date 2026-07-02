@@ -43,7 +43,14 @@ fn spawn_gif_preview_worker(
                         let bytes_res = tokio::fs::read(&src_path).await.map_err(|err| {
                             anyhow!("failed to read gif file {}: {err}", src_path.display())
                         });
-                        (out_png.clone(), gif_dest.clone(), *max_width, None, false, bytes_res)
+                        (
+                            out_png.clone(),
+                            gif_dest.clone(),
+                            *max_width,
+                            None,
+                            false,
+                            bytes_res,
+                        )
                     }
                     GifPreviewRequest::FromUrl {
                         url,
@@ -63,14 +70,9 @@ fn spawn_gif_preview_worker(
                                 let max_retries = 3u32;
                                 loop {
                                     let result = async {
-                                        let resp = client
-                                            .get(url)
-                                            .send()
-                                            .await?
-                                            .error_for_status()?;
-                                        Ok::<Vec<u8>, anyhow::Error>(
-                                            resp.bytes().await?.to_vec(),
-                                        )
+                                        let resp =
+                                            client.get(url).send().await?.error_for_status()?;
+                                        Ok::<Vec<u8>, anyhow::Error>(resp.bytes().await?.to_vec())
                                     }
                                     .await;
                                     match result {
@@ -111,8 +113,9 @@ fn spawn_gif_preview_worker(
                             use image::ImageDecoder;
                             use image::ImageEncoder;
                             use std::io::Cursor;
-                            let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
-                                .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
+                            let mut decoder =
+                                image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+                                    .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
                             decoder
                                 .set_limits(image_decode_limits())
                                 .map_err(|err| anyhow!("gif exceeded decode limits: {err}"))?;
@@ -142,12 +145,7 @@ fn spawn_gif_preview_worker(
                             let mut out = Vec::new();
                             let encoder = image::codecs::png::PngEncoder::new(&mut out);
                             encoder
-                                .write_image(
-                                    &rgba,
-                                    width,
-                                    height,
-                                    image::ExtendedColorType::Rgba8,
-                                )
+                                .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
                                 .map_err(|err| {
                                     anyhow!("failed to encode gif preview png: {err}")
                                 })?;
@@ -301,18 +299,18 @@ fn spawn_gif_animation_worker(
                             use image::AnimationDecoder;
                             use image::ImageDecoder;
                             use std::io::Cursor;
-                            let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
-                                .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
+                            let mut decoder =
+                                image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+                                    .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
                             decoder
                                 .set_limits(image_decode_limits())
                                 .map_err(|err| anyhow!("gif exceeded decode limits: {err}"))?;
                             let frames_iter = decoder.into_frames();
                             let mut frames = Vec::new();
+                            let mut total_rgba_bytes = 0_u64;
                             for (frame_num, frame_result) in frames_iter.enumerate() {
                                 if frame_num >= GIF_ANIMATION_MAX_FRAMES {
-                                    bail!(
-                                        "gif animation exceeds {GIF_ANIMATION_MAX_FRAMES} frames"
-                                    );
+                                    break;
                                 }
                                 let frame = frame_result.map_err(|err| {
                                     anyhow!("failed to decode gif frame {}: {err}", frame_num)
@@ -338,10 +336,20 @@ fn spawn_gif_animation_worker(
                                 .ok_or_else(|| {
                                     anyhow!("failed to resize gif frame {}", frame_num)
                                 })?;
+                                let frame_bytes = (width as u64)
+                                    .saturating_mul(height as u64)
+                                    .saturating_mul(4);
+                                if !frames.is_empty()
+                                    && total_rgba_bytes.saturating_add(frame_bytes)
+                                        > GIF_ANIMATION_MAX_TOTAL_RGBA_BYTES
+                                {
+                                    break;
+                                }
                                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
                                     [width as usize, height as usize],
                                     &rgba,
                                 );
+                                total_rgba_bytes = total_rgba_bytes.saturating_add(frame_bytes);
                                 frames.push(GifAnimationFrame {
                                     image: color_image,
                                     delay_ms,
@@ -497,8 +505,7 @@ fn spawn_local_mod_image_worker(
                                 .await
                             {
                                 if let Some(image_thumb) = load_cover_color_image(&cached_bytes) {
-                                    thumbnail_byte_cache
-                                        .insert(cache_key.clone(), cached_bytes);
+                                    thumbnail_byte_cache.insert(cache_key.clone(), cached_bytes);
                                     let _ = tx.send(LocalModImageResult {
                                         texture_key: texture_key.clone(),
                                         image_full: None,
@@ -595,7 +602,8 @@ fn spawn_local_mod_image_worker(
                                         });
                                         continue;
                                     } else {
-                                        let _ = persistence::cache_remove(&portable, &full_cache_key);
+                                        let _ =
+                                            persistence::cache_remove(&portable, &full_cache_key);
                                     }
                                 };
                                 let _full_permit = full_limiter.acquire().await.ok();
@@ -679,7 +687,8 @@ fn spawn_local_mod_image_worker(
                         if thumb_bytes.is_none() && !force_regen && thumb_path.exists() {
                             if let Some(bytes) = tokio::fs::read(&thumb_path).await.ok() {
                                 if load_cover_color_image(&bytes).is_some() {
-                                    thumbnail_byte_cache.insert(thumb_ram_key.clone(), bytes.clone());
+                                    thumbnail_byte_cache
+                                        .insert(thumb_ram_key.clone(), bytes.clone());
                                     thumb_bytes = Some(bytes);
                                 } else {
                                     let _ = tokio::fs::remove_file(&thumb_path).await;

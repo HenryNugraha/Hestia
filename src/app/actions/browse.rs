@@ -375,7 +375,13 @@ impl HestiaApp {
             search_sort: self.state.static_prefs.search_sort,
             force_refresh,
         };
-        let _ = self.browse_request_tx.send(request);
+        if self.browse_request_tx.send(request).is_err() {
+            self.browse_state.loading_page = false;
+            self.browse_state.page_request_nonce = None;
+            self.browse_state.page_request_started_at = None;
+            self.browse_state.has_more = false;
+            self.browse_state.page_error = Some("browse worker unavailable".to_string());
+        }
     }
 
     fn restart_browse_query(&mut self) {
@@ -456,14 +462,18 @@ impl HestiaApp {
         self.browse_state.character_categories_game_id = Some(game.definition.id.clone());
         self.browse_state.character_categories_loading = true;
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
-        let _ = self
+        if self
             .browse_request_tx
             .send(BrowseRequest::FetchCharacterCategories {
                 nonce: self.browse_request_nonce,
                 game_id: game.definition.id,
                 super_category_id,
                 force_refresh,
-            });
+            })
+            .is_err()
+        {
+            self.browse_state.character_categories_loading = false;
+        }
     }
 
     fn select_browse_character_category(&mut self, category: BrowseCharacterCategory) {
@@ -532,12 +542,28 @@ impl HestiaApp {
                     .flatten()
             })
         };
-        let _ = self.browse_request_tx.send(BrowseRequest::FetchDetail {
-            nonce: self.browse_request_nonce,
-            mod_id,
-            force_refresh: self.browse_state.refresh_page_cache_for_session,
-            cached_profile_json,
-        });
+        if self
+            .browse_request_tx
+            .send(BrowseRequest::FetchDetail {
+                nonce: self.browse_request_nonce,
+                mod_id,
+                force_refresh: self.browse_state.refresh_page_cache_for_session,
+                cached_profile_json,
+            })
+            .is_err()
+        {
+            self.browse_detail_request_nonces.remove(&mod_id);
+            self.browse_state.loading_details.remove(&mod_id);
+            let mut i = 0;
+            while i < self.browse_state.pending_installs.len() {
+                if self.browse_state.pending_installs[i].mod_id == mod_id {
+                    let pending = self.browse_state.pending_installs.remove(i);
+                    self.update_task_status(pending.task_id, TaskStatus::Failed);
+                } else {
+                    i += 1;
+                }
+            }
+        }
     }
 
     fn request_browse_updates(&mut self, mod_id: u64) {
@@ -549,11 +575,17 @@ impl HestiaApp {
         }
         detail.updates = BrowseUpdatesState::Loading;
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
-        let _ = self.browse_request_tx.send(BrowseRequest::FetchUpdates {
-            nonce: self.browse_request_nonce,
-            mod_id,
-            force_refresh: self.browse_state.refresh_page_cache_for_session,
-        });
+        if self
+            .browse_request_tx
+            .send(BrowseRequest::FetchUpdates {
+                nonce: self.browse_request_nonce,
+                mod_id,
+                force_refresh: self.browse_state.refresh_page_cache_for_session,
+            })
+            .is_err()
+        {
+            detail.updates = BrowseUpdatesState::Failed("browse worker unavailable".to_string());
+        }
     }
 
     fn reset_browse_detail_render_state(&mut self) {
@@ -689,6 +721,8 @@ impl HestiaApp {
                 inflight.cancel.store(true, Ordering::Relaxed);
             }
         }
+        self.browse_image_inflight
+            .retain(|_, inflight| inflight.cancel_key.is_none());
         self.browse_state.screenshot_overlay = None;
     }
 
@@ -1379,7 +1413,11 @@ impl HestiaApp {
                     load_full: job.load_full,
                 },
             );
-            let _ = self.browse_image_request_tx.send(job);
+            if self.browse_image_request_tx.send(job.clone()).is_err() {
+                self.browse_image_inflight.remove(&job.texture_key);
+                self.browse_image_queue.insert(i, job);
+                break;
+            }
         }
     }
 
