@@ -166,6 +166,7 @@ impl eframe::App for HestiaApp {
         let has_pending_browse_request = self.browse_state.loading_page
             || self.browse_state.character_categories_loading
             || !self.browse_state.loading_details.is_empty();
+        let has_pending_browse_image_work = !self.browse_image_inflight.is_empty();
         let relative_time_visible = matches!(self.current_view, ViewMode::Library | ViewMode::Browse);
         let needs_continuous_repaint = 
             self.app_update_download_inflight.is_some()
@@ -176,6 +177,10 @@ impl eframe::App for HestiaApp {
         
         if needs_continuous_repaint {
             ctx.request_repaint();
+        } else if has_pending_browse_image_work {
+            // Worker channels do not wake egui themselves. Poll while remote images are in
+            // flight so completed downloads/decodes are consumed without waiting for input.
+            ctx.request_repaint_after(Duration::from_millis(100));
         } else if has_pending_browse_request {
             // Worker channels do not wake egui themselves. Poll while a Browse request is in
             // flight so completed results are consumed even without user interaction.

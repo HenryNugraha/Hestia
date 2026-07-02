@@ -974,6 +974,15 @@ pub fn cache_put(
     evict_lru_if_needed_path(max_bytes)
 }
 
+pub fn cache_remove(_paths: &PortablePaths, cache_key: &str) -> Result<()> {
+    let path = cache_file_path(cache_key);
+    if path.exists() {
+        fs::remove_file(&path)
+            .with_context(|| format!("failed to remove cache {}", path.display()))?;
+    }
+    Ok(())
+}
+
 pub fn cache_promote_file(
     _paths: &PortablePaths,
     cache_key: &str,

@@ -23,7 +23,7 @@ const GAME_ICON_TEXTURE_SIZE: u32 = 256;
 const TOOL_ICON_TEXTURE_SIZE: u32 = 96;
 const TITLEBAR_GAME_ICON_SIZE: f32 = 96.0;
 const GAME_SWITCHER_GRID_ICON_SIZE: f32 = 256.0;
-const COVER_RIGHT_EXTEND: f32 = 2.0;  // Adjust this to extend cover to right edge
+const COVER_RIGHT_EXTEND: f32 = 2.0; // Adjust this to extend cover to right edge
 const COVER_BOTTOM_EXTEND: f32 = 2.0; // Adjust this to extend cover to bottom edge
 
 // Toast notification limits, timing, and positioning.
@@ -43,14 +43,17 @@ const FULL_IMAGE_LIMIT: usize = 6;
 const THUMB_IMAGE_LIMIT: usize = 12;
 const BROWSE_IMAGE_RETRY_COOLDOWN_SECS: u64 = 15;
 const THUMBNAIL_BYTE_CACHE_CAPACITY: usize = 256;
-const LOCAL_MOD_IMAGE_WORKERS: usize = 8; 
+const LOCAL_MOD_IMAGE_WORKERS: usize = 8;
 const JSON_LIMIT: usize = 6;
 const TEXTURE_THUMB_UPLOADS_PER_FRAME: usize = 12;
 const TEXTURE_FULL_UPLOADS_PER_FRAME: usize = 2;
-const LOCAL_IMAGE_DISPATCH_BATCH: usize = 64; 
+const LOCAL_IMAGE_DISPATCH_BATCH: usize = 64;
 const FULL_IMAGE_DECODE_LIMIT: usize = 3;
 const TEXTURE_RAM_BUDGET_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 const TEXTURE_RAM_BUDGET_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const IMAGE_DECODE_MAX_DIMENSION: u32 = 8192;
+const IMAGE_DECODE_MAX_ALLOC_BYTES: u64 = 512 * 1024 * 1024;
+const GIF_ANIMATION_MAX_FRAMES: usize = 240;
 
 // App identity and stable internal IDs.
 const APP_NAME: &str = "Hestia";
@@ -87,6 +90,7 @@ const CARD_THUMBNAIL_WIDTH: u32 = 220;
 const CARD_THUMBNAIL_HEIGHT: u32 = 130;
 const RAIL_THUMBNAIL_WIDTH: u32 = 585;
 const RAIL_THUMBNAIL_HEIGHT: u32 = 330;
+const BROWSE_DETAIL_CACHE_LIMIT: usize = 4;
 
 // App worker channel aliases.
 type WorkerTx<T> = tokio_mpsc::UnboundedSender<T>;

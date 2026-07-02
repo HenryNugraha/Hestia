@@ -30,7 +30,7 @@ ed25519-dalek = "2.2"
 eframe = "0.33"
 egui = "0.33"
 egui_commonmark = { version = "0.22", default-features = false }
-egui_extras = { version = "0.33", features = ["image", "http", "gif"] }
+egui_extras = { version = "0.33", features = ["image", "gif"] }
 html2md = "0.2"
 image = "0.25"
 rfd = "0.17"

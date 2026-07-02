@@ -366,7 +366,7 @@ fn preserve_markdown_spaces(line: &str) -> String {
 
 fn flush_preserved_spaces(output: &mut String, count: usize) {
     match count {
-        0 => {},
+        0 => {}
         1 => output.push(' '),
         n => {
             output.reserve(n * 6); // "&nbsp;" is 6 bytes
@@ -461,7 +461,10 @@ mod library_selection_tests {
     fn mod_content_size_uses_one_decimal_and_binary_units() {
         assert_eq!(format_mod_content_size(999), "999 B");
         assert_eq!(format_mod_content_size(1024), "1.0 KB");
-        assert_eq!(format_mod_content_size(54 * 1024 * 1024 + 209_715), "54.2 MB");
+        assert_eq!(
+            format_mod_content_size(54 * 1024 * 1024 + 209_715),
+            "54.2 MB"
+        );
         assert_eq!(format_mod_content_size(1024_u64.pow(3)), "1.0 GB");
     }
 
@@ -631,10 +634,7 @@ fn render_selected_mod_summary(ui: &mut Ui, text: TextCatalog, titles: &[String]
             format!(" {row}")
         } else {
             let display_row = if row.chars().count() > MAX_MOD_NAME_CHARS {
-                let mut clamped = row
-                    .chars()
-                    .take(CLAMPED_MOD_NAME_CHARS)
-                    .collect::<String>();
+                let mut clamped = row.chars().take(CLAMPED_MOD_NAME_CHARS).collect::<String>();
                 clamped.truncate(clamped.trim_end().len());
                 format!("{clamped}...")
             } else {
@@ -767,8 +767,10 @@ impl HestiaApp {
         let minimum_width = width - 2.0 * margin.x;
         let actual_width = (galley.size().x + icon_spacing + icon_size.x).max(minimum_width);
         let actual_height = galley.size().y.max(icon_size.y);
-        let content_rect =
-            egui::Rect::from_min_size(slot_rect.min + margin, Vec2::new(actual_width, actual_height));
+        let content_rect = egui::Rect::from_min_size(
+            slot_rect.min + margin,
+            Vec2::new(actual_width, actual_height),
+        );
         let mut button_rect = content_rect.expand2(margin);
         button_rect.set_height(button_rect.height().max(ui.spacing().interact_size.y));
         let response = ui.interact(button_rect, button_id, Sense::click());
@@ -932,7 +934,10 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_category_layout_heading());
                 ui.add_space(-2.0);
-                if !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
+                if !matches!(
+                    self.state.static_prefs.library_group_mode,
+                    LibraryGroupMode::Category
+                ) {
                     static_label(
                         ui,
                         RichText::new(text.library_available_when_grouped_by_category())
@@ -943,9 +948,13 @@ impl HestiaApp {
                     ui.add_space(-1.0);
                 }
                 ui.add_enabled_ui(
-                    matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
+                    matches!(
+                        self.state.static_prefs.library_group_mode,
+                        LibraryGroupMode::Category
+                    ),
                     |ui| {
-                        let mut display_mode = self.state.static_prefs.library_category_display_mode;
+                        let mut display_mode =
+                            self.state.static_prefs.library_category_display_mode;
                         should_save |= Self::sort_menu_radio(
                             ui,
                             &mut display_mode,
@@ -974,10 +983,11 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_sort_categories_heading());
                 ui.add_space(-2.0);
-                let selected_game_id = self
-                    .selected_game()
-                    .map(|game| game.definition.id.clone());
-                if !matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
+                let selected_game_id = self.selected_game().map(|game| game.definition.id.clone());
+                if !matches!(
+                    self.state.static_prefs.library_group_mode,
+                    LibraryGroupMode::Category
+                ) {
                     static_label(
                         ui,
                         RichText::new(text.library_available_when_grouped_by_category())
@@ -988,12 +998,13 @@ impl HestiaApp {
                     ui.add_space(-1.0);
                 }
                 ui.add_enabled_ui(
-                    matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
-                        && selected_game_id.is_some(),
+                    matches!(
+                        self.state.static_prefs.library_group_mode,
+                        LibraryGroupMode::Category
+                    ) && selected_game_id.is_some(),
                     |ui| {
                         if let Some(game_id) = selected_game_id.as_deref() {
-                            let mut category_sort_mode =
-                                self.category_sort_mode_for_game(game_id);
+                            let mut category_sort_mode = self.category_sort_mode_for_game(game_id);
                             should_save |= Self::sort_menu_radio(
                                 ui,
                                 &mut category_sort_mode,
@@ -1027,10 +1038,7 @@ impl HestiaApp {
                                 Some(text.library_category_sort_by_least_mods_tooltip()),
                             );
                             if category_sort_mode != self.category_sort_mode_for_game(game_id) {
-                                self.set_category_sort_mode_for_game(
-                                    game_id,
-                                    category_sort_mode,
-                                );
+                                self.set_category_sort_mode_for_game(game_id, category_sort_mode);
                             }
                         }
                     },
@@ -1044,12 +1052,18 @@ impl HestiaApp {
                 ui.add_space(-2.0);
                 let detail_changed = match self.state.static_prefs.library_group_mode {
                     LibraryGroupMode::Status => ui
-                        .checkbox(&mut self.state.static_prefs.library_sort_category_first, text.sort_by_category_first())
+                        .checkbox(
+                            &mut self.state.static_prefs.library_sort_category_first,
+                            text.sort_by_category_first(),
+                        )
                         .on_hover_text(text.library_sort_category_first_tooltip())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .changed(),
                     LibraryGroupMode::Category | LibraryGroupMode::None => ui
-                        .checkbox(&mut self.state.static_prefs.library_sort_status_first, text.sort_by_status_first())
+                        .checkbox(
+                            &mut self.state.static_prefs.library_sort_status_first,
+                            text.sort_by_status_first(),
+                        )
                         .on_hover_text(text.library_sort_status_first_tooltip())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .changed(),
@@ -1132,11 +1146,9 @@ impl HestiaApp {
         }
         let text_pos = egui::pos2(response.rect.min.x, response.rect.center().y);
         let font_id = egui::FontId::new(12.0, FontFamily::Proportional);
-        let galley = ui.painter().layout_no_wrap(
-            display_text,
-            font_id.clone(),
-            ui.visuals().text_color(),
-        );
+        let galley =
+            ui.painter()
+                .layout_no_wrap(display_text, font_id.clone(), ui.visuals().text_color());
         ui.painter().galley(
             egui::pos2(text_pos.x, text_pos.y - galley.size().y * 0.5),
             galley.clone(),
@@ -1172,12 +1184,9 @@ impl HestiaApp {
 
     fn mod_category_label(&self, mod_entry: &ModEntry) -> String {
         if let Some(category_id) = mod_entry.metadata.user.category_id.as_deref() {
-            if let Some(category) = self
-                .state
-                .categories
-                .iter()
-                .find(|category| category.id == category_id && category.game_id == mod_entry.game_id)
-            {
+            if let Some(category) = self.state.categories.iter().find(|category| {
+                category.id == category_id && category.game_id == mod_entry.game_id
+            }) {
                 return category.name.clone();
             }
         }
@@ -1268,7 +1277,12 @@ impl HestiaApp {
                 continue;
             }
 
-            let category_name = self.state.mods[index].metadata.user.category.trim().to_string();
+            let category_name = self.state.mods[index]
+                .metadata
+                .user
+                .category
+                .trim()
+                .to_string();
             if category_name.is_empty() {
                 continue;
             }
@@ -1285,15 +1299,11 @@ impl HestiaApp {
                 continue;
             }
 
-            let category_id = if let Some(existing) = self
-                .state
-                .categories
-                .iter()
-                .find(|category| {
+            let category_id = if let Some(existing) =
+                self.state.categories.iter().find(|category| {
                     category.game_id == game_id
                         && category.name.eq_ignore_ascii_case(category_name.as_str())
-                })
-            {
+                }) {
                 existing.id.clone()
             } else {
                 let id_available = current_category_id.as_ref().is_some_and(|category_id| {
@@ -1401,8 +1411,12 @@ impl HestiaApp {
         if mod_has_local_changes_for_update_check(mod_entry) {
             if let Some(ignoring_kind) = Self::ignored_update_kind(mod_entry) {
                 return match ignoring_kind {
-                    IgnoredUpdateKind::Once => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
-                    IgnoredUpdateKind::Always => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                    IgnoredUpdateKind::Once => {
+                        mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce)
+                    }
+                    IgnoredUpdateKind::Always => {
+                        mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways)
+                    }
                 };
             }
         }
@@ -1423,9 +1437,7 @@ impl HestiaApp {
                 (text.update_available(), Color32::from_rgb(214, 156, 92))
             }
             ModUpdateState::MissingSource => (text.missing(), Color32::from_rgb(196, 166, 126)),
-            ModUpdateState::ModifiedLocally => {
-                (text.modified(), Color32::from_rgb(179, 133, 133))
-            }
+            ModUpdateState::ModifiedLocally => (text.modified(), Color32::from_rgb(179, 133, 133)),
             ModUpdateState::CheckSkipped => (text.skipped(), Color32::from_rgb(142, 153, 168)),
             ModUpdateState::IgnoringUpdateOnce => {
                 (text.ignoring_once(), Color32::from_rgb(181, 153, 196))
@@ -1517,8 +1529,7 @@ impl HestiaApp {
             .into_iter()
             .map(|category| category.id)
             .collect();
-        let Some(reordered) =
-            reorder_category_ids_for_drag(&ordered_ids, moving_ids, slot_index)
+        let Some(reordered) = reorder_category_ids_for_drag(&ordered_ids, moving_ids, slot_index)
         else {
             return false;
         };
@@ -1574,7 +1585,12 @@ impl HestiaApp {
                 .map(|category| category.name.clone())
         });
         let new_category = category_name.clone().unwrap_or_default();
-        let Some(index) = self.state.mods.iter().position(|mod_entry| mod_entry.id == mod_id) else {
+        let Some(index) = self
+            .state
+            .mods
+            .iter()
+            .position(|mod_entry| mod_entry.id == mod_id)
+        else {
             return;
         };
         let (mod_name, old_category, changed) = {
@@ -1588,8 +1604,8 @@ impl HestiaApp {
                 .filter(|title| !title.trim().is_empty())
                 .unwrap_or(&mod_entry.folder_name)
                 .to_string();
-            let changed = mod_entry.metadata.user.category_id != category_id
-                || old_category != new_category;
+            let changed =
+                mod_entry.metadata.user.category_id != category_id || old_category != new_category;
             (mod_name, old_category, changed)
         };
         if !changed {
@@ -1619,9 +1635,12 @@ impl HestiaApp {
         });
         let new_category = category_name.unwrap_or_default();
         let mut logs = Vec::new();
-        for mod_entry in self.state.mods.iter_mut().filter(|mod_entry| {
-            selected_ids.iter().any(|id| id == &mod_entry.id)
-        }) {
+        for mod_entry in self
+            .state
+            .mods
+            .iter_mut()
+            .filter(|mod_entry| selected_ids.iter().any(|id| id == &mod_entry.id))
+        {
             let old_category = mod_entry.metadata.user.category.clone();
             if mod_entry.metadata.user.category_id == category_id && old_category == new_category {
                 continue;
@@ -1678,12 +1697,9 @@ impl HestiaApp {
             } else {
                 format!("{} {index}", self.text().new_category_name())
             };
-            if !self
-                .state
-                .categories
-                .iter()
-                .any(|category| category.game_id == game_id && category.name.eq_ignore_ascii_case(&candidate))
-            {
+            if !self.state.categories.iter().any(|category| {
+                category.game_id == game_id && category.name.eq_ignore_ascii_case(&candidate)
+            }) {
                 break candidate;
             }
             index += 1;
@@ -1744,10 +1760,12 @@ impl HestiaApp {
 
     fn select_all_text_edit(ctx: &egui::Context, input: &egui::Response, text: &str) {
         let mut state = TextEdit::load_state(ctx, input.id).unwrap_or_default();
-        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::default(),
-            egui::text::CCursor::new(text.chars().count()),
-        )));
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::default(),
+                egui::text::CCursor::new(text.chars().count()),
+            )));
         state.store(ctx, input.id);
     }
 
@@ -1800,11 +1818,10 @@ impl HestiaApp {
             return;
         };
         category.name = trimmed.to_string();
-        for mod_entry in self
-            .state
-            .mods
-            .iter_mut()
-            .filter(|mod_entry| mod_entry.metadata.user.category_id.as_deref() == Some(category_id))
+        for mod_entry in
+            self.state.mods.iter_mut().filter(|mod_entry| {
+                mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
+            })
         {
             mod_entry.metadata.user.category = trimmed.to_string();
             let _ = xxmi::save_mod_metadata(mod_entry);
@@ -1829,9 +1846,7 @@ impl HestiaApp {
             .state
             .mods
             .iter()
-            .filter(|mod_entry| {
-                mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
-            })
+            .filter(|mod_entry| mod_entry.metadata.user.category_id.as_deref() == Some(category_id))
             .cloned()
             .collect();
         let mut deleted_count = 0;
@@ -1864,8 +1879,15 @@ impl HestiaApp {
         self.delete_category(category_id);
         let text = self.text();
         let action = text.delete_action(self.state.static_prefs.delete_behavior);
-        self.log_action(action, &format!("{category_name} folder and {deleted_count} mod(s)"));
-        self.set_message_ok(text.category_action_count_message(action, &category_name, deleted_count));
+        self.log_action(
+            action,
+            &format!("{category_name} folder and {deleted_count} mod(s)"),
+        );
+        self.set_message_ok(text.category_action_count_message(
+            action,
+            &category_name,
+            deleted_count,
+        ));
         self.refresh();
     }
 
@@ -1877,19 +1899,14 @@ impl HestiaApp {
         self.state
             .categories
             .retain(|category| !deleting.contains(category.id.as_str()));
-        for mod_entry in self
-            .state
-            .mods
-            .iter_mut()
-            .filter(|mod_entry| {
-                mod_entry
-                    .metadata
-                    .user
-                    .category_id
-                    .as_deref()
-                    .is_some_and(|category_id| deleting.contains(category_id))
-            })
-        {
+        for mod_entry in self.state.mods.iter_mut().filter(|mod_entry| {
+            mod_entry
+                .metadata
+                .user
+                .category_id
+                .as_deref()
+                .is_some_and(|category_id| deleting.contains(category_id))
+        }) {
             mod_entry.metadata.user.category_id = None;
             mod_entry.metadata.user.category.clear();
             let _ = xxmi::save_mod_metadata(mod_entry);
@@ -1991,8 +2008,7 @@ impl HestiaApp {
                                     if self.category_rename_matches(
                                         &category.id,
                                         CategoryRenameSurface::LibraryPopup,
-                                    )
-                                    {
+                                    ) {
                                         ui.add_sized(
                                             [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
                                             egui::Label::new(""),
@@ -2036,17 +2052,16 @@ impl HestiaApp {
                                             self.rename_category(&category.id, &draft);
                                         }
                                     } else {
-                                        let check_text = if common_category_id
-                                            == Some(category.id.as_str())
-                                        {
-                                            icon_rich(
-                                                Icon::Check,
-                                                12.0,
-                                                Color32::from_rgb(110, 194, 132),
-                                            )
-                                        } else {
-                                            RichText::new("")
-                                        };
+                                        let check_text =
+                                            if common_category_id == Some(category.id.as_str()) {
+                                                icon_rich(
+                                                    Icon::Check,
+                                                    12.0,
+                                                    Color32::from_rgb(110, 194, 132),
+                                                )
+                                            } else {
+                                                RichText::new("")
+                                            };
                                         ui.add_sized(
                                             [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
                                             egui::Label::new(check_text).selectable(false),
@@ -2065,15 +2080,17 @@ impl HestiaApp {
                                             .position(|item| item.id == category.id)
                                         {
                                             if category_row_rects.len() <= index {
-                                                category_row_rects.resize(index + 1, row_response.rect);
+                                                category_row_rects
+                                                    .resize(index + 1, row_response.rect);
                                             }
                                             category_row_rects[index] = row_response.rect;
                                         }
                                         let this_index = categories
                                             .iter()
                                             .position(|item| item.id == category.id);
-                                        let insert_after = pointer_pos
-                                            .is_some_and(|pos| pos.y > row_response.rect.center().y);
+                                        let insert_after = pointer_pos.is_some_and(|pos| {
+                                            pos.y > row_response.rect.center().y
+                                        });
                                         let insertion_slot = this_index.map(|index| {
                                             if insert_after {
                                                 index.saturating_add(1)
@@ -2082,15 +2099,15 @@ impl HestiaApp {
                                             }
                                         });
                                         if self.dragging_category_id.is_some()
-                                            && self
-                                                .dragging_category_id
-                                                .as_ref()
-                                                .is_some_and(|dragging_id| dragging_id != &category.id)
+                                            && self.dragging_category_id.as_ref().is_some_and(
+                                                |dragging_id| dragging_id != &category.id,
+                                            )
                                             && pointer_pos
                                                 .is_some_and(|pos| row_response.rect.contains(pos))
                                         {
                                             if let Some(slot_index) = insertion_slot {
-                                                self.dragging_category_target_index = Some(slot_index);
+                                                self.dragging_category_target_index =
+                                                    Some(slot_index);
                                                 ui.ctx().request_repaint();
                                             }
                                         }
@@ -2099,10 +2116,9 @@ impl HestiaApp {
                                             self.dragging_category_target_index = this_index;
                                         }
                                         if row_response.drag_stopped()
-                                            && self
-                                                .dragging_category_id
-                                                .as_ref()
-                                                .is_some_and(|dragging_id| dragging_id == &category.id)
+                                            && self.dragging_category_id.as_ref().is_some_and(
+                                                |dragging_id| dragging_id == &category.id,
+                                            )
                                         {
                                             self.finish_category_drag();
                                         }
@@ -2172,11 +2188,7 @@ impl HestiaApp {
                                     }
                                 });
                             }
-                            self.update_category_drag_target(
-                                ui,
-                                pointer_pos,
-                                &category_row_rects,
-                            );
+                            self.update_category_drag_target(ui, pointer_pos, &category_row_rects);
                             self.paint_category_drop_indicator(ui, &category_row_rects);
                         });
                 });
@@ -2202,10 +2214,7 @@ impl HestiaApp {
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                     {
-                        self.create_category_for_game(
-                            game_id,
-                            CategoryRenameSurface::LibraryPopup,
-                        );
+                        self.create_category_for_game(game_id, CategoryRenameSurface::LibraryPopup);
                     }
                 });
 
@@ -2304,10 +2313,7 @@ impl HestiaApp {
             let x2 = (x + dash).min(right);
             ui.painter().line_segment(
                 [egui::pos2(x, line_y), egui::pos2(x2, line_y)],
-                egui::Stroke::new(
-                    1.25,
-                    Color32::from_rgba_premultiplied(232, 153, 118, 170),
-                ),
+                egui::Stroke::new(1.25, Color32::from_rgba_premultiplied(232, 153, 118, 170)),
             );
             x += dash + gap;
         }
@@ -2360,7 +2366,9 @@ impl HestiaApp {
             .selectable(false)
             .sense(Sense::click()),
         );
-        response.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+        response
+            .clone()
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         let popup_id = ui.id().with(("mod_category_popup", &selected.id));
         self.render_category_picker_popup(
@@ -2388,155 +2396,166 @@ impl HestiaApp {
         let text = self.text();
         let categories = self.categories_for_game(game_id);
         if categories.is_empty() {
-            ui.menu_button(icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0), |ui| {
-                ui.set_min_width(188.0);
-                ui.label(
-                    RichText::new(text.no_category_help())
-                    .size(12.0)
-                    .color(Color32::from_gray(185)),
-                );
-            })
+            ui.menu_button(
+                icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0),
+                |ui| {
+                    ui.set_min_width(188.0);
+                    ui.label(
+                        RichText::new(text.no_category_help())
+                            .size(12.0)
+                            .color(Color32::from_gray(185)),
+                    );
+                },
+            )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
             return;
         }
 
-        ui.menu_button(icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0), |ui| {
-            const CATEGORY_ICON_WIDTH: f32 = 18.0;
-            const CATEGORY_TEXT_WIDTH: f32 = 168.0;
-            const CATEGORY_ROW_HEIGHT: f32 = 22.0;
-            const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
-            const CATEGORY_SUBMENU_MAX_HEIGHT: f32 = 320.0;
+        ui.menu_button(
+            icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0),
+            |ui| {
+                const CATEGORY_ICON_WIDTH: f32 = 18.0;
+                const CATEGORY_TEXT_WIDTH: f32 = 168.0;
+                const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+                const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
+                const CATEGORY_SUBMENU_MAX_HEIGHT: f32 = 320.0;
 
-            ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
-            let pointer_pos = ui.ctx().pointer_latest_pos();
-            let uncategorized =
-                current_category_id.is_none() && category_label == text.uncategorized();
-            let mut category_row_rects = Vec::new();
-            egui::ScrollArea::vertical()
-                .max_height(CATEGORY_SUBMENU_MAX_HEIGHT)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                            egui::Label::new(if uncategorized {
-                                icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
-                            } else {
-                                RichText::new("")
-                            })
-                            .selectable(false),
-                        );
-                        if Self::category_popup_text(
-                            ui,
-                            text.none_label(),
-                            None,
-                            CATEGORY_TEXT_WIDTH,
-                            CATEGORY_ROW_HEIGHT,
-                            Sense::click(),
-                            self.dragging_category_id.is_none(),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                        {
-                            self.assign_mod_category(mod_id, None);
-                            ui.close();
-                        }
-                    });
-                    for category in categories.clone() {
-                        let selected = current_category_id == Some(category.id.as_str());
+                ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
+                let pointer_pos = ui.ctx().pointer_latest_pos();
+                let uncategorized =
+                    current_category_id.is_none() && category_label == text.uncategorized();
+                let mut category_row_rects = Vec::new();
+                egui::ScrollArea::vertical()
+                    .max_height(CATEGORY_SUBMENU_MAX_HEIGHT)
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.add_sized(
                                 [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                egui::Label::new(if selected {
+                                egui::Label::new(if uncategorized {
                                     icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
                                 } else {
                                     RichText::new("")
                                 })
                                 .selectable(false),
                             );
-                            let row_response = Self::category_popup_text(
+                            if Self::category_popup_text(
                                 ui,
-                                &category.name,
-                                Some(self.category_member_count(game_id, &category.id)),
+                                text.none_label(),
+                                None,
                                 CATEGORY_TEXT_WIDTH,
                                 CATEGORY_ROW_HEIGHT,
-                                Sense::click_and_drag(),
+                                Sense::click(),
                                 self.dragging_category_id.is_none(),
-                            );
-                            if let Some(index) =
-                                categories.iter().position(|item| item.id == category.id)
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
                             {
-                                if category_row_rects.len() <= index {
-                                    category_row_rects.resize(index + 1, row_response.rect);
-                                }
-                                category_row_rects[index] = row_response.rect;
+                                self.assign_mod_category(mod_id, None);
+                                ui.close();
                             }
-                            let this_index =
-                                categories.iter().position(|item| item.id == category.id);
-                            let insert_after = pointer_pos
-                                .is_some_and(|pos| pos.y > row_response.rect.center().y);
-                            let insertion_slot = this_index.map(|index| {
-                                if insert_after {
-                                    index.saturating_add(1)
-                                } else {
-                                    index
+                        });
+                        for category in categories.clone() {
+                            let selected = current_category_id == Some(category.id.as_str());
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                    egui::Label::new(if selected {
+                                        icon_rich(
+                                            Icon::Check,
+                                            12.0,
+                                            Color32::from_rgb(110, 194, 132),
+                                        )
+                                    } else {
+                                        RichText::new("")
+                                    })
+                                    .selectable(false),
+                                );
+                                let row_response = Self::category_popup_text(
+                                    ui,
+                                    &category.name,
+                                    Some(self.category_member_count(game_id, &category.id)),
+                                    CATEGORY_TEXT_WIDTH,
+                                    CATEGORY_ROW_HEIGHT,
+                                    Sense::click_and_drag(),
+                                    self.dragging_category_id.is_none(),
+                                );
+                                if let Some(index) =
+                                    categories.iter().position(|item| item.id == category.id)
+                                {
+                                    if category_row_rects.len() <= index {
+                                        category_row_rects.resize(index + 1, row_response.rect);
+                                    }
+                                    category_row_rects[index] = row_response.rect;
                                 }
-                            });
-                            if self.dragging_category_id.is_some()
-                                && self
-                                    .dragging_category_id
-                                    .as_ref()
-                                    .is_some_and(|dragging_id| dragging_id != &category.id)
-                                && pointer_pos.is_some_and(|pos| row_response.rect.contains(pos))
-                            {
-                                if let Some(slot_index) = insertion_slot {
-                                    self.dragging_category_target_index = Some(slot_index);
-                                    ui.ctx().request_repaint();
+                                let this_index =
+                                    categories.iter().position(|item| item.id == category.id);
+                                let insert_after = pointer_pos
+                                    .is_some_and(|pos| pos.y > row_response.rect.center().y);
+                                let insertion_slot = this_index.map(|index| {
+                                    if insert_after {
+                                        index.saturating_add(1)
+                                    } else {
+                                        index
+                                    }
+                                });
+                                if self.dragging_category_id.is_some()
+                                    && self
+                                        .dragging_category_id
+                                        .as_ref()
+                                        .is_some_and(|dragging_id| dragging_id != &category.id)
+                                    && pointer_pos
+                                        .is_some_and(|pos| row_response.rect.contains(pos))
+                                {
+                                    if let Some(slot_index) = insertion_slot {
+                                        self.dragging_category_target_index = Some(slot_index);
+                                        ui.ctx().request_repaint();
+                                    }
                                 }
-                            }
-                            if row_response.drag_started() {
-                                self.dragging_category_id = Some(category.id.clone());
-                                self.dragging_category_target_index = this_index;
-                            }
-                            if row_response.drag_stopped()
-                                && self
+                                if row_response.drag_started() {
+                                    self.dragging_category_id = Some(category.id.clone());
+                                    self.dragging_category_target_index = this_index;
+                                }
+                                if row_response.drag_stopped()
+                                    && self
+                                        .dragging_category_id
+                                        .as_ref()
+                                        .is_some_and(|dragging_id| dragging_id == &category.id)
+                                {
+                                    self.finish_category_drag();
+                                }
+                                if row_response
+                                    .clone()
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                    && !row_response.dragged()
+                                {
+                                    self.assign_mod_category(mod_id, Some(category.id.clone()));
+                                    ui.close();
+                                }
+                                if self
                                     .dragging_category_id
                                     .as_ref()
                                     .is_some_and(|dragging_id| dragging_id == &category.id)
-                            {
-                                self.finish_category_drag();
-                            }
-                            if row_response
-                                .clone()
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                                && !row_response.dragged()
-                            {
-                                self.assign_mod_category(mod_id, Some(category.id.clone()));
-                                ui.close();
-                            }
-                            if self
-                                .dragging_category_id
-                                .as_ref()
-                                .is_some_and(|dragging_id| dragging_id == &category.id)
-                            {
-                                self.paint_dragged_category_preview(
-                                    ui,
-                                    Some((category.name.clone(), row_response.rect)),
-                                    ui.id().with(("mod_card_category_submenu", mod_id)),
-                                );
-                            }
-                        });
-                    }
-                    self.update_category_drag_target(ui, pointer_pos, &category_row_rects);
-                    self.paint_category_drop_indicator(ui, &category_row_rects);
-                    if self.dragging_category_id.is_some()
-                        && !ui.ctx().input(|input| input.pointer.primary_down())
-                    {
-                        self.finish_category_drag();
-                    }
-                });
-        })
+                                {
+                                    self.paint_dragged_category_preview(
+                                        ui,
+                                        Some((category.name.clone(), row_response.rect)),
+                                        ui.id().with(("mod_card_category_submenu", mod_id)),
+                                    );
+                                }
+                            });
+                        }
+                        self.update_category_drag_target(ui, pointer_pos, &category_row_rects);
+                        self.paint_category_drop_indicator(ui, &category_row_rects);
+                        if self.dragging_category_id.is_some()
+                            && !ui.ctx().input(|input| input.pointer.primary_down())
+                        {
+                            self.finish_category_drag();
+                        }
+                    });
+            },
+        )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
@@ -2553,39 +2572,41 @@ impl HestiaApp {
             .map(|link| link.mod_id)
             .filter(|id| *id > 0);
 
-        ui.menu_button(icon_text_sized(Icon::FolderOpen, text.open(), 12.0, 12.0), |ui| {
-            ui.set_min_width(156.0);
-            if ui
-                .button(icon_text_sized(
-                    Icon::FolderOpen,
-                    text.file_explorer(),
-                    12.0,
-                    12.0,
-                ))
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                let _ = open_in_explorer(root_path);
-                ui.close();
-            }
-
-            let gamebanana_response = ui.add_enabled(
-                gamebanana_id.is_some(),
-                egui::Button::new(icon_text_sized(Icon::Globe, "GameBanana", 12.0, 12.0)),
-            );
-            let gamebanana_response = if gamebanana_id.is_some() {
-                gamebanana_response.on_hover_cursor(egui::CursorIcon::PointingHand)
-            } else {
-                gamebanana_response
-                    .on_disabled_hover_text(text.no_gamebanana_source())
-            };
-            if gamebanana_response.clicked() {
-                if let Some(mod_id) = gamebanana_id {
-                    self.open_linked_mod_in_browse(mod_id);
+        ui.menu_button(
+            icon_text_sized(Icon::FolderOpen, text.open(), 12.0, 12.0),
+            |ui| {
+                ui.set_min_width(156.0);
+                if ui
+                    .button(icon_text_sized(
+                        Icon::FolderOpen,
+                        text.file_explorer(),
+                        12.0,
+                        12.0,
+                    ))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    let _ = open_in_explorer(root_path);
                     ui.close();
                 }
-            }
-        })
+
+                let gamebanana_response = ui.add_enabled(
+                    gamebanana_id.is_some(),
+                    egui::Button::new(icon_text_sized(Icon::Globe, "GameBanana", 12.0, 12.0)),
+                );
+                let gamebanana_response = if gamebanana_id.is_some() {
+                    gamebanana_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                } else {
+                    gamebanana_response.on_disabled_hover_text(text.no_gamebanana_source())
+                };
+                if gamebanana_response.clicked() {
+                    if let Some(mod_id) = gamebanana_id {
+                        self.open_linked_mod_in_browse(mod_id);
+                        ui.close();
+                    }
+                }
+            },
+        )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
@@ -2608,95 +2629,107 @@ impl HestiaApp {
             })
             .cloned()
             .flatten();
-        let all_uncategorized = !selected_category_ids.is_empty()
-            && selected_category_ids.iter().all(Option::is_none);
+        let all_uncategorized =
+            !selected_category_ids.is_empty() && selected_category_ids.iter().all(Option::is_none);
         let categories = self.categories_for_game(game_id);
 
-        ui.menu_button(icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0), |ui| {
-            const CATEGORY_ICON_WIDTH: f32 = 18.0;
-            const CATEGORY_TEXT_WIDTH: f32 = 168.0;
-            const CATEGORY_ROW_HEIGHT: f32 = 22.0;
-            const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
+        ui.menu_button(
+            icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0),
+            |ui| {
+                const CATEGORY_ICON_WIDTH: f32 = 18.0;
+                const CATEGORY_TEXT_WIDTH: f32 = 168.0;
+                const CATEGORY_ROW_HEIGHT: f32 = 22.0;
+                const CATEGORY_SUBMENU_WIDTH: f32 = 204.0;
 
-            ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                    egui::Label::new(if all_uncategorized {
-                        icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
-                    } else {
-                        RichText::new("")
-                    })
-                    .selectable(false),
-                );
-                if Self::category_popup_text(
-                    ui,
-                    text.none_label(),
-                    None,
-                    CATEGORY_TEXT_WIDTH,
-                    CATEGORY_ROW_HEIGHT,
-                    Sense::click(),
-                    true,
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-                {
-                    self.assign_selected_mods_category(None);
-                    ui.close();
-                }
-            });
-
-            if categories.is_empty() {
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(text.no_category_yet())
-                        .size(12.0)
-                        .color(Color32::from_gray(185)),
-                );
-                return;
-            }
-
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    for category in categories {
-                        let selected = common_category_id.as_deref() == Some(category.id.as_str());
-                        ui.horizontal(|ui| {
-                            ui.add_sized(
-                                [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
-                                egui::Label::new(if selected {
-                                    icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
-                                } else {
-                                    RichText::new("")
-                                })
-                                .selectable(false),
-                            );
-                            if Self::category_popup_text(
-                                ui,
-                                &category.name,
-                                Some(self.category_member_count(game_id, &category.id)),
-                                CATEGORY_TEXT_WIDTH,
-                                CATEGORY_ROW_HEIGHT,
-                                Sense::click(),
-                                true,
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                            {
-                                self.assign_selected_mods_category(Some(category.id.clone()));
-                                ui.close();
-                            }
-                        });
+                ui.set_min_width(CATEGORY_SUBMENU_WIDTH);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                        egui::Label::new(if all_uncategorized {
+                            icon_rich(Icon::Check, 12.0, Color32::from_rgb(110, 194, 132))
+                        } else {
+                            RichText::new("")
+                        })
+                        .selectable(false),
+                    );
+                    if Self::category_popup_text(
+                        ui,
+                        text.none_label(),
+                        None,
+                        CATEGORY_TEXT_WIDTH,
+                        CATEGORY_ROW_HEIGHT,
+                        Sense::click(),
+                        true,
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                    {
+                        self.assign_selected_mods_category(None);
+                        ui.close();
                     }
                 });
-        })
+
+                if categories.is_empty() {
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(text.no_category_yet())
+                            .size(12.0)
+                            .color(Color32::from_gray(185)),
+                    );
+                    return;
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for category in categories {
+                            let selected =
+                                common_category_id.as_deref() == Some(category.id.as_str());
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [CATEGORY_ICON_WIDTH, CATEGORY_ROW_HEIGHT],
+                                    egui::Label::new(if selected {
+                                        icon_rich(
+                                            Icon::Check,
+                                            12.0,
+                                            Color32::from_rgb(110, 194, 132),
+                                        )
+                                    } else {
+                                        RichText::new("")
+                                    })
+                                    .selectable(false),
+                                );
+                                if Self::category_popup_text(
+                                    ui,
+                                    &category.name,
+                                    Some(self.category_member_count(game_id, &category.id)),
+                                    CATEGORY_TEXT_WIDTH,
+                                    CATEGORY_ROW_HEIGHT,
+                                    Sense::click(),
+                                    true,
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                                {
+                                    self.assign_selected_mods_category(Some(category.id.clone()));
+                                    ui.close();
+                                }
+                            });
+                        }
+                    });
+            },
+        )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     fn render_update_preference_checkboxes(&mut self, ui: &mut Ui, mod_id: &str) {
         let text = self.text();
-        let Some(index) = self.state.mods.iter().position(|mod_entry| mod_entry.id == mod_id)
+        let Some(index) = self
+            .state
+            .mods
+            .iter()
+            .position(|mod_entry| mod_entry.id == mod_id)
         else {
             return;
         };
@@ -2726,18 +2759,20 @@ impl HestiaApp {
             }
             changed = true;
         }
-        let can_use_ignore_once =
-            ignore_current_update || ignore_once_signature_for_mod(&self.state.mods[index]).is_some();
+        let can_use_ignore_once = ignore_current_update
+            || ignore_once_signature_for_mod(&self.state.mods[index]).is_some();
 
         let ignore_once_response = ui.add_enabled(
             can_use_ignore_once,
             egui::Checkbox::new(&mut ignore_current_update, text.ignore_update_once()),
         );
-        ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
-            text.ignore_update_once_tooltip()
-        } else {
-            text.ignore_update_once_disabled_tooltip()
-        });
+        ignore_once_response
+            .clone()
+            .on_hover_text(if can_use_ignore_once {
+                text.ignore_update_once_tooltip()
+            } else {
+                text.ignore_update_once_disabled_tooltip()
+            });
         ui.add_space(-6.0);
         let ignore_always_response =
             ui.checkbox(&mut ignore_update_always, text.ignore_update_always());
@@ -2944,8 +2979,7 @@ impl HestiaApp {
 
         let mut ignore_current_update = all_ignore_current_update;
         let mut ignore_update_always = all_ignore_update_always;
-        let ignore_current_update_mixed =
-            any_ignore_current_update && !all_ignore_current_update;
+        let ignore_current_update_mixed = any_ignore_current_update && !all_ignore_current_update;
         let ignore_update_always_mixed = any_ignore_update_always && !all_ignore_update_always;
         let text = self.text();
 
@@ -2954,11 +2988,13 @@ impl HestiaApp {
             egui::Checkbox::new(&mut ignore_current_update, text.ignore_update_once())
                 .indeterminate(ignore_current_update_mixed),
         );
-        ignore_once_response.clone().on_hover_text(if any_can_use_ignore_once {
-            text.ignore_update_once_tooltip()
-        } else {
-            text.ignore_update_once_bulk_disabled_tooltip()
-        });
+        ignore_once_response
+            .clone()
+            .on_hover_text(if any_can_use_ignore_once {
+                text.ignore_update_once_tooltip()
+            } else {
+                text.ignore_update_once_bulk_disabled_tooltip()
+            });
         ui.add_space(-6.0);
         let ignore_always_response = ui.add(
             egui::Checkbox::new(&mut ignore_update_always, text.ignore_update_always())
@@ -2980,7 +3016,11 @@ impl HestiaApp {
     }
 
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
-        let Some(mod_entry) = self.state.mods.iter_mut().find(|mod_entry| mod_entry.id == mod_id)
+        let Some(mod_entry) = self
+            .state
+            .mods
+            .iter_mut()
+            .find(|mod_entry| mod_entry.id == mod_id)
         else {
             return;
         };
@@ -3052,15 +3092,13 @@ impl HestiaApp {
                 .retain(|source| source.path != personal_note_path);
 
             if let Some(content) = saved {
-                mod_entry
-                    .metadata
-                    .extracted
-                    .text_sources
-                    .push(crate::model::ExtractedMetadataTextSource {
+                mod_entry.metadata.extracted.text_sources.push(
+                    crate::model::ExtractedMetadataTextSource {
                         path: personal_note_path.clone(),
                         label: text.personal_note().to_string(),
                         content: content.clone(),
-                    });
+                    },
+                );
                 mod_entry.metadata.user.extracted_metadata_source_path =
                     Some(personal_note_path.clone());
                 mod_entry.metadata.extracted.description = Some(content);
@@ -3080,7 +3118,9 @@ impl HestiaApp {
                             == Some(personal_note_path.as_str());
 
                 if personal_note_was_selected {
-                    if let Some(fallback) = mod_entry.metadata.extracted.text_sources.first().cloned() {
+                    if let Some(fallback) =
+                        mod_entry.metadata.extracted.text_sources.first().cloned()
+                    {
                         mod_entry.metadata.user.extracted_metadata_source_path =
                             Some(fallback.path.clone());
                         mod_entry.metadata.extracted.description = Some(fallback.content);
@@ -3114,10 +3154,7 @@ impl HestiaApp {
     }
 
     fn render_workspace_view(&mut self, ui: &mut Ui) {
-        if self
-            .has_enabled_games()
-            && self.selected_game().is_none_or(|game| !game.enabled)
-        {
+        if self.has_enabled_games() && self.selected_game().is_none_or(|game| !game.enabled) {
             if let Some((index, _)) = self
                 .state
                 .games
@@ -3228,20 +3265,20 @@ impl HestiaApp {
                     egui::vec2(content_rect.width(), 26.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                            static_label(ui, bold(text.no_games_detected(), Some(21.0)));
+                        static_label(ui, bold(text.no_games_detected(), Some(21.0)));
                     },
                 );
-                        ui.add_space(2.0);
+                ui.add_space(2.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 18.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                            static_label(
-                                ui,
-                                RichText::new(text.library_setup_description())
-                                    .color(Color32::from_gray(155))
-                                    .size(13.0),
-                            );
+                        static_label(
+                            ui,
+                            RichText::new(text.library_setup_description())
+                                .color(Color32::from_gray(155))
+                                .size(13.0),
+                        );
                     },
                 );
                 ui.add_space(12.0);
@@ -3252,120 +3289,117 @@ impl HestiaApp {
                     egui::vec2(content_rect.width(), 20.0),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                            ui.add_space(28.0);
-                            static_label(
-                                ui,
-                                RichText::new("01")
-                                    .color(Color32::from_rgb(203, 104, 59))
-                                    .size(11.0)
-                                    .strong(),
-                            );
-                            ui.add_space(4.0);
-                            static_label(ui, bold(text.ensure_xxmi_installed(), Some(15.0)));
+                        ui.add_space(28.0);
+                        static_label(
+                            ui,
+                            RichText::new("01")
+                                .color(Color32::from_rgb(203, 104, 59))
+                                .size(11.0)
+                                .strong(),
+                        );
+                        ui.add_space(4.0);
+                        static_label(ui, bold(text.ensure_xxmi_installed(), Some(15.0)));
                     },
                 );
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 18.0),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                            ui.add_space(54.0);
-                            static_label(
-                                ui,
-                                RichText::new(text.install_xxmi_description())
-                                    .color(Color32::from_gray(165))
-                                    .size(13.0),
-                            );
+                        ui.add_space(54.0);
+                        static_label(
+                            ui,
+                            RichText::new(text.install_xxmi_description())
+                                .color(Color32::from_gray(165))
+                                .size(13.0),
+                        );
                     },
                 );
-                        ui.add_space(6.0);
+                ui.add_space(6.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 42.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                            ui.add_space(54.0);
-                            let download_xxmi_button = egui::Button::new(icon_bold_text(
-                                Icon::ExternalLink,
-                                text.download_xxmi(),
-                                14.0,
-                                14.0,
-                            ))
-                            .fill(Color32::from_rgb(48, 51, 56))
-                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(73, 78, 86)));
-                            if ui
-                                .add_sized([172.0, 40.0], download_xxmi_button)
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
+                        ui.add_space(54.0);
+                        let download_xxmi_button = egui::Button::new(icon_bold_text(
+                            Icon::ExternalLink,
+                            text.download_xxmi(),
+                            14.0,
+                            14.0,
+                        ))
+                        .fill(Color32::from_rgb(48, 51, 56))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(73, 78, 86)));
+                        if ui
+                            .add_sized([172.0, 40.0], download_xxmi_button)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if let Err(err) =
+                                open_external_url("https://github.com/SpectrumQT/XXMI-Launcher")
                             {
-                                if let Err(err) = open_external_url(
-                                    "https://github.com/SpectrumQT/XXMI-Launcher",
-                                ) {
-                                    self.report_error(err, Some(text.app_could_not_open_browser()));
-                                }
+                                self.report_error(err, Some(text.app_could_not_open_browser()));
                             }
+                        }
                     },
                 );
 
-                        ui.add_space(18.0);
+                ui.add_space(18.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 20.0),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                            ui.add_space(28.0);
-                            static_label(
-                                ui,
-                                RichText::new("02")
-                                    .color(Color32::from_rgb(203, 104, 59))
-                                    .size(11.0)
-                                    .strong(),
-                            );
-                            ui.add_space(4.0);
-                            static_label(
-                                ui,
-                                bold(text.find_games_and_fix_paths(), Some(15.0)),
-                            );
+                        ui.add_space(28.0);
+                        static_label(
+                            ui,
+                            RichText::new("02")
+                                .color(Color32::from_rgb(203, 104, 59))
+                                .size(11.0)
+                                .strong(),
+                        );
+                        ui.add_space(4.0);
+                        static_label(ui, bold(text.find_games_and_fix_paths(), Some(15.0)));
                     },
                 );
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 18.0),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                            ui.add_space(54.0);
-                            static_label(
-                                ui,
-                                RichText::new(text.library_path_scan_description())
-                                    .color(Color32::from_gray(165))
-                                    .size(13.0),
-                            );
+                        ui.add_space(54.0);
+                        static_label(
+                            ui,
+                            RichText::new(text.library_path_scan_description())
+                                .color(Color32::from_gray(165))
+                                .size(13.0),
+                        );
                     },
                 );
-                        let scanning = self.startup_path_scan.is_some();
-                        ui.add_space(6.0);
+                let scanning = self.startup_path_scan.is_some();
+                ui.add_space(6.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(content_rect.width(), 42.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                            ui.add_space(54.0);
-                            let scan_button = egui::Button::new(icon_bold_text(
-                                Icon::Search,
-                                text.path_scan_button(scanning),
-                                15.0,
-                                16.0,
-                            ))
-                            .fill(Color32::from_rgb(180, 78, 35))
-                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)))
-                            .min_size(egui::vec2(172.0, 40.0));
-                            if ui
-                                .add_enabled(!scanning, scan_button)
-                                .on_hover_text(text.path_scan_button_tooltip())
-                                .on_hover_cursor(if scanning {
-                                    egui::CursorIcon::NotAllowed
-                                } else {
-                                    egui::CursorIcon::PointingHand
-                                })
-                                .clicked()
-                            {
-                                self.start_manual_path_scan();
-                            }
+                        ui.add_space(54.0);
+                        let scan_button = egui::Button::new(icon_bold_text(
+                            Icon::Search,
+                            text.path_scan_button(scanning),
+                            15.0,
+                            16.0,
+                        ))
+                        .fill(Color32::from_rgb(180, 78, 35))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)))
+                        .min_size(egui::vec2(172.0, 40.0));
+                        if ui
+                            .add_enabled(!scanning, scan_button)
+                            .on_hover_text(text.path_scan_button_tooltip())
+                            .on_hover_cursor(if scanning {
+                                egui::CursorIcon::NotAllowed
+                            } else {
+                                egui::CursorIcon::PointingHand
+                            })
+                            .clicked()
+                        {
+                            self.start_manual_path_scan();
+                        }
                     },
                 );
                 ui.add_space(-2.0);
@@ -3494,10 +3528,7 @@ impl HestiaApp {
                                         13.0,
                                     ))
                                     .fill(Color32::from_rgb(54, 50, 48))
-                                    .stroke(egui::Stroke::new(
-                                        1.0,
-                                        Color32::from_rgb(96, 78, 68),
-                                    )),
+                                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(96, 78, 68))),
                                 )
                                 .on_hover_text(dir.display().to_string())
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -3559,7 +3590,8 @@ impl HestiaApp {
                     ModStatus::Archived => has_archived = true,
                 }
                 if matches!(update_state, ModUpdateState::UpdateAvailable)
-                    || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
+                    || (self.state.static_prefs.modified_update_behavior
+                        != ModifiedUpdateBehavior::HideButton
                         && *modified_update_available)
                 {
                     has_update_eligible = true;
@@ -4440,12 +4472,7 @@ impl HestiaApp {
                     let back_response = ui
                         .vertical(|ui| {
                             ui.add_space(4.0);
-                            ui.button(icon_text_sized(
-                                Icon::ChevronLeft,
-                                text.back(),
-                                13.0,
-                                12.0,
-                            ))
+                            ui.button(icon_text_sized(Icon::ChevronLeft, text.back(), 13.0, 12.0))
                         })
                         .inner
                         .on_hover_text(text.back_to_category_folders())
@@ -6832,14 +6859,16 @@ impl HestiaApp {
         let text = self.text();
         // Use the available rect and extend it to fill the pane
         let pane_rect = ui.available_rect_before_wrap();
-        if ui.ctx().input(|input| input.viewport().minimized.unwrap_or(false)) {
+        if ui
+            .ctx()
+            .input(|input| input.viewport().minimized.unwrap_or(false))
+        {
             return;
         }
-        let pane_rect_usable =
-            pane_rect.width().is_finite()
-                && pane_rect.height().is_finite()
-                && pane_rect.width() >= 320.0
-                && pane_rect.height() >= 240.0;
+        let pane_rect_usable = pane_rect.width().is_finite()
+            && pane_rect.height().is_finite()
+            && pane_rect.width() >= 320.0
+            && pane_rect.height() >= 240.0;
         if !pane_rect_usable {
             return;
         }
@@ -6868,7 +6897,7 @@ impl HestiaApp {
                     // Image wider than container: fit height, clip sides
                     let uv_width_fraction = container_rect.width() / scaled_width;
                     let uv_x_offset = (1.0 - uv_width_fraction) / 2.0;
-                    
+
                     ui.painter().image(
                         cover_texture.id(),
                         container_rect,
@@ -6885,7 +6914,7 @@ impl HestiaApp {
                         container_rect.min + egui::vec2(x_offset, 0.0),
                         egui::vec2(scaled_width, container_height),
                     );
-                    
+
                     ui.painter().image(
                         cover_texture.id(),
                         centered_rect,
@@ -7843,7 +7872,11 @@ impl HestiaApp {
                                 Some(&selected.root_path),
                             );
                             self.prewarm_markdown_images(&markdown);
-                            self.render_markdown_with_inline_images(ui, &markdown);
+                            self.render_markdown_with_inline_images(
+                                ui,
+                                &markdown,
+                                Some(&selected.root_path),
+                            );
                         }
                     }
                     
@@ -8205,7 +8238,11 @@ impl HestiaApp {
                                     let width = personal_note_content_width(ui);
                                     ui.scope(|ui| {
                                         ui.set_max_width(width);
-                                        self.render_markdown_with_inline_images(ui, &markdown);
+                                        self.render_markdown_with_inline_images(
+                                            ui,
+                                            &markdown,
+                                            Some(&selected.root_path),
+                                        );
                                     });
                                 } else {
                                     ui.add(egui::Label::new(
@@ -8608,5 +8645,4 @@ impl HestiaApp {
         self.render_browse_screenshot_overlay(ui.ctx());
         self.render_browse_file_prompt(ui.ctx(), details_rect);
     }
-
 }

@@ -27,6 +27,14 @@ impl ThumbnailByteCache {
         };
         inner.put(key, Arc::new(bytes));
     }
+
+    fn remove(&self, key: &str) {
+        let mut inner = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(_) => return,
+        };
+        inner.pop(key);
+    }
 }
 
 pub struct RuntimeServices {

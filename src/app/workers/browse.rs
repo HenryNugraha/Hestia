@@ -588,6 +588,9 @@ fn spawn_browse_image_workers(
 ) {
     let runtime_services = runtime_services.clone();
     let handle = runtime_services.handle();
+    let full_limiter = Arc::clone(&runtime_services.full_image_limiter);
+    let thumb_limiter = Arc::clone(&runtime_services.thumb_image_limiter);
+    let full_decode_limiter = Arc::clone(&runtime_services.full_decode_limiter);
     runtime_services.clone().spawn(async move {
         while let Some(request) = rx.recv().await {
             let client = runtime_services.http_client();
@@ -595,6 +598,9 @@ fn spawn_browse_image_workers(
             let tx = tx.clone();
             let handle = handle.clone();
             let cache_limit_bytes = Arc::clone(&cache_limit_bytes);
+            let full_limiter = Arc::clone(&full_limiter);
+            let thumb_limiter = Arc::clone(&thumb_limiter);
+            let full_decode_limiter = Arc::clone(&full_decode_limiter);
             tokio::spawn(async move {
                 if request.cancel.load(Ordering::Relaxed) {
                     return;
@@ -603,9 +609,14 @@ fn spawn_browse_image_workers(
                 let url = request.url.clone();
                 let cache_key = request.cache_key.clone();
                 let limit = cache_limit_bytes.load(Ordering::Relaxed);
+                let _image_permit = if request.load_full {
+                    full_limiter.acquire().await.ok()
+                } else {
+                    thumb_limiter.acquire().await.ok()
+                };
                 let bytes_result = async {
                     if let Some(cached) = persistence::cache_get(&portable, &cache_key)? {
-                        return Ok::<Vec<u8>, anyhow::Error>(cached);
+                        return Ok::<(Vec<u8>, bool), anyhow::Error>((cached, true));
                     }
                     let bytes = client
                         .get(&url)
@@ -615,9 +626,7 @@ fn spawn_browse_image_workers(
                         .bytes()
                         .await?
                         .to_vec();
-                    let _ =
-                        persistence::cache_put(&portable, &cache_key, "browse-img", &bytes, limit);
-                    Ok(bytes)
+                    Ok((bytes, false))
                 };
                 let bytes_result = tokio::select! {
                     _ = async {
@@ -629,32 +638,93 @@ fn spawn_browse_image_workers(
                 };
 
                 match bytes_result {
-                    Ok(bytes) => {
+                    Ok((bytes, from_cache)) => {
                         if request.cancel.load(Ordering::Relaxed) {
                             return;
                         }
                         let thumb_profile = request.thumb_profile;
                         let load_full = request.load_full;
-                        let result = handle
-                            .spawn_blocking(move || BrowseImageResult {
-                                texture_key: request.texture_key,
-                                thumb_texture_key: request.thumb_texture_key,
-                                image_full: if load_full {
-                                    load_cover_color_image(&bytes)
-                                } else {
-                                    None
-                                },
-                                image_thumb: load_cover_color_image_thumbnail(
+                        let skip_texture = request.skip_texture;
+                        let texture_key = request.texture_key.clone();
+                        let thumb_texture_key = request.thumb_texture_key.clone();
+                        let cancel_key = request.cancel_key;
+                        let _decode_permit = if load_full {
+                            full_decode_limiter.acquire().await.ok()
+                        } else {
+                            None
+                        };
+                        let decode_result = handle
+                            .spawn_blocking(move || {
+                                decode_browse_image_result(
                                     &bytes,
+                                    load_full,
+                                    skip_texture,
                                     thumb_profile,
-                                ),
-                                cancel_key: request.cancel_key,
-                                failure: None,
+                                )
+                                .map(|decoded| (bytes, decoded))
                             })
                             .await;
 
-                        if let Ok(result) = result {
-                            let _ = tx.send(result);
+                        match decode_result {
+                            Ok(Ok((bytes, decoded))) => {
+                                if request.cancel.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if !from_cache {
+                                    let _ = persistence::cache_put(
+                                        &portable,
+                                        &cache_key,
+                                        "browse-img",
+                                        &bytes,
+                                        limit,
+                                    );
+                                }
+                                let _ = tx.send(BrowseImageResult {
+                                    texture_key,
+                                    thumb_texture_key,
+                                    image_full: decoded.image_full,
+                                    image_thumb: decoded.image_thumb,
+                                    cancel_key,
+                                    failure: None,
+                                });
+                            }
+                            Ok(Err(err)) => {
+                                if request.cancel.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if from_cache {
+                                    let _ = persistence::cache_remove(&portable, &cache_key);
+                                }
+                                let _ = tx.send(BrowseImageResult {
+                                    texture_key,
+                                    thumb_texture_key,
+                                    image_full: None,
+                                    image_thumb: None,
+                                    cancel_key,
+                                    failure: Some(BrowseImageFailure {
+                                        url,
+                                        timed_out: false,
+                                        error: format!("{err:#}"),
+                                    }),
+                                });
+                            }
+                            Err(err) => {
+                                if request.cancel.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let _ = tx.send(BrowseImageResult {
+                                    texture_key,
+                                    thumb_texture_key,
+                                    image_full: None,
+                                    image_thumb: None,
+                                    cancel_key,
+                                    failure: Some(BrowseImageFailure {
+                                        url,
+                                        timed_out: false,
+                                        error: format!("image decode worker failed: {err}"),
+                                    }),
+                                });
+                            }
                         }
                     }
                     Err(err) => {
@@ -670,6 +740,7 @@ fn spawn_browse_image_workers(
                             failure: Some(BrowseImageFailure {
                                 url,
                                 timed_out: is_timeout_error(&err),
+                                error: format!("{err:#}"),
                             }),
                         });
                     }
@@ -677,4 +748,38 @@ fn spawn_browse_image_workers(
             });
         }
     });
+}
+
+struct DecodedBrowseImage {
+    image_full: Option<egui::ColorImage>,
+    image_thumb: Option<egui::ColorImage>,
+}
+
+fn decode_browse_image_result(
+    bytes: &[u8],
+    load_full: bool,
+    skip_texture: bool,
+    thumb_profile: ThumbnailProfile,
+) -> Result<DecodedBrowseImage> {
+    if skip_texture {
+        decode_limited_dynamic_image(bytes)?;
+        return Ok(DecodedBrowseImage {
+            image_full: None,
+            image_thumb: None,
+        });
+    }
+
+    let image_full = if load_full {
+        let image = load_cover_color_image(bytes)
+            .ok_or_else(|| anyhow!("failed to decode full image"))?;
+        Some(image)
+    } else {
+        None
+    };
+    let image_thumb = load_cover_color_image_thumbnail(bytes, thumb_profile)
+        .ok_or_else(|| anyhow!("failed to decode thumbnail image"))?;
+    Ok(DecodedBrowseImage {
+        image_full,
+        image_thumb: Some(image_thumb),
+    })
 }

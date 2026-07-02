@@ -76,8 +76,12 @@ impl HestiaApp {
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != texture_key);
         self.pending_texture_uploads.retain(|item| match item {
-            PendingTextureUpload::ModThumb { texture_key: key, .. }
-            | PendingTextureUpload::ModFull { texture_key: key, .. } => key != &texture_key,
+            PendingTextureUpload::ModThumb {
+                texture_key: key, ..
+            }
+            | PendingTextureUpload::ModFull {
+                texture_key: key, ..
+            } => key != &texture_key,
             _ => true,
         });
         self.my_mod_overlay_images
@@ -116,6 +120,8 @@ impl HestiaApp {
             .with_guessed_format()
             .map_err(|err| anyhow!("failed to detect image format: {err}"))?;
         let is_jpeg = matches!(reader.format(), Some(image::ImageFormat::Jpeg));
+        let mut reader = reader;
+        reader.limits(image_decode_limits());
         let decoded = reader
             .decode()
             .map_err(|err| anyhow!("failed to decode image {}: {err}", source_path.display()))?;
@@ -144,7 +150,10 @@ impl HestiaApp {
         bail!("failed to allocate a unique manual image name")
     }
 
-    fn import_manual_images_from_paths(mod_root: &Path, paths: Vec<PathBuf>) -> Result<Vec<String>> {
+    fn import_manual_images_from_paths(
+        mod_root: &Path,
+        paths: Vec<PathBuf>,
+    ) -> Result<Vec<String>> {
         let mut imported = Vec::with_capacity(paths.len());
         for path in paths {
             match Self::save_manual_mod_image_from_path(mod_root, &path) {
@@ -163,7 +172,11 @@ impl HestiaApp {
         Ok(imported)
     }
 
-    fn enqueue_add_images_to_unlinked_mod(&mut self, mod_id: &str, paths: Vec<PathBuf>) -> Result<()> {
+    fn enqueue_add_images_to_unlinked_mod(
+        &mut self,
+        mod_id: &str,
+        paths: Vec<PathBuf>,
+    ) -> Result<()> {
         let (root_path, folder_name) = {
             let mod_entry = self
                 .state
@@ -272,8 +285,7 @@ impl HestiaApp {
 
     fn consume_manual_image_events(&mut self) {
         while let Ok(event) = self.manual_image_event_rx.try_recv() {
-            self.manual_image_imports_pending =
-                self.manual_image_imports_pending.saturating_sub(1);
+            self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_sub(1);
             match event {
                 ManualImageEvent::Added {
                     mod_id,
@@ -285,7 +297,9 @@ impl HestiaApp {
                     }
                     let count = rel_paths.len();
                     let cover_changed = {
-                        let Some(mod_entry) = self.state.mods.iter_mut().find(|item| item.id == mod_id) else {
+                        let Some(mod_entry) =
+                            self.state.mods.iter_mut().find(|item| item.id == mod_id)
+                        else {
                             self.report_warn(
                                 format!(
                                     "manual images imported for missing mod {mod_id}: {}",
@@ -457,8 +471,7 @@ impl HestiaApp {
                 result.image,
                 egui::TextureOptions::LINEAR,
             );
-            self.game_cover_textures
-                .insert(result.game_id, texture);
+            self.game_cover_textures.insert(result.game_id, texture);
         }
     }
 
@@ -483,7 +496,9 @@ impl HestiaApp {
         mod_root.join(MOD_META_DIR).join(file_name)
     }
 
-    fn current_card_thumb_meta(mod_entry: &ModEntry) -> (CardThumbMeta, Option<PathBuf>, Option<String>) {
+    fn current_card_thumb_meta(
+        mod_entry: &ModEntry,
+    ) -> (CardThumbMeta, Option<PathBuf>, Option<String>) {
         if let Some(rel) = mod_entry
             .metadata
             .user
@@ -544,7 +559,11 @@ impl HestiaApp {
         )
     }
 
-    fn is_mod_thumb_valid(mod_entry: &ModEntry, expected: &CardThumbMeta, profile: ThumbnailProfile) -> bool {
+    fn is_mod_thumb_valid(
+        mod_entry: &ModEntry,
+        expected: &CardThumbMeta,
+        profile: ThumbnailProfile,
+    ) -> bool {
         let user = &mod_entry.metadata.user;
         let (source_kind, source_id, source_mtime, source_size) = match profile {
             ThumbnailProfile::Card => (
@@ -571,7 +590,11 @@ impl HestiaApp {
         Self::resolve_mod_thumb_path(&mod_entry.root_path, profile).exists()
     }
 
-    fn update_mod_thumb_meta(mod_entry: &mut ModEntry, expected: &CardThumbMeta, profile: ThumbnailProfile) {
+    fn update_mod_thumb_meta(
+        mod_entry: &mut ModEntry,
+        expected: &CardThumbMeta,
+        profile: ThumbnailProfile,
+    ) {
         match profile {
             ThumbnailProfile::Card => {
                 mod_entry.metadata.user.card_thumb_source_kind = Some(expected.kind.clone());
@@ -599,8 +622,10 @@ impl HestiaApp {
             .find(|q| q.texture_key == req.texture_key)
         {
             existing.priority = existing.priority.min(req.priority);
-            if matches!(existing.mode, LocalModImageMode::CardThumbOnly | LocalModImageMode::ThumbOnly)
-                && req.mode == LocalModImageMode::FullOnly
+            if matches!(
+                existing.mode,
+                LocalModImageMode::CardThumbOnly | LocalModImageMode::ThumbOnly
+            ) && req.mode == LocalModImageMode::FullOnly
             {
                 existing.mode = LocalModImageMode::FullOnly;
                 existing.payload = req.payload;
@@ -619,7 +644,8 @@ impl HestiaApp {
         };
         let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(&mod_entry);
         let thumb_path = Self::resolve_mod_thumb_path(&mod_entry.root_path, ThumbnailProfile::Card);
-        let force_regen = !Self::is_mod_thumb_valid(&mod_entry, &expected_meta, ThumbnailProfile::Card);
+        let force_regen =
+            !Self::is_mod_thumb_valid(&mod_entry, &expected_meta, ThumbnailProfile::Card);
         let payload = LocalModImagePayload::CardThumb {
             mod_root: mod_entry.root_path.clone(),
             source_path,
@@ -668,7 +694,10 @@ impl HestiaApp {
             mode: LocalModImageMode::ThumbOnly,
             priority,
             generation: 0,
-            payload: LocalModImagePayload::Path { path, thumb_profile },
+            payload: LocalModImagePayload::Path {
+                path,
+                thumb_profile,
+            },
         });
     }
 
@@ -693,8 +722,16 @@ impl HestiaApp {
         });
     }
 
-    fn prewarm_markdown_images(&mut self, _markdown: &str) {
-        // No need to prewarm for texture keys - they're already loaded or loading
+    fn prewarm_markdown_images(&mut self, markdown: &str) {
+        for dest in extract_markdown_image_dests(markdown) {
+            let lower_dest = dest.to_ascii_lowercase();
+            if !lower_dest.starts_with("http://") && !lower_dest.starts_with("https://")
+                || is_gif_dest(&dest)
+            {
+                continue;
+            }
+            self.queue_browse_image_with_profile(dest, None, false, ThumbnailProfile::Rail, 100);
+        }
     }
 
     fn cached_rewrite_markdown_gif_images(
@@ -705,7 +742,11 @@ impl HestiaApp {
         let root_key = mod_root
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
-        let key = format!("{}:{}", hash64_hex(markdown.as_bytes()), hash64_hex(root_key.as_bytes()));
+        let key = format!(
+            "{}:{}",
+            hash64_hex(markdown.as_bytes()),
+            hash64_hex(root_key.as_bytes())
+        );
         if let Some(cached) = self.gif_rewritten_markdown_cache.get(&key) {
             return cached.clone();
         }
@@ -713,7 +754,35 @@ impl HestiaApp {
             self.gif_rewritten_markdown_cache.clear();
         }
         let rewritten = rewrite_markdown_gif_images(markdown, mod_root);
-        self.gif_rewritten_markdown_cache.insert(key, rewritten.clone());
+        self.gif_rewritten_markdown_cache
+            .insert(key, rewritten.clone());
+        rewritten
+    }
+
+    fn cached_rewrite_markdown_for_render(
+        &mut self,
+        markdown: &str,
+        mod_root: Option<&Path>,
+    ) -> String {
+        let root_key = mod_root
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let key = format!(
+            "{}:{}:{}",
+            hash64_hex(markdown.as_bytes()),
+            hash64_hex(root_key.as_bytes()),
+            hash64_hex(markdown_image_dependency_signature(markdown, mod_root).as_bytes())
+        );
+        if let Some(cached) = self.render_safe_markdown_cache.get(&key) {
+            return cached.clone();
+        }
+        if self.render_safe_markdown_cache.len() >= 64 {
+            self.render_safe_markdown_cache.clear();
+        }
+        let rewritten =
+            rewrite_markdown_remote_images_for_render(markdown, &self.portable, mod_root);
+        self.render_safe_markdown_cache
+            .insert(key, rewritten.clone());
         rewritten
     }
 
@@ -744,7 +813,14 @@ impl HestiaApp {
         }
     }
 
-    fn render_markdown_with_inline_images(&mut self, ui: &mut Ui, markdown: &str) {
+    fn render_markdown_with_inline_images(
+        &mut self,
+        ui: &mut Ui,
+        markdown: &str,
+        mod_root: Option<&Path>,
+    ) {
+        let render_markdown = self.cached_rewrite_markdown_for_render(markdown, mod_root);
+        let markdown = render_markdown.as_str();
         let images = extract_markdown_images(markdown);
         let youtube_embeds = extract_markdown_youtube_embeds(markdown);
 
@@ -759,13 +835,15 @@ impl HestiaApp {
                 (start, end, InlineMarkdownEmbed::Image { texture_key })
             })
             .collect();
-        embeds.extend(youtube_embeds.into_iter().map(|(start, end, url)| {
-            (start, end, InlineMarkdownEmbed::Youtube { url })
-        }));
+        embeds.extend(
+            youtube_embeds
+                .into_iter()
+                .map(|(start, end, url)| (start, end, InlineMarkdownEmbed::Youtube { url })),
+        );
         embeds.sort_by_key(|(start, _, _)| *start);
 
         let mut last_end = 0;
-        
+
         for (start, end, embed) in embeds {
             if start > last_end {
                 let text_chunk = &markdown[last_end..start];
@@ -773,10 +851,14 @@ impl HestiaApp {
                     CommonMarkViewer::new().show(ui, &mut self.browse_commonmark_cache, text_chunk);
                 }
             }
-            
+
             match embed {
                 InlineMarkdownEmbed::Image { texture_key } => {
-                    if let Some(texture) = self.browse_image_textures.get(&texture_key) {
+                    if let Some(texture) = self
+                        .browse_image_textures
+                        .get(&texture_key)
+                        .or_else(|| self.browse_thumb_textures.get(&texture_key))
+                    {
                         ui.add_space(8.0);
                         let response = render_inline_markdown_image(ui, texture);
                         ui.add_space(8.0);
@@ -801,7 +883,9 @@ impl HestiaApp {
                                 && self.animated_gif_state.contains_key(&texture_key)
                             {
                                 let animation_key = gif_animation_texture_key(&texture_key);
-                                if let Some(texture) = self.browse_image_textures.get(&animation_key) {
+                                if let Some(texture) =
+                                    self.browse_image_textures.get(&animation_key)
+                                {
                                     egui::Image::new(texture)
                                         .fit_to_exact_size(response.rect.size())
                                         .paint_at(ui, response.rect);
@@ -823,10 +907,10 @@ impl HestiaApp {
                     ui.add_space(8.0);
                 }
             }
-            
+
             last_end = end;
         }
-        
+
         if last_end < markdown.len() {
             let text_chunk = &markdown[last_end..];
             if !text_chunk.trim().is_empty() {
@@ -847,9 +931,14 @@ impl HestiaApp {
         if let Some(mod_id) = self.selected_mod_id.as_ref() {
             if self.mod_detail_open || self.browse_state.screenshot_overlay.is_some() {
                 // Only allow if the overlay/detail actually belongs to this local mod
-                let belongs = self.browse_state.screenshot_overlay.as_ref().map_or(true, |o| {
-                    o.texture_key == *mod_id || o.texture_key.starts_with(&format!("my-mod-shot-{mod_id}-"))
-                });
+                let belongs = self
+                    .browse_state
+                    .screenshot_overlay
+                    .as_ref()
+                    .map_or(true, |o| {
+                        o.texture_key == *mod_id
+                            || o.texture_key.starts_with(&format!("my-mod-shot-{mod_id}-"))
+                    });
                 if belongs {
                     focus_mode = true;
                     allowed_mod_id = mod_id.clone();
@@ -874,14 +963,21 @@ impl HestiaApp {
         let mut eligible = Vec::new();
         let current_gen = self.image_generation.load(Ordering::Relaxed);
         let mut i = 0;
-        while i < self.pending_mod_image_queue.len() && eligible.len() < LOCAL_IMAGE_DISPATCH_BATCH {
+        while i < self.pending_mod_image_queue.len() && eligible.len() < LOCAL_IMAGE_DISPATCH_BATCH
+        {
             let req = &self.pending_mod_image_queue[i];
-            let is_mod_task = req.texture_key == allowed_mod_id 
-                || req.texture_key.starts_with(&format!("my-mod-shot-{}-", allowed_mod_id))
+            let is_mod_task = req.texture_key == allowed_mod_id
+                || req
+                    .texture_key
+                    .starts_with(&format!("my-mod-shot-{}-", allowed_mod_id))
                 || req.texture_key.starts_with("file:///")
                 || req.texture_key.starts_with("http");
             let is_background_thumb = req.mode == LocalModImageMode::CardThumbOnly;
-            let is_overlay_task = self.browse_state.screenshot_overlay.as_ref().is_some_and(|o| o.texture_key == req.texture_key);
+            let is_overlay_task = self
+                .browse_state
+                .screenshot_overlay
+                .as_ref()
+                .is_some_and(|o| o.texture_key == req.texture_key);
             if !focus_mode || is_mod_task || is_background_thumb || is_overlay_task {
                 let mut req = self.pending_mod_image_queue.remove(i);
                 req.generation = current_gen;
@@ -917,16 +1013,18 @@ impl HestiaApp {
                 }
             }
             if let Some(image_thumb) = result.image_thumb {
-                self.pending_texture_uploads.push_back(PendingTextureUpload::ModThumb {
-                    texture_key: result.texture_key.clone(),
-                    image: image_thumb,
-                });
+                self.pending_texture_uploads
+                    .push_back(PendingTextureUpload::ModThumb {
+                        texture_key: result.texture_key.clone(),
+                        image: image_thumb,
+                    });
             }
             if let Some(image_full) = result.image_full {
-                self.pending_texture_uploads.push_back(PendingTextureUpload::ModFull {
-                    texture_key: result.texture_key,
-                    image: image_full,
-                });
+                self.pending_texture_uploads
+                    .push_back(PendingTextureUpload::ModFull {
+                        texture_key: result.texture_key,
+                        image: image_full,
+                    });
             }
         }
     }
@@ -934,18 +1032,26 @@ impl HestiaApp {
     fn consume_gif_preview_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.gif_preview_event_rx.try_recv() {
             match event {
-                GifPreviewEvent::Ready { out_png, gif_dest, image } => {
+                GifPreviewEvent::Ready {
+                    out_png,
+                    gif_dest,
+                    image,
+                } => {
                     let out_key = out_png.to_string_lossy().to_string();
-                    self.pending_gif_previews.remove(&out_key);
+                    if !self.pending_gif_previews.remove(&out_key) {
+                        continue;
+                    }
 
                     // Register as a texture handle so egui can find it by key immediately.
                     let texture_key = format!("gif-preview-{}", hash64_hex(gif_dest.as_bytes()));
-                    let texture = ctx.load_texture(
-                        &texture_key,
-                        image,
-                        egui::TextureOptions::LINEAR,
+                    let texture =
+                        ctx.load_texture(&texture_key, image, egui::TextureOptions::LINEAR);
+                    self.insert_tracked_texture(
+                        TextureKind::BrowseFull,
+                        texture_key.clone(),
+                        3,
+                        texture,
                     );
-                    self.insert_tracked_texture(TextureKind::BrowseFull, texture_key.clone(), 3, texture);
 
                     self.browse_commonmark_cache = CommonMarkCache::default();
                 }
@@ -961,12 +1067,17 @@ impl HestiaApp {
     fn consume_gif_animation_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.gif_animation_event_rx.try_recv() {
             match event {
-                GifAnimationEvent::Ready { texture_key, animation } => {
-                    self.pending_gif_animations.remove(&texture_key);
-                    
+                GifAnimationEvent::Ready {
+                    texture_key,
+                    animation,
+                } => {
+                    if !self.pending_gif_animations.remove(&texture_key) {
+                        continue;
+                    }
+
                     // Get current time for animation timing
                     let now = ctx.input(|i| i.time);
-                    
+
                     // Load the first frame as an immediate texture
                     if let Some(first_frame) = animation.frames.first() {
                         let anim_texture_key = gif_animation_texture_key(&texture_key);
@@ -995,7 +1106,9 @@ impl HestiaApp {
                     ctx.request_repaint();
                 }
                 GifAnimationEvent::Failed { texture_key, error } => {
-                    self.pending_gif_animations.remove(&texture_key);
+                    if !self.pending_gif_animations.remove(&texture_key) {
+                        continue;
+                    }
                     self.report_warn(
                         format!("failed to decode GIF animation for {texture_key}: {error}"),
                         None,
@@ -1074,16 +1187,16 @@ impl HestiaApp {
                 continue;
             };
             let elapsed_ms = ((now - state.frame_start_time) * 1000.0) as u32;
-            
+
             // Calculate total animation duration
             let total_duration_ms: u32 = state.animation.frames.iter().map(|f| f.delay_ms).sum();
             if total_duration_ms == 0 {
                 continue; // Skip animations with no valid timing
             }
-            
+
             // Normalize elapsed time to animation loop
             let loop_elapsed = elapsed_ms % total_duration_ms;
-            
+
             // Find which frame we should be on by accumulating delays
             let mut time_accum = 0u32;
             let mut new_frame = 0;
@@ -1092,12 +1205,10 @@ impl HestiaApp {
                 if loop_elapsed < time_accum {
                     new_frame = i;
                     let until_next_frame = time_accum.saturating_sub(loop_elapsed).max(1);
-                    next_repaint_ms = Some(
-                        next_repaint_ms
-                            .map_or(until_next_frame as u64, |current| {
-                                current.min(until_next_frame as u64)
-                            }),
-                    );
+                    next_repaint_ms =
+                        Some(next_repaint_ms.map_or(until_next_frame as u64, |current| {
+                            current.min(until_next_frame as u64)
+                        }));
                     break;
                 }
             }
@@ -1147,10 +1258,19 @@ impl HestiaApp {
             if !is_gif_dest(&dest) {
                 continue;
             }
-            let out_png = sized_gif_preview_out_path(
-                gif_preview_out_path(&dest, mod_root),
-                max_width,
-            );
+            let local_path = file_uri_to_path(&dest)
+                .filter(|path| is_hestia_controlled_image_path(path, mod_root));
+            let remote_url = if dest.starts_with("http://") || dest.starts_with("https://") {
+                Some(dest.clone())
+            } else {
+                None
+            };
+            if local_path.is_none() && remote_url.is_none() {
+                continue;
+            }
+
+            let out_png =
+                sized_gif_preview_out_path(gif_preview_out_path(&dest, mod_root), max_width);
             let texture_key = format!("gif-preview-{}", hash64_hex(dest.as_bytes()));
             self.gif_dest_by_texture_key
                 .insert(texture_key.clone(), dest.clone());
@@ -1169,12 +1289,14 @@ impl HestiaApp {
                         if let Some(image) = load_cover_color_image(&bytes) {
                             let image = downscale_color_image_to_width(image, max_width);
 
-                            let texture = ctx.load_texture(
-                                &texture_key,
-                                image,
-                                egui::TextureOptions::LINEAR,
+                            let texture =
+                                ctx.load_texture(&texture_key, image, egui::TextureOptions::LINEAR);
+                            self.insert_tracked_texture(
+                                TextureKind::BrowseFull,
+                                texture_key.clone(),
+                                3,
+                                texture,
                             );
-                            self.insert_tracked_texture(TextureKind::BrowseFull, texture_key.clone(), 3, texture);
                             self.browse_commonmark_cache = CommonMarkCache::default();
                         }
                     }
@@ -1188,20 +1310,24 @@ impl HestiaApp {
 
             self.pending_gif_previews.insert(out_key);
 
-            if let Some(path) = file_uri_to_path(&dest) {
-                let _ = self.gif_preview_request_tx.send(GifPreviewRequest::FromFile {
-                    src_path: path,
-                    out_png,
-                    gif_dest: dest,
-                    max_width,
-                });
-            } else if dest.starts_with("http://") || dest.starts_with("https://") {
-                let _ = self.gif_preview_request_tx.send(GifPreviewRequest::FromUrl {
-                    url: dest.clone(),
-                    out_png,
-                    gif_dest: dest,
-                    max_width,
-                });
+            if let Some(path) = local_path {
+                let _ = self
+                    .gif_preview_request_tx
+                    .send(GifPreviewRequest::FromFile {
+                        src_path: path,
+                        out_png,
+                        gif_dest: dest,
+                        max_width,
+                    });
+            } else if let Some(url) = remote_url {
+                let _ = self
+                    .gif_preview_request_tx
+                    .send(GifPreviewRequest::FromUrl {
+                        url,
+                        out_png,
+                        gif_dest: dest,
+                        max_width,
+                    });
             }
         }
     }
@@ -1253,11 +1379,8 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::ModFull { texture_key, image });
                         continue;
                     }
-                    let texture = ctx.load_texture(
-                        texture_key.clone(),
-                        image,
-                        egui::TextureOptions::LINEAR,
-                    );
+                    let texture =
+                        ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
                     self.insert_tracked_texture(TextureKind::ModFull, texture_key, 3, texture);
                     full_uploads += 1;
                     uploaded_any = true;
@@ -1289,11 +1412,8 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::BrowseFull { texture_key, image });
                         continue;
                     }
-                    let texture = ctx.load_texture(
-                        texture_key.clone(),
-                        image,
-                        egui::TextureOptions::LINEAR,
-                    );
+                    let texture =
+                        ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
                     full_uploads += 1;
                     uploaded_any = true;
@@ -1305,7 +1425,6 @@ impl HestiaApp {
         }
         self.evict_textures_to_budget(ctx.input(|i| i.time));
     }
-
 }
 
 fn render_inline_markdown_image(

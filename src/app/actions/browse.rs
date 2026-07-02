@@ -556,7 +556,51 @@ impl HestiaApp {
         });
     }
 
+    fn reset_browse_detail_render_state(&mut self) {
+        self.browse_commonmark_cache = CommonMarkCache::default();
+        self.gif_rewritten_markdown_cache.clear();
+        self.render_safe_markdown_cache.clear();
+        self.gif_dest_by_texture_key.clear();
+        self.pending_gif_previews.clear();
+        self.pending_gif_animations.clear();
+        self.animated_gif_state.clear();
+    }
+
+    fn prune_browse_detail_cache(&mut self) {
+        if self.browse_state.details.len() <= BROWSE_DETAIL_CACHE_LIMIT {
+            return;
+        }
+
+        let selected = self.browse_state.selected_mod_id;
+        let loading = self.browse_state.loading_details.clone();
+        let pending_installs: HashSet<u64> = self
+            .browse_state
+            .pending_installs
+            .iter()
+            .map(|pending| pending.mod_id)
+            .collect();
+        let mut removable = self
+            .browse_state
+            .details
+            .keys()
+            .copied()
+            .filter(|mod_id| Some(*mod_id) != selected)
+            .filter(|mod_id| !loading.contains(mod_id))
+            .filter(|mod_id| !pending_installs.contains(mod_id))
+            .collect::<Vec<_>>();
+        while self.browse_state.details.len() > BROWSE_DETAIL_CACHE_LIMIT {
+            let Some(mod_id) = removable.pop() else {
+                break;
+            };
+            self.browse_state.details.remove(&mod_id);
+        }
+    }
+
     fn open_browse_detail(&mut self, mod_id: u64) {
+        let switching_detail = self.browse_state.selected_mod_id != Some(mod_id);
+        if switching_detail {
+            self.reset_browse_detail_render_state();
+        }
         self.browse_state.selected_mod_id = Some(mod_id);
         self.browse_detail_open = true;
         self.browse_detail_focus_requested = true;
@@ -567,6 +611,7 @@ impl HestiaApp {
         }
         self.queue_detail_preview_images(mod_id);
         self.begin_full_image_prefetch(mod_id);
+        self.prune_browse_detail_cache();
     }
 
     fn open_linked_mod_in_browse(&mut self, mod_id: u64) {
@@ -1102,6 +1147,7 @@ impl HestiaApp {
                         translation_loading: false,
                     };
                     self.browse_state.details.insert(mod_id, cache);
+                    self.prune_browse_detail_cache();
                     if let Some(card) = self
                         .browse_state
                         .cards
@@ -1352,13 +1398,13 @@ impl HestiaApp {
                 );
                 if failure.timed_out {
                     self.log_warn(format!(
-                        "image request timed out; retrying in {}s: {}",
-                        BROWSE_IMAGE_RETRY_COOLDOWN_SECS, failure.url
+                        "image request timed out; retrying in {}s: {} ({})",
+                        BROWSE_IMAGE_RETRY_COOLDOWN_SECS, failure.url, failure.error
                     ));
                 } else {
                     self.log_warn(format!(
-                        "image request failed; retrying in {}s: {}",
-                        BROWSE_IMAGE_RETRY_COOLDOWN_SECS, failure.url
+                        "image request failed; retrying in {}s: {} ({})",
+                        BROWSE_IMAGE_RETRY_COOLDOWN_SECS, failure.url, failure.error
                     ));
                 }
                 continue;
@@ -1758,7 +1804,9 @@ impl HestiaApp {
                             files: selectable
                                 .into_iter()
                                 .map(|file| BrowseSelectableFile {
-                                    selected: update_files.iter().any(|update| update.id == file.id),
+                                    selected: update_files
+                                        .iter()
+                                        .any(|update| update.id == file.id),
                                     file,
                                 })
                                 .collect(),

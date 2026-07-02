@@ -1838,7 +1838,11 @@ impl HestiaApp {
                                                 None,
                                             );
                                             self.prewarm_markdown_images(&markdown);
-                                            self.render_markdown_with_inline_images(ui, &markdown);
+                                            self.render_markdown_with_inline_images(
+                                                ui,
+                                                &markdown,
+                                                None,
+                                            );
                                         }
                                     }
                                     ui.add_space(1.0);
@@ -2071,7 +2075,7 @@ impl HestiaApp {
                         let markdown =
                             self.cached_rewrite_markdown_gif_images(&detail.markdown, None);
                         self.prewarm_markdown_images(&markdown);
-                        self.render_markdown_with_inline_images(ui, &markdown);
+                        self.render_markdown_with_inline_images(ui, &markdown, None);
 
                         let render_file_section_label = |ui: &mut Ui, label: &str, count: usize| {
                             let section_height = 20.0;
@@ -2500,7 +2504,8 @@ impl HestiaApp {
                         self.mark_gif_animation_visible(ui.ctx(), &current_key);
                     }
                 }
-                let texture = if let Some(texture) = self.get_browse_full_texture(&animation_key, 3) {
+                let texture = if let Some(texture) = self.get_browse_full_texture(&animation_key, 3)
+                {
                     Some(texture)
                 } else if let Some(texture) = self.get_browse_full_texture(&current_key, 3) {
                     Some(texture)

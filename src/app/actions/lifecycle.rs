@@ -143,8 +143,7 @@ impl HestiaApp {
             tokio_mpsc::unbounded_channel::<BrowseDownloadEvent>();
         let (app_update_event_tx, app_update_event_rx) =
             tokio_mpsc::unbounded_channel::<AppUpdateEvent>();
-        let (proxy_apply_tx, proxy_apply_rx) =
-            tokio_mpsc::unbounded_channel::<ProxyApplyEvent>();
+        let (proxy_apply_tx, proxy_apply_rx) = tokio_mpsc::unbounded_channel::<ProxyApplyEvent>();
         let (feedback_survey_submit_tx, feedback_survey_worker_rx) =
             tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitRequest>();
         let (feedback_survey_worker_tx, feedback_survey_submit_rx) =
@@ -424,6 +423,7 @@ impl HestiaApp {
             pending_browse_install_safety: HashMap::new(),
             pending_browse_install_meta: HashMap::new(),
             gif_rewritten_markdown_cache: HashMap::new(),
+            render_safe_markdown_cache: HashMap::new(),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,
             browse_page_generation: 0,
@@ -529,18 +529,19 @@ impl HestiaApp {
             return;
         }
         let mut has_saved_proxy = false;
-        let proxy_candidates = CustomProxyConfig::parse_candidates(&self.state.static_prefs.custom_proxy_url).map(
-            |mut candidates| {
-                if let Ok(saved) = CustomProxyConfig::parse(
-                    &self.state.static_prefs.custom_proxy_resolved_url,
-                ) {
-                    has_saved_proxy = true;
-                    candidates.retain(|candidate| candidate != &saved);
-                    candidates.insert(0, saved);
-                }
-                candidates.into_iter().map(Some).collect::<Vec<_>>()
-            },
-        );
+        let proxy_candidates = CustomProxyConfig::parse_candidates(
+            &self.state.static_prefs.custom_proxy_url,
+        )
+        .map(|mut candidates| {
+            if let Ok(saved) =
+                CustomProxyConfig::parse(&self.state.static_prefs.custom_proxy_resolved_url)
+            {
+                has_saved_proxy = true;
+                candidates.retain(|candidate| candidate != &saved);
+                candidates.insert(0, saved);
+            }
+            candidates.into_iter().map(Some).collect::<Vec<_>>()
+        });
         let proxy_candidates = match proxy_candidates {
             Ok(candidates) => candidates,
             Err(error) => {
@@ -577,9 +578,10 @@ impl HestiaApp {
                 let candidates: Vec<_> = candidates
                     .into_iter()
                     .filter(|proxy| {
-                        proxy.as_ref().and_then(proxy_socket_address).is_some_and(|address| {
-                            open_endpoints.contains(&address)
-                        })
+                        proxy
+                            .as_ref()
+                            .and_then(proxy_socket_address)
+                            .is_some_and(|address| open_endpoints.contains(&address))
                     })
                     .collect();
                 if candidates.is_empty() {
@@ -589,9 +591,8 @@ impl HestiaApp {
                 let mut validations = futures_util::stream::FuturesUnordered::new();
                 for proxy in &candidates {
                     let proxy = proxy.clone();
-                    validations.push(async move {
-                        validate_proxy_manifest(&proxy).await.map(|_| proxy)
-                    });
+                    validations
+                        .push(async move { validate_proxy_manifest(&proxy).await.map(|_| proxy) });
                 }
                 let mut validated = HashSet::new();
                 while let Some(result) = validations.next().await {
@@ -612,7 +613,9 @@ impl HestiaApp {
             .await;
             let event = match result {
                 Ok(proxy) => ProxyApplyEvent::Validated { proxy },
-                Err(err) => ProxyApplyEvent::Failed { error: format!("{err:#}") },
+                Err(err) => ProxyApplyEvent::Failed {
+                    error: format!("{err:#}"),
+                },
             };
             let _ = tx.send(event);
         });
@@ -713,7 +716,12 @@ impl HestiaApp {
             inflight.cancel.store(true, Ordering::Relaxed);
         }
 
-        for task_id in self.browse_download_inflight.keys().copied().collect::<Vec<_>>() {
+        for task_id in self
+            .browse_download_inflight
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+        {
             self.proxy_requeue_browse_downloads.insert(task_id);
             if let Some(inflight) = self.browse_download_inflight.get(&task_id) {
                 inflight.cancel.store(true, Ordering::Relaxed);
@@ -746,11 +754,9 @@ impl HestiaApp {
         if self.browse_state.character_categories_loading {
             self.request_browse_character_categories(true);
         }
-        if let Some(mod_id) = self
-            .browse_state
-            .selected_mod_id
-            .filter(|mod_id| self.browse_detail_open && self.browse_state.loading_details.contains(mod_id))
-        {
+        if let Some(mod_id) = self.browse_state.selected_mod_id.filter(|mod_id| {
+            self.browse_detail_open && self.browse_state.loading_details.contains(mod_id)
+        }) {
             self.browse_state.loading_details.remove(&mod_id);
             self.request_browse_detail(mod_id);
         }
@@ -1220,7 +1226,10 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
-        let has_enabled_xxmi_games = state.games.iter().any(|game| game.enabled && game.is_xxmi());
+        let has_enabled_xxmi_games = state
+            .games
+            .iter()
+            .any(|game| game.enabled && game.is_xxmi());
         let global_modded_needs = match state.static_prefs.modded_launcher_path_override.as_ref() {
             Some(path) => !path.is_file(),
             None => true,
@@ -1279,13 +1288,16 @@ impl HestiaApp {
             .cloned()
             .into_iter()
             .collect::<Vec<_>>();
-        let has_enabled_xxmi_games = state.games.iter().any(|game| game.enabled && game.is_xxmi());
+        let has_enabled_xxmi_games = state
+            .games
+            .iter()
+            .any(|game| game.enabled && game.is_xxmi());
         let has_missing_xxmi = has_enabled_xxmi_games
             && state
-            .static_prefs
-            .modded_launcher_path_override
-            .as_ref()
-            .is_none_or(|path| !path.is_file());
+                .static_prefs
+                .modded_launcher_path_override
+                .as_ref()
+                .is_none_or(|path| !path.is_file());
 
         let mut has_missing_game = false;
         let mut game_targets = Vec::new();
@@ -1345,7 +1357,11 @@ impl HestiaApp {
             .unwrap_or_default();
 
         let mut changed = false;
-        let has_enabled_xxmi_games = self.state.games.iter().any(|game| game.enabled && game.is_xxmi());
+        let has_enabled_xxmi_games = self
+            .state
+            .games
+            .iter()
+            .any(|game| game.enabled && game.is_xxmi());
         let global_modded_needs = match self
             .state
             .static_prefs
@@ -1398,12 +1414,17 @@ impl HestiaApp {
         let mut changed = false;
 
         if game.is_unreal_engine() {
-            let mods_needs = game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir());
+            let mods_needs = game
+                .mods_path_override
+                .as_ref()
+                .is_none_or(|path| !path.is_dir());
             if mods_needs {
                 if let Some(path) = game
                     .vanilla_exe_path_override
                     .as_ref()
-                    .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path))
+                    .and_then(|path| {
+                        default_unreal_pak_mods_path_from_exe(&game.definition.id, path)
+                    })
                     .filter(|path| path.is_dir())
                 {
                     game.mods_path_override = Some(path);
@@ -1464,10 +1485,10 @@ impl HestiaApp {
             if let Some(path) = path {
                 game.vanilla_exe_path_override = Some(path);
                 if game.is_unreal_engine() && game.mods_path_override.is_none() {
-                    game.mods_path_override = game
-                        .vanilla_exe_path_override
-                        .as_ref()
-                        .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                    game.mods_path_override =
+                        game.vanilla_exe_path_override.as_ref().and_then(|path| {
+                            default_unreal_pak_mods_path_from_exe(&game.definition.id, path)
+                        });
                 }
                 changed = true;
             }
@@ -1699,7 +1720,10 @@ impl HestiaApp {
         Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.unsafe_content_mode);
         Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_sort);
         Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_group_mode);
-        Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.library_category_display_mode);
+        Self::hash_discriminant_for_library_cache(
+            &mut hasher,
+            &prefs.library_category_display_mode,
+        );
         Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.modified_update_behavior);
         Self::hash_discriminant_for_library_cache(&mut hasher, &prefs.language);
 

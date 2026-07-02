@@ -276,6 +276,7 @@ pub struct HestiaApp {
     pending_browse_install_safety: HashMap<u64, bool>,
     pending_browse_install_meta: HashMap<u64, PendingBrowseInstallMeta>,
     gif_rewritten_markdown_cache: HashMap<String, String>,
+    render_safe_markdown_cache: HashMap<String, String>,
     browse_commonmark_cache: CommonMarkCache,
     browse_request_nonce: u64,
     browse_page_generation: u64,
@@ -831,6 +832,7 @@ struct BrowseImageInflight {
 struct BrowseImageFailure {
     url: String,
     timed_out: bool,
+    error: String,
 }
 
 #[derive(Clone)]
