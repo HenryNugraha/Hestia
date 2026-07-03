@@ -240,6 +240,15 @@ impl HestiaApp {
             .saturating_add(1);
         let texture_ram_budget_bytes = Self::detect_texture_ram_budget_bytes();
 
+        let (gif_preview_request_tx, gif_preview_request_rx) =
+            tokio_mpsc::unbounded_channel::<GifPreviewRequest>();
+        let (gif_preview_event_tx, gif_preview_event_rx) =
+            tokio_mpsc::unbounded_channel::<GifPreviewEvent>();
+        spawn_gif_preview_worker(
+            &runtime_services,
+            gif_preview_request_rx,
+            gif_preview_event_tx,
+        );
         let (gif_animation_request_tx, gif_animation_request_rx) =
             tokio_mpsc::unbounded_channel::<GifAnimationRequest>();
         let (gif_animation_event_tx, gif_animation_event_rx) =
@@ -463,12 +472,17 @@ impl HestiaApp {
             startup_path_scan,
             startup_path_scan_tx,
             startup_path_scan_rx,
+            gif_preview_request_tx,
+            gif_preview_event_rx,
             gif_animation_request_tx,
             gif_animation_event_rx,
             gif_dest_by_texture_key: HashMap::new(),
-            pending_gif_animations: HashSet::new(),
+            pending_gif_previews: HashMap::new(),
+            gif_preview_requests_in_flight: 0,
+            pending_gif_animations: HashMap::new(),
             gif_animation_requests_in_flight: 0,
             animated_gif_state: HashMap::new(),
+            visible_gif_process_texture_keys: HashSet::new(),
             visible_gif_texture_keys: HashSet::new(),
             last_visible_gif_texture_keys: HashSet::new(),
             pending_events: PendingEventsFlags::default(),
@@ -2482,13 +2496,12 @@ impl HestiaApp {
 
             // Optimization: Pre-fetch full cover image for the selected mod to avoid redundant decoding later.
             // Extract necessary data before any mutable borrows of `self`
-            let (mod_entry_id_clone, source_path_clone, markdown_content) = {
+            let (mod_entry_id_clone, source_path_clone) = {
                 if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == id) {
                     let (_, source_path, _) = Self::current_card_thumb_meta(mod_entry);
-                    let markdown = mod_primary_description_markdown(mod_entry, &self.portable);
-                    (Some(id.clone()), source_path, Some(markdown))
+                    (Some(id.clone()), source_path)
                 } else {
-                    (None, None, None)
+                    (None, None)
                 }
             };
 
@@ -2496,9 +2509,6 @@ impl HestiaApp {
             if let Some(mod_entry_id) = mod_entry_id_clone {
                 if let Some(path) = source_path_clone {
                     self.queue_mod_image_full_load(mod_entry_id.clone(), path, 10);
-                }
-                if let Some(markdown) = markdown_content {
-                    self.prewarm_markdown_images(&markdown);
                 }
             }
         } else {
@@ -2894,6 +2904,7 @@ impl HestiaApp {
         let has_events = !self.icon_result_rx.is_empty()
             || !self.mod_image_result_rx.is_empty()
             || !self.manual_image_event_rx.is_empty()
+            || !self.gif_preview_event_rx.is_empty()
             || !self.gif_animation_event_rx.is_empty()
             || !self.cover_result_rx.is_empty()
             || !self.browse_event_rx.is_empty()

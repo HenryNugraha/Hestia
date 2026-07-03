@@ -51,6 +51,16 @@ fn gif_anim_cache_path(dest: &str) -> PathBuf {
         .join(format!("{key}.gif"))
 }
 
+fn gif_preview_out_path(dest: &str, mod_root: Option<&Path>) -> PathBuf {
+    let key = hash64_hex(dest.as_bytes());
+    let base = if let Some(root) = mod_root {
+        root.join(MOD_META_DIR).join("description_gif_previews")
+    } else {
+        persistence::runtime_temp_cache_dir().join("gif_previews")
+    };
+    base.join(format!("{key}.png"))
+}
+
 fn rewrite_markdown_gif_images(markdown: &str, _mod_root: Option<&Path>) -> String {
     MARKDOWN_IMAGE_DEST_RE
         .replace_all(markdown, |caps: &regex::Captures| {
@@ -192,7 +202,7 @@ fn fetch_valid_image_bytes_bg(
     cache_key: &str,
 ) -> Result<Vec<u8>> {
     if let Some(cached) = persistence::cache_get(portable, cache_key)? {
-        if image_bytes_are_decodable(&cached) {
+        if is_gif_dest(url) || image_bytes_are_decodable(&cached) {
             return Ok(cached);
         }
         let _ = persistence::cache_remove(portable, cache_key);
@@ -204,7 +214,7 @@ fn fetch_valid_image_bytes_bg(
         .error_for_status()?
         .bytes()?
         .to_vec();
-    if !image_bytes_are_decodable(&bytes) {
+    if !is_gif_dest(url) && !image_bytes_are_decodable(&bytes) {
         bail!("downloaded image bytes could not be decoded: {url}");
     }
     Ok(bytes)
@@ -426,6 +436,10 @@ fn rewrite_markdown_urls(
                 return caps[0].to_string();
             }
 
+            if is_gif_dest(&url) {
+                return caps[0].to_string();
+            }
+
             if let (Some(root), Some(mid)) = (mod_root, gb_id) {
                 if mid > 0 {
                     let meta_dir = root.join(MOD_META_DIR);
@@ -436,14 +450,9 @@ fn rewrite_markdown_urls(
                             let name = entry.file_name().to_string_lossy().to_string();
                             if name.starts_with(&prefix) {
                                 let path = entry.path();
-                                match fs::read(&path) {
-                                    Ok(bytes) if image_bytes_are_decodable(&bytes) => {
-                                        let uri = path_to_file_uri(&path);
-                                        return format!("![{alt}](<{uri}>)");
-                                    }
-                                    _ => {
-                                        let _ = fs::remove_file(path);
-                                    }
+                                if path.is_file() {
+                                    let uri = path_to_file_uri(&path);
+                                    return format!("![{alt}](<{uri}>)");
                                 }
                             }
                         }
@@ -451,22 +460,11 @@ fn rewrite_markdown_urls(
                 }
             }
 
-            if is_gif_dest(&url) {
-                return caps[0].to_string();
-            }
-
             let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
             let cache_path = persistence::cache_file_path(&cache_key);
-            if cache_path.exists() {
-                match fs::read(&cache_path) {
-                    Ok(bytes) if image_bytes_are_decodable(&bytes) => {
-                        let uri = path_to_file_uri(&cache_path);
-                        return format!("![{alt}](<{uri}>)");
-                    }
-                    _ => {
-                        let _ = fs::remove_file(&cache_path);
-                    }
-                }
+            if cache_path.is_file() {
+                let uri = path_to_file_uri(&cache_path);
+                return format!("![{alt}](<{uri}>)");
             }
 
             caps[0].to_string()
@@ -509,7 +507,7 @@ fn markdown_image_dest_allowed_for_render(dest: &str, mod_root: Option<&Path>) -
         return false;
     }
 
-    fs::read(&path).is_ok_and(|bytes| image_bytes_are_decodable(&bytes))
+    path.is_file()
 }
 
 fn strip_untrusted_markdown_images(markdown: &str, mod_root: Option<&Path>) -> String {
@@ -617,7 +615,7 @@ fn markdown_image_dependency_signature(markdown: &str, mod_root: Option<&Path>) 
 
 fn rewrite_markdown_remote_images_for_render(
     markdown: &str,
-    portable: &PortablePaths,
+    _portable: &PortablePaths,
     mod_root: Option<&Path>,
 ) -> String {
     let markdown = MARKDOWN_IMAGE_DEST_RE
@@ -639,15 +637,8 @@ fn rewrite_markdown_remote_images_for_render(
             let texture_key = markdown_static_image_texture_key(&url);
             let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
             let cache_path = persistence::cache_file_path(&cache_key);
-            if cache_path.exists() {
-                match fs::read(&cache_path) {
-                    Ok(bytes) if image_bytes_are_decodable(&bytes) => {
-                        return format!("![{alt}]({texture_key})");
-                    }
-                    _ => {
-                        let _ = persistence::cache_remove(portable, &cache_key);
-                    }
-                }
+            if cache_path.is_file() {
+                return format!("![{alt}]({texture_key})");
             }
 
             String::new()
@@ -913,7 +904,7 @@ mod markdown_render_image_tests {
     }
 
     #[test]
-    fn prepare_removes_invalid_persisted_description_image_file() {
+    fn prepare_keeps_persisted_static_description_image_without_decoding() {
         let portable = dummy_portable_paths();
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let meta_dir = temp.path().join(MOD_META_DIR);
@@ -930,7 +921,56 @@ mod markdown_render_image_tests {
             &portable,
         );
 
+        assert!(markdown.contains(&path_to_file_uri(&image_path)));
+        assert!(image_path.exists());
+    }
+
+    #[test]
+    fn prepare_keeps_persisted_gif_on_remote_gif_path_without_reading_file() {
+        let portable = dummy_portable_paths();
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let meta_dir = temp.path().join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).expect("meta dir should be created");
+        let url = "https://images.gamebanana.com/example/desc.gif";
+        let url_hash = hash64_hex(url.as_bytes());
+        let image_path = meta_dir.join(format!("gb_desc_42_{url_hash}.gif"));
+        fs::write(&image_path, b"not a gif").expect("test gif placeholder should be written");
+
+        let markdown = prepare_markdown_for_display(
+            &format!(r#"<p>body</p><img src="{url}">"#),
+            Some(temp.path()),
+            Some(42),
+            &portable,
+        );
+
         assert!(markdown.contains(url));
-        assert!(!image_path.exists());
+        assert!(!markdown.contains(&path_to_file_uri(&image_path)));
+        assert!(image_path.exists());
+    }
+
+    #[test]
+    fn render_rewrite_uses_cached_remote_static_image_without_decoding() {
+        let portable = dummy_portable_paths();
+        let url = "https://images.gamebanana.com/example/cached-invalid.png";
+        let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
+        let _ = persistence::cache_remove(&portable, &cache_key);
+        persistence::cache_put(
+            &portable,
+            &cache_key,
+            "test-image",
+            b"not an image",
+            1024 * 1024,
+        )
+        .expect("test cache write should succeed");
+
+        let markdown = format!("![alt]({url})");
+        let rendered = rewrite_markdown_remote_images_for_render(&markdown, &portable, None);
+
+        assert_eq!(
+            rendered,
+            format!("![alt]({})", markdown_static_image_texture_key(url))
+        );
+
+        let _ = persistence::cache_remove(&portable, &cache_key);
     }
 }

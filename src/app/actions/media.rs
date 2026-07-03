@@ -854,18 +854,11 @@ impl HestiaApp {
 
             match embed {
                 InlineMarkdownEmbed::Image { texture_key } => {
-                    let animation_key = gif_animation_texture_key(&texture_key);
                     let is_gif = self.gif_dest_by_texture_key.contains_key(&texture_key);
-                    let texture = if is_gif {
-                        self.browse_image_textures
-                            .get(&animation_key)
-                            .or_else(|| self.browse_image_textures.get(&texture_key))
-                            .or_else(|| self.browse_thumb_textures.get(&texture_key))
-                    } else {
-                        self.browse_image_textures
-                            .get(&texture_key)
-                            .or_else(|| self.browse_thumb_textures.get(&texture_key))
-                    };
+                    let texture = self
+                        .browse_image_textures
+                        .get(&texture_key)
+                        .or_else(|| self.browse_thumb_textures.get(&texture_key));
                     if let Some(texture) = texture {
                         ui.add_space(8.0);
                         let response = render_inline_markdown_image(ui, texture);
@@ -875,6 +868,10 @@ impl HestiaApp {
                                 let visible_fraction =
                                     visible_rect_fraction(response.rect, ui.clip_rect());
                                 if visible_fraction >= GIF_PROCESS_VISIBLE_THRESHOLD {
+                                    self.visible_gif_process_texture_keys
+                                        .insert(texture_key.clone());
+                                }
+                                if visible_fraction >= GIF_ANIMATE_VISIBLE_THRESHOLD {
                                     self.ensure_gif_animation_requested(
                                         ui.ctx(),
                                         &texture_key,
@@ -883,39 +880,55 @@ impl HestiaApp {
                                             response.rect.height().round().max(1.0) as u32,
                                         ],
                                     );
-                                }
-                                if visible_fraction >= GIF_ANIMATE_VISIBLE_THRESHOLD
-                                    && self.animated_gif_state.contains_key(&texture_key)
-                                {
                                     self.mark_gif_animation_visible(ui.ctx(), &texture_key);
+                                    if self.animated_gif_state.contains_key(&texture_key) {
+                                        let animation_key = gif_animation_texture_key(&texture_key);
+                                        if let Some(texture) =
+                                            self.browse_image_textures.get(&animation_key)
+                                        {
+                                            egui::Image::new(texture)
+                                                .fit_to_exact_size(response.rect.size())
+                                                .paint_at(ui, response.rect);
+                                        }
+                                    }
                                 }
                             }
                             if response.clicked() {
-                                let overlay_texture_key = if is_gif
-                                    && self.browse_image_textures.contains_key(&animation_key)
-                                {
-                                    animation_key.clone()
-                                } else {
-                                    texture_key.clone()
-                                };
                                 self.browse_state.screenshot_overlay = Some(BrowseOverlayImage {
-                                    texture_key: overlay_texture_key,
+                                    texture_key: texture_key.clone(),
                                     caption: None,
                                 });
                             }
                         }
                     } else if is_gif {
                         ui.add_space(8.0);
-                        let pending = self.pending_gif_animations.contains(&texture_key);
+                        let preview_pending = self
+                            .gif_dest_by_texture_key
+                            .get(&texture_key)
+                            .map(|dest| {
+                                let max_width = gif_preview_max_width(ui.available_width());
+                                let out_png = sized_gif_preview_out_path(
+                                    gif_preview_out_path(dest, mod_root),
+                                    max_width,
+                                );
+                                self.pending_gif_previews
+                                    .contains_key(&out_png.to_string_lossy().to_string())
+                            })
+                            .unwrap_or(false);
+                        let pending = preview_pending
+                            || self.pending_gif_animations.contains_key(&texture_key);
                         let response = render_inline_gif_placeholder(ui, pending);
                         ui.add_space(8.0);
                         let visible_fraction = visible_rect_fraction(response.rect, ui.clip_rect());
                         if visible_fraction >= GIF_PROCESS_VISIBLE_THRESHOLD {
+                            self.visible_gif_process_texture_keys
+                                .insert(texture_key.clone());
                             let width = response.rect.width().round().max(1.0) as u32;
-                            self.ensure_gif_animation_requested(
+                            self.ensure_gif_preview_requested(
                                 ui.ctx(),
                                 &texture_key,
-                                [width, GIF_ANIMATION_MAX_DIMENSION],
+                                mod_root,
+                                width as f32,
                             );
                         }
                     }
@@ -1062,10 +1075,9 @@ impl HestiaApp {
                     texture_key,
                     animation,
                 } => {
-                    if !self.pending_gif_animations.remove(&texture_key) {
+                    if self.pending_gif_animations.remove(&texture_key).is_none() {
                         continue;
                     }
-
                     // Get current time for animation timing
                     let now = ctx.input(|i| i.time);
 
@@ -1096,14 +1108,20 @@ impl HestiaApp {
                     self.browse_commonmark_cache = CommonMarkCache::default();
                     ctx.request_repaint();
                 }
-                GifAnimationEvent::Failed { texture_key, error } => {
-                    if !self.pending_gif_animations.remove(&texture_key) {
+                GifAnimationEvent::Failed {
+                    texture_key,
+                    error,
+                    cancelled,
+                } => {
+                    if self.pending_gif_animations.remove(&texture_key).is_none() {
                         continue;
                     }
-                    self.report_warn(
-                        format!("failed to decode GIF animation for {texture_key}: {error}"),
-                        None,
-                    );
+                    if !cancelled {
+                        self.report_warn(
+                            format!("failed to decode GIF animation for {texture_key}: {error}"),
+                            None,
+                        );
+                    }
                     ctx.request_repaint();
                 }
             }
@@ -1116,15 +1134,16 @@ impl HestiaApp {
         texture_key: &str,
         max_size: [u32; 2],
     ) {
-        let max_size = gif_animation_max_size(max_size);
         if self.animated_gif_state.contains_key(texture_key) {
             return;
         }
-        if self.pending_gif_animations.contains(texture_key) {
+        if self.pending_gif_animations.contains_key(texture_key) {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
-        if self.gif_animation_requests_in_flight >= GIF_ANIMATION_MAX_IN_FLIGHT {
+        if self.gif_animation_requests_in_flight >= GIF_ANIMATION_MAX_IN_FLIGHT
+            || self.gif_requests_in_flight() >= GIF_MAX_IN_FLIGHT
+        {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
@@ -1132,18 +1151,21 @@ impl HestiaApp {
         let Some(dest) = self.gif_dest_by_texture_key.get(texture_key).cloned() else {
             return;
         };
+        let cancel = Arc::new(AtomicBool::new(false));
 
         let request = if let Some(path) = file_uri_to_path(&dest) {
             Some(GifAnimationRequest::FromFile {
                 src_path: path,
                 texture_key: texture_key.to_string(),
                 max_size,
+                cancel: Arc::clone(&cancel),
             })
         } else if dest.starts_with("http://") || dest.starts_with("https://") {
             Some(GifAnimationRequest::FromUrl {
                 url: dest,
                 texture_key: texture_key.to_string(),
                 max_size,
+                cancel: Arc::clone(&cancel),
             })
         } else {
             None
@@ -1151,7 +1173,8 @@ impl HestiaApp {
 
         if let Some(request) = request {
             let texture_key = texture_key.to_string();
-            self.pending_gif_animations.insert(texture_key.clone());
+            self.pending_gif_animations
+                .insert(texture_key.clone(), cancel);
             if self.gif_animation_request_tx.send(request).is_err() {
                 self.pending_gif_animations.remove(&texture_key);
             } else {
@@ -1167,6 +1190,18 @@ impl HestiaApp {
         if !self.last_visible_gif_texture_keys.contains(texture_key) {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
+    }
+
+    fn cancel_invisible_gif_work(&mut self) {
+        for (texture_key, cancel) in &self.pending_gif_animations {
+            if !self.visible_gif_texture_keys.contains(texture_key) {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn gif_requests_in_flight(&self) -> usize {
+        self.gif_preview_requests_in_flight + self.gif_animation_requests_in_flight
     }
 
     fn update_gif_animations(&mut self, ctx: &egui::Context) {
@@ -1242,7 +1277,47 @@ impl HestiaApp {
         }
     }
 
-    fn register_gif_dests_for_markdown(&mut self, markdown: &str, mod_root: Option<&Path>) {
+    fn consume_gif_preview_events(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.gif_preview_event_rx.try_recv() {
+            self.gif_preview_requests_in_flight =
+                self.gif_preview_requests_in_flight.saturating_sub(1);
+            match event {
+                GifPreviewEvent::Ready {
+                    out_png,
+                    gif_dest,
+                    image,
+                } => {
+                    let out_key = out_png.to_string_lossy().to_string();
+                    let Some(pending) = self.pending_gif_previews.remove(&out_key) else {
+                        continue;
+                    };
+                    let texture_key = format!("gif-preview-{}", hash64_hex(gif_dest.as_bytes()));
+                    if pending.texture_key != texture_key {
+                        continue;
+                    }
+
+                    let texture =
+                        ctx.load_texture(&texture_key, image, egui::TextureOptions::LINEAR);
+                    self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
+                    self.browse_commonmark_cache = CommonMarkCache::default();
+                }
+                GifPreviewEvent::Failed { out_png } => {
+                    let out_key = out_png.to_string_lossy().to_string();
+                    self.pending_gif_previews.remove(&out_key);
+                }
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    fn queue_gif_previews_for_markdown(
+        &mut self,
+        ctx: &egui::Context,
+        markdown: &str,
+        mod_root: Option<&Path>,
+        max_width: f32,
+    ) {
+        let max_width = gif_preview_max_width(max_width);
         for dest in extract_markdown_image_dests(markdown) {
             if !is_gif_dest(&dest) {
                 continue;
@@ -1259,7 +1334,111 @@ impl HestiaApp {
             }
 
             let texture_key = format!("gif-preview-{}", hash64_hex(dest.as_bytes()));
-            self.gif_dest_by_texture_key.insert(texture_key, dest);
+            self.gif_dest_by_texture_key
+                .insert(texture_key.clone(), dest.clone());
+            if self
+                .browse_image_textures
+                .get(&texture_key)
+                .is_some_and(|texture| texture.size()[0] as u32 >= max_width)
+            {
+                continue;
+            }
+
+            self.ensure_gif_preview_requested(ctx, &texture_key, mod_root, max_width as f32);
+        }
+    }
+
+    fn ensure_gif_preview_requested(
+        &mut self,
+        ctx: &egui::Context,
+        texture_key: &str,
+        mod_root: Option<&Path>,
+        max_width: f32,
+    ) {
+        if self.browse_image_textures.contains_key(texture_key) {
+            return;
+        }
+        let max_width = gif_preview_max_width(max_width);
+        let Some(dest) = self.gif_dest_by_texture_key.get(texture_key).cloned() else {
+            return;
+        };
+        let local_path =
+            file_uri_to_path(&dest).filter(|path| is_hestia_controlled_image_path(path, mod_root));
+        let remote_url = if dest.starts_with("http://") || dest.starts_with("https://") {
+            Some(dest.clone())
+        } else {
+            None
+        };
+        if local_path.is_none() && remote_url.is_none() {
+            return;
+        }
+
+        let out_png = sized_gif_preview_out_path(gif_preview_out_path(&dest, mod_root), max_width);
+        if out_png.exists() {
+            if let Ok(bytes) = std::fs::read(&out_png) {
+                if let Some(image) = load_cover_color_image(&bytes) {
+                    let texture =
+                        ctx.load_texture(texture_key, image, egui::TextureOptions::LINEAR);
+                    self.insert_tracked_texture(
+                        TextureKind::BrowseFull,
+                        texture_key.to_string(),
+                        3,
+                        texture,
+                    );
+                    self.browse_commonmark_cache = CommonMarkCache::default();
+                    ctx.request_repaint();
+                }
+            }
+            return;
+        }
+
+        let out_key = out_png.to_string_lossy().to_string();
+        if self.pending_gif_previews.contains_key(&out_key) {
+            return;
+        }
+        if self.gif_preview_requests_in_flight >= GIF_PREVIEW_MAX_IN_FLIGHT
+            || self.gif_requests_in_flight() >= GIF_MAX_IN_FLIGHT
+        {
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        }
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.pending_gif_previews.insert(
+            out_key.clone(),
+            PendingGifPreview {
+                texture_key: texture_key.to_string(),
+                cancel: Arc::clone(&cancel),
+            },
+        );
+        let sent = if let Some(path) = local_path {
+            self.gif_preview_request_tx
+                .send(GifPreviewRequest::FromFile {
+                    src_path: path,
+                    out_png,
+                    gif_dest: dest,
+                    max_width,
+                    cancel: Arc::clone(&cancel),
+                })
+                .is_ok()
+        } else if let Some(url) = remote_url {
+            self.gif_preview_request_tx
+                .send(GifPreviewRequest::FromUrl {
+                    url,
+                    out_png,
+                    gif_dest: dest,
+                    max_width,
+                    cancel: Arc::clone(&cancel),
+                })
+                .is_ok()
+        } else {
+            false
+        };
+
+        if sent {
+            self.gif_preview_requests_in_flight += 1;
+        } else {
+            self.pending_gif_previews.remove(&out_key);
         }
     }
 
@@ -1379,11 +1558,10 @@ fn render_inline_markdown_image(
     )
 }
 
-fn render_inline_gif_placeholder(ui: &mut Ui, pending: bool) -> egui::Response {
+fn render_inline_gif_placeholder(ui: &mut Ui, _pending: bool) -> egui::Response {
     let width = ui.available_width().max(1.0);
-    let height = 84.0;
+    let height = 44.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    let visuals = ui.visuals();
     let fill = if response.hovered() {
         Color32::from_rgb(43, 45, 49)
     } else {
@@ -1396,41 +1574,23 @@ fn render_inline_gif_placeholder(ui: &mut Ui, pending: bool) -> egui::Response {
         egui::Stroke::new(1.0, Color32::from_rgb(76, 78, 84)),
         egui::StrokeKind::Outside,
     );
-    let title = if pending { "Loading GIF" } else { "GIF" };
-    let subtitle = if pending {
-        "Preparing animation"
-    } else {
-        "Waiting"
-    };
     ui.painter().text(
-        rect.center_top() + egui::vec2(0.0, 22.0),
-        egui::Align2::CENTER_TOP,
-        title,
-        egui::FontId::proportional(16.0),
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Loading GIF...",
+        egui::FontId::proportional(13.0),
         Color32::from_gray(225),
-    );
-    ui.painter().text(
-        rect.center_top() + egui::vec2(0.0, 48.0),
-        egui::Align2::CENTER_TOP,
-        subtitle,
-        egui::FontId::proportional(12.0),
-        visuals.weak_text_color(),
     );
     response
 }
 
-fn gif_animation_texture_key(texture_key: &str) -> String {
-    format!("{texture_key}:anim")
+fn gif_preview_max_width(width: f32) -> u32 {
+    let width = width.ceil().clamp(1.0, 4096.0) as u32;
+    width.div_ceil(64).saturating_mul(64).min(4096)
 }
 
-fn gif_animation_max_size(max_size: [u32; 2]) -> [u32; 2] {
-    let width = max_size[0].max(1);
-    let height = max_size[1].max(1);
-    let scale = (GIF_ANIMATION_MAX_DIMENSION as f32 / width.max(height) as f32).min(1.0);
-    [
-        ((width as f32 * scale).round() as u32).max(1),
-        ((height as f32 * scale).round() as u32).max(1),
-    ]
+fn gif_animation_texture_key(texture_key: &str) -> String {
+    format!("{texture_key}:anim")
 }
 
 fn visible_rect_fraction(rect: egui::Rect, clip_rect: egui::Rect) -> f32 {
@@ -1446,4 +1606,18 @@ fn visible_rect_fraction(rect: egui::Rect, clip_rect: egui::Rect) -> f32 {
     let width = (intersection_max.x - intersection_min.x).max(0.0);
     let height = (intersection_max.y - intersection_min.y).max(0.0);
     (width * height / area).clamp(0.0, 1.0)
+}
+
+fn sized_gif_preview_out_path(path: PathBuf, max_width: u32) -> PathBuf {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return path;
+    };
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    let file_name = match extension {
+        Some(extension) if !extension.is_empty() => {
+            format!("{stem}_w{max_width}.{extension}")
+        }
+        _ => format!("{stem}_w{max_width}"),
+    };
+    path.with_file_name(file_name)
 }

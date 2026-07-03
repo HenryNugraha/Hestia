@@ -18,6 +18,242 @@ fn spawn_icon_worker(
         }
     });
 }
+
+async fn download_gif_bytes_with_cancel(
+    client: &ClientWithMiddleware,
+    url: &str,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>> {
+    if cancel.load(Ordering::Relaxed) {
+        bail!("gif work cancelled");
+    }
+    let response = client.get(url).send().await?.error_for_status()?;
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::Relaxed) {
+            bail!("gif work cancelled");
+        }
+        let chunk = chunk?;
+        bytes.extend_from_slice(&chunk);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        bail!("gif work cancelled");
+    }
+    Ok(bytes)
+}
+
+fn spawn_gif_preview_worker(
+    runtime_services: &RuntimeServices,
+    mut rx: WorkerRx<GifPreviewRequest>,
+    tx: WorkerTx<GifPreviewEvent>,
+) {
+    let runtime_services = runtime_services.clone();
+    let handle = runtime_services.handle();
+    let limiter = Arc::clone(&runtime_services.full_decode_limiter);
+    runtime_services.clone().spawn(async move {
+        while let Some(request) = rx.recv().await {
+            let client = runtime_services.http_client();
+            let handle = handle.clone();
+            let tx = tx.clone();
+            let limiter = limiter.clone();
+            tokio::spawn(async move {
+                let (out_png, gif_dest, max_width, cache_path, from_cache, cancel, res) =
+                    match &request {
+                        GifPreviewRequest::FromFile {
+                            src_path,
+                            out_png,
+                            gif_dest,
+                            max_width,
+                            cancel,
+                        } => {
+                            let cancel = Arc::clone(cancel);
+                            let bytes_res = if cancel.load(Ordering::Relaxed) {
+                                Err(anyhow!("gif preview cancelled"))
+                            } else {
+                                match tokio::fs::read(&src_path).await {
+                                    Ok(_bytes) if cancel.load(Ordering::Relaxed) => {
+                                        Err(anyhow!("gif preview cancelled"))
+                                    }
+                                    Ok(bytes) => Ok(bytes),
+                                    Err(err) => Err(anyhow!(
+                                        "failed to read gif file {}: {err}",
+                                        src_path.display()
+                                    )),
+                                }
+                            };
+                            (
+                                out_png.clone(),
+                                gif_dest.clone(),
+                                *max_width,
+                                None,
+                                false,
+                                cancel,
+                                bytes_res,
+                            )
+                        }
+                        GifPreviewRequest::FromUrl {
+                            url,
+                            out_png,
+                            gif_dest,
+                            max_width,
+                            cancel,
+                        } => {
+                            let cancel = Arc::clone(cancel);
+                            let cache_path = gif_anim_cache_path(url);
+                            let from_cache = cache_path.exists();
+                            let bytes_res = async {
+                                if from_cache {
+                                    if cancel.load(Ordering::Relaxed) {
+                                        return Err(anyhow!("gif preview cancelled"));
+                                    }
+                                    match tokio::fs::read(&cache_path).await {
+                                        Ok(_bytes) if cancel.load(Ordering::Relaxed) => {
+                                            Err(anyhow!("gif preview cancelled"))
+                                        }
+                                        Ok(bytes) => Ok(bytes),
+                                        Err(err) => Err(anyhow!(
+                                            "failed to read cached gif {}: {err}",
+                                            cache_path.display()
+                                        )),
+                                    }
+                                } else {
+                                    let mut retries = 0u32;
+                                    let max_retries = 3u32;
+                                    loop {
+                                        let result =
+                                            download_gif_bytes_with_cancel(&client, url, &cancel)
+                                                .await;
+                                        match result {
+                                            Ok(bytes) => return Ok(bytes),
+                                            Err(err) if cancel.load(Ordering::Relaxed) => {
+                                                return Err(err);
+                                            }
+                                            Err(_err) if retries < max_retries => {
+                                                retries += 1;
+                                                let backoff_ms = 100 * (2_u64.pow(retries - 1));
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_millis(backoff_ms),
+                                                )
+                                                .await;
+                                            }
+                                            Err(err) => return Err(err),
+                                        }
+                                    }
+                                }
+                            }
+                            .await;
+                            (
+                                out_png.clone(),
+                                gif_dest.clone(),
+                                *max_width,
+                                Some(cache_path),
+                                from_cache,
+                                cancel,
+                                bytes_res,
+                            )
+                        }
+                    };
+
+                let res = match res {
+                    Ok(bytes) => {
+                        let bytes_for_cache = bytes.clone();
+                        let out_png_for_job = out_png.clone();
+                        let cancel_for_job = Arc::clone(&cancel);
+                        let _permit = limiter.acquire().await.ok();
+                        let job = handle.spawn_blocking(move || -> Result<egui::ColorImage> {
+                            use image::AnimationDecoder;
+                            use image::DynamicImage;
+                            use image::ImageDecoder;
+                            use image::ImageEncoder;
+                            use std::io::Cursor;
+
+                            if cancel_for_job.load(Ordering::Relaxed) {
+                                bail!("gif preview cancelled");
+                            }
+                            let mut decoder =
+                                image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+                                    .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
+                            decoder
+                                .set_limits(image_decode_limits())
+                                .map_err(|err| anyhow!("gif exceeded decode limits: {err}"))?;
+                            let mut frames = decoder.into_frames();
+                            let frame = frames
+                                .next()
+                                .ok_or_else(|| anyhow!("gif contained no frames"))?
+                                .map_err(|err| anyhow!("failed to decode gif frame: {err}"))?;
+                            if cancel_for_job.load(Ordering::Relaxed) {
+                                bail!("gif preview cancelled");
+                            }
+                            let dynamic_img = DynamicImage::ImageRgba8(frame.into_buffer());
+                            let rgba_buf = dynamic_img.to_rgba8();
+                            let width = rgba_buf.width();
+                            let height = rgba_buf.height();
+                            let (width, height, rgba) = resize_rgba_to_fit_rgba(
+                                width,
+                                height,
+                                rgba_buf.into_raw(),
+                                [max_width, height],
+                            )
+                            .ok_or_else(|| anyhow!("failed to resize gif preview"))?;
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                [width as usize, height as usize],
+                                &rgba,
+                            );
+                            let mut out = Vec::new();
+                            let encoder = image::codecs::png::PngEncoder::new(&mut out);
+                            encoder
+                                .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
+                                .map_err(|err| {
+                                    anyhow!("failed to encode gif preview png: {err}")
+                                })?;
+                            persistence::write_atomic_bytes(&out_png_for_job, &out)
+                                .map_err(|err| anyhow!("failed to write gif preview: {err}"))?;
+                            Ok(color_image)
+                        });
+                        match job.await {
+                            Ok(Ok(image)) => {
+                                if cancel.load(Ordering::Relaxed) {
+                                    Err(anyhow!("gif preview cancelled"))
+                                } else {
+                                    if let Some(cache_path) = cache_path.filter(|_| !from_cache) {
+                                        let _ = persistence::write_atomic_bytes(
+                                            &cache_path,
+                                            &bytes_for_cache,
+                                        );
+                                    }
+                                    Ok(image)
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                if let Some(cache_path) = cache_path.filter(|_| from_cache) {
+                                    let _ = std::fs::remove_file(cache_path);
+                                }
+                                Err(err)
+                            }
+                            Err(err) => Err(anyhow!("gif preview join failed: {err}")),
+                        }
+                    }
+                    Err(err) => Err(err),
+                };
+
+                match res {
+                    Ok(image) if !cancel.load(Ordering::Relaxed) => {
+                        let _ = tx.send(GifPreviewEvent::Ready {
+                            out_png,
+                            gif_dest,
+                            image,
+                        });
+                    }
+                    Ok(_) | Err(_) => {
+                        let _ = tx.send(GifPreviewEvent::Failed { out_png });
+                    }
+                }
+            });
+        }
+    });
+}
+
 fn spawn_gif_animation_worker(
     runtime_services: &RuntimeServices,
     mut rx: WorkerRx<GifAnimationRequest>,
@@ -33,75 +269,83 @@ fn spawn_gif_animation_worker(
             let tx = tx.clone();
             let limiter = limiter.clone();
             tokio::spawn(async move {
-                let (texture_key, max_size, cache_path, from_cache, res) = match &request {
+                let (texture_key, max_size, cache_path, from_cache, cancel, res) = match &request {
                     GifAnimationRequest::FromFile {
                         src_path,
                         texture_key,
                         max_size,
+                        cancel,
                     } => {
-                        let bytes_res = tokio::fs::read(&src_path).await.map_err(|err| {
-                            anyhow!("failed to read gif file {}: {err}", src_path.display())
-                        });
-                        (texture_key.clone(), *max_size, None, false, bytes_res)
+                        let cancel = Arc::clone(cancel);
+                        let bytes_res = if cancel.load(Ordering::Relaxed) {
+                            Err(anyhow!("gif animation cancelled"))
+                        } else {
+                            match tokio::fs::read(&src_path).await {
+                                Ok(_bytes) if cancel.load(Ordering::Relaxed) => {
+                                    Err(anyhow!("gif animation cancelled"))
+                                }
+                                Ok(bytes) => Ok(bytes),
+                                Err(err) => Err(anyhow!(
+                                    "failed to read gif file {}: {err}",
+                                    src_path.display()
+                                )),
+                            }
+                        };
+                        (
+                            texture_key.clone(),
+                            *max_size,
+                            None,
+                            false,
+                            cancel,
+                            bytes_res,
+                        )
                     }
                     GifAnimationRequest::FromUrl {
                         url,
                         texture_key,
                         max_size,
+                        cancel,
                     } => {
+                        let cancel = Arc::clone(cancel);
                         let cache_path = gif_anim_cache_path(url);
                         let from_cache = cache_path.exists();
                         let bytes_res = async {
                             if from_cache {
-                                tokio::fs::read(&cache_path).await.map_err(|err| {
-                                    anyhow!(
+                                if cancel.load(Ordering::Relaxed) {
+                                    return Err(anyhow!("gif animation cancelled"));
+                                }
+                                match tokio::fs::read(&cache_path).await {
+                                    Ok(_bytes) if cancel.load(Ordering::Relaxed) => {
+                                        Err(anyhow!("gif animation cancelled"))
+                                    }
+                                    Ok(bytes) => Ok(bytes),
+                                    Err(err) => Err(anyhow!(
                                         "failed to read cached gif {}: {err}",
                                         cache_path.display()
-                                    )
-                                })
+                                    )),
+                                }
                             } else {
                                 let mut retries = 0u32;
                                 let max_retries = 3u32;
                                 let bytes = loop {
-                                    match client.get(url).send().await {
-                                        Ok(response) => match response.error_for_status() {
-                                            Ok(resp) => match resp.bytes().await {
-                                                Ok(bytes) => break bytes.to_vec(),
-                                                Err(_e) if retries < max_retries => {
-                                                    retries += 1;
-                                                    let backoff_ms = 100 * (2_u64.pow(retries - 1));
-                                                    tokio::time::sleep(
-                                                        std::time::Duration::from_millis(
-                                                            backoff_ms,
-                                                        ),
-                                                    )
-                                                    .await;
-                                                    continue;
-                                                }
-                                                Err(e) => {
-                                                    return Err(anyhow!(
-                                                        "failed to read gif body for {url}: {e}"
-                                                    ));
-                                                }
-                                            },
-                                            Err(e) => {
-                                                return Err(anyhow!(
-                                                    "gif request failed for {url}: {e}"
-                                                ));
-                                            }
-                                        },
-                                        Err(_e) if retries < max_retries => {
+                                    let result =
+                                        download_gif_bytes_with_cancel(&client, url, &cancel).await;
+                                    match result {
+                                        Ok(bytes) => break bytes,
+                                        Err(err) if cancel.load(Ordering::Relaxed) => {
+                                            return Err(err);
+                                        }
+                                        Err(_err) if retries < max_retries => {
                                             retries += 1;
                                             let backoff_ms = 100 * (2_u64.pow(retries - 1));
                                             tokio::time::sleep(std::time::Duration::from_millis(
                                                 backoff_ms,
                                             ))
                                             .await;
-                                            continue;
                                         }
-                                        Err(e) => {
+                                        Err(err) => {
                                             return Err(anyhow!(
-                                                "failed to download gif {url}: {e}"
+                                                "failed to download gif {url}: {err}"
                                             ));
                                         }
                                     }
@@ -115,6 +359,7 @@ fn spawn_gif_animation_worker(
                             *max_size,
                             Some(cache_path),
                             from_cache,
+                            cancel,
                             bytes_res,
                         )
                     }
@@ -122,11 +367,15 @@ fn spawn_gif_animation_worker(
                 let res = match res {
                     Ok(bytes) => {
                         let bytes_for_cache = bytes.clone();
+                        let cancel_for_job = Arc::clone(&cancel);
                         let _permit = limiter.acquire().await.ok();
                         let job = handle.spawn_blocking(move || -> Result<GifAnimation> {
                             use image::AnimationDecoder;
                             use image::ImageDecoder;
                             use std::io::Cursor;
+                            if cancel_for_job.load(Ordering::Relaxed) {
+                                bail!("gif animation cancelled");
+                            }
                             let mut decoder =
                                 image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
                                     .map_err(|err| anyhow!("failed to decode gif: {err}"))?;
@@ -137,6 +386,9 @@ fn spawn_gif_animation_worker(
                             let mut frames = Vec::new();
                             let mut total_rgba_bytes = 0_u64;
                             for (frame_num, frame_result) in frames_iter.enumerate() {
+                                if cancel_for_job.load(Ordering::Relaxed) {
+                                    bail!("gif animation cancelled");
+                                }
                                 if frame_num >= GIF_ANIMATION_MAX_FRAMES {
                                     break;
                                 }
@@ -146,9 +398,10 @@ fn spawn_gif_animation_worker(
                                 let delay = frame.delay();
                                 let (numer, denom) = delay.numer_denom_ms();
                                 let delay_ms = if denom > 0 {
-                                    (numer as u32 / denom as u32).max(10)
+                                    (numer as u32 / denom as u32)
+                                        .max(GIF_ANIMATION_MIN_FRAME_DELAY_MS)
                                 } else {
-                                    10
+                                    GIF_ANIMATION_MIN_FRAME_DELAY_MS
                                 };
                                 let dynamic_img =
                                     image::DynamicImage::ImageRgba8(frame.into_buffer());
@@ -186,17 +439,24 @@ fn spawn_gif_animation_worker(
                             if frames.is_empty() {
                                 return Err(anyhow!("gif contained no frames"));
                             }
+                            if cancel_for_job.load(Ordering::Relaxed) {
+                                bail!("gif animation cancelled");
+                            }
                             Ok(GifAnimation { frames })
                         });
                         match job.await {
                             Ok(Ok(animation)) => {
-                                if let Some(cache_path) = cache_path.filter(|_| !from_cache) {
-                                    let _ = persistence::write_atomic_bytes(
-                                        &cache_path,
-                                        &bytes_for_cache,
-                                    );
+                                if cancel.load(Ordering::Relaxed) {
+                                    Err(anyhow!("gif animation cancelled"))
+                                } else {
+                                    if let Some(cache_path) = cache_path.filter(|_| !from_cache) {
+                                        let _ = persistence::write_atomic_bytes(
+                                            &cache_path,
+                                            &bytes_for_cache,
+                                        );
+                                    }
+                                    Ok(animation)
                                 }
-                                Ok(animation)
                             }
                             Ok(Err(err)) => {
                                 if let Some(cache_path) = cache_path.filter(|_| from_cache) {
@@ -210,16 +470,24 @@ fn spawn_gif_animation_worker(
                     Err(err) => Err(err),
                 };
                 match res {
-                    Ok(animation) => {
+                    Ok(animation) if !cancel.load(Ordering::Relaxed) => {
                         let _ = tx.send(GifAnimationEvent::Ready {
                             texture_key,
                             animation,
+                        });
+                    }
+                    Ok(_) => {
+                        let _ = tx.send(GifAnimationEvent::Failed {
+                            texture_key,
+                            error: "gif animation cancelled".to_string(),
+                            cancelled: true,
                         });
                     }
                     Err(err) => {
                         let _ = tx.send(GifAnimationEvent::Failed {
                             texture_key,
                             error: format!("{err:#}"),
+                            cancelled: cancel.load(Ordering::Relaxed),
                         });
                     }
                 }
@@ -711,6 +979,16 @@ fn resize_rgba_to_fit_rgba(
     rgba: Vec<u8>,
     max_size: [u32; 2],
 ) -> Option<(u32, u32, Vec<u8>)> {
+    resize_rgba_to_fit_rgba_with_options(src_w, src_h, rgba, max_size, fir::ResizeOptions::new())
+}
+
+fn resize_rgba_to_fit_rgba_with_options(
+    src_w: u32,
+    src_h: u32,
+    rgba: Vec<u8>,
+    max_size: [u32; 2],
+    options: fir::ResizeOptions,
+) -> Option<(u32, u32, Vec<u8>)> {
     if src_w == 0 || src_h == 0 {
         return None;
     }
@@ -730,7 +1008,6 @@ fn resize_rgba_to_fit_rgba(
         fir::images::Image::from_vec_u8(src_w, src_h, rgba, fir::PixelType::U8x4).ok()?;
     let mut dst_image = fir::images::Image::new(dst_w, dst_h, fir::PixelType::U8x4);
     thread_local! {         static RESIZER: std::cell::RefCell<fir::Resizer> =             std::cell::RefCell::new(fir::Resizer::new());     }
-    let options = fir::ResizeOptions::new();
     let success = RESIZER.with(|r| {
         r.borrow_mut()
             .resize(&mut src_image, &mut dst_image, &options)

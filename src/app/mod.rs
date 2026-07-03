@@ -88,6 +88,7 @@ impl eframe::App for HestiaApp {
             self.consume_icon_results(ctx);
             self.consume_mod_image_results();
             self.consume_manual_image_events();
+            self.consume_gif_preview_events(ctx);
             self.consume_gif_animation_events(ctx);
             self.consume_cover_results(ctx);
             self.consume_browse_events();
@@ -106,8 +107,10 @@ impl eframe::App for HestiaApp {
         self.complete_startup_launch(ctx);
         
         // Always run these - they have internal checks or are always needed
+        self.cancel_invisible_gif_work();
         self.update_gif_animations(ctx);
         self.last_visible_gif_texture_keys = std::mem::take(&mut self.visible_gif_texture_keys);
+        self.visible_gif_process_texture_keys.clear();
         self.evict_textures_to_budget(ctx.input(|i| i.time));
         self.enforce_browse_page_timeout();
         self.detect_drag_and_drop(ctx);

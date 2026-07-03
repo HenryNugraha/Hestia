@@ -1827,9 +1827,11 @@ impl HestiaApp {
                                             );
                                         });
                                         if !entry.markdown.trim().is_empty() {
-                                            self.register_gif_dests_for_markdown(
+                                            self.queue_gif_previews_for_markdown(
+                                                ui.ctx(),
                                                 &entry.markdown,
                                                 None,
+                                                ui.available_width(),
                                             );
                                             let markdown = self.cached_rewrite_markdown_gif_images(
                                                 &entry.markdown,
@@ -2064,7 +2066,12 @@ impl HestiaApp {
                             });
                         }
 
-                        self.register_gif_dests_for_markdown(&detail.markdown, None);
+                        self.queue_gif_previews_for_markdown(
+                            ui.ctx(),
+                            &detail.markdown,
+                            None,
+                            ui.available_width(),
+                        );
                         let markdown =
                             self.cached_rewrite_markdown_gif_images(&detail.markdown, None);
                         self.prewarm_markdown_images(&markdown);

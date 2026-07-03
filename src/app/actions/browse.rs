@@ -593,8 +593,20 @@ impl HestiaApp {
         self.gif_rewritten_markdown_cache.clear();
         self.render_safe_markdown_cache.clear();
         self.gif_dest_by_texture_key.clear();
+        for pending in self.pending_gif_previews.values() {
+            pending.cancel.store(true, Ordering::Relaxed);
+        }
+        self.pending_gif_previews.clear();
+        self.gif_preview_requests_in_flight = 0;
+        for cancel in self.pending_gif_animations.values() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.pending_gif_animations.clear();
+        self.gif_animation_requests_in_flight = 0;
         self.animated_gif_state.clear();
+        self.visible_gif_process_texture_keys.clear();
+        self.visible_gif_texture_keys.clear();
+        self.last_visible_gif_texture_keys.clear();
     }
 
     fn prune_browse_detail_cache(&mut self) {
@@ -1153,7 +1165,7 @@ impl HestiaApp {
                         for cap in image_regex.captures_iter(&markdown) {
                             if let Some(url_match) = cap.get(2) {
                                 let url = url_match.as_str();
-                                if url.starts_with("http") {
+                                if url.starts_with("http") && !is_gif_dest(url) {
                                     description_image_keys.insert(hash64_hex(url.as_bytes()));
                                     description_image_keys.insert(Self::browse_thumb_texture_key(
                                         url,

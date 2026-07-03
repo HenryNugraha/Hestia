@@ -325,12 +325,17 @@ pub struct HestiaApp {
     startup_path_scan: Option<StartupPathScanState>,
     startup_path_scan_tx: WorkerTx<StartupPathScanEvent>,
     startup_path_scan_rx: WorkerRx<StartupPathScanEvent>,
+    gif_preview_request_tx: WorkerTx<GifPreviewRequest>,
+    gif_preview_event_rx: WorkerRx<GifPreviewEvent>,
     gif_animation_request_tx: WorkerTx<GifAnimationRequest>,
     gif_animation_event_rx: WorkerRx<GifAnimationEvent>,
     gif_dest_by_texture_key: HashMap<String, String>,
-    pending_gif_animations: HashSet<String>,
+    pending_gif_previews: HashMap<String, PendingGifPreview>,
+    gif_preview_requests_in_flight: usize,
+    pending_gif_animations: HashMap<String, Arc<AtomicBool>>,
     gif_animation_requests_in_flight: usize,
     animated_gif_state: HashMap<String, AnimatedGifState>,
+    visible_gif_process_texture_keys: HashSet<String>,
     visible_gif_texture_keys: HashSet<String>,
     last_visible_gif_texture_keys: HashSet<String>,
     pending_events: PendingEventsFlags,
@@ -671,16 +676,51 @@ struct GifAnimation {
     frames: Vec<GifAnimationFrame>,
 }
 
+struct PendingGifPreview {
+    texture_key: String,
+    cancel: Arc<AtomicBool>,
+}
+
+enum GifPreviewRequest {
+    FromFile {
+        src_path: PathBuf,
+        out_png: PathBuf,
+        gif_dest: String,
+        max_width: u32,
+        cancel: Arc<AtomicBool>,
+    },
+    FromUrl {
+        url: String,
+        out_png: PathBuf,
+        gif_dest: String,
+        max_width: u32,
+        cancel: Arc<AtomicBool>,
+    },
+}
+
+enum GifPreviewEvent {
+    Ready {
+        out_png: PathBuf,
+        gif_dest: String,
+        image: egui::ColorImage,
+    },
+    Failed {
+        out_png: PathBuf,
+    },
+}
+
 enum GifAnimationRequest {
     FromFile {
         src_path: PathBuf,
         texture_key: String,
         max_size: [u32; 2],
+        cancel: Arc<AtomicBool>,
     },
     FromUrl {
         url: String,
         texture_key: String,
         max_size: [u32; 2],
+        cancel: Arc<AtomicBool>,
     },
 }
 
@@ -692,6 +732,7 @@ enum GifAnimationEvent {
     Failed {
         texture_key: String,
         error: String,
+        cancelled: bool,
     },
 }
 
