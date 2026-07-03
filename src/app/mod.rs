@@ -213,4 +213,8 @@ impl eframe::App for HestiaApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         Color32::from_rgb(24, 26, 29).to_normalized_gamma_f32()
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.cancel_all_gif_work();
+    }
 }

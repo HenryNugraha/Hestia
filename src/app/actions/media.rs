@@ -1200,6 +1200,23 @@ impl HestiaApp {
         }
     }
 
+    fn cancel_all_gif_work(&mut self) {
+        for pending in self.pending_gif_previews.values() {
+            pending.cancel.store(true, Ordering::Relaxed);
+        }
+        self.pending_gif_previews.clear();
+        self.gif_preview_requests_in_flight = 0;
+        for cancel in self.pending_gif_animations.values() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.pending_gif_animations.clear();
+        self.gif_animation_requests_in_flight = 0;
+        self.animated_gif_state.clear();
+        self.visible_gif_process_texture_keys.clear();
+        self.visible_gif_texture_keys.clear();
+        self.last_visible_gif_texture_keys.clear();
+    }
+
     fn gif_requests_in_flight(&self) -> usize {
         self.gif_preview_requests_in_flight + self.gif_animation_requests_in_flight
     }

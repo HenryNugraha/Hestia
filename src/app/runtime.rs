@@ -69,6 +69,18 @@ impl Clone for RuntimeServices {
     }
 }
 
+impl Drop for RuntimeServices {
+    fn drop(&mut self) {
+        let Some(runtime) = self._runtime_owner.take() else {
+            return;
+        };
+        match Arc::try_unwrap(runtime) {
+            Ok(runtime) => runtime.shutdown_timeout(Duration::from_millis(250)),
+            Err(runtime) => drop(runtime),
+        }
+    }
+}
+
 impl RuntimeServices {
     pub(crate) fn http_client_for(
         custom_proxy: &Option<CustomProxyConfig>,
