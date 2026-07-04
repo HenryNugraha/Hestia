@@ -3458,14 +3458,14 @@ impl HestiaApp {
                 let settings_response = Self::render_blank_setup_choice(
                     ui,
                     Icon::Settings2,
-                    text.game_path_settings(),
-                    text.game_path_settings_description(),
+                    text.games_settings(),
+                    text.games_settings_description(),
                     Color32::from_rgb(112, 164, 118),
                     true,
                 );
                 if settings_response.clicked() {
                     self.settings_open = true;
-                    self.settings_tab = SettingsTab::Path;
+                    self.settings_tab = SettingsTab::Games;
                 }
             });
     }

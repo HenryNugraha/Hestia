@@ -227,7 +227,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Log (Ctrl+L)", // ChromeLogTooltip
     "Settings (F10)", // ChromeSettingsTooltip
     "No Games Enabled", // ChromeNoGamesDetected
-    "See Settings → Game & Path", // ChromeSeeSettingsGamePath
+    "See Settings → Games", // ChromeSeeSettingsGames
 
     // Main GUI: Browse
     "Discover mods on GameBanana...", // BrowseSearchHint
@@ -306,8 +306,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Download XXMI", // LibraryDownloadXxmi
     "Scan Games", // LibraryFindGamesAndFixPaths
     "Find supported games automatically.", // LibraryPathScanDescription
-    "Game & Path Settings", // LibraryGamePathSettings
-    "Enable games and set paths manually.", // LibraryGamePathSettingsDescription
+    "Games Settings", // LibraryGamesSettings
+    "Enable games and set paths manually.", // LibraryGamesSettingsDescription
     "Signature bypasser is missing", // LibraryNteBypasserMissingTitle
     "NTE mods will not load until AyakaNTEModLoader.asi or UniversalSigBypasser.asi is installed.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
@@ -485,7 +485,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "General", // SettingsTabGeneral
     "Category", // SettingsTabCategory
     "Advanced", // SettingsTabAdvanced
-    "Game & Path", // SettingsTabGamePath
+    "Games", // SettingsTabGames
     "About", // SettingsTabAbout
 
     // Window: Settings > General > Behavior
@@ -570,19 +570,19 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Delete", // SettingsCategoryDelete
     "Uncategorized", // SettingsCategoryUncategorized
 
-    // Window: Settings > Game & Path
-    "Scan Games", // SettingsPathScanTitle
-    "Hestia can perform a deep search to find supported games", // SettingsPathScanDescription
-    "Scan", // SettingsPathScanButtonScan
-    "Scanning...", // SettingsPathScanButtonScanning
-    "XXMI", // SettingsPathXxmiSection
-    "XXMI Launcher:", // SettingsPathXxmiLauncher
-    "Path not found", // SettingsPathPathNotFound
-    "Use default XXMI mod path for games", // SettingsPathUseDefaultXxmiModPath
-    "Game", // SettingsPathGameSection
-    "Game EXE file:", // SettingsPathGameExeFile
-    "{code} Mods Folder:", // SettingsPathGameModsFolder
-    "Mod folder (~mods):", // SettingsPathUnrealModFolder
+    // Window: Settings > Games
+    "Scan Games", // SettingsGamesScanTitle
+    "Hestia can perform a deep search to find supported games", // SettingsGamesScanDescription
+    "Scan", // SettingsGamesScanButtonScan
+    "Scanning...", // SettingsGamesScanButtonScanning
+    "XXMI", // SettingsGamesXxmiSection
+    "XXMI Launcher:", // SettingsGamesXxmiLauncher
+    "Path not found", // SettingsGamesPathNotFound
+    "Use default XXMI mod path for games", // SettingsGamesUseDefaultXxmiModPath
+    "Games", // SettingsGamesGamesSection
+    "Game EXE file:", // SettingsGamesGameExeFile
+    "{code} Mods Folder:", // SettingsGamesGameModsFolder
+    "Mod folder (~mods):", // SettingsGamesUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Appearance", // SettingsAdvancedAppearanceSection

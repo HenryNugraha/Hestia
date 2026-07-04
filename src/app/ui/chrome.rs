@@ -943,7 +943,7 @@ impl HestiaApp {
                             ui.add_space(-16.0);
                             static_label(
                                 ui,
-                                RichText::new(text.see_settings_game_path())
+                                RichText::new(text.see_settings_games())
                                     .color(Color32::from_gray(150)),
                             );
                         } else {

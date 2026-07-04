@@ -2303,8 +2303,8 @@ impl HestiaApp {
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
-                    SettingsTab::Path,
-                    bold(text.settings_tab_game_path().to_uppercase(), None),
+                    SettingsTab::Games,
+                    bold(text.settings_tab_games().to_uppercase(), None),
                 ).on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.selectable_value(
                     &mut self.settings_tab,
@@ -2725,7 +2725,7 @@ impl HestiaApp {
                     SettingsTab::Categories => {
                         self.render_categories_settings_tab(ui, &mut should_save);
                     }
-                    SettingsTab::Path => {
+                    SettingsTab::Games => {
                         let accent = Color32::from_rgb(203, 104, 59);
                         let width = (ui.available_width() * 0.86).min(520.0);
                         let height = 116.0;
@@ -2760,7 +2760,7 @@ impl HestiaApp {
                         let text_x = content_rect.left() + 36.0;
                         let text_width = (content_rect.right() - text_x).max(1.0);
                         let title_galley = egui::WidgetText::from(
-                            RichText::new(text.path_scan_title())
+                            RichText::new(text.games_scan_title())
                                 .size(14.5)
                                 .strong()
                                 .color(Color32::from_rgb(226, 230, 236)),
@@ -2772,7 +2772,7 @@ impl HestiaApp {
                             egui::FontSelection::Default,
                         );
                         let description_galley = egui::WidgetText::from(
-                            RichText::new(text.path_scan_description())
+                            RichText::new(text.games_scan_description())
                                 .size(12.0)
                                 .color(Color32::from_gray(160)),
                         )
@@ -2830,7 +2830,7 @@ impl HestiaApp {
                             let scanning = self.startup_path_scan.is_some();
                             let scan_button = egui::Button::new(icon_text_sized(
                                 Icon::Search,
-                                text.path_scan_button(scanning),
+                                text.games_scan_button(scanning),
                                 14.0,
                                 13.0,
                             ))
@@ -2855,7 +2855,7 @@ impl HestiaApp {
                             .iter()
                             .any(|game| game.enabled && game.is_xxmi());
                         if has_enabled_xxmi_games {
-                    static_label(ui, bold(text.path_xxmi_section(), Some(16.0)).underline());
+                    static_label(ui, bold(text.games_xxmi_section(), Some(16.0)).underline());
                     ui.group(|ui| {
                         let warn_color = Color32::from_rgb(124, 45, 58);
                         let err_stroke = egui::Stroke::new(1.0, warn_color);
@@ -2875,7 +2875,7 @@ impl HestiaApp {
                             ui.horizontal(|ui| {
                                 static_label(
                                     ui,
-                                    RichText::new(text.path_xxmi_launcher())
+                                    RichText::new(text.games_xxmi_launcher())
                                         .small()
                                         .color(Color32::from_gray(165)),
                                 );
@@ -2884,7 +2884,7 @@ impl HestiaApp {
                                     ui.add_space(-8.0);
                                     static_label(
                                         ui,
-                                        RichText::new(text.path_not_found())
+                                        RichText::new(text.games_path_not_found())
                                             .small()
                                             .color(warn_color),
                                     );
@@ -2999,7 +2999,7 @@ impl HestiaApp {
                             ui.horizontal(|ui| {
                                 ui.add_space(4.0);
                                 let was_using_default_mods_path = self.state.static_prefs.use_default_mods_path;
-                                if ui.checkbox(&mut self.state.static_prefs.use_default_mods_path, text.path_use_default_xxmi_mod_path()).changed() {
+                                if ui.checkbox(&mut self.state.static_prefs.use_default_mods_path, text.games_use_default_xxmi_mod_path()).changed() {
                                     if was_using_default_mods_path && !self.state.static_prefs.use_default_mods_path {
                                         for game in self.state.games.iter_mut().filter(|game| game.enabled && game.is_xxmi()) {
                                             if game.mods_path_override.is_none() {
@@ -3020,7 +3020,7 @@ impl HestiaApp {
                     });
                     }
                     ui.add_space(24.0);
-                    ui.label(bold(text.path_game_section(), Some(16.0)).underline())
+                    ui.label(bold(text.games_section(), Some(16.0)).underline())
                     .on_hover_cursor(egui::CursorIcon::Default);
                     let mut selected_game_was_disabled = false;
                     let mut enabled_game_ids = Vec::new();
@@ -3103,7 +3103,7 @@ impl HestiaApp {
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
                                                     ui.label(
-                                                        RichText::new(text.path_game_exe_file())
+                                                        RichText::new(text.games_game_exe_file())
                                                             .small()
                                                             .color(Color32::from_gray(165)),
                                                     ).on_hover_cursor(egui::CursorIcon::Default);
@@ -3112,7 +3112,7 @@ impl HestiaApp {
                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                         ui.add_space(-8.0);
                                                         ui.label(
-                                                            RichText::new(text.path_not_found())
+                                                            RichText::new(text.games_path_not_found())
                                                                 .small()
                                                                 .color(warn_color),
                                                         ).on_hover_cursor(egui::CursorIcon::Default);
@@ -3232,9 +3232,9 @@ impl HestiaApp {
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
                                                     let mods_label = if game.is_unreal_engine() {
-                                                        text.path_unreal_mod_folder().to_string()
+                                                        text.games_unreal_mod_folder().to_string()
                                                     } else {
-                                                        text.path_game_mods_folder(&game.definition.xxmi_code)
+                                                        text.games_game_mods_folder(&game.definition.xxmi_code)
                                                     };
                                                     ui.label(
                                                         RichText::new(mods_label)
@@ -3246,7 +3246,7 @@ impl HestiaApp {
                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                         ui.add_space(-8.0);
                                                         ui.label(
-                                                            RichText::new(text.path_not_found())
+                                                            RichText::new(text.games_path_not_found())
                                                                 .small()
                                                                 .color(warn_color),
                                                         ).on_hover_cursor(egui::CursorIcon::Default);

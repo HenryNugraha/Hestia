@@ -227,7 +227,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "日志 (Ctrl+L)", // ChromeLogTooltip
     "设置 (F10)", // ChromeSettingsTooltip
     "未启用游戏", // ChromeNoGamesDetected
-    "查看“设置 → 游戏和路径”", // ChromeSeeSettingsGamePath
+    "查看“设置 → 游戏”", // ChromeSeeSettingsGames
 
     // Main GUI: Browse
     "在 GameBanana 查找 Mod…", // BrowseSearchHint
@@ -306,8 +306,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "下载 XXMI", // LibraryDownloadXxmi
     "扫描游戏", // LibraryFindGamesAndFixPaths
     "自动查找受支持的游戏。", // LibraryPathScanDescription
-    "游戏和路径设置", // LibraryGamePathSettings
-    "手动启用游戏并设置路径。", // LibraryGamePathSettingsDescription
+    "游戏设置", // LibraryGamesSettings
+    "手动启用游戏并设置路径。", // LibraryGamesSettingsDescription
     "缺少签名绕过器", // LibraryNteBypasserMissingTitle
     "安装 AyakaNTEModLoader.asi 或 UniversalSigBypasser.asi 之前，NTE Mod 不会加载。", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
@@ -485,7 +485,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "常规", // SettingsTabGeneral
     "分类", // SettingsTabCategory
     "高级", // SettingsTabAdvanced
-    "游戏和路径", // SettingsTabGamePath
+    "游戏", // SettingsTabGames
     "关于", // SettingsTabAbout
 
     // Window: Settings > General > Behavior
@@ -570,19 +570,19 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "删除", // SettingsCategoryDelete
     "未分类", // SettingsCategoryUncategorized
 
-    // Window: Settings > Game & Path
-    "扫描游戏", // SettingsPathScanTitle
-    "Hestia 可以进行深度搜索来查找受支持的游戏", // SettingsPathScanDescription
-    "扫描", // SettingsPathScanButtonScan
-    "正在扫描…", // SettingsPathScanButtonScanning
-    "XXMI", // SettingsPathXxmiSection
-    "XXMI 启动器：", // SettingsPathXxmiLauncher
-    "路径未找到", // SettingsPathPathNotFound
-    "为游戏使用默认 XXMI Mod 路径", // SettingsPathUseDefaultXxmiModPath
-    "游戏", // SettingsPathGameSection
-    "游戏 EXE 文件：", // SettingsPathGameExeFile
-    "{code} Mod 文件夹：", // SettingsPathGameModsFolder
-    "Mod 文件夹（~mods）：", // SettingsPathUnrealModFolder
+    // Window: Settings > Games
+    "扫描游戏", // SettingsGamesScanTitle
+    "Hestia 可以进行深度搜索来查找受支持的游戏", // SettingsGamesScanDescription
+    "扫描", // SettingsGamesScanButtonScan
+    "正在扫描…", // SettingsGamesScanButtonScanning
+    "XXMI", // SettingsGamesXxmiSection
+    "XXMI 启动器：", // SettingsGamesXxmiLauncher
+    "路径未找到", // SettingsGamesPathNotFound
+    "为游戏使用默认 XXMI Mod 路径", // SettingsGamesUseDefaultXxmiModPath
+    "游戏", // SettingsGamesGamesSection
+    "游戏 EXE 文件：", // SettingsGamesGameExeFile
+    "{code} Mod 文件夹：", // SettingsGamesGameModsFolder
+    "Mod 文件夹（~mods）：", // SettingsGamesUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "外观", // SettingsAdvancedAppearanceSection

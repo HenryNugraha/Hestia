@@ -227,7 +227,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Log (Ctrl+L)", // ChromeLogTooltip
     "Setelan (F10)", // ChromeSettingsTooltip
     "Belum Ada Game yang Diaktifkan", // ChromeNoGamesDetected
-    "Lihat Setelan → Game & Path", // ChromeSeeSettingsGamePath
+    "Lihat Setelan → Game", // ChromeSeeSettingsGames
 
     // Main GUI: Browse
     "Temukan mod di GameBanana...", // BrowseSearchHint
@@ -306,8 +306,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Unduh XXMI", // LibraryDownloadXxmi
     "Pindai Game", // LibraryFindGamesAndFixPaths
     "Temukan game yang didukung secara otomatis.", // LibraryPathScanDescription
-    "Setelan Game & Path", // LibraryGamePathSettings
-    "Aktifkan game dan atur path secara manual.", // LibraryGamePathSettingsDescription
+    "Setelan Game", // LibraryGamesSettings
+    "Aktifkan game dan atur path secara manual.", // LibraryGamesSettingsDescription
     "Signature bypasser belum terpasang", // LibraryNteBypasserMissingTitle
     "Mod NTE tidak akan dimuat sampai AyakaNTEModLoader.asi atau UniversalSigBypasser.asi terpasang.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
@@ -485,7 +485,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Umum", // SettingsTabGeneral
     "Kategori", // SettingsTabCategory
     "Lanjutan", // SettingsTabAdvanced
-    "Game & Path", // SettingsTabGamePath
+    "Game", // SettingsTabGames
     "Tentang", // SettingsTabAbout
 
     // Window: Settings > General > Behavior
@@ -570,19 +570,19 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Hapus", // SettingsCategoryDelete
     "Tanpa kategori", // SettingsCategoryUncategorized
 
-    // Window: Settings > Game & Path
-    "Pindai Game", // SettingsPathScanTitle
-    "Hestia dapat melakukan pencarian mendalam untuk menemukan game yang didukung", // SettingsPathScanDescription
-    "Pindai", // SettingsPathScanButtonScan
-    "Memindai...", // SettingsPathScanButtonScanning
-    "XXMI", // SettingsPathXxmiSection
-    "XXMI Launcher:", // SettingsPathXxmiLauncher
-    "Path tidak ditemukan", // SettingsPathPathNotFound
-    "Gunakan path mod XXMI default untuk game", // SettingsPathUseDefaultXxmiModPath
-    "Game", // SettingsPathGameSection
-    "File EXE game:", // SettingsPathGameExeFile
-    "Folder Mod {code}:", // SettingsPathGameModsFolder
-    "Folder mod (~mods):", // SettingsPathUnrealModFolder
+    // Window: Settings > Games
+    "Pindai Game", // SettingsGamesScanTitle
+    "Hestia dapat melakukan pencarian mendalam untuk menemukan game yang didukung", // SettingsGamesScanDescription
+    "Pindai", // SettingsGamesScanButtonScan
+    "Memindai...", // SettingsGamesScanButtonScanning
+    "XXMI", // SettingsGamesXxmiSection
+    "XXMI Launcher:", // SettingsGamesXxmiLauncher
+    "Path tidak ditemukan", // SettingsGamesPathNotFound
+    "Gunakan path mod XXMI default untuk game", // SettingsGamesUseDefaultXxmiModPath
+    "Game", // SettingsGamesGamesSection
+    "File EXE game:", // SettingsGamesGameExeFile
+    "Folder Mod {code}:", // SettingsGamesGameModsFolder
+    "Folder mod (~mods):", // SettingsGamesUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Tampilan", // SettingsAdvancedAppearanceSection

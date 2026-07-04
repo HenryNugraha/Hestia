@@ -227,7 +227,7 @@ enum TextKey {
     ChromeLogTooltip,
     ChromeSettingsTooltip,
     ChromeNoGamesDetected,
-    ChromeSeeSettingsGamePath,
+    ChromeSeeSettingsGames,
 
     BrowseSearchHint,
     BrowseModsTitle,
@@ -304,8 +304,8 @@ enum TextKey {
     LibraryDownloadXxmi,
     LibraryFindGamesAndFixPaths,
     LibraryPathScanDescription,
-    LibraryGamePathSettings,
-    LibraryGamePathSettingsDescription,
+    LibraryGamesSettings,
+    LibraryGamesSettingsDescription,
     LibraryNteBypasserMissingTitle,
     LibraryNteBypasserMissingDescription,
     LibraryNteBypasserAyaka,
@@ -482,7 +482,7 @@ enum TextKey {
     SettingsTabGeneral,
     SettingsTabCategory,
     SettingsTabAdvanced,
-    SettingsTabGamePath,
+    SettingsTabGames,
     SettingsTabAbout,
 
     SettingsGeneralBehaviorSection,
@@ -562,18 +562,18 @@ enum TextKey {
     SettingsCategoryDelete,
     SettingsCategoryUncategorized,
 
-    SettingsPathScanTitle,
-    SettingsPathScanDescription,
-    SettingsPathScanButtonScan,
-    SettingsPathScanButtonScanning,
-    SettingsPathXxmiSection,
-    SettingsPathXxmiLauncher,
-    SettingsPathPathNotFound,
-    SettingsPathUseDefaultXxmiModPath,
-    SettingsPathGameSection,
-    SettingsPathGameExeFile,
-    SettingsPathGameModsFolder,
-    SettingsPathUnrealModFolder,
+    SettingsGamesScanTitle,
+    SettingsGamesScanDescription,
+    SettingsGamesScanButtonScan,
+    SettingsGamesScanButtonScanning,
+    SettingsGamesXxmiSection,
+    SettingsGamesXxmiLauncher,
+    SettingsGamesPathNotFound,
+    SettingsGamesUseDefaultXxmiModPath,
+    SettingsGamesGamesSection,
+    SettingsGamesGameExeFile,
+    SettingsGamesGameModsFolder,
+    SettingsGamesUnrealModFolder,
 
     SettingsAdvancedAppearanceSection,
     SettingsAdvancedAppearanceLanguage,
@@ -1528,8 +1528,8 @@ impl TextCatalog {
         self.get(TextKey::ChromeNoGamesDetected)
     }
 
-    fn see_settings_game_path(self) -> &'static str {
-        self.get(TextKey::ChromeSeeSettingsGamePath)
+    fn see_settings_games(self) -> &'static str {
+        self.get(TextKey::ChromeSeeSettingsGames)
     }
 
     fn browse_search_hint(self) -> &'static str {
@@ -1851,12 +1851,12 @@ impl TextCatalog {
         self.get(TextKey::LibraryPathScanDescription)
     }
 
-    fn game_path_settings(self) -> &'static str {
-        self.get(TextKey::LibraryGamePathSettings)
+    fn games_settings(self) -> &'static str {
+        self.get(TextKey::LibraryGamesSettings)
     }
 
-    fn game_path_settings_description(self) -> &'static str {
-        self.get(TextKey::LibraryGamePathSettingsDescription)
+    fn games_settings_description(self) -> &'static str {
+        self.get(TextKey::LibraryGamesSettingsDescription)
     }
 
     fn nte_bypasser_missing_title(self) -> &'static str {
@@ -2559,8 +2559,8 @@ impl TextCatalog {
         self.get(TextKey::SettingsTabAdvanced)
     }
 
-    fn settings_tab_game_path(self) -> &'static str {
-        self.get(TextKey::SettingsTabGamePath)
+    fn settings_tab_games(self) -> &'static str {
+        self.get(TextKey::SettingsTabGames)
     }
 
     fn settings_tab_about(self) -> &'static str {
@@ -2807,53 +2807,53 @@ impl TextCatalog {
         self.get(TextKey::SettingsCategoryUncategorized)
     }
 
-    fn path_scan_title(self) -> &'static str {
-        self.get(TextKey::SettingsPathScanTitle)
+    fn games_scan_title(self) -> &'static str {
+        self.get(TextKey::SettingsGamesScanTitle)
     }
 
-    fn path_scan_description(self) -> &'static str {
-        self.get(TextKey::SettingsPathScanDescription)
+    fn games_scan_description(self) -> &'static str {
+        self.get(TextKey::SettingsGamesScanDescription)
     }
 
-    fn path_scan_button(self, scanning: bool) -> &'static str {
+    fn games_scan_button(self, scanning: bool) -> &'static str {
         if scanning {
-            self.get(TextKey::SettingsPathScanButtonScanning)
+            self.get(TextKey::SettingsGamesScanButtonScanning)
         } else {
-            self.get(TextKey::SettingsPathScanButtonScan)
+            self.get(TextKey::SettingsGamesScanButtonScan)
         }
     }
 
-    fn path_xxmi_section(self) -> &'static str {
-        self.get(TextKey::SettingsPathXxmiSection)
+    fn games_xxmi_section(self) -> &'static str {
+        self.get(TextKey::SettingsGamesXxmiSection)
     }
 
-    fn path_xxmi_launcher(self) -> &'static str {
-        self.get(TextKey::SettingsPathXxmiLauncher)
+    fn games_xxmi_launcher(self) -> &'static str {
+        self.get(TextKey::SettingsGamesXxmiLauncher)
     }
 
-    fn path_not_found(self) -> &'static str {
-        self.get(TextKey::SettingsPathPathNotFound)
+    fn games_path_not_found(self) -> &'static str {
+        self.get(TextKey::SettingsGamesPathNotFound)
     }
 
-    fn path_use_default_xxmi_mod_path(self) -> &'static str {
-        self.get(TextKey::SettingsPathUseDefaultXxmiModPath)
+    fn games_use_default_xxmi_mod_path(self) -> &'static str {
+        self.get(TextKey::SettingsGamesUseDefaultXxmiModPath)
     }
 
-    fn path_game_section(self) -> &'static str {
-        self.get(TextKey::SettingsPathGameSection)
+    fn games_section(self) -> &'static str {
+        self.get(TextKey::SettingsGamesGamesSection)
     }
 
-    fn path_game_exe_file(self) -> &'static str {
-        self.get(TextKey::SettingsPathGameExeFile)
+    fn games_game_exe_file(self) -> &'static str {
+        self.get(TextKey::SettingsGamesGameExeFile)
     }
 
-    fn path_game_mods_folder(self, xxmi_code: &str) -> String {
-        self.get(TextKey::SettingsPathGameModsFolder)
+    fn games_game_mods_folder(self, xxmi_code: &str) -> String {
+        self.get(TextKey::SettingsGamesGameModsFolder)
             .replace("{code}", xxmi_code)
     }
 
-    fn path_unreal_mod_folder(self) -> &'static str {
-        self.get(TextKey::SettingsPathUnrealModFolder)
+    fn games_unreal_mod_folder(self) -> &'static str {
+        self.get(TextKey::SettingsGamesUnrealModFolder)
     }
 
     fn when_launching_game(self) -> &'static str {

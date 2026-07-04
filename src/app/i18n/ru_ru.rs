@@ -227,7 +227,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Журнал (Ctrl+L)", // ChromeLogTooltip
     "Настройки (F10)", // ChromeSettingsTooltip
     "Нет включенных игр", // ChromeNoGamesDetected
-    "См. «Настройки → Игра и путь»", // ChromeSeeSettingsGamePath
+    "См. «Настройки → Игры»", // ChromeSeeSettingsGames
 
     // Main GUI: Browse
     "Найти моды на GameBanana…", // BrowseSearchHint
@@ -306,8 +306,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Скачать XXMI", // LibraryDownloadXxmi
     "Сканировать игры", // LibraryFindGamesAndFixPaths
     "Автоматически найти поддерживаемые игры.", // LibraryPathScanDescription
-    "Настройки игры и путей", // LibraryGamePathSettings
-    "Включите игры и задайте пути вручную.", // LibraryGamePathSettingsDescription
+    "Настройки игр", // LibraryGamesSettings
+    "Включите игры и задайте пути вручную.", // LibraryGamesSettingsDescription
     "Signature bypasser не установлен", // LibraryNteBypasserMissingTitle
     "Моды NTE не будут загружаться, пока не установлен AyakaNTEModLoader.asi или UniversalSigBypasser.asi.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
@@ -485,7 +485,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Общие", // SettingsTabGeneral
     "Категории", // SettingsTabCategory
     "Дополнительно", // SettingsTabAdvanced
-    "Игра и путь", // SettingsTabGamePath
+    "Игры", // SettingsTabGames
     "О программе", // SettingsTabAbout
 
     // Window: Settings > General > Behavior
@@ -570,19 +570,19 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Удалить", // SettingsCategoryDelete
     "Без категории", // SettingsCategoryUncategorized
 
-    // Window: Settings > Game & Path
-    "Сканировать игры", // SettingsPathScanTitle
-    "Hestia может выполнить глубокий поиск поддерживаемых игр", // SettingsPathScanDescription
-    "Сканировать", // SettingsPathScanButtonScan
-    "Сканирование…", // SettingsPathScanButtonScanning
-    "XXMI", // SettingsPathXxmiSection
-    "Лаунчер XXMI:", // SettingsPathXxmiLauncher
-    "Путь не найден", // SettingsPathPathNotFound
-    "Использовать путь к модам XXMI по умолчанию для игр", // SettingsPathUseDefaultXxmiModPath
-    "Игра", // SettingsPathGameSection
-    "EXE-файл игры:", // SettingsPathGameExeFile
-    "Папка модов {code}:", // SettingsPathGameModsFolder
-    "Папка модов (~mods):", // SettingsPathUnrealModFolder
+    // Window: Settings > Games
+    "Сканировать игры", // SettingsGamesScanTitle
+    "Hestia может выполнить глубокий поиск поддерживаемых игр", // SettingsGamesScanDescription
+    "Сканировать", // SettingsGamesScanButtonScan
+    "Сканирование…", // SettingsGamesScanButtonScanning
+    "XXMI", // SettingsGamesXxmiSection
+    "Лаунчер XXMI:", // SettingsGamesXxmiLauncher
+    "Путь не найден", // SettingsGamesPathNotFound
+    "Использовать путь к модам XXMI по умолчанию для игр", // SettingsGamesUseDefaultXxmiModPath
+    "Игры", // SettingsGamesGamesSection
+    "EXE-файл игры:", // SettingsGamesGameExeFile
+    "Папка модов {code}:", // SettingsGamesGameModsFolder
+    "Папка модов (~mods):", // SettingsGamesUnrealModFolder
 
     // Window: Settings > Advanced > Appearance
     "Внешний вид", // SettingsAdvancedAppearanceSection

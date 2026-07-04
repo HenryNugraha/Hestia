@@ -1689,7 +1689,7 @@ impl HestiaApp {
         let text = self.text();
         match issue {
             GameSetupIssue::MissingGamePath => text.game_not_installed().to_string(),
-            GameSetupIssue::MissingModFolder => text.path_not_found().to_string(),
+            GameSetupIssue::MissingModFolder => text.games_path_not_found().to_string(),
             GameSetupIssue::MissingXxmiLauncher => text.install_xxmi_description().to_string(),
             GameSetupIssue::MissingNteBypasser => text.nte_bypasser_missing_description().to_string(),
             GameSetupIssue::MissingUnrealRequirement => text.install_unavailable().to_string(),

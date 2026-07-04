@@ -89,7 +89,7 @@ enum SettingsTab {
     General,
     Categories,
     Advanced,
-    Path,
+    Games,
     About,
 }
 
