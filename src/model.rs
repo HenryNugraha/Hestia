@@ -79,6 +79,8 @@ pub struct StaticPreferences {
     pub library_sort_category_first: bool,
     #[serde(default)]
     pub library_uncategorized_first: bool,
+    #[serde(default = "serde_default_true")]
+    pub library_show_empty_category_folders: bool,
     #[serde(default)]
     pub update_check_statuses: ModStatusTargets,
     #[serde(default)]
@@ -134,6 +136,7 @@ impl Default for StaticPreferences {
             library_category_group_show_status: true,
             library_sort_category_first: false,
             library_uncategorized_first: false,
+            library_show_empty_category_folders: true,
             update_check_statuses: ModStatusTargets::default(),
             auto_update_statuses: ModStatusTargets::default(),
             modified_update_behavior: ModifiedUpdateBehavior::default(),

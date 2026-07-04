@@ -407,7 +407,10 @@ enum TextKey {
     LibraryRename,
     LibraryRenameShortcut,
     LibraryFolderOnlyMoveModsOutside,
+    LibraryFolderModsInsideKeepFolder,
+    LibraryFolderModsInsideKeepFolderHiddenTooltip,
     LibraryFolderAndModsInside,
+    LibraryFolderAndModsInsideHiddenTooltip,
     LibraryDeletedFolder,
     LibraryStatusActive,
     LibraryStatusDisabled,
@@ -511,6 +514,7 @@ enum TextKey {
     SettingsGeneralInstalledModsShowDisabledMods,
     SettingsGeneralInstalledModsShowArchivedMods,
     SettingsGeneralInstalledModsShowUncategorizedModsFirst,
+    SettingsGeneralInstalledModsShowEmptyCategoryFolders,
 
     SettingsGeneralOperationalSection,
     SettingsGeneralOperationalModsToCheckForUpdates,
@@ -2248,8 +2252,22 @@ impl TextCatalog {
         self.get(TextKey::LibraryFolderOnlyMoveModsOutside)
     }
 
+    fn folder_mods_inside_keep_folder(self) -> &'static str {
+        self.get(TextKey::LibraryFolderModsInsideKeepFolder)
+    }
+
+    fn folder_mods_inside_keep_folder_hidden_tooltip(self, count: usize) -> String {
+        self.get(TextKey::LibraryFolderModsInsideKeepFolderHiddenTooltip)
+            .replace("{count}", &count.to_string())
+    }
+
     fn folder_and_mods_inside(self) -> &'static str {
         self.get(TextKey::LibraryFolderAndModsInside)
+    }
+
+    fn folder_and_mods_inside_hidden_tooltip(self, count: usize) -> String {
+        self.get(TextKey::LibraryFolderAndModsInsideHiddenTooltip)
+            .replace("{count}", &count.to_string())
     }
 
     fn deleted_folder(self, category_name: &str) -> String {
@@ -2615,6 +2633,10 @@ impl TextCatalog {
 
     fn show_uncategorized_mods_first(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowUncategorizedModsFirst)
+    }
+
+    fn show_empty_category_folders(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralInstalledModsShowEmptyCategoryFolders)
     }
 
     fn mods_to_check_for_updates(self) -> &'static str {

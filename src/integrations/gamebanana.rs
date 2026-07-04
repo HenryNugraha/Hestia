@@ -518,7 +518,7 @@ pub async fn fetch_character_browse_page_async(
     let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Index")?;
     let sort = match sort {
         crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
-        crate::model::BrowseSort::RecentUpdated => "Generic_Newest",
+        crate::model::BrowseSort::RecentUpdated => "Generic_LatestUpdated",
     };
     {
         let mut query_pairs = url.query_pairs_mut();

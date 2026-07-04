@@ -409,7 +409,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Rename", // LibraryRename
     "Rename (F2)", // LibraryRenameShortcut
     "Folder only, move mods outside", // LibraryFolderOnlyMoveModsOutside
+    "Mods inside only, keep folder", // LibraryFolderModsInsideKeepFolder
+    "Deletes only shown mods. {count} not-shown mod(s) stay in this folder.", // LibraryFolderModsInsideKeepFolderHiddenTooltip
     "Folder and mods inside", // LibraryFolderAndModsInside
+    "{count} mod(s) in this folder are not shown. Clear search/filters to delete everything inside.", // LibraryFolderAndModsInsideHiddenTooltip
     "Deleted folder: {category}", // LibraryDeletedFolder
     "Active", // LibraryStatusActive
     "Disabled", // LibraryStatusDisabled
@@ -516,6 +519,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Show disabled mods", // SettingsGeneralInstalledModsShowDisabledMods
     "Show archived mods", // SettingsGeneralInstalledModsShowArchivedMods
     "Show uncategorized mods first", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
+    "Show empty category folders", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
 
     // Window: Settings > General > Operational
     "Operational", // SettingsGeneralOperationalSection

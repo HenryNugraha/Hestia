@@ -409,7 +409,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "重命名", // LibraryRename
     "重命名 (F2)", // LibraryRenameShortcut
     "仅删除文件夹，将 Mod 移到外面", // LibraryFolderOnlyMoveModsOutside
+    "仅删除其中的 Mod，保留文件夹", // LibraryFolderModsInsideKeepFolder
+    "仅删除已显示的 Mod。{count} 个未显示的 Mod 会保留在此文件夹中。", // LibraryFolderModsInsideKeepFolderHiddenTooltip
     "删除文件夹及其中的 Mod", // LibraryFolderAndModsInside
+    "此文件夹中有 {count} 个 Mod 未显示。清除搜索/筛选后即可删除其中所有内容。", // LibraryFolderAndModsInsideHiddenTooltip
     "已删除文件夹：{category}", // LibraryDeletedFolder
     "已启用", // LibraryStatusActive
     "禁用", // LibraryStatusDisabled
@@ -516,6 +519,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "显示禁用的 Mod", // SettingsGeneralInstalledModsShowDisabledMods
     "显示已归档的 Mod", // SettingsGeneralInstalledModsShowArchivedMods
     "优先显示未分类的 Mod", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
+    "显示空分类文件夹", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
 
     // Window: Settings > General > Operational
     "操作", // SettingsGeneralOperationalSection

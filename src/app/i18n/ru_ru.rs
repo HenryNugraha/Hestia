@@ -409,7 +409,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Переименовать", // LibraryRename
     "Переименовать (F2)", // LibraryRenameShortcut
     "Только папка, моды переместить наружу", // LibraryFolderOnlyMoveModsOutside
+    "Только моды внутри, оставить папку", // LibraryFolderModsInsideKeepFolder
+    "Удаляет только показанные моды. {count} непоказанных модов останутся в этой папке.", // LibraryFolderModsInsideKeepFolderHiddenTooltip
     "Папка вместе с модами внутри", // LibraryFolderAndModsInside
+    "{count} модов в этой папке не показано. Очистите поиск/фильтры, чтобы удалить всё внутри.", // LibraryFolderAndModsInsideHiddenTooltip
     "Папка удалена: {category}", // LibraryDeletedFolder
     "Активен", // LibraryStatusActive
     "Отключён", // LibraryStatusDisabled
@@ -516,6 +519,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Показывать отключённые моды", // SettingsGeneralInstalledModsShowDisabledMods
     "Показывать архивные моды", // SettingsGeneralInstalledModsShowArchivedMods
     "Показывать моды без категории первыми", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
+    "Показывать пустые папки категорий", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
 
     // Window: Settings > General > Operational
     "Операции", // SettingsGeneralOperationalSection

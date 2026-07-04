@@ -109,6 +109,8 @@ fn apply_vertical_scroll_navigation(
 struct CategoryFolderTile {
     id: String,
     name: String,
+    visible_mod_ids: Vec<String>,
+    hidden_mod_count: usize,
     total_count: usize,
     active_count: usize,
     disabled_count: usize,
@@ -1110,6 +1112,24 @@ impl HestiaApp {
                             .changed();
                     },
                 );
+                ui.add_enabled_ui(
+                    matches!(
+                        self.state.static_prefs.library_group_mode,
+                        LibraryGroupMode::Category
+                    ) && matches!(
+                        self.state.static_prefs.library_category_display_mode,
+                        LibraryCategoryDisplayMode::Folders
+                    ),
+                    |ui| {
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.state.static_prefs.library_show_empty_category_folders,
+                                text.show_empty_category_folders(),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .changed();
+                    },
+                );
 
                 if should_save {
                     self.selected_mods.clear();
@@ -1889,6 +1909,55 @@ impl HestiaApp {
             deleted_count,
         ));
         self.refresh();
+    }
+
+    fn delete_category_mods_keep_folder(&mut self, category_id: &str, mod_ids: &[String]) {
+        if mod_ids.is_empty() {
+            return;
+        }
+        let category_name = self
+            .state
+            .categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .map(|category| category.name.clone())
+            .unwrap_or_else(|| self.text().categories_heading().to_string());
+        let deleting: HashSet<&str> = mod_ids.iter().map(String::as_str).collect();
+        let mods_to_delete: Vec<ModEntry> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| {
+                deleting.contains(mod_entry.id.as_str())
+                    && mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
+            })
+            .cloned()
+            .collect();
+        let mut deleted_count = 0;
+        let mut last_err: Option<anyhow::Error> = None;
+        for mod_entry in mods_to_delete {
+            match self.delete_mod_entry(&mod_entry) {
+                Ok(_) => {
+                    deleted_count += 1;
+                    self.selected_mods.remove(&mod_entry.id);
+                    if self.selected_mod_id.as_deref() == Some(mod_entry.id.as_str()) {
+                        self.set_selected_mod_id(None);
+                    }
+                }
+                Err(err) => last_err = Some(err),
+            }
+        }
+        if deleted_count > 0 {
+            let text = self.text();
+            let action = text.delete_action(self.state.static_prefs.delete_behavior);
+            self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
+            self.set_message_ok(text.action_count_message(action, deleted_count));
+            self.save_state();
+        }
+        self.refresh();
+        if let Some(err) = last_err {
+            self.report_error(err, Some(self.text().delete_failed()));
+        }
     }
 
     fn delete_categories(&mut self, category_ids: &[String]) {
@@ -4427,6 +4496,8 @@ impl HestiaApp {
         let category_sections = self.categories_for_game(&selected_game_id);
         let category_sort_mode = self.category_sort_mode_for_game(&selected_game_id);
         let category_display_mode = self.state.static_prefs.library_category_display_mode;
+        let show_empty_category_folders =
+            self.state.static_prefs.library_show_empty_category_folders;
         let mut selected_category_folder_id =
             self.selected_category_folder_id
                 .clone()
@@ -4620,7 +4691,8 @@ impl HestiaApp {
                         let mut category_rename_focus_consumed = false;
                         let mut category_rename_name_draft =
                             self.category_rename_name.clone();
-                        let library_filter_active = !self.mods_search_query.trim().is_empty()
+                        let search_filter_active = !self.mods_search_query.trim().is_empty();
+                        let library_filter_active = search_filter_active
                             || !self.show_enabled_mods
                             || self.state.static_prefs.hide_disabled
                             || self.state.static_prefs.hide_archived
@@ -4644,7 +4716,18 @@ impl HestiaApp {
                                             card.13.as_deref() == Some(category.id.as_str())
                                         })
                                         .collect();
-                                    if library_filter_active && section_cards.is_empty() {
+                                    let category_mod_count = self
+                                        .state
+                                        .mods
+                                        .iter()
+                                        .filter(|mod_entry| {
+                                            mod_entry.metadata.user.category_id.as_deref()
+                                                == Some(category.id.as_str())
+                                        })
+                                        .count();
+                                    if section_cards.is_empty()
+                                        && (search_filter_active || !show_empty_category_folders)
+                                    {
                                         return None;
                                     }
                                     let active_count = section_cards
@@ -4705,6 +4788,12 @@ impl HestiaApp {
                                     Some(CategoryFolderTile {
                                         id: category.id.clone(),
                                         name: category.name.clone(),
+                                        visible_mod_ids: section_cards
+                                            .iter()
+                                            .map(|card| card.0.clone())
+                                            .collect(),
+                                        hidden_mod_count: category_mod_count
+                                            .saturating_sub(section_cards.len()),
                                         total_count: section_cards.len(),
                                         active_count,
                                         disabled_count,
@@ -6179,6 +6268,8 @@ impl HestiaApp {
                         let mut pending_folder_rename_save: Option<(String, String)> = None;
                         let mut pending_folder_rename_cancel = false;
                         let mut pending_folder_delete_only: Option<(String, String)> = None;
+                        let mut pending_folder_delete_visible_mods: Option<(String, Vec<String>)> =
+                            None;
                         let mut pending_folder_delete_with_mods: Option<String> = None;
                         let mut pending_finish_folder_drag = false;
                         match library_group_mode {
@@ -6506,55 +6597,128 @@ impl HestiaApp {
                                                             ));
                                                             ui.close();
                                                         }
-                                                        ui.menu_button(
-                                                            icon_text_sized(
-                                                                Icon::Trash2,
-                                                                text.delete(),
-                                                                12.0,
-                                                                12.0,
-                                                            ),
-                                                            |ui| {
-                                                                if ui
-                                                                    .button(icon_text_sized(
-                                                                        Icon::FolderOpen,
-                                                                        text.folder_only_move_mods_outside(),
-                                                                        12.0,
-                                                                        12.0,
-                                                                    ))
-                                                                    .on_hover_cursor(
-                                                                        egui::CursorIcon::PointingHand,
-                                                                    )
-                                                                    .clicked()
-                                                                {
-                                                                    pending_folder_delete_only =
-                                                                        Some((
-                                                                            tile.id.clone(),
-                                                                            tile.name.clone(),
-                                                                        ));
-                                                                    ui.close();
-                                                                }
-                                                                if ui
-                                                                    .button(icon_text_sized(
-                                                                        Icon::Trash2,
-                                                                        text.folder_and_mods_inside(),
-                                                                        12.0,
-                                                                        12.0,
-                                                                    ))
-                                                                    .on_hover_cursor(
-                                                                        egui::CursorIcon::PointingHand,
-                                                                    )
-                                                                    .clicked()
-                                                                {
-                                                                    pending_folder_delete_with_mods =
-                                                                        Some(tile.id.clone());
-                                                                    ui.close();
-                                                                }
-                                                            },
-                                                        )
-                                                        .response
-                                                        .on_hover_cursor(
-                                                            egui::CursorIcon::PointingHand,
-                                                        );
+                                                        if tile.total_count == 0
+                                                            && tile.hidden_mod_count == 0
+                                                        {
+                                                            if ui
+                                                                .button(icon_text_sized(
+                                                                    Icon::Trash2,
+                                                                    text.delete(),
+                                                                    12.0,
+                                                                    12.0,
+                                                                ))
+                                                                .on_hover_cursor(
+                                                                    egui::CursorIcon::PointingHand,
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                pending_folder_delete_only = Some((
+                                                                    tile.id.clone(),
+                                                                    tile.name.clone(),
+                                                                ));
+                                                                ui.close();
+                                                            }
+                                                        } else {
+                                                            ui.menu_button(
+                                                                icon_text_sized(
+                                                                    Icon::Trash2,
+                                                                    text.delete(),
+                                                                    12.0,
+                                                                    12.0,
+                                                                ),
+                                                                |ui| {
+                                                                    if ui
+                                                                        .button(icon_text_sized(
+                                                                            Icon::FolderOpen,
+                                                                            text.folder_only_move_mods_outside(),
+                                                                            12.0,
+                                                                            12.0,
+                                                                        ))
+                                                                        .on_hover_cursor(
+                                                                            egui::CursorIcon::PointingHand,
+                                                                        )
+                                                                        .clicked()
+                                                                    {
+                                                                        pending_folder_delete_only =
+                                                                            Some((
+                                                                                tile.id.clone(),
+                                                                                tile.name.clone(),
+                                                                            ));
+                                                                        ui.close();
+                                                                    }
+                                                                    let delete_visible_response = ui
+                                                                        .button(icon_text_sized(
+                                                                            Icon::Trash2,
+                                                                            text.folder_mods_inside_keep_folder(),
+                                                                            12.0,
+                                                                            12.0,
+                                                                        ))
+                                                                        .on_hover_cursor(
+                                                                            egui::CursorIcon::PointingHand,
+                                                                        );
+                                                                    let delete_visible_clicked =
+                                                                        if tile.hidden_mod_count > 0 {
+                                                                            delete_visible_response
+                                                                                .on_hover_text(
+                                                                                    text.folder_mods_inside_keep_folder_hidden_tooltip(
+                                                                                        tile.hidden_mod_count,
+                                                                                    ),
+                                                                                )
+                                                                                .clicked()
+                                                                        } else {
+                                                                            delete_visible_response.clicked()
+                                                                        };
+                                                                    if delete_visible_clicked {
+                                                                        pending_folder_delete_visible_mods =
+                                                                            Some((
+                                                                                tile.id.clone(),
+                                                                                tile.visible_mod_ids.clone(),
+                                                                            ));
+                                                                        ui.close();
+                                                                    }
+                                                                    let delete_all_hidden =
+                                                                        tile.hidden_mod_count > 0;
+                                                                    let delete_all_response = ui
+                                                                        .add_enabled(
+                                                                            !delete_all_hidden,
+                                                                            egui::Button::new(
+                                                                                icon_text_sized(
+                                                                                    Icon::Trash2,
+                                                                                    text.folder_and_mods_inside(),
+                                                                                    12.0,
+                                                                                    12.0,
+                                                                                ),
+                                                                            ),
+                                                                        )
+                                                                        .on_hover_cursor(if delete_all_hidden {
+                                                                            egui::CursorIcon::NotAllowed
+                                                                        } else {
+                                                                            egui::CursorIcon::PointingHand
+                                                                        });
+                                                                    let delete_all_clicked =
+                                                                        if delete_all_hidden {
+                                                                            delete_all_response
+                                                                                .on_disabled_hover_text(
+                                                                                    text.folder_and_mods_inside_hidden_tooltip(
+                                                                                        tile.hidden_mod_count,
+                                                                                    ),
+                                                                                )
+                                                                                .clicked()
+                                                                        } else {
+                                                                            delete_all_response.clicked()
+                                                                        };
+                                                                    if delete_all_clicked {
+                                                                        pending_folder_delete_with_mods =
+                                                                            Some(tile.id.clone());
+                                                                        ui.close();
+                                                                    }
+                                                                },
+                                                            )
+                                                            .response
+                                                            .on_hover_cursor(
+                                                                egui::CursorIcon::PointingHand,
+                                                            );
+                                                        }
                                                     });
                                                     if response.clicked() {
                                                         pending_category_folder_id =
@@ -6791,6 +6955,9 @@ impl HestiaApp {
                         if let Some((category_id, category_name)) = pending_folder_delete_only {
                             self.delete_category(&category_id);
                             self.set_message_ok(text.deleted_folder(&category_name));
+                        }
+                        if let Some((category_id, mod_ids)) = pending_folder_delete_visible_mods {
+                            self.delete_category_mods_keep_folder(&category_id, &mod_ids);
                         }
                         if let Some(category_id) = pending_folder_delete_with_mods {
                             self.delete_category_and_mods(&category_id);

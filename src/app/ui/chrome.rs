@@ -591,23 +591,44 @@ impl HestiaApp {
                         },
                     );
                 });
-                let controls_size = Vec2::new(104.0, 24.0);
-                let controls_rect = egui::Rect::from_min_size(
-                    egui::pos2(inner_rect.max.x - controls_size.x - 2.0, inner_rect.min.y - 2.0),
-                    controls_size,
-                );
+                let maximized = ui
+                    .ctx()
+                    .input(|input| input.viewport().maximized.unwrap_or(false));
+                let control_spacing = 2.0;
+                let controls_size = if maximized {
+                    Vec2::new(
+                        MAXIMIZED_TITLEBAR_CONTROL_BUTTON_WIDTH * 3.0 + control_spacing * 2.0,
+                        MAXIMIZED_TITLEBAR_CONTROL_BUTTON_HEIGHT,
+                    )
+                } else {
+                    Vec2::new(
+                        TITLEBAR_CONTROL_BUTTON_WIDTH * 3.0 + control_spacing * 2.0 + 4.0,
+                        TITLEBAR_CONTROL_BUTTON_HEIGHT,
+                    )
+                };
+                let controls_pos = if maximized {
+                    egui::pos2(
+                        titlebar_rect.max.x - controls_size.x,
+                        titlebar_rect.min.y - 4.0,
+                    )
+                } else {
+                    egui::pos2(
+                        inner_rect.max.x - controls_size.x - 2.0,
+                        inner_rect.min.y - 2.0,
+                    )
+                };
+                let controls_rect = egui::Rect::from_min_size(controls_pos, controls_size);
                 let mut controls_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(controls_rect)
                         .layout(egui::Layout::right_to_left(egui::Align::Min)),
                 );
-                controls_ui.spacing_mut().item_spacing.x = 2.0;
+                controls_ui.spacing_mut().item_spacing.x = control_spacing;
                 controls_ui.horizontal(|ui| {
                     if titlebar_control_button(ui, Icon::X, text.close()).clicked()
                     {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    let maximized = ui.ctx().input(|input| input.viewport().maximized.unwrap_or(false));
                     if titlebar_control_button(
                         ui,
                         if maximized {

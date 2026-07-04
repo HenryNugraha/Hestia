@@ -2528,6 +2528,19 @@ impl HestiaApp {
                                     {
                                         should_save = true;
                                     }
+                                    if matches!(
+                                        self.state.static_prefs.library_category_display_mode,
+                                        LibraryCategoryDisplayMode::Folders
+                                    ) && matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
+                                        && ui
+                                            .checkbox(
+                                                &mut self.state.static_prefs.library_show_empty_category_folders,
+                                                text.show_empty_category_folders(),
+                                            )
+                                            .changed()
+                                    {
+                                        should_save = true;
+                                    }
                                 });
                             });
                             if self.state.static_prefs.library_group_mode != group_mode {

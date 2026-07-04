@@ -107,7 +107,23 @@ fn nav_rail_button(
 }
 
 fn titlebar_control_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
-    let button_size = Vec2::new(32.0, 24.0);
+    let maximized = ui
+        .ctx()
+        .input(|input| input.viewport().maximized.unwrap_or(false));
+    let (button_size, icon_size) = if maximized {
+        (
+            Vec2::new(
+                MAXIMIZED_TITLEBAR_CONTROL_BUTTON_WIDTH,
+                MAXIMIZED_TITLEBAR_CONTROL_BUTTON_HEIGHT,
+            ),
+            MAXIMIZED_TITLEBAR_CONTROL_ICON_SIZE,
+        )
+    } else {
+        (
+            Vec2::new(TITLEBAR_CONTROL_BUTTON_WIDTH, TITLEBAR_CONTROL_BUTTON_HEIGHT),
+            TITLEBAR_CONTROL_ICON_SIZE,
+        )
+    };
     let (rect, response) = ui.allocate_exact_size(button_size, Sense::click());
     let hovered = response.hovered();
     let is_close = matches!(icon, Icon::X);
@@ -137,7 +153,7 @@ fn titlebar_control_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Respon
             rect.center(),
             egui::Align2::CENTER_CENTER,
             icon_char(icon),
-            egui::FontId::new(15.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            egui::FontId::new(icon_size, FontFamily::Name(LUCIDE_FAMILY.into())),
             fg,
         );
     } else {
@@ -145,7 +161,7 @@ fn titlebar_control_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Respon
             rect.center(),
             egui::Align2::CENTER_CENTER,
             icon_char(icon),
-            egui::FontId::new(15.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            egui::FontId::new(icon_size, FontFamily::Name(LUCIDE_FAMILY.into())),
             Color32::from_rgb(225, 229, 233),
         );
     }

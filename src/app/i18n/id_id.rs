@@ -409,7 +409,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ubah nama", // LibraryRename
     "Ubah nama (F2)", // LibraryRenameShortcut
     "Folder saja, pindahkan mod keluar", // LibraryFolderOnlyMoveModsOutside
+    "Mod di dalam saja, pertahankan folder", // LibraryFolderModsInsideKeepFolder
+    "Hanya menghapus mod yang ditampilkan. {count} mod yang tidak ditampilkan tetap di folder ini.", // LibraryFolderModsInsideKeepFolderHiddenTooltip
     "Folder dan mod di dalamnya", // LibraryFolderAndModsInside
+    "{count} mod di folder ini tidak ditampilkan. Bersihkan pencarian/filter untuk menghapus semua isinya.", // LibraryFolderAndModsInsideHiddenTooltip
     "Folder dihapus: {category}", // LibraryDeletedFolder
     "Aktif", // LibraryStatusActive
     "Nonaktif", // LibraryStatusDisabled
@@ -516,6 +519,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tampilkan mod yang dinonaktifkan", // SettingsGeneralInstalledModsShowDisabledMods
     "Tampilkan mod yang diarsipkan", // SettingsGeneralInstalledModsShowArchivedMods
     "Tampilkan mod tanpa kategori lebih dulu", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
+    "Tampilkan folder kategori kosong", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
 
     // Window: Settings > General > Operational
     "Operasional", // SettingsGeneralOperationalSection
