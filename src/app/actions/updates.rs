@@ -2279,9 +2279,9 @@ impl HestiaApp {
 
         let mod_id = link.mod_id;
         let game_id = mod_entry.game_id.clone();
-        if !self.game_is_installed_or_configured(&game_id) {
+        if !self.game_can_download_mods(&game_id) {
             self.report_warn(
-                self.text().game_not_installed(),
+                self.game_mod_setup_message(&game_id),
                 Some(self.text().update_unavailable()),
             );
             return;

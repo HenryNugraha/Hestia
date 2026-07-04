@@ -226,7 +226,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "下载 (Ctrl+J)", // ChromeTasksTooltip
     "日志 (Ctrl+L)", // ChromeLogTooltip
     "设置 (F10)", // ChromeSettingsTooltip
-    "未检测到或未启用游戏", // ChromeNoGamesDetected
+    "未启用游戏", // ChromeNoGamesDetected
     "查看“设置 → 游戏和路径”", // ChromeSeeSettingsGamePath
 
     // Main GUI: Browse
@@ -300,13 +300,14 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "正在扫描已安装 Mod", // LibraryScanningInstalledMods
-    "安装 XXMI", // LibraryEnsureXxmiInstalled
-    "需要 XXMI Launcher 才能管理受支持的游戏。", // LibraryInstallXxmiDescription
-    "先设置 XXMI，再让 Hestia 查找您的游戏。", // LibrarySetupDescription
+    "需要 XXMI Launcher", // LibraryEnsureXxmiInstalled
+    "安装或下载此游戏的 Mod 前，Hestia 需要 XXMI Launcher。", // LibraryInstallXxmiDescription
+    "扫描已安装的游戏，或在设置中手动启用一个游戏。", // LibrarySetupDescription
     "下载 XXMI", // LibraryDownloadXxmi
-    "查找游戏并修复路径", // LibraryFindGamesAndFixPaths
-    "Hestia 可以进行深度搜索来查找受支持的游戏", // LibraryPathScanDescription
+    "扫描游戏", // LibraryFindGamesAndFixPaths
+    "自动查找受支持的游戏。", // LibraryPathScanDescription
     "游戏和路径设置", // LibraryGamePathSettings
+    "手动启用游戏并设置路径。", // LibraryGamePathSettingsDescription
     "缺少签名绕过器", // LibraryNteBypasserMissingTitle
     "安装 AyakaNTEModLoader.asi 或 UniversalSigBypasser.asi 之前，NTE Mod 不会加载。", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka

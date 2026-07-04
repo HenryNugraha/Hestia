@@ -2726,52 +2726,135 @@ impl HestiaApp {
                         self.render_categories_settings_tab(ui, &mut should_save);
                     }
                     SettingsTab::Path => {
-                    ui.indent("path_scan_tools", |ui| {
-                            static_label(
-                                ui,
-                                RichText::new(text.path_scan_title())
-                                    .size(14.0)
-                                    .color(Color32::from_gray(220)),
-                            );
-                            ui.add_space(-10.0);
-                            static_label(
-                                ui,
-                                RichText::new(text.path_scan_description())
-                                    .size(12.0)
-                                    .color(Color32::from_gray(165)),
-                            );
-                            ui.add_space(-4.0);
-                            ui.scope(|ui| {
-                                let radius = egui::CornerRadius::same(3);
-                                ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
-                                ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
-                                ui.style_mut().visuals.widgets.active.corner_radius = radius;
-                                let scanning = self.startup_path_scan.is_some();
-                                let scan_button = egui::Button::new(icon_text_sized(
-                                    Icon::Search,
-                                    text.path_scan_button(scanning),
-                                    14.0,
-                                    13.0,
-                                ))
-                                .fill(Color32::from_rgb(180, 78, 35))
-                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)));
-                                if ui
-                                    .add_enabled(!scanning, scan_button)
-                                    .on_hover_cursor(if scanning {
-                                        egui::CursorIcon::NotAllowed
-                                    } else {
-                                        egui::CursorIcon::PointingHand
-                                    })
-                                    .clicked()
-                                {
-                                    self.start_manual_path_scan();
-                                }
-                                ui.add_space(1.0);
-                            });
-                    });
-                    ui.add_space(16.0);
-                    let has_enabled_xxmi_games = self.state.games.iter().any(|game| game.enabled && game.is_xxmi());
-                    if has_enabled_xxmi_games {
+                        let accent = Color32::from_rgb(203, 104, 59);
+                        let width = (ui.available_width() * 0.86).min(520.0);
+                        let height = 116.0;
+                        let (block_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+                        ui.painter().rect(
+                            block_rect,
+                            egui::CornerRadius::same(6),
+                            Color32::from_rgb(33, 36, 40),
+                            egui::Stroke::new(1.0, Color32::from_rgb(58, 64, 72)),
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                block_rect.min,
+                                egui::vec2(3.0, block_rect.height()),
+                            ),
+                            egui::CornerRadius {
+                                nw: 6,
+                                ne: 0,
+                                sw: 6,
+                                se: 0,
+                            },
+                            accent,
+                        );
+
+                        let content_rect = block_rect.shrink2(egui::vec2(14.0, 10.0));
+                        let button_width = 76.0;
+                        let button_height = 30.0;
+                        let button_gap = 10.0;
+                        let icon_x = content_rect.left() + 10.0;
+                        let text_x = content_rect.left() + 36.0;
+                        let text_width = (content_rect.right() - text_x).max(1.0);
+                        let title_galley = egui::WidgetText::from(
+                            RichText::new(text.path_scan_title())
+                                .size(14.5)
+                                .strong()
+                                .color(Color32::from_rgb(226, 230, 236)),
+                        )
+                        .into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Extend),
+                            f32::INFINITY,
+                            egui::FontSelection::Default,
+                        );
+                        let description_galley = egui::WidgetText::from(
+                            RichText::new(text.path_scan_description())
+                                .size(12.0)
+                                .color(Color32::from_gray(160)),
+                        )
+                        .into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Wrap),
+                            text_width,
+                            egui::FontSelection::Default,
+                        );
+                        let copy_gap = 1.0;
+                        let copy_height =
+                            title_galley.size().y + copy_gap + description_galley.size().y;
+                        let group_height = copy_height + button_gap + button_height;
+                        let group_top = block_rect.center().y - group_height * 0.5;
+                        let copy_top = group_top;
+                        let button_rect = egui::Rect::from_min_size(
+                            egui::pos2(text_x, copy_top + copy_height + button_gap),
+                            egui::vec2(button_width, button_height),
+                        );
+                        let copy_clip = content_rect;
+                        let copy_painter = ui.painter().with_clip_rect(copy_clip);
+                        copy_painter.text(
+                            egui::pos2(icon_x, copy_top + copy_height * 0.5),
+                            egui::Align2::CENTER_CENTER,
+                            icon_char(Icon::Search),
+                            egui::FontId::new(18.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                            accent,
+                        );
+                        copy_painter.galley(
+                            egui::pos2(text_x, copy_top),
+                            title_galley,
+                            Color32::WHITE,
+                        );
+                        copy_painter.galley(
+                            egui::pos2(
+                                text_x,
+                                copy_top + copy_height - description_galley.size().y,
+                            ),
+                            description_galley,
+                            Color32::WHITE,
+                        );
+
+                        let mut button_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(button_rect)
+                                .layout(egui::Layout::centered_and_justified(
+                                    egui::Direction::LeftToRight,
+                                )),
+                        );
+                        button_ui.scope(|ui| {
+                            let radius = egui::CornerRadius::same(3);
+                            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                            let scanning = self.startup_path_scan.is_some();
+                            let scan_button = egui::Button::new(icon_text_sized(
+                                Icon::Search,
+                                text.path_scan_button(scanning),
+                                14.0,
+                                13.0,
+                            ))
+                            .fill(Color32::from_rgb(180, 78, 35))
+                            .stroke(egui::Stroke::new(1.0, accent));
+                            if ui
+                                .add_enabled(!scanning, scan_button)
+                                .on_hover_cursor(if scanning {
+                                    egui::CursorIcon::NotAllowed
+                                } else {
+                                    egui::CursorIcon::PointingHand
+                                })
+                                .clicked()
+                            {
+                                self.start_manual_path_scan();
+                            }
+                        });
+                        ui.add_space(16.0);
+                        let has_enabled_xxmi_games = self
+                            .state
+                            .games
+                            .iter()
+                            .any(|game| game.enabled && game.is_xxmi());
+                        if has_enabled_xxmi_games {
                     static_label(ui, bold(text.path_xxmi_section(), Some(16.0)).underline());
                     ui.group(|ui| {
                         let warn_color = Color32::from_rgb(124, 45, 58);

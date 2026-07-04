@@ -226,7 +226,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Задачи (Ctrl+J)", // ChromeTasksTooltip
     "Журнал (Ctrl+L)", // ChromeLogTooltip
     "Настройки (F10)", // ChromeSettingsTooltip
-    "Игры не обнаружены или не включены", // ChromeNoGamesDetected
+    "Нет включенных игр", // ChromeNoGamesDetected
     "См. «Настройки → Игра и путь»", // ChromeSeeSettingsGamePath
 
     // Main GUI: Browse
@@ -300,13 +300,14 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Сканирование установленных модов", // LibraryScanningInstalledMods
-    "Установите XXMI", // LibraryEnsureXxmiInstalled
-    "XXMI Launcher нужен для управления играми.", // LibraryInstallXxmiDescription
-    "Настройте XXMI, затем позвольте Hestia найти ваши игры.", // LibrarySetupDescription
+    "Требуется XXMI Launcher", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher нужен, прежде чем Hestia сможет устанавливать или загружать моды для этой игры.", // LibraryInstallXxmiDescription
+    "Просканируйте установленные игры или включите игру вручную в настройках.", // LibrarySetupDescription
     "Скачать XXMI", // LibraryDownloadXxmi
-    "Найти игры и исправить пути", // LibraryFindGamesAndFixPaths
-    "Hestia может выполнить глубокий поиск поддерживаемых игр", // LibraryPathScanDescription
+    "Сканировать игры", // LibraryFindGamesAndFixPaths
+    "Автоматически найти поддерживаемые игры.", // LibraryPathScanDescription
     "Настройки игры и путей", // LibraryGamePathSettings
+    "Включите игры и задайте пути вручную.", // LibraryGamePathSettingsDescription
     "Signature bypasser не установлен", // LibraryNteBypasserMissingTitle
     "Моды NTE не будут загружаться, пока не установлен AyakaNTEModLoader.asi или UniversalSigBypasser.asi.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka

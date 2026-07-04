@@ -1620,35 +1620,154 @@ impl HestiaApp {
         self.state.games.iter().any(|game| game.enabled)
     }
 
-    fn selected_game_is_installed_or_configured(&self) -> bool {
+    fn selected_game_readiness(&self) -> Option<GameReadiness> {
         self.selected_game()
-            .is_some_and(Self::game_install_is_configured)
+            .map(|game| self.game_readiness_for(game))
     }
 
-    fn selected_game_can_launch_modded(&self) -> bool {
-        self.selected_game().is_some_and(|game| {
-            game.is_xxmi()
-                && Self::game_install_is_configured(game)
-                && self
-                    .state
-                    .static_prefs
-                    .modded_launcher_path_override
-                    .as_ref()
-                    .or_else(|| game.modded_exe_path_override.as_ref())
-                    .is_some_and(|path| path.is_file())
-        })
-    }
-
-    fn selected_game_can_launch_vanilla(&self) -> bool {
-        self.selected_game()
-            .is_some_and(|game| Self::game_install_is_configured(game))
-    }
-
-    fn game_is_installed_or_configured(&self, game_id: &str) -> bool {
+    fn game_readiness(&self, game_id: &str) -> Option<GameReadiness> {
         self.state
             .games
             .iter()
-            .any(|game| game.definition.id == game_id && Self::game_install_is_configured(game))
+            .find(|game| game.definition.id == game_id)
+            .map(|game| self.game_readiness_for(game))
+    }
+
+    fn selected_game_can_install_mods(&self) -> bool {
+        self.selected_game_readiness()
+            .is_some_and(|readiness| readiness.can_install_mods)
+    }
+
+    fn selected_game_can_download_mods(&self) -> bool {
+        self.selected_game_readiness()
+            .is_some_and(|readiness| readiness.can_download_mods)
+    }
+
+    fn selected_game_mod_setup_issue(&self) -> Option<GameSetupIssue> {
+        self.selected_game_readiness()
+            .and_then(|readiness| readiness.primary_issue)
+    }
+
+    fn selected_game_can_launch_modded(&self) -> bool {
+        self.selected_game_readiness()
+            .is_some_and(|readiness| readiness.can_launch_modded)
+    }
+
+    fn selected_game_can_launch_vanilla(&self) -> bool {
+        self.selected_game_readiness()
+            .is_some_and(|readiness| readiness.can_launch_vanilla)
+    }
+
+    fn game_can_install_mods(&self, game_id: &str) -> bool {
+        self.game_readiness(game_id)
+            .is_some_and(|readiness| readiness.can_install_mods)
+    }
+
+    fn game_can_download_mods(&self, game_id: &str) -> bool {
+        self.game_readiness(game_id)
+            .is_some_and(|readiness| readiness.can_download_mods)
+    }
+
+    fn game_mod_setup_issue(&self, game_id: &str) -> Option<GameSetupIssue> {
+        self.game_readiness(game_id)
+            .and_then(|readiness| readiness.primary_issue)
+    }
+
+    fn selected_game_mod_setup_message(&self) -> String {
+        self.selected_game_mod_setup_issue()
+            .map(|issue| self.game_setup_issue_message(issue))
+            .unwrap_or_else(|| self.text().game_not_installed().to_string())
+    }
+
+    fn game_mod_setup_message(&self, game_id: &str) -> String {
+        self.game_mod_setup_issue(game_id)
+            .map(|issue| self.game_setup_issue_message(issue))
+            .unwrap_or_else(|| self.text().game_not_installed().to_string())
+    }
+
+    fn game_setup_issue_message(&self, issue: GameSetupIssue) -> String {
+        let text = self.text();
+        match issue {
+            GameSetupIssue::MissingGamePath => text.game_not_installed().to_string(),
+            GameSetupIssue::MissingModFolder => text.path_not_found().to_string(),
+            GameSetupIssue::MissingXxmiLauncher => text.install_xxmi_description().to_string(),
+            GameSetupIssue::MissingNteBypasser => text.nte_bypasser_missing_description().to_string(),
+            GameSetupIssue::MissingUnrealRequirement => text.install_unavailable().to_string(),
+        }
+    }
+
+    fn game_readiness_for(&self, game: &GameInstall) -> GameReadiness {
+        Self::compute_game_readiness(
+            game,
+            self.state.static_prefs.use_default_mods_path,
+            self.state
+                .static_prefs
+                .modded_launcher_path_override
+                .as_deref(),
+        )
+    }
+
+    fn compute_game_readiness(
+        game: &GameInstall,
+        use_default_mods_path: bool,
+        global_modded_launcher: Option<&Path>,
+    ) -> GameReadiness {
+        let game_present = Self::game_install_is_configured(game);
+        let mods_path = game.mods_path(use_default_mods_path);
+        let mod_root_ready = game_present && mods_path.is_some();
+        let mut mod_loader_ready = false;
+        let mut primary_issue = None;
+
+        if !game_present {
+            primary_issue = Some(GameSetupIssue::MissingGamePath);
+        } else if !mod_root_ready {
+            primary_issue = Some(GameSetupIssue::MissingModFolder);
+        }
+
+        if game_present && mod_root_ready {
+            match game.definition.backend {
+                GameBackend::Xxmi => {
+                    let launcher_exists = global_modded_launcher
+                        .or_else(|| game.modded_exe_path_override.as_deref())
+                        .is_some_and(|path| path.is_file());
+                    mod_loader_ready = launcher_exists;
+                    if !launcher_exists {
+                        primary_issue = Some(GameSetupIssue::MissingXxmiLauncher);
+                    }
+                }
+                GameBackend::UnrealEngine => {
+                    mod_loader_ready = Self::unreal_game_mod_loader_ready(game);
+                    if !mod_loader_ready {
+                        primary_issue = match game.definition.id.as_str() {
+                            "nte" => Some(GameSetupIssue::MissingNteBypasser),
+                            _ => Some(GameSetupIssue::MissingUnrealRequirement),
+                        };
+                    }
+                }
+            }
+        }
+
+        let can_install_mods = game_present && mod_root_ready && mod_loader_ready;
+        GameReadiness {
+            game_present,
+            can_launch_vanilla: game_present,
+            can_launch_modded: game.is_xxmi() && game_present && mod_loader_ready,
+            can_open_mods_folder: game_present && mod_root_ready,
+            can_install_mods,
+            can_download_mods: can_install_mods,
+            primary_issue,
+        }
+    }
+
+    fn unreal_game_mod_loader_ready(game: &GameInstall) -> bool {
+        match game.definition.id.as_str() {
+            "nte" => game
+                .vanilla_exe_path_override
+                .as_ref()
+                .map(|exe| default_unreal_bypasser_paths_from_exe(&game.definition.id, exe))
+                .is_some_and(|paths| !paths.is_empty() && paths.iter().any(|path| path.is_file())),
+            _ => false,
+        }
     }
 
     fn game_install_is_configured(game: &GameInstall) -> bool {
@@ -2942,5 +3061,128 @@ impl HestiaApp {
 
         self.pending_events.has_process_work = has_work;
         has_work
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    fn game_install(id: &str, backend: GameBackend, exe: PathBuf) -> GameInstall {
+        GameInstall {
+            definition: crate::model::GameDefinition {
+                id: id.to_string(),
+                name: id.to_string(),
+                backend,
+                xxmi_code: if backend == GameBackend::Xxmi {
+                    "TESTMI".to_string()
+                } else {
+                    String::new()
+                },
+            },
+            mods_path_override: None,
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: Some(exe),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn xxmi_game_present_without_launcher_blocks_mod_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp.path().join("Game.exe");
+        let mods = temp.path().join("Mods");
+        std::fs::write(&exe, []).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        let mut game = game_install("xxmi-test", GameBackend::Xxmi, exe);
+        game.mods_path_override = Some(mods);
+
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+
+        assert!(readiness.game_present);
+        assert!(readiness.can_launch_vanilla);
+        assert!(!readiness.can_launch_modded);
+        assert!(!readiness.can_install_mods);
+        assert!(!readiness.can_download_mods);
+        assert_eq!(
+            readiness.primary_issue,
+            Some(GameSetupIssue::MissingXxmiLauncher)
+        );
+    }
+
+    #[test]
+    fn xxmi_game_with_launcher_allows_mod_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp.path().join("Game.exe");
+        let launcher = temp.path().join("XXMI Launcher.exe");
+        let mods = temp.path().join("Mods");
+        std::fs::write(&exe, []).unwrap();
+        std::fs::write(&launcher, []).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        let mut game = game_install("xxmi-test", GameBackend::Xxmi, exe);
+        game.mods_path_override = Some(mods);
+
+        let readiness = HestiaApp::compute_game_readiness(&game, false, Some(&launcher));
+
+        assert!(readiness.game_present);
+        assert!(readiness.can_launch_vanilla);
+        assert!(readiness.can_launch_modded);
+        assert!(readiness.can_install_mods);
+        assert!(readiness.can_download_mods);
+        assert_eq!(readiness.primary_issue, None);
+    }
+
+    #[test]
+    fn nte_without_bypasser_blocks_mod_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp
+            .path()
+            .join("Neverness To Everness")
+            .join("Client")
+            .join("WindowsNoEditor")
+            .join("HT")
+            .join("Binaries")
+            .join("Win64")
+            .join("HTGame.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, []).unwrap();
+        let game = game_install("nte", GameBackend::UnrealEngine, exe);
+
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+
+        assert!(readiness.game_present);
+        assert!(readiness.can_launch_vanilla);
+        assert!(!readiness.can_install_mods);
+        assert!(!readiness.can_download_mods);
+        assert_eq!(
+            readiness.primary_issue,
+            Some(GameSetupIssue::MissingNteBypasser)
+        );
+    }
+
+    #[test]
+    fn nte_with_bypasser_allows_mod_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp
+            .path()
+            .join("Neverness To Everness")
+            .join("Client")
+            .join("WindowsNoEditor")
+            .join("HT")
+            .join("Binaries")
+            .join("Win64")
+            .join("HTGame.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, []).unwrap();
+        std::fs::write(exe.parent().unwrap().join("UniversalSigBypasser.asi"), []).unwrap();
+        let game = game_install("nte", GameBackend::UnrealEngine, exe);
+
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+
+        assert!(readiness.game_present);
+        assert!(readiness.can_launch_vanilla);
+        assert!(readiness.can_install_mods);
+        assert!(readiness.can_download_mods);
+        assert_eq!(readiness.primary_issue, None);
     }
 }

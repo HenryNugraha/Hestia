@@ -1152,6 +1152,26 @@ enum StartupPathScanEvent {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GameSetupIssue {
+    MissingGamePath,
+    MissingModFolder,
+    MissingXxmiLauncher,
+    MissingNteBypasser,
+    MissingUnrealRequirement,
+}
+
+#[derive(Clone, Debug)]
+struct GameReadiness {
+    game_present: bool,
+    can_launch_vanilla: bool,
+    can_launch_modded: bool,
+    can_open_mods_folder: bool,
+    can_install_mods: bool,
+    can_download_mods: bool,
+    primary_issue: Option<GameSetupIssue>,
+}
+
 #[derive(Clone)]
 struct RefreshRequest {
     game_id: String,

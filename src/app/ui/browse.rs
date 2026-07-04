@@ -627,7 +627,9 @@ impl HestiaApp {
                                                 ui.vertical(|ui| {
                                                     ui.add_space(4.0);
                                                     let is_installed = self.is_browse_mod_installed(card);
-                                                    let selected_game_ready = self.selected_game_is_installed_or_configured();
+                                                    let selected_game_ready = self.selected_game_can_download_mods();
+                                                    let selected_game_setup_message =
+                                                        self.selected_game_mod_setup_message();
                                                     ui.spacing_mut().button_padding.y = 4.0;
                                                     let install_response = ui.add_enabled(
                                                         card.has_files && selected_game_ready,
@@ -651,7 +653,7 @@ impl HestiaApp {
                                                     if !selected_game_ready {
                                                         install_response
                                                             .clone()
-                                                            .on_hover_text(text.game_not_installed())
+                                                            .on_hover_text(&selected_game_setup_message)
                                                             .on_hover_cursor(egui::CursorIcon::NotAllowed);
                                                     } else if card.has_files {
                                                         install_response
@@ -776,7 +778,8 @@ impl HestiaApp {
                                 gamebanana::install_block_reason(profile)
                                     .unwrap_or_default();
                             let install_blocked = !install_disabled_reason.is_empty();
-                            let selected_game_ready = self.selected_game_is_installed_or_configured();
+                            let selected_game_ready = self.selected_game_can_download_mods();
+                            let selected_game_setup_message = self.selected_game_mod_setup_message();
 
                             let install_response = ui.add_enabled(
                                 !install_blocked && selected_game_ready,
@@ -796,7 +799,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 install_response
                                     .clone()
-                                    .on_hover_text_at_pointer(text.game_not_installed())
+                                    .on_hover_text_at_pointer(&selected_game_setup_message)
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             } else {
                                 install_response
@@ -821,7 +824,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 install_disabled_response
                                     .clone()
-                                    .on_hover_text_at_pointer(text.game_not_installed())
+                                    .on_hover_text_at_pointer(&selected_game_setup_message)
                                     .on_hover_cursor(egui::CursorIcon::NotAllowed);
                             } else if install_blocked {
                                 install_disabled_response
@@ -1394,7 +1397,8 @@ impl HestiaApp {
                     let install_disabled_reason =
                         gamebanana::install_block_reason(profile).unwrap_or_default();
                     let install_blocked = !install_disabled_reason.is_empty();
-                    let selected_game_ready = self.selected_game_is_installed_or_configured();
+                    let selected_game_ready = self.selected_game_can_download_mods();
+                    let selected_game_setup_message = self.selected_game_mod_setup_message();
                     ui.add_space(-4.0);
                     ui.horizontal(|ui| {
                         let install_response = ui.add_enabled(
@@ -1419,7 +1423,7 @@ impl HestiaApp {
                         if !selected_game_ready {
                             install_response
                                 .clone()
-                                .on_hover_text_at_pointer(text.game_not_installed())
+                                .on_hover_text_at_pointer(&selected_game_setup_message)
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         } else if install_blocked {
                             install_response
@@ -1468,7 +1472,7 @@ impl HestiaApp {
                             if !selected_game_ready {
                                 static_label(
                                     ui,
-                                    RichText::new(text.game_not_installed())
+                                    RichText::new(&selected_game_setup_message)
                                         .size(12.0)
                                         .color(Color32::from_gray(170)),
                                 );
@@ -2173,7 +2177,8 @@ impl HestiaApp {
                         }
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        let selected_game_ready = self.game_is_installed_or_configured(&game_id);
+                        let selected_game_ready = self.game_can_download_mods(&game_id);
+                        let game_setup_message = self.game_mod_setup_message(&game_id);
                         let install_response = ui.add_enabled(
                             selected_game_ready && file.download_url.is_some(),
                             egui::Button::new(text.install()),
@@ -2181,7 +2186,7 @@ impl HestiaApp {
                         if !selected_game_ready {
                             install_response
                                 .clone()
-                                .on_hover_text(text.game_not_installed())
+                                .on_hover_text(&game_setup_message)
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         } else if file.download_url.is_some() {
                             install_response
@@ -2221,7 +2226,8 @@ impl HestiaApp {
         else {
             return;
         };
-        let prompt_game_ready = self.game_is_installed_or_configured(&prompt_game_id);
+        let prompt_game_ready = self.game_can_install_mods(&prompt_game_id);
+        let prompt_game_setup_message = self.game_mod_setup_message(&prompt_game_id);
         let Some(prompt) = self.browse_state.file_prompt.as_mut() else {
             return;
         };
@@ -2370,7 +2376,7 @@ impl HestiaApp {
                     if !prompt_game_ready {
                         install_response
                             .clone()
-                            .on_hover_text(text.game_not_installed())
+                            .on_hover_text(&prompt_game_setup_message)
                             .on_hover_cursor(egui::CursorIcon::NotAllowed);
                     }
                     if install_response.clicked() {

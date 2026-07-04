@@ -3324,13 +3324,85 @@ impl HestiaApp {
             });
     }
 
+    fn render_blank_setup_choice(
+        ui: &mut Ui,
+        icon: Icon,
+        title: &str,
+        description: &str,
+        accent: Color32,
+        enabled: bool,
+    ) -> egui::Response {
+        let width = ui.available_width();
+        let height = 78.0;
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::click());
+        let response = response.on_hover_cursor(if enabled {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        let fill = if !enabled {
+            Color32::from_rgb(28, 30, 34)
+        } else if response.hovered() {
+            Color32::from_rgb(38, 42, 47)
+        } else {
+            Color32::from_rgb(33, 36, 40)
+        };
+        ui.painter().rect(
+            rect,
+            egui::CornerRadius::same(6),
+            fill,
+            egui::Stroke::new(1.0, Color32::from_rgb(58, 64, 72)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())),
+            egui::CornerRadius {
+                nw: 6,
+                ne: 0,
+                sw: 6,
+                se: 0,
+            },
+            accent,
+        );
+
+        let content_rect = rect.shrink2(egui::vec2(16.0, 12.0));
+        let mut tile_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(content_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        tile_ui.add_enabled_ui(enabled, |ui| {
+            static_label(ui, icon_rich(icon, 21.0, accent));
+            ui.add_space(10.0);
+            ui.vertical(|ui| {
+                ui.add_space(1.0);
+                static_label(
+                    ui,
+                    RichText::new(title)
+                        .size(14.5)
+                        .strong()
+                        .color(Color32::from_rgb(226, 230, 236)),
+                );
+                ui.add_space(-2.0);
+                static_label(
+                    ui,
+                    RichText::new(description)
+                        .size(12.5)
+                        .color(Color32::from_gray(160)),
+                );
+            });
+        });
+
+        response
+    }
+
     fn render_blank_left_pane(&mut self, ui: &mut Ui) {
         let text = self.text();
         egui::Frame::new()
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
                 ui.add_space(22.0);
-                let panel_size = egui::vec2(520.0, 360.0);
+                let panel_size = egui::vec2(520.0, 286.0);
                 let (panel_rect, _) = ui.allocate_exact_size(panel_size, Sense::hover());
                 ui.painter().rect(
                     panel_rect,
@@ -3368,145 +3440,33 @@ impl HestiaApp {
                         );
                     },
                 );
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(14.0);
-
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 20.0),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.add_space(28.0);
-                        static_label(
-                            ui,
-                            RichText::new("01")
-                                .color(Color32::from_rgb(203, 104, 59))
-                                .size(11.0)
-                                .strong(),
-                        );
-                        ui.add_space(4.0);
-                        static_label(ui, bold(text.ensure_xxmi_installed(), Some(15.0)));
-                    },
-                );
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 18.0),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.add_space(54.0);
-                        static_label(
-                            ui,
-                            RichText::new(text.install_xxmi_description())
-                                .color(Color32::from_gray(165))
-                                .size(13.0),
-                        );
-                    },
-                );
-                ui.add_space(6.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 42.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.add_space(54.0);
-                        let download_xxmi_button = egui::Button::new(icon_bold_text(
-                            Icon::ExternalLink,
-                            text.download_xxmi(),
-                            14.0,
-                            14.0,
-                        ))
-                        .fill(Color32::from_rgb(48, 51, 56))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(73, 78, 86)));
-                        if ui
-                            .add_sized([172.0, 40.0], download_xxmi_button)
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            if let Err(err) =
-                                open_external_url("https://github.com/SpectrumQT/XXMI-Launcher")
-                            {
-                                self.report_error(err, Some(text.app_could_not_open_browser()));
-                            }
-                        }
-                    },
-                );
-
                 ui.add_space(18.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 20.0),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.add_space(28.0);
-                        static_label(
-                            ui,
-                            RichText::new("02")
-                                .color(Color32::from_rgb(203, 104, 59))
-                                .size(11.0)
-                                .strong(),
-                        );
-                        ui.add_space(4.0);
-                        static_label(ui, bold(text.find_games_and_fix_paths(), Some(15.0)));
-                    },
-                );
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 18.0),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.add_space(54.0);
-                        static_label(
-                            ui,
-                            RichText::new(text.library_path_scan_description())
-                                .color(Color32::from_gray(165))
-                                .size(13.0),
-                        );
-                    },
-                );
                 let scanning = self.startup_path_scan.is_some();
-                ui.add_space(6.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 42.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.add_space(54.0);
-                        let scan_button = egui::Button::new(icon_bold_text(
-                            Icon::Search,
-                            text.path_scan_button(scanning),
-                            15.0,
-                            16.0,
-                        ))
-                        .fill(Color32::from_rgb(180, 78, 35))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)))
-                        .min_size(egui::vec2(172.0, 40.0));
-                        if ui
-                            .add_enabled(!scanning, scan_button)
-                            .on_hover_cursor(if scanning {
-                                egui::CursorIcon::NotAllowed
-                            } else {
-                                egui::CursorIcon::PointingHand
-                            })
-                            .clicked()
-                        {
-                            self.start_manual_path_scan();
-                        }
-                    },
+                let scan_response = Self::render_blank_setup_choice(
+                    ui,
+                    Icon::Search,
+                    text.find_games_and_fix_paths(),
+                    text.library_path_scan_description(),
+                    Color32::from_rgb(203, 104, 59),
+                    !scanning,
                 );
-                ui.add_space(-2.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(content_rect.width(), 18.0),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        ui.add_space(54.0);
-                        if ui
-                            .link(
-                                RichText::new(format!("{} →", text.game_path_settings()))
-                                    .color(Color32::from_gray(175))
-                                    .size(13.0),
-                            )
-                            .clicked()
-                        {
-                            self.settings_open = true;
-                            self.settings_tab = SettingsTab::Path;
-                        }
-                    },
+                if scan_response.clicked() && !scanning {
+                    self.start_manual_path_scan();
+                }
+
+                ui.add_space(10.0);
+                let settings_response = Self::render_blank_setup_choice(
+                    ui,
+                    Icon::Settings2,
+                    text.game_path_settings(),
+                    text.game_path_settings_description(),
+                    Color32::from_rgb(112, 164, 118),
+                    true,
                 );
+                if settings_response.clicked() {
+                    self.settings_open = true;
+                    self.settings_tab = SettingsTab::Path;
+                }
             });
     }
 
@@ -3523,6 +3483,114 @@ impl HestiaApp {
     fn missing_selected_nte_bypasser_paths(&self) -> Option<Vec<PathBuf>> {
         self.selected_nte_bypasser_paths()
             .filter(|paths| !paths.iter().any(|path| path.is_file()))
+    }
+
+    fn render_selected_game_setup_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
+        match self.selected_game_mod_setup_issue()? {
+            GameSetupIssue::MissingXxmiLauncher => self.render_xxmi_launcher_warning(ui),
+            GameSetupIssue::MissingNteBypasser => self.render_nte_bypasser_warning(ui),
+            GameSetupIssue::MissingModFolder | GameSetupIssue::MissingUnrealRequirement => {
+                self.render_generic_mod_setup_warning(ui)
+            }
+            GameSetupIssue::MissingGamePath => None,
+        }
+    }
+
+    fn render_xxmi_launcher_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
+        let text = self.text();
+        let warn_color = Color32::from_rgb(203, 104, 59);
+        let frame = egui::Frame::new()
+            .fill(Color32::from_rgb(43, 38, 36))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(113, 70, 48)))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .outer_margin(egui::Margin::symmetric(12, 0))
+            .corner_radius(egui::CornerRadius::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        static_label(ui, icon_rich(Icon::AlertTriangle, 18.0, warn_color));
+                        ui.add_space(4.0);
+                        ui.vertical(|ui| {
+                            static_label(
+                                ui,
+                                RichText::new(text.ensure_xxmi_installed())
+                                    .size(13.5)
+                                    .strong()
+                                    .color(Color32::from_rgb(238, 220, 207)),
+                            );
+                            ui.add_space(-2.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.install_xxmi_description())
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(198, 176, 162)),
+                            );
+                        });
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(26.0);
+                        let download = ui
+                            .add_sized(
+                                [154.0, 30.0],
+                                egui::Button::new(icon_text_sized(
+                                    Icon::ExternalLink,
+                                    text.download_xxmi(),
+                                    13.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if download.clicked() {
+                            if let Err(err) =
+                                open_external_url("https://github.com/SpectrumQT/XXMI-Launcher")
+                            {
+                                self.report_error(err, Some(text.app_could_not_open_browser()));
+                            }
+                        }
+                    });
+                });
+            });
+        Some(frame.response.rect)
+    }
+
+    fn render_generic_mod_setup_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
+        let text = self.text();
+        let message = self.selected_game_mod_setup_message();
+        let warn_color = Color32::from_rgb(203, 104, 59);
+        let frame = egui::Frame::new()
+            .fill(Color32::from_rgb(43, 38, 36))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(113, 70, 48)))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .outer_margin(egui::Margin::symmetric(12, 0))
+            .corner_radius(egui::CornerRadius::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    static_label(ui, icon_rich(Icon::AlertTriangle, 18.0, warn_color));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        static_label(
+                            ui,
+                            RichText::new(text.install_unavailable())
+                                .size(13.5)
+                                .strong()
+                                .color(Color32::from_rgb(238, 220, 207)),
+                        );
+                        ui.add_space(-2.0);
+                        static_label(
+                            ui,
+                            RichText::new(message)
+                                .size(12.0)
+                                .color(Color32::from_rgb(198, 176, 162)),
+                        );
+                    });
+                });
+            });
+        Some(frame.response.rect)
     }
 
     fn render_nte_bypasser_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
@@ -4496,7 +4564,7 @@ impl HestiaApp {
         mod_card_context_block_rects.push(header_frame_response.response.rect);
 
         ui.add_space(8.0);
-        if let Some(warning_rect) = self.render_nte_bypasser_warning(ui) {
+        if let Some(warning_rect) = self.render_selected_game_setup_warning(ui) {
             mod_card_context_block_rects.push(warning_rect);
             ui.add_space(8.0);
         }

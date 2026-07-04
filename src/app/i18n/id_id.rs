@@ -226,7 +226,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Unduhan (Ctrl+J)", // ChromeTasksTooltip
     "Log (Ctrl+L)", // ChromeLogTooltip
     "Setelan (F10)", // ChromeSettingsTooltip
-    "Tidak ada game dipilih", // ChromeNoGamesDetected
+    "Belum Ada Game yang Diaktifkan", // ChromeNoGamesDetected
     "Lihat Setelan → Game & Path", // ChromeSeeSettingsGamePath
 
     // Main GUI: Browse
@@ -300,13 +300,14 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Memindai mod terpasang", // LibraryScanningInstalledMods
-    "Pasang XXMI", // LibraryEnsureXxmiInstalled
-    "XXMI Launcher diperlukan untuk mengelola game yang didukung.", // LibraryInstallXxmiDescription
-    "Siapkan XXMI, lalu biarkan Hestia menemukan game Anda.", // LibrarySetupDescription
+    "XXMI Launcher diperlukan", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher diperlukan sebelum Hestia dapat memasang atau mengunduh mod untuk game ini.", // LibraryInstallXxmiDescription
+    "Pindai game yang terpasang atau aktifkan satu secara manual di setelan.", // LibrarySetupDescription
     "Unduh XXMI", // LibraryDownloadXxmi
-    "Temukan game dan perbaiki path", // LibraryFindGamesAndFixPaths
-    "Hestia dapat melakukan pencarian mendalam untuk menemukan game yang didukung", // LibraryPathScanDescription
+    "Pindai Game", // LibraryFindGamesAndFixPaths
+    "Temukan game yang didukung secara otomatis.", // LibraryPathScanDescription
     "Setelan Game & Path", // LibraryGamePathSettings
+    "Aktifkan game dan atur path secara manual.", // LibraryGamePathSettingsDescription
     "Signature bypasser belum terpasang", // LibraryNteBypasserMissingTitle
     "Mod NTE tidak akan dimuat sampai AyakaNTEModLoader.asi atau UniversalSigBypasser.asi terpasang.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka

@@ -276,9 +276,9 @@ impl HestiaApp {
         {
             return true;
         }
-        if !self.game_is_installed_or_configured(&payload.game_id) {
+        if !self.game_can_download_mods(&payload.game_id) {
             self.report_warn(
-                self.text().game_not_installed(),
+                self.game_mod_setup_message(&payload.game_id),
                 Some(self.text().install_unavailable()),
             );
             return true;
@@ -1476,12 +1476,12 @@ impl HestiaApp {
         install_disabled: bool,
         post_install_rename_to: Option<String>,
     ) {
-        if !self.game_is_installed_or_configured(&game_id) {
+        if !self.game_can_download_mods(&game_id) {
             if let Some(task_id) = task_id {
                 self.update_task_status(task_id, TaskStatus::Failed);
             }
             self.report_warn(
-                self.text().game_not_installed(),
+                self.game_mod_setup_message(&game_id),
                 Some(self.text().install_unavailable()),
             );
             return;
@@ -1717,10 +1717,10 @@ impl HestiaApp {
     }
 
     fn resolve_browse_install_after_detail(&mut self, pending: PendingBrowseInstall) {
-        if !self.game_is_installed_or_configured(&pending.game_id) {
+        if !self.game_can_install_mods(&pending.game_id) {
             self.update_task_status(pending.task_id, TaskStatus::Failed);
             self.report_warn(
-                self.text().game_not_installed(),
+                self.game_mod_setup_message(&pending.game_id),
                 Some(self.text().install_unavailable()),
             );
             return;
@@ -1966,9 +1966,9 @@ impl HestiaApp {
         let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
             return;
         };
-        if !self.selected_game_is_installed_or_configured() {
+        if !self.selected_game_can_download_mods() {
             self.report_warn(
-                self.text().game_not_installed(),
+                self.selected_game_mod_setup_message(),
                 Some(self.text().install_unavailable()),
             );
             return;

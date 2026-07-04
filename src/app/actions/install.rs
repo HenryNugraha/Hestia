@@ -204,9 +204,9 @@ impl HestiaApp {
                 self.report_warn(self.text().select_game_first(), None);
                 return;
             };
-            if !self.selected_game_is_installed_or_configured() {
+            if !self.selected_game_can_install_mods() {
                 self.report_warn(
-                    self.text().game_not_installed(),
+                    self.selected_game_mod_setup_message(),
                     Some(self.text().install_unavailable()),
                 );
                 return;
@@ -256,9 +256,9 @@ impl HestiaApp {
             self.install_batch_stats = InstallBatchStats::default();
             self.install_batch_active = true;
         }
-        if !self.game_is_installed_or_configured(&game_id) {
+        if !self.game_can_install_mods(&game_id) {
             self.report_warn(
-                self.text().game_not_installed(),
+                self.game_mod_setup_message(&game_id),
                 Some(self.text().install_unavailable()),
             );
             self.update_task_status(task_id, TaskStatus::Failed);

@@ -226,7 +226,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Tasks (Ctrl+J)", // ChromeTasksTooltip
     "Log (Ctrl+L)", // ChromeLogTooltip
     "Settings (F10)", // ChromeSettingsTooltip
-    "No games detected or enabled", // ChromeNoGamesDetected
+    "No Games Enabled", // ChromeNoGamesDetected
     "See Settings → Game & Path", // ChromeSeeSettingsGamePath
 
     // Main GUI: Browse
@@ -300,13 +300,14 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
 
     // Main GUI: My Mods
     "Scanning installed mods", // LibraryScanningInstalledMods
-    "Install XXMI", // LibraryEnsureXxmiInstalled
-    "XXMI Launcher is required to manage supported games.", // LibraryInstallXxmiDescription
-    "Set up XXMI, then let Hestia locate your games.", // LibrarySetupDescription
+    "XXMI Launcher required", // LibraryEnsureXxmiInstalled
+    "XXMI Launcher is required before Hestia can install or download mods for this game.", // LibraryInstallXxmiDescription
+    "Scan for installed games or enable one manually in settings.", // LibrarySetupDescription
     "Download XXMI", // LibraryDownloadXxmi
-    "Find games and fix paths", // LibraryFindGamesAndFixPaths
-    "Hestia can perform a deep search to find supported games", // LibraryPathScanDescription
+    "Scan Games", // LibraryFindGamesAndFixPaths
+    "Find supported games automatically.", // LibraryPathScanDescription
     "Game & Path Settings", // LibraryGamePathSettings
+    "Enable games and set paths manually.", // LibraryGamePathSettingsDescription
     "Signature bypasser is missing", // LibraryNteBypasserMissingTitle
     "NTE mods will not load until AyakaNTEModLoader.asi or UniversalSigBypasser.asi is installed.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka

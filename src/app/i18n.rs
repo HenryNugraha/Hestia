@@ -305,6 +305,7 @@ enum TextKey {
     LibraryFindGamesAndFixPaths,
     LibraryPathScanDescription,
     LibraryGamePathSettings,
+    LibraryGamePathSettingsDescription,
     LibraryNteBypasserMissingTitle,
     LibraryNteBypasserMissingDescription,
     LibraryNteBypasserAyaka,
@@ -1852,6 +1853,10 @@ impl TextCatalog {
 
     fn game_path_settings(self) -> &'static str {
         self.get(TextKey::LibraryGamePathSettings)
+    }
+
+    fn game_path_settings_description(self) -> &'static str {
+        self.get(TextKey::LibraryGamePathSettingsDescription)
     }
 
     fn nte_bypasser_missing_title(self) -> &'static str {
