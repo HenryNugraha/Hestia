@@ -2659,18 +2659,36 @@ impl HestiaApp {
                     ui.close();
                 }
 
-                let gamebanana_response = ui.add_enabled(
+                let hestia_response = ui.add_enabled(
                     gamebanana_id.is_some(),
-                    egui::Button::new(icon_text_sized(Icon::Globe, "GameBanana", 12.0, 12.0)),
+                    egui::Button::new(icon_text_sized(Icon::Compass, "Hestia", 12.0, 12.0)),
                 );
-                let gamebanana_response = if gamebanana_id.is_some() {
-                    gamebanana_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                let hestia_response = if gamebanana_id.is_some() {
+                    hestia_response.on_hover_cursor(egui::CursorIcon::PointingHand)
                 } else {
-                    gamebanana_response.on_disabled_hover_text(text.no_gamebanana_source())
+                    hestia_response.on_disabled_hover_text(text.no_gamebanana_source())
                 };
-                if gamebanana_response.clicked() {
+                if hestia_response.clicked() {
                     if let Some(mod_id) = gamebanana_id {
                         self.open_linked_mod_in_browse(mod_id);
+                        ui.close();
+                    }
+                }
+
+                let browser_response = ui.add_enabled(
+                    gamebanana_id.is_some(),
+                    egui::Button::new(icon_text_sized(Icon::Globe, "Browser", 12.0, 12.0)),
+                );
+                let browser_response = if gamebanana_id.is_some() {
+                    browser_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                } else {
+                    browser_response.on_disabled_hover_text(text.no_gamebanana_source())
+                };
+                if browser_response.clicked() {
+                    if let Some(mod_id) = gamebanana_id {
+                        if let Err(err) = open_external_url(&gamebanana::browser_url(mod_id)) {
+                            self.report_error(err, Some(text.app_could_not_open_browser()));
+                        }
                         ui.close();
                     }
                 }
@@ -3459,7 +3477,6 @@ impl HestiaApp {
                         .min_size(egui::vec2(172.0, 40.0));
                         if ui
                             .add_enabled(!scanning, scan_button)
-                            .on_hover_text(text.path_scan_button_tooltip())
                             .on_hover_cursor(if scanning {
                                 egui::CursorIcon::NotAllowed
                             } else {

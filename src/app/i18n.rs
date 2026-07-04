@@ -565,7 +565,6 @@ enum TextKey {
     SettingsPathScanDescription,
     SettingsPathScanButtonScan,
     SettingsPathScanButtonScanning,
-    SettingsPathScanButtonTooltip,
     SettingsPathXxmiSection,
     SettingsPathXxmiLauncher,
     SettingsPathPathNotFound,
@@ -2817,10 +2816,6 @@ impl TextCatalog {
         } else {
             self.get(TextKey::SettingsPathScanButtonScan)
         }
-    }
-
-    fn path_scan_button_tooltip(self) -> &'static str {
-        self.get(TextKey::SettingsPathScanButtonTooltip)
     }
 
     fn path_xxmi_section(self) -> &'static str {

@@ -106,11 +106,31 @@ impl HestiaApp {
                                 .color(Color32::from_gray(220)),
                         );
                         ui.add_space(2.0);
+                        let xxmi_game_ids = self
+                            .state
+                            .games
+                            .iter()
+                            .filter(|game| game.is_xxmi())
+                            .map(|game| game.definition.id.clone())
+                            .collect::<HashSet<_>>();
                         if let Some(scan) = self.startup_path_scan.as_mut() {
                             let finished = scan.finished;
                             let stopped = scan.stopped;
                             for status in &mut scan.statuses {
-                                Self::render_startup_path_status_row(ui, text, status, finished, stopped);
+                                let indent_as_xxmi_game = match &status.kind {
+                                    StartupPathTargetKind::Game(game_id) => {
+                                        xxmi_game_ids.contains(game_id)
+                                    }
+                                    StartupPathTargetKind::Xxmi => false,
+                                };
+                                Self::render_startup_path_status_row(
+                                    ui,
+                                    text,
+                                    status,
+                                    finished,
+                                    stopped,
+                                    indent_as_xxmi_game,
+                                );
                             }
                         }
                     });
@@ -169,9 +189,19 @@ impl HestiaApp {
         status: &mut StartupPathScanStatus,
         finished: bool,
         stopped: bool,
+        indent_as_xxmi_game: bool,
     ) {
         ui.horizontal(|ui| {
             ui.set_height(28.0);
+            if indent_as_xxmi_game {
+                ui.add_space(20.0);
+                static_label(
+                    ui,
+                    RichText::new("•")
+                        .size(14.0)
+                        .color(Color32::from_gray(160)),
+                );
+            }
             static_label(
                 ui,
                 RichText::new(&status.label)

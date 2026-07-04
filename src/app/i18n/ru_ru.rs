@@ -89,8 +89,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Dialogs
     "Сканирование путей…", // DialogScanningPaths
-    "Поиск XXMI и путей к играм", // DialogFindingPaths
-    "Hestia выполняет глубокое сканирование доступных дисков для поиска XXMI и поддерживаемых игр.", // DialogDeepScanningPaths
+    "Сканировать игры", // DialogFindingPaths
+    "Hestia сканирует доступные диски в поисках установленных поддерживаемых игр.", // DialogDeepScanningPaths
     "Результаты сканирования", // DialogScanResults
     "Продолжить", // DialogContinue
     "Остановить сканирование", // DialogStopScan
@@ -305,7 +305,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Настройте XXMI, затем позвольте Hestia найти ваши игры.", // LibrarySetupDescription
     "Скачать XXMI", // LibraryDownloadXxmi
     "Найти игры и исправить пути", // LibraryFindGamesAndFixPaths
-    "Найдите XXMI и поддерживаемые игры на дисках.", // LibraryPathScanDescription
+    "Hestia может выполнить глубокий поиск поддерживаемых игр", // LibraryPathScanDescription
     "Настройки игры и путей", // LibraryGamePathSettings
     "Signature bypasser не установлен", // LibraryNteBypasserMissingTitle
     "Моды NTE не будут загружаться, пока не установлен AyakaNTEModLoader.asi или UniversalSigBypasser.asi.", // LibraryNteBypasserMissingDescription
@@ -570,11 +570,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Без категории", // SettingsCategoryUncategorized
 
     // Window: Settings > Game & Path
-    "Проблемы с путями?", // SettingsPathScanTitle
-    "Hestia может выполнить глубокое сканирование, чтобы найти пути к XXMI и поддерживаемым играм", // SettingsPathScanDescription
-    "Сканировать пути", // SettingsPathScanButtonScan
+    "Сканировать игры", // SettingsPathScanTitle
+    "Hestia может выполнить глубокий поиск поддерживаемых игр", // SettingsPathScanDescription
+    "Сканировать", // SettingsPathScanButtonScan
     "Сканирование…", // SettingsPathScanButtonScanning
-    "Сканирует доступные диски в поисках XXMI и исполняемых файлов игр.", // SettingsPathScanButtonTooltip
     "XXMI", // SettingsPathXxmiSection
     "Лаунчер XXMI:", // SettingsPathXxmiLauncher
     "Путь не найден", // SettingsPathPathNotFound

@@ -89,8 +89,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Dialogs
     "Memindai path...", // DialogScanningPaths
-    "Mencari path XXMI dan game", // DialogFindingPaths
-    "Hestia sedang memindai drive yang dapat diakses untuk mencari XXMI dan game yang didukung.", // DialogDeepScanningPaths
+    "Pindai Game", // DialogFindingPaths
+    "Hestia sedang memindai drive yang dapat diakses untuk mencari instalasi game yang didukung.", // DialogDeepScanningPaths
     "Hasil Pemindaian", // DialogScanResults
     "Lanjutkan", // DialogContinue
     "Hentikan Pemindaian", // DialogStopScan
@@ -305,7 +305,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Siapkan XXMI, lalu biarkan Hestia menemukan game Anda.", // LibrarySetupDescription
     "Unduh XXMI", // LibraryDownloadXxmi
     "Temukan game dan perbaiki path", // LibraryFindGamesAndFixPaths
-    "Temukan lokasi instalasi XXMI dan game di komputer ini.", // LibraryPathScanDescription
+    "Hestia dapat melakukan pencarian mendalam untuk menemukan game yang didukung", // LibraryPathScanDescription
     "Setelan Game & Path", // LibraryGamePathSettings
     "Signature bypasser belum terpasang", // LibraryNteBypasserMissingTitle
     "Mod NTE tidak akan dimuat sampai AyakaNTEModLoader.asi atau UniversalSigBypasser.asi terpasang.", // LibraryNteBypasserMissingDescription
@@ -570,11 +570,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tanpa kategori", // SettingsCategoryUncategorized
 
     // Window: Settings > Game & Path
-    "Ada masalah dengan path?", // SettingsPathScanTitle
-    "Hestia dapat melakukan pemindaian mendalam untuk mendeteksi path XXMI dan game yang didukung", // SettingsPathScanDescription
-    "Pindai Path", // SettingsPathScanButtonScan
+    "Pindai Game", // SettingsPathScanTitle
+    "Hestia dapat melakukan pencarian mendalam untuk menemukan game yang didukung", // SettingsPathScanDescription
+    "Pindai", // SettingsPathScanButtonScan
     "Memindai...", // SettingsPathScanButtonScanning
-    "Pindai drive yang dapat diakses untuk mencari executable XXMI dan game.", // SettingsPathScanButtonTooltip
     "XXMI", // SettingsPathXxmiSection
     "XXMI Launcher:", // SettingsPathXxmiLauncher
     "Path tidak ditemukan", // SettingsPathPathNotFound

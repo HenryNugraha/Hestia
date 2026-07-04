@@ -1235,15 +1235,24 @@ impl HestiaApp {
             match event {
                 StartupPathScanEvent::Found { kind, path } => {
                     let mut should_save_found_path = false;
+                    let game_for_kind = match &kind {
+                        StartupPathTargetKind::Game(game_id) => self
+                            .state
+                            .games
+                            .iter()
+                            .find(|game| game.definition.id == *game_id)
+                            .cloned(),
+                        StartupPathTargetKind::Xxmi => None,
+                    };
                     if let Some(scan) = self.startup_path_scan.as_mut() {
                         if let Some(status) =
                             scan.statuses.iter_mut().find(|status| status.kind == kind)
                         {
-                            if !status.candidates.iter().any(|candidate| candidate == &path) {
-                                status.candidates.push(path);
-                            }
-                            if status.selected_candidate.is_none() {
-                                status.selected_candidate = status.candidates.first().cloned();
+                            if Self::merge_startup_path_candidate(
+                                status,
+                                game_for_kind.as_ref(),
+                                path,
+                            ) {
                                 should_save_found_path = true;
                             }
                         }
@@ -1263,6 +1272,94 @@ impl HestiaApp {
 
         if saw_event || self.startup_path_scan.is_some() {
             ctx.request_repaint();
+        }
+    }
+
+    fn merge_startup_path_candidate(
+        status: &mut StartupPathScanStatus,
+        game: Option<&GameInstall>,
+        path: PathBuf,
+    ) -> bool {
+        if status.candidates.iter().any(|candidate| candidate == &path) {
+            return false;
+        }
+
+        let previous_selected = status.selected_candidate.clone();
+        if let Some(game) = game.filter(|game| game.is_unreal_engine()) {
+            if let Some(key) = Self::startup_unreal_candidate_key(game, &path) {
+                if let Some(existing_index) = status.candidates.iter().position(|candidate| {
+                    Self::startup_unreal_candidate_key(game, candidate).as_ref() == Some(&key)
+                }) {
+                    let existing = status.candidates[existing_index].clone();
+                    if Self::startup_unreal_candidate_is_better(game, &path, &existing) {
+                        status.candidates[existing_index] = path.clone();
+                        if status
+                            .selected_candidate
+                            .as_ref()
+                            .is_none_or(|selected| selected == &existing)
+                        {
+                            status.selected_candidate = Some(path);
+                        }
+                    }
+                    return status.selected_candidate != previous_selected;
+                }
+            }
+        }
+
+        status.candidates.push(path);
+        if status.selected_candidate.is_none() {
+            status.selected_candidate = status.candidates.first().cloned();
+        }
+        status.selected_candidate != previous_selected
+    }
+
+    fn startup_unreal_candidate_key(game: &GameInstall, path: &Path) -> Option<String> {
+        default_unreal_pak_mods_path_from_exe(&game.definition.id, path)
+            .map(|path| Self::normalized_startup_path_key(&path))
+    }
+
+    fn normalized_startup_path_key(path: &Path) -> String {
+        path.display()
+            .to_string()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    }
+
+    fn startup_unreal_candidate_is_better(
+        game: &GameInstall,
+        candidate: &Path,
+        current: &Path,
+    ) -> bool {
+        Self::startup_unreal_candidate_score(game, candidate)
+            < Self::startup_unreal_candidate_score(game, current)
+    }
+
+    fn startup_unreal_candidate_score(game: &GameInstall, path: &Path) -> u8 {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        match game.definition.id.as_str() {
+            "nte" => match file_name.as_str() {
+                "htgame.exe" => 0,
+                "ht-win64-shipping.exe" => 1,
+                "nteglobalgame.exe" | "ntegame.exe" => 2,
+                "nevernesstoeverness.exe" | "neverness to everness.exe" | "nte.exe"
+                | "ht.exe" => 3,
+                name if name.contains("launcher") => 4,
+                _ => 5,
+            },
+            _ => {
+                if file_name.contains("shipping") {
+                    0
+                } else if file_name.contains("launcher") {
+                    3
+                } else {
+                    1
+                }
+            }
         }
     }
 
@@ -2243,6 +2340,72 @@ impl HestiaApp {
         }
     }
 
+}
+
+#[cfg(test)]
+mod startup_path_candidate_tests {
+    use super::*;
+
+    fn nte_game() -> GameInstall {
+        GameInstall {
+            definition: crate::model::GameDefinition {
+                id: "nte".to_string(),
+                name: "Neverness To Everness".to_string(),
+                backend: GameBackend::UnrealEngine,
+                xxmi_code: String::new(),
+            },
+            mods_path_override: None,
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: None,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn nte_scan_collapses_executables_from_same_unreal_install() {
+        let game = nte_game();
+        let root = PathBuf::from(r"C:\Games\Neverness To Everness");
+        let launcher = root.join("NTEGlobal").join("NTEGlobalLauncher.exe");
+        let wrapper = root.join("NTEGlobal").join("NTEGlobalGame.exe");
+        let game_exe = root
+            .join("Client")
+            .join("WindowsNoEditor")
+            .join("HT")
+            .join("Binaries")
+            .join("Win64")
+            .join("HTGame.exe");
+        let mut status = StartupPathScanStatus {
+            kind: StartupPathTargetKind::Game("nte".to_string()),
+            label: "Neverness To Everness".to_string(),
+            candidates: Vec::new(),
+            selected_candidate: None,
+            choosing: false,
+        };
+
+        assert!(HestiaApp::merge_startup_path_candidate(
+            &mut status,
+            Some(&game),
+            launcher.clone(),
+        ));
+        assert_eq!(status.candidates, vec![launcher.clone()]);
+        assert_eq!(status.selected_candidate.as_ref(), Some(&launcher));
+
+        assert!(HestiaApp::merge_startup_path_candidate(
+            &mut status,
+            Some(&game),
+            game_exe.clone(),
+        ));
+        assert_eq!(status.candidates, vec![game_exe.clone()]);
+        assert_eq!(status.selected_candidate.as_ref(), Some(&game_exe));
+
+        assert!(!HestiaApp::merge_startup_path_candidate(
+            &mut status,
+            Some(&game),
+            wrapper,
+        ));
+        assert_eq!(status.candidates, vec![game_exe.clone()]);
+        assert_eq!(status.selected_candidate.as_ref(), Some(&game_exe));
+    }
 }
 
 #[cfg(test)]

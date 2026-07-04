@@ -1290,6 +1290,7 @@ impl HestiaApp {
             .cloned()
             .into_iter()
             .collect::<Vec<_>>();
+        let has_xxmi_game_targets = state.games.iter().any(|game| game.is_xxmi());
         let has_enabled_xxmi_games = state
             .games
             .iter()
@@ -1335,7 +1336,7 @@ impl HestiaApp {
         }
 
         let mut targets = Vec::new();
-        if has_enabled_xxmi_games {
+        if has_xxmi_game_targets {
             targets.push(StartupPathScanTarget {
                 kind: StartupPathTargetKind::Xxmi,
                 label: "XXMI Launcher".to_string(),

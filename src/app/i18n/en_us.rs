@@ -89,8 +89,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Dialogs
     "Scanning paths...", // DialogScanningPaths
-    "Finding your XXMI and game paths", // DialogFindingPaths
-    "Hestia is now deep scanning accessible drives for XXMI and supported games.", // DialogDeepScanningPaths
+    "Scan Games", // DialogFindingPaths
+    "Hestia is scanning through accessible drives for supported games installations.", // DialogDeepScanningPaths
     "Scan Results", // DialogScanResults
     "Continue", // DialogContinue
     "Stop Scan", // DialogStopScan
@@ -305,7 +305,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Set up XXMI, then let Hestia locate your games.", // LibrarySetupDescription
     "Download XXMI", // LibraryDownloadXxmi
     "Find games and fix paths", // LibraryFindGamesAndFixPaths
-    "Scan your accessible drives for XXMI and supported game installations.", // LibraryPathScanDescription
+    "Hestia can perform a deep search to find supported games", // LibraryPathScanDescription
     "Game & Path Settings", // LibraryGamePathSettings
     "Signature bypasser is missing", // LibraryNteBypasserMissingTitle
     "NTE mods will not load until AyakaNTEModLoader.asi or UniversalSigBypasser.asi is installed.", // LibraryNteBypasserMissingDescription
@@ -570,11 +570,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Uncategorized", // SettingsCategoryUncategorized
 
     // Window: Settings > Game & Path
-    "Having trouble with paths?", // SettingsPathScanTitle
-    "Hestia can perform a deep scan to detect paths for XXMI and supported game", // SettingsPathScanDescription
-    "Scan Paths", // SettingsPathScanButtonScan
+    "Scan Games", // SettingsPathScanTitle
+    "Hestia can perform a deep search to find supported games", // SettingsPathScanDescription
+    "Scan", // SettingsPathScanButtonScan
     "Scanning...", // SettingsPathScanButtonScanning
-    "Scan accessible drives for XXMI and game executables.", // SettingsPathScanButtonTooltip
     "XXMI", // SettingsPathXxmiSection
     "XXMI Launcher:", // SettingsPathXxmiLauncher
     "Path not found", // SettingsPathPathNotFound

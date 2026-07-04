@@ -89,8 +89,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
 
     // Window: Dialogs
     "正在扫描路径…", // DialogScanningPaths
-    "正在查找 XXMI 和游戏路径", // DialogFindingPaths
-    "Hestia 正在深度扫描可访问的驱动器，以查找 XXMI 和支持的游戏。", // DialogDeepScanningPaths
+    "扫描游戏", // DialogFindingPaths
+    "Hestia 正在扫描可访问的驱动器，以查找已安装的受支持游戏。", // DialogDeepScanningPaths
     "扫描结果", // DialogScanResults
     "继续", // DialogContinue
     "停止扫描", // DialogStopScan
@@ -305,7 +305,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "先设置 XXMI，再让 Hestia 查找您的游戏。", // LibrarySetupDescription
     "下载 XXMI", // LibraryDownloadXxmi
     "查找游戏并修复路径", // LibraryFindGamesAndFixPaths
-    "扫描可访问的驱动器以查找 XXMI 和受支持游戏的安装位置。", // LibraryPathScanDescription
+    "Hestia 可以进行深度搜索来查找受支持的游戏", // LibraryPathScanDescription
     "游戏和路径设置", // LibraryGamePathSettings
     "缺少签名绕过器", // LibraryNteBypasserMissingTitle
     "安装 AyakaNTEModLoader.asi 或 UniversalSigBypasser.asi 之前，NTE Mod 不会加载。", // LibraryNteBypasserMissingDescription
@@ -570,11 +570,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "未分类", // SettingsCategoryUncategorized
 
     // Window: Settings > Game & Path
-    "路径有问题？", // SettingsPathScanTitle
-    "Hestia 可以执行深度扫描来检测 XXMI 和受支持游戏的路径", // SettingsPathScanDescription
-    "扫描路径", // SettingsPathScanButtonScan
+    "扫描游戏", // SettingsPathScanTitle
+    "Hestia 可以进行深度搜索来查找受支持的游戏", // SettingsPathScanDescription
+    "扫描", // SettingsPathScanButtonScan
     "正在扫描…", // SettingsPathScanButtonScanning
-    "扫描可访问的驱动器以查找 XXMI 和游戏可执行文件。", // SettingsPathScanButtonTooltip
     "XXMI", // SettingsPathXxmiSection
     "XXMI 启动器：", // SettingsPathXxmiLauncher
     "路径未找到", // SettingsPathPathNotFound

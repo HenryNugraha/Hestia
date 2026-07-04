@@ -2757,7 +2757,6 @@ impl HestiaApp {
                                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)));
                                 if ui
                                     .add_enabled(!scanning, scan_button)
-                                    .on_hover_text(text.path_scan_button_tooltip())
                                     .on_hover_cursor(if scanning {
                                         egui::CursorIcon::NotAllowed
                                     } else {
