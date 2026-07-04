@@ -202,6 +202,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "启动", // ChromePlay
     "安装\nZip/Rar", // ChromeInstallArchive
     "安装\n文件夹", // ChromeInstallFolder
+    "Mod\n文件夹", // ChromeOpenModsFolder
     "重新加载", // ChromeReload
     "游戏未安装或未设置。", // ChromeGameNotInstalled
     "通过 XXMI 启动带 Mod 的游戏", // ChromeLaunchWithModsTooltip
@@ -210,6 +211,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "不带 Mod 启动", // ChromePlayWithoutMods
     "从 zip/rar/7z 压缩包安装 Mod", // ChromeInstallArchiveTooltip
     "从已解压的文件夹安装 Mod", // ChromeInstallFolderTooltip
+    "打开所选游戏的 Mod 文件夹", // ChromeOpenModsFolderTooltip
     "安装", // ChromeInstall
     "安装并禁用", // ChromeInstallDisabled
     "重新扫描已安装 Mod 并在 GameBanana 检查更新 (Ctrl+R)", // ChromeReloadLibraryTooltip

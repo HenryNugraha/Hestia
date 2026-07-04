@@ -202,6 +202,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Играть", // ChromePlay
     "Из\nZip/Rar", // ChromeInstallArchive
     "Из\nпапки", // ChromeInstallFolder
+    "Папка\nмодов", // ChromeOpenModsFolder
     "Обновить", // ChromeReload
     "Игра не установлена или не настроена.", // ChromeGameNotInstalled
     "Запустить игру с модами через XXMI", // ChromeLaunchWithModsTooltip
@@ -210,6 +211,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Играть без модов", // ChromePlayWithoutMods
     "Установить мод из архива zip/rar/7z", // ChromeInstallArchiveTooltip
     "Установить мод из уже распакованной папки", // ChromeInstallFolderTooltip
+    "Открыть папку модов выбранной игры", // ChromeOpenModsFolderTooltip
     "Поставить", // ChromeInstall
     "Поставить выкл.", // ChromeInstallDisabled
     "Повторно просканировать установленные моды и проверить обновления на GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip

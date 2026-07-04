@@ -100,6 +100,7 @@ impl HestiaApp {
                                 (Icon::Play, text.play()),
                                 (Icon::PackagePlus, text.install_archive()),
                                 (Icon::FolderPlus, text.install_folder()),
+                                (Icon::FolderOpen, text.open_mods_folder()),
                                 (Icon::RefreshCw, text.reload()),
                             ];
                             let max_lines =
@@ -107,6 +108,9 @@ impl HestiaApp {
 
                             let selected_game_ready = self.selected_game_is_installed_or_configured();
                             let selected_game_is_xxmi = self.selected_game().is_some_and(|game| game.is_xxmi());
+                            let selected_game_mods_path = self
+                                .selected_game()
+                                .and_then(|game| game.mods_path(self.state.static_prefs.use_default_mods_path));
                             let play_modded_ready = self.selected_game_can_launch_modded();
                             let play_vanilla_ready = self.selected_game_can_launch_vanilla();
                             let play_ready = play_modded_ready || play_vanilla_ready;
@@ -299,6 +303,36 @@ impl HestiaApp {
                                 });
                             });
                             ui.add_enabled_ui(selected_game_ready, |ui| {
+                                let response = titlebar_action_button(
+                                    ui,
+                                    buttons[3].0,
+                                    buttons[3].1,
+                                    max_lines,
+                                );
+                                response
+                                    .clone()
+                                    .on_hover_text(text.open_mods_folder_tooltip());
+                                if !selected_game_ready {
+                                    response
+                                        .clone()
+                                        .on_hover_text(tooltip)
+                                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                                }
+                                if response.clicked() {
+                                    if let Some(path) = selected_game_mods_path.as_ref() {
+                                        if let Err(err) = open_in_explorer(path) {
+                                            self.report_error_message(
+                                                format!(
+                                                    "failed to open mods folder {}: {err:#}",
+                                                    path.display()
+                                                ),
+                                                Some(text.could_not_open_location()),
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                            ui.add_enabled_ui(selected_game_ready, |ui| {
                                 let now = ui.input(|i| i.time);
                                 let is_reload_busy = self.startup_scan_loading
                                     || self.refresh_inflight
@@ -316,8 +350,8 @@ impl HestiaApp {
                                 ui.add_enabled_ui(!is_reload_rotating, |ui| {
                                     let response = titlebar_action_button_with_spinner(
                                         ui,
-                                        buttons[3].0,
-                                        buttons[3].1,
+                                        buttons[4].0,
+                                        buttons[4].1,
                                         max_lines,
                                         is_reload_rotating,
                                     );

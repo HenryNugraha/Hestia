@@ -202,6 +202,7 @@ enum TextKey {
     ChromePlay,
     ChromeInstallArchive,
     ChromeInstallFolder,
+    ChromeOpenModsFolder,
     ChromeReload,
     ChromeGameNotInstalled,
     ChromeLaunchWithModsTooltip,
@@ -210,6 +211,7 @@ enum TextKey {
     ChromePlayWithoutMods,
     ChromeInstallArchiveTooltip,
     ChromeInstallFolderTooltip,
+    ChromeOpenModsFolderTooltip,
     ChromeInstall,
     ChromeInstallDisabled,
     ChromeReloadLibraryTooltip,
@@ -1426,6 +1428,10 @@ impl TextCatalog {
         self.get(TextKey::ChromeInstallFolder)
     }
 
+    fn open_mods_folder(self) -> &'static str {
+        self.get(TextKey::ChromeOpenModsFolder)
+    }
+
     fn reload(self) -> &'static str {
         self.get(TextKey::ChromeReload)
     }
@@ -1456,6 +1462,10 @@ impl TextCatalog {
 
     fn install_folder_tooltip(self) -> &'static str {
         self.get(TextKey::ChromeInstallFolderTooltip)
+    }
+
+    fn open_mods_folder_tooltip(self) -> &'static str {
+        self.get(TextKey::ChromeOpenModsFolderTooltip)
     }
 
     fn install(self) -> &'static str {

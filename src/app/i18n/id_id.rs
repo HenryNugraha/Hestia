@@ -202,6 +202,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Main", // ChromePlay
     "Pasang\nZip/Rar", // ChromeInstallArchive
     "Pasang\nFolder", // ChromeInstallFolder
+    "Folder\nMod", // ChromeOpenModsFolder
     "Muat\nUlang", // ChromeReload
     "Game tidak terpasang atau belum diatur.", // ChromeGameNotInstalled
     "Jalankan game dengan mod lewat XXMI", // ChromeLaunchWithModsTooltip
@@ -210,6 +211,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Main tanpa mod", // ChromePlayWithoutMods
     "Pasang mod dari arsip zip/rar/7z", // ChromeInstallArchiveTooltip
     "Pasang mod dari folder yang sudah diekstrak", // ChromeInstallFolderTooltip
+    "Buka folder mod untuk game yang dipilih", // ChromeOpenModsFolderTooltip
     "Pasang", // ChromeInstall
     "Pasang & Nonaktifkan", // ChromeInstallDisabled
     "Pindai ulang mod terpasang dan periksa pembaruan di GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip

@@ -202,6 +202,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Play", // ChromePlay
     "Install\nZip/Rar", // ChromeInstallArchive
     "Install\nFolder", // ChromeInstallFolder
+    "Mods\nFolder", // ChromeOpenModsFolder
     "Reload", // ChromeReload
     "Game is not installed or configured.", // ChromeGameNotInstalled
     "Launch the game with mods via XXMI", // ChromeLaunchWithModsTooltip
@@ -210,6 +211,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Play without mods", // ChromePlayWithoutMods
     "Install a mod from a zip/rar/7z archive", // ChromeInstallArchiveTooltip
     "Install a mod from an already extracted folder", // ChromeInstallFolderTooltip
+    "Open the selected game's mods folder", // ChromeOpenModsFolderTooltip
     "Install", // ChromeInstall
     "Install & Disable", // ChromeInstallDisabled
     "Rescan installed mods and check for updates on GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip
