@@ -10,11 +10,11 @@ impl HestiaApp {
         }
         self.toasts
             .retain(|toast| current_time - toast.created_at <= TOAST_DURATION);
-        
-        egui::TopBottomPanel::top("top_bar")
+
+        egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))
+                    .fill(Color32::from_rgb(24, 26, 29))
                     .inner_margin(egui::Margin::same(8))
                     .outer_margin(egui::Margin {
                         left: WINDOW_INSET,
@@ -23,7 +23,7 @@ impl HestiaApp {
                         bottom: 0,
                     }),
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.last_titlebar_rect = Some(ui.max_rect());
             let titlebar_height = TITLEBAR_GAME_ICON_SIZE + 20.0;
             let (titlebar_rect, titlebar_drag) = ui.allocate_exact_size(
@@ -790,13 +790,13 @@ impl HestiaApp {
 
     fn render_nav_rail(&mut self, ui: &mut egui::Ui) {
         let text = self.text();
-        egui::SidePanel::left("nav_rail")
+        egui::Panel::left("nav_rail")
             .resizable(false)
-            .exact_width(78.0)
+            .exact_size(NAV_RAIL_WIDTH)
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_premultiplied(24, 26, 29, 242))
-                    .inner_margin(egui::Margin::same(10))
+                    .fill(Color32::from_rgb(24, 26, 29))
+                    .inner_margin(egui::Margin::symmetric(8, 10))
                     .outer_margin(egui::Margin {
                         left: WINDOW_INSET,
                         right: 0,
@@ -804,7 +804,7 @@ impl HestiaApp {
                         bottom: WINDOW_INSET,
                     }),
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
                     let old_view = self.current_view;
@@ -894,7 +894,11 @@ impl HestiaApp {
                     .iter()
                     .any(|game| game.definition.id == *game_id)
             })
-            .or_else(|| enabled_games.first().map(|game| game.definition.id.as_str()));
+            .or_else(|| {
+                enabled_games
+                    .first()
+                    .map(|game| game.definition.id.as_str())
+            });
         if let Some(game_id) = selected_game_id {
             if !self.game_icon_textures.contains_key(game_id) {
                 self.request_icon_texture(game_id);
@@ -951,18 +955,20 @@ impl HestiaApp {
                             for row in enabled_games.chunks(3) {
                                 ui.horizontal_top(|ui| {
                                     for game in row {
-                                        if !self.game_icon_textures.contains_key(&game.definition.id) {
+                                        if !self
+                                            .game_icon_textures
+                                            .contains_key(&game.definition.id)
+                                        {
                                             self.request_icon_texture(&game.definition.id);
                                         }
-                                        let selected = self.selected_game().is_some_and(|current| {
-                                            current.definition.id == game.definition.id
-                                        });
-                                        let is_dragging_this = self
-                                            .dragging_game_id
-                                            .as_deref()
-                                            .is_some_and(|dragging_id| {
-                                                dragging_id == game.definition.id
+                                        let selected =
+                                            self.selected_game().is_some_and(|current| {
+                                                current.definition.id == game.definition.id
                                             });
+                                        let is_dragging_this =
+                                            self.dragging_game_id.as_deref().is_some_and(
+                                                |dragging_id| dragging_id == game.definition.id,
+                                            );
                                         let response = game_grid_card(
                                             ui,
                                             &self.game_icon_textures,
@@ -973,12 +979,12 @@ impl HestiaApp {
                                             is_dragging_this,
                                         );
                                         if response.drag_started() {
-                                            self.dragging_game_id = Some(game.definition.id.clone());
-                                            self.dragging_game_target_index = self
-                                                .state
-                                                .games
-                                                .iter()
-                                                .position(|item| item.definition.id == game.definition.id);
+                                            self.dragging_game_id =
+                                                Some(game.definition.id.clone());
+                                            self.dragging_game_target_index =
+                                                self.state.games.iter().position(|item| {
+                                                    item.definition.id == game.definition.id
+                                                });
                                         }
                                         let pointer_over_card = ui
                                             .ctx()
@@ -988,11 +994,9 @@ impl HestiaApp {
                                             .ctx()
                                             .pointer_latest_pos()
                                             .is_some_and(|pos| pos.x < response.rect.center().x);
-                                        let this_index = self
-                                            .state
-                                            .games
-                                            .iter()
-                                            .position(|item| item.definition.id == game.definition.id);
+                                        let this_index = self.state.games.iter().position(|item| {
+                                            item.definition.id == game.definition.id
+                                        });
                                         let insertion_slot = this_index.map(|index| {
                                             if insert_before {
                                                 index
@@ -1001,12 +1005,9 @@ impl HestiaApp {
                                             }
                                         });
                                         if self.dragging_game_id.is_some()
-                                            && self
-                                                .dragging_game_id
-                                                .as_deref()
-                                                .is_some_and(|dragging_id| {
-                                                    dragging_id != game.definition.id
-                                                })
+                                            && self.dragging_game_id.as_deref().is_some_and(
+                                                |dragging_id| dragging_id != game.definition.id,
+                                            )
                                         {
                                             if let (Some(index), Some(target_index)) =
                                                 (this_index, self.dragging_game_target_index)
@@ -1042,12 +1043,9 @@ impl HestiaApp {
                                         }
                                         if self.dragging_game_id.is_some()
                                             && ui.input(|input| input.pointer.primary_down())
-                                            && self
-                                                .dragging_game_id
-                                                .as_deref()
-                                                .is_some_and(|dragging_id| {
-                                                    dragging_id != game.definition.id
-                                                })
+                                            && self.dragging_game_id.as_deref().is_some_and(
+                                                |dragging_id| dragging_id != game.definition.id,
+                                            )
                                             && pointer_over_card
                                         {
                                             if let Some(slot_index) = insertion_slot {
@@ -1056,16 +1054,18 @@ impl HestiaApp {
                                             }
                                         }
                                         if response.drag_stopped()
-                                            && self
-                                                .dragging_game_id
-                                                .as_deref()
-                                                .is_some_and(|dragging_id| dragging_id == game.definition.id)
+                                            && self.dragging_game_id.as_deref().is_some_and(
+                                                |dragging_id| dragging_id == game.definition.id,
+                                            )
                                         {
                                             if let (Some(dragging_id), Some(target_index)) = (
                                                 self.dragging_game_id.clone(),
                                                 self.dragging_game_target_index,
                                             ) {
-                                                if self.move_game_order_to_slot(&dragging_id, target_index) {
+                                                if self.move_game_order_to_slot(
+                                                    &dragging_id,
+                                                    target_index,
+                                                ) {
                                                     save_after_drag = true;
                                                 }
                                             }
@@ -1073,9 +1073,11 @@ impl HestiaApp {
                                             self.dragging_game_target_index = None;
                                         }
                                         if response.clicked() && !response.dragged() {
-                                            if let Some(index) = self.state.games.iter().position(|item| {
-                                                item.definition.id == game.definition.id
-                                            }) {
+                                            if let Some(index) =
+                                                self.state.games.iter().position(|item| {
+                                                    item.definition.id == game.definition.id
+                                                })
+                                            {
                                                 self.set_selected_game(index, ui.ctx());
                                             }
                                             ui.close();
@@ -1109,18 +1111,13 @@ impl HestiaApp {
                             .fixed_pos(ghost_rect.min)
                             .interactable(false)
                             .show(ui.ctx(), |ui| {
-                                let (rect, _) = ui.allocate_exact_size(
-                                    source_rect.size(),
-                                    Sense::hover(),
-                                );
+                                let (rect, _) =
+                                    ui.allocate_exact_size(source_rect.size(), Sense::hover());
                                 ui.painter().rect(
                                     rect.shrink(1.0),
                                     egui::CornerRadius::same(16),
                                     Color32::from_rgba_premultiplied(31, 33, 37, 205),
-                                    egui::Stroke::new(
-                                        1.0,
-                                        Color32::from_rgb(214, 104, 58),
-                                    ),
+                                    egui::Stroke::new(1.0, Color32::from_rgb(214, 104, 58)),
                                     egui::StrokeKind::Inside,
                                 );
                                 let mut child = ui.new_child(
@@ -1138,17 +1135,14 @@ impl HestiaApp {
                                 );
                                 child.add_space(4.0);
                                 child.add(
-                                    egui::Label::new(
-                                        RichText::new(label).size(20.0).strong(),
-                                    )
-                                    .selectable(false)
-                                    .truncate(),
+                                    egui::Label::new(RichText::new(label).size(20.0).strong())
+                                        .selectable(false)
+                                        .truncate(),
                                 );
                             });
                     }
                 }
-                if self.dragging_game_id.is_some()
-                    && ui.input(|input| input.pointer.primary_down())
+                if self.dragging_game_id.is_some() && ui.input(|input| input.pointer.primary_down())
                 {
                     ui.ctx().output_mut(|output| {
                         output.cursor_icon = egui::CursorIcon::Grabbing;
@@ -1156,7 +1150,6 @@ impl HestiaApp {
                 }
             });
     }
-
 }
 
 fn paint_game_switcher_dim_overlay(ctx: &egui::Context) {

@@ -6,17 +6,19 @@ impl HestiaApp {
         let mut whats_new_open = self.state.show_whats_new;
         let force_default_pos = self.whats_new_force_default_pos;
         let text = self.text();
-        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let mut window = egui::Window::new(icon_text_sized(Icon::Bell, text.whats_new(), 14.0, 14.0))
-            .id(egui::Id::new((
-                "whats_new_window",
-                self.whats_new_window_nonce,
-            )))
-            .open(&mut whats_new_open)
-            .title_bar(true)
-            .resizable(false)
-            .collapsible(true)
-            .frame(window_frame);
+        let window_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16));
+        let mut window =
+            egui::Window::new(icon_text_sized(Icon::Bell, text.whats_new(), 14.0, 14.0))
+                .id(egui::Id::new((
+                    "whats_new_window",
+                    self.whats_new_window_nonce,
+                )))
+                .open(&mut whats_new_open)
+                .title_bar(true)
+                .resizable(false)
+                .collapsible(true)
+                .frame(window_frame);
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -40,9 +42,11 @@ impl HestiaApp {
                 if feedback_survey().is_some() {
                     let version_response = ui
                         .add(
-                            egui::Label::new(bold(format!("Hestia {APP_VERSION}"), Some(16.0)).underline())
-                                .selectable(false)
-                                .sense(Sense::click()),
+                            egui::Label::new(
+                                bold(format!("Hestia {APP_VERSION}"), Some(16.0)).underline(),
+                            )
+                            .selectable(false)
+                            .sense(Sense::click()),
                         )
                         .on_hover_text(text.whats_new_feedback_survey_tooltip())
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -61,10 +65,7 @@ impl HestiaApp {
                     let whats_new_date = WHATS_NEW_DATE.get(self.state.static_prefs.language);
                     static_label(
                         ui,
-                        RichText::new(whats_new_date)
-                            .italics()
-                            .size(11.0)
-                            .small(),
+                        RichText::new(whats_new_date).italics().size(11.0).small(),
                     );
                 });
             });
@@ -102,19 +103,24 @@ impl HestiaApp {
         let text = self.text();
         let mut survey_open = self.state.show_feedback_survey;
         let force_default_pos = self.feedback_survey_force_default_pos;
-        let window_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
+        let window_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16));
         let survey_title = survey.title.get(self.state.static_prefs.language);
-        let mut window =
-            egui::Window::new(icon_text_sized(Icon::ClipboardList, survey_title, 14.0, 14.0))
-                .id(egui::Id::new((
-                    "feedback_survey_window",
-                    self.feedback_survey_window_nonce,
-                )))
-                .open(&mut survey_open)
-                .title_bar(true)
-                .resizable(false)
-                .collapsible(true)
-                .frame(window_frame);
+        let mut window = egui::Window::new(icon_text_sized(
+            Icon::ClipboardList,
+            survey_title,
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new((
+            "feedback_survey_window",
+            self.feedback_survey_window_nonce,
+        )))
+        .open(&mut survey_open)
+        .title_bar(true)
+        .resizable(false)
+        .collapsible(true)
+        .frame(window_frame);
 
         let window_size = egui::vec2(420.0, 420.0);
 
@@ -174,7 +180,8 @@ impl HestiaApp {
                                 ui.add_space(6.0);
                             }
 
-                            let message_label = survey.message_label.get(self.state.static_prefs.language);
+                            let message_label =
+                                survey.message_label.get(self.state.static_prefs.language);
                             if !message_label.trim().is_empty() {
                                 ui.label(message_label);
                                 ui.add(
@@ -207,13 +214,13 @@ impl HestiaApp {
                     .fill(Color32::from_rgb(180, 78, 35))
                     .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)));
                 let submit_enabled = complete && !self.feedback_survey_submitting;
-                let submit_response = ui.add_enabled(submit_enabled, submit_button).on_hover_cursor(
-                    if submit_enabled {
+                let submit_response = ui
+                    .add_enabled(submit_enabled, submit_button)
+                    .on_hover_cursor(if submit_enabled {
                         egui::CursorIcon::PointingHand
                     } else {
                         egui::CursorIcon::NotAllowed
-                    },
-                );
+                    });
                 if submit_response.clicked() {
                     action = Some(SurveyAction::Submit);
                 }
@@ -286,9 +293,7 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 static_label(
                     ui,
-                    RichText::new(
-                        text.feedback_survey_privacy_payload(FEEDBACK_SURVEY_SERVER_URL),
-                    )
+                    RichText::new(text.feedback_survey_privacy_payload(FEEDBACK_SURVEY_SERVER_URL))
                         .size(11.0)
                         .color(Color32::from_gray(180)),
                 );
@@ -307,8 +312,7 @@ impl HestiaApp {
                         );
                         ui.add_space(-10.0);
                         ui.hyperlink_to(
-                            RichText::new("hestia-survey.hnawc.com/ongoing")
-                                .size(11.0),
+                            RichText::new("hestia-survey.hnawc.com/ongoing").size(11.0),
                             "https://hestia-survey.hnawc.com/ongoing",
                         );
                     });
@@ -321,8 +325,7 @@ impl HestiaApp {
                         );
                         ui.add_space(-10.0);
                         ui.hyperlink_to(
-                            RichText::new("hestia-survey.hnawc.com/previous")
-                                .size(11.0),
+                            RichText::new("hestia-survey.hnawc.com/previous").size(11.0),
                             "https://hestia-survey.hnawc.com/previous",
                         );
                     });
@@ -375,10 +378,7 @@ impl HestiaApp {
         for question in survey.questions {
             if let Some(answer) = self.feedback_survey_answers.get(question.id) {
                 if *answer != 0 {
-                    answers.insert(
-                        question.id.to_string(),
-                        serde_json::Value::from(*answer),
-                    );
+                    answers.insert(question.id.to_string(), serde_json::Value::from(*answer));
                 }
             }
         }
@@ -430,7 +430,8 @@ impl HestiaApp {
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let text = self.text();
-        let log_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let log_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, text.log(), 14.0, 14.0))
             .id(egui::Id::new(("log_window", self.log_window_nonce)))
             .open(&mut log_open)
@@ -555,17 +556,18 @@ impl HestiaApp {
         let just_opened = self.tasks_force_default_pos;
         let force_default_pos = self.tasks_force_default_pos;
         let text = self.text();
-        let tasks_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
+        let tasks_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(
             Icon::ListChecks,
             text.tasks_window(),
             14.0,
             14.0,
         ))
-            .id(egui::Id::new(("tasks_window", self.tasks_window_nonce)))
-            .open(&mut tasks_open)
-            .title_bar(true)
-            .frame(tasks_frame);
+        .id(egui::Id::new(("tasks_window", self.tasks_window_nonce)))
+        .open(&mut tasks_open)
+        .title_bar(true)
+        .frame(tasks_frame);
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -874,17 +876,14 @@ impl HestiaApp {
         let just_opened = self.tools_force_default_pos;
         let force_default_pos = self.tools_force_default_pos;
         let text = self.text();
-        let tools_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(12));
-        let mut window = egui::Window::new(icon_text_sized(
-            Icon::AppWindow,
-            text.tools(),
-            14.0,
-            14.0,
-        ))
-            .id(egui::Id::new(("tools_window", self.tools_window_nonce)))
-            .open(&mut tools_open)
-            .title_bar(true)
-            .frame(tools_frame);
+        let tools_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
+        let mut window =
+            egui::Window::new(icon_text_sized(Icon::AppWindow, text.tools(), 14.0, 14.0))
+                .id(egui::Id::new(("tools_window", self.tools_window_nonce)))
+                .open(&mut tools_open)
+                .title_bar(true)
+                .frame(tools_frame);
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -1541,7 +1540,7 @@ impl HestiaApp {
         .constrain_to(constrain_rect)
         .open(&mut open)
         .frame(
-            egui::Frame::window(&ctx.style())
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
                 .inner_margin(egui::Margin::same(16))
                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
         )
@@ -1587,9 +1586,7 @@ impl HestiaApp {
             ui.add_space(14.0);
             ui.horizontal(|ui| {
                 if ui
-                    .add(
-                        egui::Button::new(text.save()).fill(Color32::from_rgb(180, 78, 35)),
-                    )
+                    .add(egui::Button::new(text.save()).fill(Color32::from_rgb(180, 78, 35)))
                     .clicked()
                 {
                     should_save = true;
@@ -1871,10 +1868,7 @@ impl HestiaApp {
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
-                        self.create_category_for_game(
-                            &game_id,
-                            CategoryRenameSurface::Settings,
-                        );
+                        self.create_category_for_game(&game_id, CategoryRenameSurface::Settings);
                     }
                     ui.add_space(-6.0);
                     if has_selected_categories
@@ -2047,8 +2041,7 @@ impl HestiaApp {
                                         if self.category_rename_matches(
                                             &category.id,
                                             CategoryRenameSurface::Settings,
-                                        )
-                                        {
+                                        ) {
                                             let input = ui.add(
                                                 TextEdit::singleline(
                                                     &mut self.category_rename_name,
@@ -2259,12 +2252,17 @@ impl HestiaApp {
 
         let text = self.text();
         let mut settings_open = self.settings_open;
-        let settings_frame = egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16));
-        let mut window =
-            egui::Window::new(icon_text_sized(Icon::Settings2, text.settings(), 14.0, 14.0))
-                .open(&mut settings_open)
-                .title_bar(true)
-                .frame(settings_frame);
+        let settings_frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16));
+        let mut window = egui::Window::new(icon_text_sized(
+            Icon::Settings2,
+            text.settings(),
+            14.0,
+            14.0,
+        ))
+        .open(&mut settings_open)
+        .title_bar(true)
+        .frame(settings_frame);
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));

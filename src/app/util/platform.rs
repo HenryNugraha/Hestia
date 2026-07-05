@@ -7,75 +7,82 @@ struct SystemFontCandidate {
 const CLASSIC_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeui.ttf";
 const CLASSIC_BOLD_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeuib.ttf";
 
+fn hinted_font_data(font_data: FontData) -> FontData {
+    font_data.tweak(egui::FontTweak {
+        hinting: Some(true),
+        ..egui::FontTweak::default()
+    })
+}
+
 fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         APP_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/selawk.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         APP_BOLD_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/selawkb.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         ELEGANT_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/Diphylleia-Regular.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         ELEGANT_BOLD_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/Gabriela-Regular.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         TRADITIONAL_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/NewTegomin-Regular.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         TRADITIONAL_BOLD_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/Coustard-Regular.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         CJK_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/NotoSansSC-Regular.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         CJK_BOLD_FONT_FAMILY.to_string(),
-        FontData::from_static(include_bytes!(concat!(
+        hinted_font_data(FontData::from_static(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/asset/font/NotoSansSC-Bold.ttf"
-        )))
+        ))))
         .into(),
     );
     fonts.font_data.insert(
         LUCIDE_FAMILY.to_string(),
-        FontData::from_static(LUCIDE_FONT_BYTES).into(),
+        hinted_font_data(FontData::from_static(LUCIDE_FONT_BYTES)).into(),
     );
 
     let classic_available = load_classic_fonts(&mut fonts);
@@ -113,7 +120,9 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
         vec![bold_family.to_owned()],
     );
     if bold_family != APP_BOLD_FONT_FAMILY {
-        if let Some(bold_fonts) = fonts.families.get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
+        if let Some(bold_fonts) = fonts
+            .families
+            .get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
         {
             bold_fonts.push(APP_BOLD_FONT_FAMILY.to_owned());
         }
@@ -229,10 +238,10 @@ fn load_font_bytes(
     }
     fonts.font_data.insert(
         name.to_string(),
-        FontData {
+        hinted_font_data(FontData {
             index,
             ..FontData::from_owned(bytes)
-        }
+        })
         .into(),
     );
     true
@@ -253,8 +262,9 @@ fn install_system_fallback_fonts(fonts: &mut FontDefinitions) {
             .entry(FontFamily::Monospace)
             .or_default()
             .push(candidate.name.to_string());
-        if let Some(bold_family) =
-            fonts.families.get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
+        if let Some(bold_family) = fonts
+            .families
+            .get_mut(&FontFamily::Name(BOLD_FONT_FAMILY.into()))
         {
             bold_family.push(candidate.name.to_string());
         }
@@ -392,11 +402,11 @@ fn system_font_candidates() -> &'static [SystemFontCandidate] {
 fn apply_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.visuals = egui::Visuals::dark();
     style.visuals.override_text_color = Some(Color32::from_rgb(228, 231, 235));
-    style.visuals.panel_fill = Color32::from_rgba_premultiplied(24, 26, 29, 242);
-    style.visuals.window_fill = Color32::from_rgba_premultiplied(24, 26, 29, 242);
+    style.visuals.panel_fill = Color32::from_rgb(24, 26, 29);
+    style.visuals.window_fill = Color32::from_rgb(24, 26, 29);
     style.visuals.faint_bg_color = Color32::from_rgba_premultiplied(36, 39, 43, 242);
     style.visuals.extreme_bg_color = Color32::from_rgba_premultiplied(20, 22, 25, 242);
     style.visuals.code_bg_color = Color32::from_rgba_premultiplied(31, 33, 37, 242);
@@ -424,16 +434,14 @@ fn apply_theme(ctx: &egui::Context) {
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(12);
     style.visuals.widgets.open.corner_radius = egui::CornerRadius::same(12);
     let visuals = style.visuals.clone();
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
     ctx.set_visuals_of(egui::Theme::Dark, visuals.clone());
     ctx.set_visuals_of(egui::Theme::Light, visuals);
 }
 
 #[cfg(windows)]
-fn prepare_initial_window_placement(
-    cc: &eframe::CreationContext<'_>,
-    state: &AppState,
-) {
+fn prepare_initial_window_placement(cc: &eframe::CreationContext<'_>, state: &AppState) {
     if !state.static_prefs.window_maximized {
         return;
     }
@@ -452,13 +460,17 @@ fn prepare_initial_window_placement(
         std::mem::size_of::<windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT>() as u32;
 
     unsafe {
-        if windows::Win32::UI::WindowsAndMessaging::GetWindowPlacement(hwnd, &mut placement).is_err()
+        if windows::Win32::UI::WindowsAndMessaging::GetWindowPlacement(hwnd, &mut placement)
+            .is_err()
         {
             return;
         }
     }
 
-    if let (Some([x, y]), Some([w, h])) = (state.static_prefs.window_pos, state.static_prefs.window_size) {
+    if let (Some([x, y]), Some([w, h])) = (
+        state.static_prefs.window_pos,
+        state.static_prefs.window_size,
+    ) {
         placement.rcNormalPosition = RECT {
             left: x.round() as i32,
             top: y.round() as i32,
@@ -474,10 +486,7 @@ fn prepare_initial_window_placement(
 }
 
 #[cfg(not(windows))]
-fn prepare_initial_window_placement(
-    _cc: &eframe::CreationContext<'_>,
-    _state: &AppState,
-) {
+fn prepare_initial_window_placement(_cc: &eframe::CreationContext<'_>, _state: &AppState) {
     // need improvement here but I hate dealing with linux DE :(
 }
 
@@ -523,15 +532,7 @@ fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage>
         .chain(std::iter::once(0))
         .collect();
     let mut icon = HICON::default();
-    let extracted = unsafe {
-        ExtractIconExW(
-            PCWSTR(wide.as_ptr()),
-            0,
-            Some(&mut icon),
-            None,
-            1,
-        )
-    };
+    let extracted = unsafe { ExtractIconExW(PCWSTR(wide.as_ptr()), 0, Some(&mut icon), None, 1) };
     if extracted == 0 || icon.0.is_null() {
         return None;
     }
@@ -564,16 +565,8 @@ fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage>
     };
 
     let mut bits: *mut c_void = std::ptr::null_mut();
-    let bitmap = unsafe {
-        CreateDIBSection(
-            Some(screen_dc),
-            &bmi,
-            DIB_RGB_COLORS,
-            &mut bits,
-            None,
-            0,
-        )
-    };
+    let bitmap =
+        unsafe { CreateDIBSection(Some(screen_dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0) };
     let Ok(bitmap) = bitmap else {
         unsafe {
             let _ = DeleteDC(mem_dc);
@@ -593,7 +586,9 @@ fn load_exe_icon_color_image(path: &Path, size: u32) -> Option<egui::ColorImage>
     }
 
     let previous = unsafe { SelectObject(mem_dc, HGDIOBJ(bitmap.0)) };
-    let pixel_count = usize::try_from(size).ok()?.saturating_mul(usize::try_from(size).ok()?);
+    let pixel_count = usize::try_from(size)
+        .ok()?
+        .saturating_mul(usize::try_from(size).ok()?);
     unsafe {
         std::ptr::write_bytes(bits, 0, pixel_count.saturating_mul(4));
     }

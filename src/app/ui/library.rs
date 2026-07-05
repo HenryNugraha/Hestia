@@ -3481,12 +3481,11 @@ impl HestiaApp {
     }
 
     fn missing_selected_nte_bypasser_paths(&self) -> Option<Vec<PathBuf>> {
-        self.selected_nte_bypasser_paths()
-            .filter(|paths| {
-                !paths
-                    .iter()
-                    .any(|path| self.cached_path_is_file(path, Duration::from_secs(1)))
-            })
+        self.selected_nte_bypasser_paths().filter(|paths| {
+            !paths
+                .iter()
+                .any(|path| self.cached_path_is_file(path, Duration::from_secs(1)))
+        })
     }
 
     fn render_selected_game_setup_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
@@ -3787,6 +3786,19 @@ impl HestiaApp {
                     let selection_anim = ui.ctx().animate_bool_with_time(ui.id().with("batch_anim"), has_selection, 0.2);
 
                     let mods_status_filter_popup_id = ui.id().with("mods_status_filter_popup");
+                    let mods_status_filter_popup_pos_id =
+                        ui.id().with("mods_status_filter_popup_pos");
+                    let mods_status_filter_popup_pending_id =
+                        ui.id().with("mods_status_filter_popup_pending");
+                    let stored_filter_popup_pos = ui
+                        .ctx()
+                        .data(|data| data.get_temp::<egui::Pos2>(mods_status_filter_popup_pos_id));
+                    let header_filter_popup_open = ui
+                        .ctx()
+                        .data_mut(|data| {
+                            data.remove_temp::<bool>(mods_status_filter_popup_pending_id)
+                                .unwrap_or(false)
+                        });
 
                     ui.scope(|ui| {
                         let icon_size = 41.0;
@@ -3853,13 +3865,28 @@ impl HestiaApp {
                         if icon_resp.clicked() {
                             self.mods_search_expanded = !self.mods_search_expanded;
                         }
+                        if filter_context_menu_open || icon_resp.clicked() {
+                            ui.ctx().data_mut(|data| {
+                                data.remove::<egui::Pos2>(mods_status_filter_popup_pos_id);
+                            });
+                        }
                         let filter_popup_command = if filter_context_menu_open {
                             Some(egui::SetOpenCommand::Bool(true))
                         } else if icon_resp.clicked() {
                             Some(egui::SetOpenCommand::Bool(false))
+                        } else if header_filter_popup_open {
+                            Some(egui::SetOpenCommand::Bool(true))
                         } else {
                             None
                         };
+                        let filter_popup_anchor =
+                            if filter_context_menu_open || icon_resp.clicked() {
+                                egui::PopupAnchor::PointerFixed
+                            } else if let Some(pos) = stored_filter_popup_pos {
+                                egui::PopupAnchor::Position(pos)
+                            } else {
+                                egui::PopupAnchor::PointerFixed
+                            };
                         const MODS_STATUS_FILTER_POPUP_WIDTH: f32 = 170.0;
                         const VISIBILITY_HEADER_ICON_SIZE: f32 = 20.0;
                         const VISIBILITY_HEADER_ICON_GAP: f32 = -4.0;
@@ -3868,7 +3895,7 @@ impl HestiaApp {
                         egui::Popup::new(
                             mods_status_filter_popup_id,
                             ui.ctx().clone(),
-                            egui::PopupAnchor::PointerFixed,
+                            filter_popup_anchor,
                             icon_resp.layer_id,
                         )
                             .kind(egui::PopupKind::Menu)
@@ -4158,11 +4185,16 @@ impl HestiaApp {
                                     || check_skipped_changed
                                     || missing_source_changed
                                     || modified_locally_changed
-                                    || ignoring_update_changed
-                                {
-                                    self.selected_mods.clear();
-                                }
+                            || ignoring_update_changed
+                        {
+                            self.selected_mods.clear();
+                        }
                             });
+                        if !egui::Popup::is_id_open(ui.ctx(), mods_status_filter_popup_id) {
+                            ui.ctx().data_mut(|data| {
+                                data.remove::<egui::Pos2>(mods_status_filter_popup_pos_id);
+                            });
+                        }
                         if icon_resp.hovered() {
                             icon_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
                             if !expanded {
@@ -4183,7 +4215,7 @@ impl HestiaApp {
                                 TextEdit::singleline(&mut self.mods_search_query)
                                     .id_source(MODS_SEARCH_INPUT_ID)
                                     .hint_text(if how_expanded > 0.8 { text.library_search_hint() } else { "" })
-                                    .frame(false)
+                                    .frame(egui::Frame::NONE)
                                     .desired_width(input_rect.width())
                             );
                             if self.mods_search_focus_pending {
@@ -4229,11 +4261,13 @@ impl HestiaApp {
                                     .is_some_and(|pos| unit_rect.contains(pos))
                         }) {
                             suppress_mod_card_context_menu = true;
-                            let hover_pos = ui.ctx().pointer_hover_pos();
-                            #[allow(deprecated)]
-                            ui.ctx().memory_mut(|memory| {
-                                memory.open_popup_at(mods_status_filter_popup_id, hover_pos);
-                            });
+                            if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(mods_status_filter_popup_pos_id, pos);
+                                    data.insert_temp(mods_status_filter_popup_pending_id, true);
+                                });
+                                ui.ctx().request_repaint();
+                            }
                         }
                         
                         if label_resp.clicked() {
@@ -7281,7 +7315,7 @@ impl HestiaApp {
                                             .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
                                             .max(ui.available_width() / 6.25) // min width of 16% from the whole width
                                         )
-                                        .frame(false)
+                                        .frame(egui::Frame::NONE)
                                 )
                             }).inner;
                         self.request_mod_detail_rename_focus(ui.ctx(), &resp, &selected.id);

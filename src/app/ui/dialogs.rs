@@ -40,10 +40,7 @@ impl HestiaApp {
                         );
                         text.scan_stopped()
                     } else {
-                        static_label(
-                            &mut header_ui,
-                            icon_rich(Icon::Check, 16.0, header_color),
-                        );
+                        static_label(&mut header_ui, icon_rich(Icon::Check, 16.0, header_color));
                         text.scan_completed()
                     }
                 } else {
@@ -83,11 +80,9 @@ impl HestiaApp {
                     ui.add_space(-10.0);
                     static_label(
                         ui,
-                        RichText::new(
-                            text.deep_scanning_paths(),
-                        )
-                        .size(15.0)
-                        .color(Color32::from_gray(190)),
+                        RichText::new(text.deep_scanning_paths())
+                            .size(15.0)
+                            .color(Color32::from_gray(190)),
                     );
                 });
                 ui.add_space(6.0);
@@ -142,11 +137,10 @@ impl HestiaApp {
                         .as_ref()
                         .is_some_and(|scan| scan.finished);
                     if finished {
-                        let continue_button = egui::Button::new(
-                            bold(text.continue_label(), Some(15.0)),
-                        )
-                        .fill(Color32::from_rgb(180, 78, 35))
-                        .min_size(Vec2::new(140.0, 38.0));
+                        let continue_button =
+                            egui::Button::new(bold(text.continue_label(), Some(15.0)))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .min_size(Vec2::new(140.0, 38.0));
                         if ui
                             .add(continue_button)
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -159,8 +153,9 @@ impl HestiaApp {
                             .startup_path_scan
                             .as_ref()
                             .is_some_and(|scan| scan.cancel_requested);
-                        let stop_button = egui::Button::new(RichText::new(text.stop_scan()).size(15.0))
-                            .min_size(Vec2::new(140.0, 38.0));
+                        let stop_button =
+                            egui::Button::new(RichText::new(text.stop_scan()).size(15.0))
+                                .min_size(Vec2::new(140.0, 38.0));
                         if ui
                             .add_enabled(!cancel_requested, stop_button)
                             .on_hover_cursor(if cancel_requested {
@@ -197,9 +192,7 @@ impl HestiaApp {
                 ui.add_space(20.0);
                 static_label(
                     ui,
-                    RichText::new("•")
-                        .size(14.0)
-                        .color(Color32::from_gray(160)),
+                    RichText::new("•").size(14.0).color(Color32::from_gray(160)),
                 );
             }
             static_label(
@@ -208,14 +201,21 @@ impl HestiaApp {
                     .size(14.0)
                     .color(Color32::from_gray(220)),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                match status.candidates.len() {
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match status.candidates.len() {
                     0 => {
                         if finished {
-                            let label = if stopped { text.stopped() } else { text.not_found() };
+                            let label = if stopped {
+                                text.stopped()
+                            } else {
+                                text.not_found()
+                            };
                             static_label(
                                 ui,
-                                RichText::new(label).size(13.0).color(Color32::from_gray(145)),
+                                RichText::new(label)
+                                    .size(13.0)
+                                    .color(Color32::from_gray(145)),
                             );
                             static_label(ui, icon_rich(Icon::Minus, 14.0, Color32::from_gray(140)));
                         } else {
@@ -267,12 +267,12 @@ impl HestiaApp {
                                     Icon::AlertTriangle,
                                     14.0,
                                     Color32::from_rgb(224, 174, 86),
-                                )
+                                ),
                             );
                         }
                     }
-                }
-            });
+                },
+            );
         });
 
         if status.candidates.len() > 1 && status.choosing {
@@ -285,25 +285,25 @@ impl HestiaApp {
                 .show(ui, |ui| {
                     ui.set_min_width(360.0);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    for path in &status.candidates {
-                        let selected = status
-                            .selected_candidate
-                            .as_ref()
-                            .is_some_and(|selected| selected == path);
-                        let response = ui
-                            .selectable_label(
-                                selected,
-                                RichText::new(Self::compact_startup_path(path))
-                                    .size(12.0)
-                                    .color(Color32::from_gray(210)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(path.display().to_string());
-                        if response.clicked() {
-                            status.selected_candidate = Some(path.clone());
-                            status.choosing = false;
+                        for path in &status.candidates {
+                            let selected = status
+                                .selected_candidate
+                                .as_ref()
+                                .is_some_and(|selected| selected == path);
+                            let response = ui
+                                .selectable_label(
+                                    selected,
+                                    RichText::new(Self::compact_startup_path(path))
+                                        .size(12.0)
+                                        .color(Color32::from_gray(210)),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(path.display().to_string());
+                            if response.clicked() {
+                                status.selected_candidate = Some(path.clone());
+                                status.choosing = false;
+                            }
                         }
-                    }
                     });
                 });
         }
@@ -336,7 +336,7 @@ impl HestiaApp {
         };
         let job_id = pending.job_id;
         let inspection = pending.inspection.clone();
-        
+
         let pending_meta = self.pending_browse_install_meta.get(&job_id).cloned();
         let update_folder_name = pending_meta
             .as_ref()
@@ -355,35 +355,44 @@ impl HestiaApp {
                 return;
             };
             let candidate = &inspection.candidates[0];
-            let mod_title = pending_meta
-                .as_ref()
-                .and_then(|m| self.browse_mod_title_for_install(m.mod_id, m.update_target_mod_id.as_deref()));
+            let mod_title = pending_meta.as_ref().and_then(|m| {
+                self.browse_mod_title_for_install(m.mod_id, m.update_target_mod_id.as_deref())
+            });
             let preferred = if let Some(target) = &update_folder_name {
                 target.clone()
             } else {
                 self.preferred_browse_folder_name(mod_title.as_deref(), &candidate.label)
             };
-                            let target_root = game.mods_path(self.state.static_prefs.use_default_mods_path).unwrap_or_default();
-                            let existing_target = target_root.join(&preferred);
-                            if existing_target.exists() {
-                                if update_folder_name.is_some() {
-                                    self.pending_imports.pop_front();
-                                    if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
-                                        self.commit_import(job_id, vec![0], choice, target_root, pending.gb_profile.clone(), vec![preferred]);
-                                    } else {
-                                        let gb_profile = pending.gb_profile.clone();
-                                        self.pending_conflicts.push_back(PendingConflict {
-                                            job_id,
-                                            candidate_indices: vec![0],
-                                            preferred_name: preferred.clone(),
-                                            target_root,
-                                            existing_target,
-                                            gb_profile,
-                                        });
-                                    }
-                                    return;
-                                }
-                                let gb_profile = pending.gb_profile.clone();
+            let target_root = game
+                .mods_path(self.state.static_prefs.use_default_mods_path)
+                .unwrap_or_default();
+            let existing_target = target_root.join(&preferred);
+            if existing_target.exists() {
+                if update_folder_name.is_some() {
+                    self.pending_imports.pop_front();
+                    if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
+                        self.commit_import(
+                            job_id,
+                            vec![0],
+                            choice,
+                            target_root,
+                            pending.gb_profile.clone(),
+                            vec![preferred],
+                        );
+                    } else {
+                        let gb_profile = pending.gb_profile.clone();
+                        self.pending_conflicts.push_back(PendingConflict {
+                            job_id,
+                            candidate_indices: vec![0],
+                            preferred_name: preferred.clone(),
+                            target_root,
+                            existing_target,
+                            gb_profile,
+                        });
+                    }
+                    return;
+                }
+                let gb_profile = pending.gb_profile.clone();
                 self.pending_conflicts.push_back(PendingConflict {
                     job_id,
                     candidate_indices: vec![0],
@@ -397,19 +406,32 @@ impl HestiaApp {
             } else {
                 let gb_profile = pending.gb_profile.clone();
                 self.pending_imports.pop_front();
-                self.commit_import(job_id, vec![0], ConflictChoice::KeepBoth, target_root, gb_profile, vec![preferred]);
+                self.commit_import(
+                    job_id,
+                    vec![0],
+                    ConflictChoice::KeepBoth,
+                    target_root,
+                    gb_profile,
+                    vec![preferred],
+                );
                 return;
             }
         }
-        
+
         let mut commit_intent = None;
         let mut cancel = false;
 
-        let mod_name = self.pending_browse_install_meta.get(&job_id)
+        let mod_name = self
+            .pending_browse_install_meta
+            .get(&job_id)
             .and_then(|meta| self.browse_state.details.get(&meta.mod_id))
             .map(|d| d.profile.name.clone())
             .or_else(|| {
-                self.state.tasks.iter().find(|t| t.id == job_id).map(|t| t.title.clone())
+                self.state
+                    .tasks
+                    .iter()
+                    .find(|t| t.id == job_id)
+                    .map(|t| t.title.clone())
             })
             .unwrap_or_else(|| text.imported_mod().to_string());
 
@@ -437,7 +459,8 @@ impl HestiaApp {
                 }
                 candidate_indices.sort();
                 candidate_indices.dedup();
-                if !candidate_indices.is_empty() && candidate_indices.len() == tracked_labels.len() {
+                if !candidate_indices.is_empty() && candidate_indices.len() == tracked_labels.len()
+                {
                     let Some(game) = self
                         .state
                         .games
@@ -481,38 +504,45 @@ impl HestiaApp {
             }
         }
 
-        let constrain_rect = self.last_right_pane_rect.unwrap_or_else(|| ctx.viewport_rect());
-        let window = egui::Window::new(icon_text_sized(Icon::Info, text.missing_ini_title(), 14.0, 14.0))
-            .id(egui::Id::new(("import_review", job_id)))
-            .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
-            .default_size(egui::vec2(420.0, 420.0))
-            .order(egui::Order::Foreground)
-            .resizable(false)
-            .collapsible(false)
-            .constrain_to(constrain_rect)
-            .frame(
-                egui::Frame::window(&ctx.style())
-                    .inner_margin(egui::Margin::same(16))
-                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
-            );
+        let constrain_rect = self
+            .last_right_pane_rect
+            .unwrap_or_else(|| ctx.viewport_rect());
+        let window = egui::Window::new(icon_text_sized(
+            Icon::Info,
+            text.missing_ini_title(),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new(("import_review", job_id)))
+        .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
+        .default_size(egui::vec2(420.0, 420.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .constrain_to(constrain_rect)
+        .frame(
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
+        );
 
         window.show(ctx, |ui| {
             ui.horizontal(|ui| {
-                static_label(ui, icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)));
+                static_label(
+                    ui,
+                    icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)),
+                );
                 ui.vertical(|ui| {
                     static_label(ui, bold(&mod_name, Some(16.0)).underline());
                     ui.add_space(4.0);
-                    static_label(
-                        ui,
-                        RichText::new(text.missing_ini_prompt())
-                            .size(14.0),
-                    );
+                    static_label(ui, RichText::new(text.missing_ini_prompt()).size(14.0));
                 });
             });
             ui.add_space(-8.0);
 
             let selection_id = ui.id().with("selection");
-            let mut selected_indices: HashSet<usize> = ui.data_mut(|d| d.get_temp(selection_id).unwrap_or_default());
+            let mut selected_indices: HashSet<usize> =
+                ui.data_mut(|d| d.get_temp(selection_id).unwrap_or_default());
 
             ui.vertical_centered(|ui| {
                 egui::Frame::new()
@@ -527,46 +557,64 @@ impl HestiaApp {
                     })
                     .show(ui, |ui| {
                         ui.set_width(388.0);
-                        ScrollArea::vertical()
-                            .max_height(300.0)
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 6.0;
-                                for (index, candidate) in inspection.candidates.iter().enumerate() {
-                                    let is_selected = selected_indices.contains(&index);
-                                    let row_response = egui::Frame::group(ui.style())
-                                        .inner_margin(egui::Margin::symmetric(10, 8))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                larger_checkbox(ui, is_selected);
-                                                static_label(ui, bold(&candidate.label, None));
-                                            });
-                                        }).response;
-                                    if row_response.interact(Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                        if is_selected { selected_indices.remove(&index); }
-                                        else { selected_indices.insert(index); }
+                        ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            for (index, candidate) in inspection.candidates.iter().enumerate() {
+                                let is_selected = selected_indices.contains(&index);
+                                let row_response = egui::Frame::group(ui.style())
+                                    .inner_margin(egui::Margin::symmetric(10, 8))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            larger_checkbox(ui, is_selected);
+                                            static_label(ui, bold(&candidate.label, None));
+                                        });
+                                    })
+                                    .response;
+                                if row_response
+                                    .interact(Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    if is_selected {
+                                        selected_indices.remove(&index);
+                                    } else {
+                                        selected_indices.insert(index);
                                     }
                                 }
-                            });
+                            }
+                        });
                     });
                 ui.horizontal(|ui| {
                     let num_selected = selected_indices.len();
-                    
+
                     if num_selected <= 1 {
-                        if ui.add(egui::Button::new(text.install_label()).fill(Color32::from_rgb(180, 78, 35)))
-                            .clicked() 
+                        if ui
+                            .add(
+                                egui::Button::new(text.install_label())
+                                    .fill(Color32::from_rgb(180, 78, 35)),
+                            )
+                            .clicked()
                         {
                             commit_intent = Some((selected_indices.clone(), true));
                         }
                     } else {
-                        if ui.add(egui::Button::new(text.install_merged()).fill(Color32::from_rgb(180, 78, 35)))
+                        if ui
+                            .add(
+                                egui::Button::new(text.install_merged())
+                                    .fill(Color32::from_rgb(180, 78, 35)),
+                            )
                             .on_hover_text(text.install_merged_tooltip())
-                            .clicked() 
+                            .clicked()
                         {
                             commit_intent = Some((selected_indices.clone(), true));
                         }
-                        if ui.add(egui::Button::new(text.install_separately()).fill(Color32::from_rgb(180, 78, 35)))
+                        if ui
+                            .add(
+                                egui::Button::new(text.install_separately())
+                                    .fill(Color32::from_rgb(180, 78, 35)),
+                            )
                             .on_hover_text(text.install_separately_tooltip())
-                            .clicked() 
+                            .clicked()
                         {
                             commit_intent = Some((selected_indices.clone(), false));
                         }
@@ -585,13 +633,21 @@ impl HestiaApp {
                 self.set_message_ok(text.no_folders_selected());
                 return;
             }
-            let Some(game) = self.state.games.iter().find(|game| game.definition.id == inspection.game_id).cloned() else {
+            let Some(game) = self
+                .state
+                .games
+                .iter()
+                .find(|game| game.definition.id == inspection.game_id)
+                .cloned()
+            else {
                 self.pending_imports.pop_front();
                 return;
             };
-            let target_root = game.mods_path(self.state.static_prefs.use_default_mods_path).unwrap_or_default();
+            let target_root = game
+                .mods_path(self.state.static_prefs.use_default_mods_path)
+                .unwrap_or_default();
             let gb_profile = pending.gb_profile.clone();
-            
+
             let title_name = self.sanitized_preferred_browse_title_name(Some(&mod_name));
             let mut candidate_indices: Vec<usize> = indices.into_iter().collect();
             candidate_indices.sort();
@@ -635,7 +691,9 @@ impl HestiaApp {
                             });
                         }
                     } else {
-                        let choice = if update_folder_name.is_some() && self.should_auto_replace_update(job_id) {
+                        let choice = if update_folder_name.is_some()
+                            && self.should_auto_replace_update(job_id)
+                        {
                             ConflictChoice::Replace
                         } else {
                             ConflictChoice::KeepBoth
@@ -670,7 +728,7 @@ impl HestiaApp {
                     ConflictChoice::KeepBoth,
                     target_root,
                     gb_profile,
-                    preferred_names
+                    preferred_names,
                 );
             }
             self.pending_imports.pop_front();
@@ -682,9 +740,9 @@ impl HestiaApp {
                 .get(0)
                 .map(|candidate| candidate.label.as_str())
                 .unwrap_or(text.imported_mod());
-            let _ = self.install_request_tx.send(InstallRequest::Drop {
-                job_id,
-            });
+            let _ = self
+                .install_request_tx
+                .send(InstallRequest::Drop { job_id });
             if self.install_batch_active {
                 self.install_batch_stats.skipped += 1;
             }
@@ -705,14 +763,22 @@ impl HestiaApp {
         let conflict_existing_target = conflict.existing_target.clone();
         let conflict_target_root = conflict.target_root.clone();
         let conflict_preferred_name = conflict.preferred_name.clone();
-            let mut choice = None;
+        let mut choice = None;
 
         let warn_color = Color32::from_rgb(214, 96, 34);
-        let mut window = egui::Window::new(icon_text_sized(Icon::AlertTriangle, text.installation_conflict(), 14.0, 14.0))
-            .collapsible(false)
-            .order(egui::Order::Foreground)
-            .resizable(false)
-            .frame(egui::Frame::window(&ctx.style()).stroke(egui::Stroke::new(1.0, warn_color)));
+        let mut window = egui::Window::new(icon_text_sized(
+            Icon::AlertTriangle,
+            text.installation_conflict(),
+            14.0,
+            14.0,
+        ))
+        .collapsible(false)
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .frame(
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
+                .stroke(egui::Stroke::new(1.0, warn_color)),
+        );
 
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
@@ -722,56 +788,57 @@ impl HestiaApp {
         }
 
         window.show(ctx, |ui| {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.add(
-                        egui::Label::new(icon_rich(
-                            Icon::AlertTriangle,
-                            96.0,
-                            warn_color,
-                        ))
+                ui.add(
+                    egui::Label::new(icon_rich(Icon::AlertTriangle, 96.0, warn_color))
                         .selectable(false),
-                    ).on_hover_cursor(egui::CursorIcon::Default);
-                    ui.vertical(|ui| {
-                        ui.add(
-                            egui::Label::new(
-                                bold(conflict_existing_target
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+                ui.vertical(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            bold(
+                                conflict_existing_target
                                     .file_name()
                                     .and_then(|name| name.to_str())
                                     .unwrap_or(text.this_folder()),
-                                    Some(16.0)
-                                ).underline()
+                                Some(16.0),
                             )
-                            .selectable(false),
-                        ).on_hover_cursor(egui::CursorIcon::Default);
-                        ui.add(egui::Label::new(text.already_exists_in()).selectable(false))
-                            .on_hover_cursor(egui::CursorIcon::Default);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(conflict_target_root.display().to_string()).monospace()
-                            )
-                            .selectable(false),
-                        ).on_hover_cursor(egui::CursorIcon::Default);
-                        ui.horizontal(|ui| {
-                            if ui.button(text.replace()).clicked() {
-                                choice = Some(ConflictChoice::Replace);
-                            }
-                            if ui.button(text.merge()).clicked() {
-                                choice = Some(ConflictChoice::Merge);
-                            }
-                            if ui.button(text.keep_both()).clicked() {
-                                choice = Some(ConflictChoice::KeepBoth);
-                            }
-                            if ui.button(text.cancel()).clicked() {
-                                choice = Some(ConflictChoice::Cancel);
-                            }
-                        });
+                            .underline(),
+                        )
+                        .selectable(false),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::Default);
+                    ui.add(egui::Label::new(text.already_exists_in()).selectable(false))
+                        .on_hover_cursor(egui::CursorIcon::Default);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(conflict_target_root.display().to_string()).monospace(),
+                        )
+                        .selectable(false),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::Default);
+                    ui.horizontal(|ui| {
+                        if ui.button(text.replace()).clicked() {
+                            choice = Some(ConflictChoice::Replace);
+                        }
+                        if ui.button(text.merge()).clicked() {
+                            choice = Some(ConflictChoice::Merge);
+                        }
+                        if ui.button(text.keep_both()).clicked() {
+                            choice = Some(ConflictChoice::KeepBoth);
+                        }
+                        if ui.button(text.cancel()).clicked() {
+                            choice = Some(ConflictChoice::Cancel);
+                        }
                     });
-                    ui.add_space(4.0);
                 });
                 ui.add_space(4.0);
             });
+            ui.add_space(4.0);
+        });
 
         if let Some(choice) = choice {
             let gb_profile = conflict.gb_profile.clone();
@@ -798,8 +865,11 @@ impl HestiaApp {
             self.save_state();
             self.pending_conflicts.pop_front();
             if choice == ConflictChoice::Cancel {
-                let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
-                self.pending_imports.retain(|pending| pending.job_id != job_id);
+                let _ = self
+                    .install_request_tx
+                    .send(InstallRequest::Drop { job_id });
+                self.pending_imports
+                    .retain(|pending| pending.job_id != job_id);
                 if let Some(current) = self.install_inflight.remove(&job_id) {
                     Self::cleanup_runtime_temp_for_source(&current.source);
                 }
@@ -808,7 +878,8 @@ impl HestiaApp {
                 }
                 self.update_task_status(job_id, TaskStatus::Canceled);
             } else {
-                let preferred_names = vec![conflict_preferred_name; conflict.candidate_indices.len()];
+                let preferred_names =
+                    vec![conflict_preferred_name; conflict.candidate_indices.len()];
                 self.commit_import(
                     job_id,
                     conflict.candidate_indices.clone(),
@@ -817,7 +888,8 @@ impl HestiaApp {
                     gb_profile,
                     preferred_names,
                 );
-                self.pending_imports.retain(|pending| pending.job_id != job_id);
+                self.pending_imports
+                    .retain(|pending| pending.job_id != job_id);
             }
         }
     }
@@ -826,10 +898,16 @@ impl HestiaApp {
         let text = self.text();
         // Show a visual cue when files are hovered
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            let painter =
-                ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("dnd_layer")));
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("dnd_layer"),
+            ));
             let screen_rect = ctx.viewport_rect();
-            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(24, 26, 29, 220));
+            painter.rect_filled(
+                screen_rect,
+                0.0,
+                Color32::from_rgba_unmultiplied(24, 26, 29, 220),
+            );
             let drop_text = if let Some((_, mod_name)) = self.selected_unlinked_mod_context() {
                 let mut display_name: String = mod_name.chars().take(60).collect();
                 if display_name.chars().count() < mod_name.chars().count() {

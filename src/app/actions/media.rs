@@ -1499,6 +1499,7 @@ impl HestiaApp {
 
         if sent {
             self.gif_preview_requests_in_flight += 1;
+            ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             self.pending_gif_previews.remove(&out_key);
         }

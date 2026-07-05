@@ -19,6 +19,7 @@ const WORKSPACE_LEFT_PANE_RATIO: f32 = 0.515;
 
 // Outer chrome spacing and major titlebar/game art sizing.
 const WINDOW_INSET: i8 = 6;
+const NAV_RAIL_WIDTH: f32 = 90.0;
 const GAME_ICON_TEXTURE_SIZE: u32 = 256;
 const TOOL_ICON_TEXTURE_SIZE: u32 = 96;
 const TOOL_ICON_FAILURE_RETRY_SECS: u64 = 60;

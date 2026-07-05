@@ -109,6 +109,7 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         persist_window: false,
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
 

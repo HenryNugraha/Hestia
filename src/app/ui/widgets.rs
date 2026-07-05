@@ -353,31 +353,6 @@ fn titlebar_action_button_with_spinner(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn paint_window_frame(ctx: &egui::Context) {
-    if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) {
-        return;
-    }
-
-    let rect = ctx.viewport_rect().shrink(WINDOW_INSET as f32 * 0.5);
-    let painter = ctx.layer_painter(egui::LayerId::background());
-    painter.rect(
-        rect,
-        egui::CornerRadius::ZERO,
-        Color32::TRANSPARENT,
-        egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(65, 65, 65, 48)),
-        egui::StrokeKind::Inside,
-    );
-}
-
-fn paint_window_background(ctx: &egui::Context) {
-    let painter = ctx.layer_painter(egui::LayerId::background());
-    painter.rect_filled(
-        ctx.viewport_rect(),
-        0.0,
-        Color32::from_rgba_premultiplied(24, 26, 29, 242),
-    );
-}
-
 fn window_drag_strip(ui: &mut Ui, height: f32) {
     let width = ui.available_width().max(1.0);
     let (_, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
