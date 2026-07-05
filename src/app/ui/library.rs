@@ -3482,7 +3482,11 @@ impl HestiaApp {
 
     fn missing_selected_nte_bypasser_paths(&self) -> Option<Vec<PathBuf>> {
         self.selected_nte_bypasser_paths()
-            .filter(|paths| !paths.iter().any(|path| path.is_file()))
+            .filter(|paths| {
+                !paths
+                    .iter()
+                    .any(|path| self.cached_path_is_file(path, Duration::from_secs(1)))
+            })
     }
 
     fn render_selected_game_setup_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
@@ -3701,7 +3705,13 @@ impl HestiaApp {
     fn render_mod_grid(&mut self, ui: &mut Ui) {
         let text = self.text();
         let age_now = Local::now();
-        let cards = self.library_cards_for_selected_game();
+        let cards = if Self::pointer_motion_image_throttle_active(ui.ctx())
+            && self.library_card_cache.key.is_some()
+        {
+            Arc::clone(&self.library_card_cache.rows)
+        } else {
+            self.library_cards_for_selected_game()
+        };
 
         let selected_context_titles: Vec<String> = cards
             .iter()
@@ -4896,6 +4906,8 @@ impl HestiaApp {
                             folder_tiles
                                 .iter()
                                 .map(|tile| {
+                                    let pointer_motion_throttle =
+                                        Self::pointer_motion_image_throttle_active(ui.ctx());
                                     let texture = tile.representative_mod_id.as_deref().and_then(
                                         |mod_id| {
                                             if let Some(texture) =
@@ -4904,13 +4916,20 @@ impl HestiaApp {
                                                 return Some(texture);
                                             }
 
-                                            if let Some(path) = tile.representative_cover_path.clone()
+                                            if let Some(path) =
+                                                tile.representative_cover_path.clone()
                                             {
-                                                self.queue_mod_image_full_load(
-                                                    mod_id.to_string(),
-                                                    path,
-                                                    25,
-                                                );
+                                                if pointer_motion_throttle {
+                                                    ui.ctx().request_repaint_after(
+                                                        std::time::Duration::from_millis(120),
+                                                    );
+                                                } else {
+                                                    self.queue_mod_image_full_load(
+                                                        mod_id.to_string(),
+                                                        path,
+                                                        25,
+                                                    );
+                                                }
                                             }
 
                                             if !self.mod_cover_textures.contains_key(mod_id) {
@@ -7738,8 +7757,14 @@ impl HestiaApp {
 
                                         // Preload hi-res for current and neighbors to match Browse view performance
                                         if rect.intersects(ui.clip_rect()) {
-                                            // Only preload hi-res for visible items, and at a much lower priority than thumbnails
-                                            self.queue_mod_image_full_load(texture_key.clone(), selected.root_path.join(rel), 15);
+                                            if Self::pointer_motion_image_throttle_active(ui.ctx()) {
+                                                ui.ctx().request_repaint_after(
+                                                    std::time::Duration::from_millis(120),
+                                                );
+                                            } else {
+                                                // Only preload hi-res for visible items, and at a much lower priority than thumbnails
+                                                self.queue_mod_image_full_load(texture_key.clone(), selected.root_path.join(rel), 15);
+                                            }
                                         }
 
                                         overlay_images.push(MyModOverlayImage {

@@ -422,7 +422,9 @@ impl HestiaApp {
             pending_browse_install_safety: HashMap::new(),
             pending_browse_install_meta: HashMap::new(),
             gif_rewritten_markdown_cache: HashMap::new(),
+            markdown_dependency_signature_cache: HashMap::new(),
             render_safe_markdown_cache: HashMap::new(),
+            path_file_status_cache: Mutex::new(HashMap::new()),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,
             browse_page_generation: 0,
@@ -1697,16 +1699,96 @@ impl HestiaApp {
     }
 
     fn game_readiness_for(&self, game: &GameInstall) -> GameReadiness {
-        Self::compute_game_readiness(
-            game,
-            self.state.static_prefs.use_default_mods_path,
-            self.state
-                .static_prefs
-                .modded_launcher_path_override
-                .as_deref(),
-        )
+        const PATH_STATUS_TTL: Duration = Duration::from_secs(1);
+        let game_present = game.enabled
+            && game
+                .vanilla_exe_path_override
+                .as_ref()
+                .is_some_and(|path| self.cached_path_is_file(path, PATH_STATUS_TTL));
+        let mods_path = game.mods_path(self.state.static_prefs.use_default_mods_path);
+        let mod_root_ready = game_present && mods_path.is_some();
+        let mut mod_loader_ready = false;
+        let mut primary_issue = None;
+
+        if !game_present {
+            primary_issue = Some(GameSetupIssue::MissingGamePath);
+        } else if !mod_root_ready {
+            primary_issue = Some(GameSetupIssue::MissingModFolder);
+        }
+
+        if game_present && mod_root_ready {
+            match game.definition.backend {
+                GameBackend::Xxmi => {
+                    let launcher_exists = self
+                        .state
+                        .static_prefs
+                        .modded_launcher_path_override
+                        .as_deref()
+                        .or_else(|| game.modded_exe_path_override.as_deref())
+                        .is_some_and(|path| self.cached_path_is_file(path, PATH_STATUS_TTL));
+                    mod_loader_ready = launcher_exists;
+                    if !launcher_exists {
+                        primary_issue = Some(GameSetupIssue::MissingXxmiLauncher);
+                    }
+                }
+                GameBackend::UnrealEngine => {
+                    mod_loader_ready = match game.definition.id.as_str() {
+                        "nte" => game
+                            .vanilla_exe_path_override
+                            .as_ref()
+                            .map(|exe| default_unreal_bypasser_paths_from_exe(&game.definition.id, exe))
+                            .is_some_and(|paths| {
+                                !paths.is_empty()
+                                    && paths
+                                        .iter()
+                                        .any(|path| self.cached_path_is_file(path, PATH_STATUS_TTL))
+                            }),
+                        _ => false,
+                    };
+                    if !mod_loader_ready {
+                        primary_issue = match game.definition.id.as_str() {
+                            "nte" => Some(GameSetupIssue::MissingNteBypasser),
+                            _ => Some(GameSetupIssue::MissingUnrealRequirement),
+                        };
+                    }
+                }
+            }
+        }
+
+        let can_install_mods = game_present && mod_root_ready && mod_loader_ready;
+        GameReadiness {
+            game_present,
+            can_launch_vanilla: game_present,
+            can_launch_modded: game.is_xxmi() && game_present && mod_loader_ready,
+            can_open_mods_folder: game_present && mod_root_ready,
+            can_install_mods,
+            can_download_mods: can_install_mods,
+            primary_issue,
+        }
     }
 
+    fn cached_path_is_file(&self, path: &Path, ttl: Duration) -> bool {
+        let now = Instant::now();
+        if let Ok(mut cache) = self.path_file_status_cache.lock() {
+            if let Some((exists, checked_at)) = cache.get(path) {
+                if now.duration_since(*checked_at) < ttl {
+                    return *exists;
+                }
+            }
+            if cache.len() >= 512 {
+                cache.retain(|_, (_, checked_at)| now.duration_since(*checked_at) < ttl);
+                if cache.len() >= 512 {
+                    cache.clear();
+                }
+            }
+            let exists = path.is_file();
+            cache.insert(path.to_path_buf(), (exists, now));
+            return exists;
+        }
+        path.is_file()
+    }
+
+    #[cfg(test)]
     fn compute_game_readiness(
         game: &GameInstall,
         use_default_mods_path: bool,
@@ -1759,6 +1841,7 @@ impl HestiaApp {
         }
     }
 
+    #[cfg(test)]
     fn unreal_game_mod_loader_ready(game: &GameInstall) -> bool {
         match game.definition.id.as_str() {
             "nte" => game

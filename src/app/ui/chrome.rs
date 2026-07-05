@@ -403,7 +403,8 @@ impl HestiaApp {
                                 |ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     for tool in pinned_tools.iter().rev() {
-                                        let is_available = tool.path.is_file();
+                                        let is_available = self
+                                            .cached_path_is_file(&tool.path, Duration::from_secs(1));
                                         let allow_hover_cursor = self.dragging_titlebar_tool_id.is_none();
                                         let is_dragging_this = self
                                             .dragging_titlebar_tool_id

@@ -764,14 +764,38 @@ impl HestiaApp {
         markdown: &str,
         mod_root: Option<&Path>,
     ) -> String {
+        const MARKDOWN_DEPENDENCY_SIGNATURE_TTL_SECS: f64 = 1.0;
         let root_key = mod_root
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
+        let dependency_key = format!(
+            "{}:{}",
+            hash64_hex(markdown.as_bytes()),
+            hash64_hex(root_key.as_bytes())
+        );
+        let now = Instant::now();
+        let dependency_signature = self
+            .markdown_dependency_signature_cache
+            .get(&dependency_key)
+            .filter(|(_, checked_at)| {
+                now.duration_since(*checked_at).as_secs_f64()
+                    < MARKDOWN_DEPENDENCY_SIGNATURE_TTL_SECS
+            })
+            .map(|(signature, _)| signature.clone())
+            .unwrap_or_else(|| {
+                let signature = markdown_image_dependency_signature(markdown, mod_root);
+                if self.markdown_dependency_signature_cache.len() >= 64 {
+                    self.markdown_dependency_signature_cache.clear();
+                }
+                self.markdown_dependency_signature_cache
+                    .insert(dependency_key, (signature.clone(), now));
+                signature
+            });
         let key = format!(
             "{}:{}:{}",
             hash64_hex(markdown.as_bytes()),
             hash64_hex(root_key.as_bytes()),
-            hash64_hex(markdown_image_dependency_signature(markdown, mod_root).as_bytes())
+            hash64_hex(dependency_signature.as_bytes())
         );
         if let Some(cached) = self.render_safe_markdown_cache.get(&key) {
             return cached.clone();
@@ -951,10 +975,17 @@ impl HestiaApp {
         }
     }
 
-    fn process_local_mod_image_queue(&mut self) {
+    fn process_local_mod_image_queue(&mut self, ctx: &egui::Context) {
         if self.pending_mod_image_queue.is_empty() {
             return;
         }
+
+        let pointer_motion_throttle = Self::pointer_motion_image_throttle_active(ctx);
+        let dispatch_limit = if pointer_motion_throttle {
+            LOCAL_IMAGE_INTERACTIVE_DISPATCH_BATCH
+        } else {
+            LOCAL_IMAGE_DISPATCH_BATCH
+        };
 
         // CONTEXTUAL THROTTLING: Suspend background work to prioritize current user focus
         let mut allowed_mod_id = String::new();
@@ -995,8 +1026,8 @@ impl HestiaApp {
         let mut eligible = Vec::new();
         let current_gen = self.image_generation.load(Ordering::Relaxed);
         let mut i = 0;
-        while i < self.pending_mod_image_queue.len() && eligible.len() < LOCAL_IMAGE_DISPATCH_BATCH
-        {
+        let mut deferred_for_pointer_motion = false;
+        while i < self.pending_mod_image_queue.len() && eligible.len() < dispatch_limit {
             let req = &self.pending_mod_image_queue[i];
             let is_mod_task = req.texture_key == allowed_mod_id
                 || req
@@ -1010,6 +1041,17 @@ impl HestiaApp {
                 .screenshot_overlay
                 .as_ref()
                 .is_some_and(|o| o.texture_key == req.texture_key);
+            let is_pointer_motion_eligible = is_overlay_task
+                || req.priority <= 5
+                || (matches!(
+                    req.mode,
+                    LocalModImageMode::CardThumbOnly | LocalModImageMode::ThumbOnly
+                ) && req.priority <= 20);
+            if pointer_motion_throttle && !is_pointer_motion_eligible {
+                deferred_for_pointer_motion = true;
+                i += 1;
+                continue;
+            }
             if !focus_mode || is_mod_task || is_background_thumb || is_overlay_task {
                 let mut req = self.pending_mod_image_queue.remove(i);
                 req.generation = current_gen;
@@ -1017,6 +1059,9 @@ impl HestiaApp {
             } else {
                 i += 1;
             }
+        }
+        if deferred_for_pointer_motion {
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
 
         let mut dispatch = eligible.into_iter();
@@ -1459,6 +1504,24 @@ impl HestiaApp {
         }
     }
 
+    fn texture_upload_exceeds_budget(
+        current_bytes: u64,
+        upload_bytes: u64,
+        max_bytes: u64,
+        uploads_done: usize,
+    ) -> bool {
+        uploads_done > 0 && current_bytes.saturating_add(upload_bytes) > max_bytes
+    }
+
+    fn pointer_motion_image_throttle_active(ctx: &egui::Context) -> bool {
+        ctx.input(|input| {
+            input.pointer.is_moving()
+                && input.pointer.hover_pos().is_some()
+                && !input.pointer.any_pressed()
+                && !input.pointer.any_released()
+        })
+    }
+
     fn process_pending_texture_uploads(&mut self, ctx: &egui::Context) {
         if self.pending_texture_uploads.len() > 1 {
             let mut uploads: Vec<_> = self.pending_texture_uploads.drain(..).collect();
@@ -1467,6 +1530,8 @@ impl HestiaApp {
         }
         let mut thumb_uploads = 0;
         let mut full_uploads = 0;
+        let mut thumb_upload_bytes = 0_u64;
+        let mut full_upload_bytes = 0_u64;
         let mut inspected = 0;
         let pending_count = self.pending_texture_uploads.len();
         let mut uploaded_any = false;
@@ -1483,7 +1548,15 @@ impl HestiaApp {
                     if self.mod_cover_textures.contains_key(&texture_key) {
                         continue;
                     }
-                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME {
+                    let upload_bytes = image.pixels.len().saturating_mul(4) as u64;
+                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME
+                        || Self::texture_upload_exceeds_budget(
+                            thumb_upload_bytes,
+                            upload_bytes,
+                            TEXTURE_THUMB_UPLOAD_BYTES_PER_FRAME,
+                            thumb_uploads,
+                        )
+                    {
                         self.pending_texture_uploads
                             .push_back(PendingTextureUpload::ModThumb { texture_key, image });
                         continue;
@@ -1495,13 +1568,22 @@ impl HestiaApp {
                     );
                     self.insert_tracked_texture(TextureKind::ModThumb, texture_key, 2, texture);
                     thumb_uploads += 1;
+                    thumb_upload_bytes = thumb_upload_bytes.saturating_add(upload_bytes);
                     uploaded_any = true;
                 }
                 PendingTextureUpload::ModFull { texture_key, image } => {
                     if self.mod_full_textures.contains_key(&texture_key) {
                         continue;
                     }
-                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME {
+                    let upload_bytes = image.pixels.len().saturating_mul(4) as u64;
+                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME
+                        || Self::texture_upload_exceeds_budget(
+                            full_upload_bytes,
+                            upload_bytes,
+                            TEXTURE_FULL_UPLOAD_BYTES_PER_FRAME,
+                            full_uploads,
+                        )
+                    {
                         self.pending_texture_uploads
                             .push_back(PendingTextureUpload::ModFull { texture_key, image });
                         continue;
@@ -1510,13 +1592,22 @@ impl HestiaApp {
                         ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
                     self.insert_tracked_texture(TextureKind::ModFull, texture_key, 3, texture);
                     full_uploads += 1;
+                    full_upload_bytes = full_upload_bytes.saturating_add(upload_bytes);
                     uploaded_any = true;
                 }
                 PendingTextureUpload::BrowseThumb { texture_key, image } => {
                     if self.browse_thumb_textures.contains_key(&texture_key) {
                         continue;
                     }
-                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME {
+                    let upload_bytes = image.pixels.len().saturating_mul(4) as u64;
+                    if thumb_uploads >= TEXTURE_THUMB_UPLOADS_PER_FRAME
+                        || Self::texture_upload_exceeds_budget(
+                            thumb_upload_bytes,
+                            upload_bytes,
+                            TEXTURE_THUMB_UPLOAD_BYTES_PER_FRAME,
+                            thumb_uploads,
+                        )
+                    {
                         self.pending_texture_uploads
                             .push_back(PendingTextureUpload::BrowseThumb { texture_key, image });
                         continue;
@@ -1528,13 +1619,22 @@ impl HestiaApp {
                     );
                     self.insert_tracked_texture(TextureKind::BrowseThumb, texture_key, 2, texture);
                     thumb_uploads += 1;
+                    thumb_upload_bytes = thumb_upload_bytes.saturating_add(upload_bytes);
                     uploaded_any = true;
                 }
                 PendingTextureUpload::BrowseFull { texture_key, image } => {
                     if self.browse_image_textures.contains_key(&texture_key) {
                         continue;
                     }
-                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME {
+                    let upload_bytes = image.pixels.len().saturating_mul(4) as u64;
+                    if full_uploads >= TEXTURE_FULL_UPLOADS_PER_FRAME
+                        || Self::texture_upload_exceeds_budget(
+                            full_upload_bytes,
+                            upload_bytes,
+                            TEXTURE_FULL_UPLOAD_BYTES_PER_FRAME,
+                            full_uploads,
+                        )
+                    {
                         self.pending_texture_uploads
                             .push_back(PendingTextureUpload::BrowseFull { texture_key, image });
                         continue;
@@ -1543,6 +1643,7 @@ impl HestiaApp {
                         ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
                     full_uploads += 1;
+                    full_upload_bytes = full_upload_bytes.saturating_add(upload_bytes);
                     uploaded_any = true;
                 }
             }

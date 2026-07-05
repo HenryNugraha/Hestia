@@ -118,11 +118,11 @@ impl eframe::App for HestiaApp {
         
         // Process queues - only when there's work
         if self.check_pending_process_work() {
-            self.process_local_mod_image_queue();
+            self.process_local_mod_image_queue(ctx);
             self.process_pending_texture_uploads(ctx);
             self.ensure_browse_bootstrap();
             self.process_pending_browse_open(ctx);
-            self.process_browse_image_queue();
+            self.process_browse_image_queue(ctx);
             self.process_browse_download_queue();
             self.process_app_update_download();
             self.process_install_queue();

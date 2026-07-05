@@ -1,9 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Write,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result};
@@ -34,6 +35,9 @@ pub const LOG_HISTORY_LIMIT: usize = 30_000;
 pub const LOG_HISTORY_TRIM_THRESHOLD: usize = 50_000;
 pub const TASK_HISTORY_LIMIT: usize = 10_000;
 pub const TASK_HISTORY_TRIM_THRESHOLD: usize = 15_000;
+const CACHE_ACCESS_TOUCH_INTERVAL: Duration = Duration::from_secs(300);
+const CACHE_ACCESS_TOUCH_TRACK_LIMIT: usize = 4096;
+static CACHE_ACCESS_TOUCHES: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
 
 fn serde_default_true() -> bool {
     true
@@ -952,13 +956,14 @@ pub fn cache_exists(_paths: &PortablePaths, cache_key: &str) -> Result<bool> {
 
 pub fn cache_get(_paths: &PortablePaths, cache_key: &str) -> Result<Option<Vec<u8>>> {
     let path = cache_file_path(cache_key);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let bytes =
-        fs::read(&path).with_context(|| format!("failed to read cache {}", path.display()))?;
-    let now = FileTime::from_system_time(SystemTime::now());
-    let _ = set_file_mtime(&path, now);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read cache {}", path.display()));
+        }
+    };
+    touch_cache_file_if_due(&path);
     Ok(Some(bytes))
 }
 
@@ -1004,9 +1009,29 @@ pub fn cache_link_or_copy_to_file(
         anyhow::bail!("cached download not found");
     }
     link_or_copy_file(&source, destination)?;
-    let now = FileTime::from_system_time(SystemTime::now());
-    let _ = set_file_mtime(&source, now);
+    touch_cache_file_if_due(&source);
     Ok(())
+}
+
+fn touch_cache_file_if_due(path: &Path) {
+    let now = Instant::now();
+    let touches = CACHE_ACCESS_TOUCHES.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut touches) = touches.lock() else {
+        return;
+    };
+    if let Some(last_touch) = touches.get(path) {
+        if now.duration_since(*last_touch) < CACHE_ACCESS_TOUCH_INTERVAL {
+            return;
+        }
+    }
+    if touches.len() >= CACHE_ACCESS_TOUCH_TRACK_LIMIT {
+        touches.retain(|_, last_touch| now.duration_since(*last_touch) < CACHE_ACCESS_TOUCH_INTERVAL);
+        if touches.len() >= CACHE_ACCESS_TOUCH_TRACK_LIMIT {
+            touches.clear();
+        }
+    }
+    touches.insert(path.to_path_buf(), now);
+    let _ = set_file_mtime(path, FileTime::from_system_time(SystemTime::now()));
 }
 
 fn promote_file_atomically(source: &Path, destination: &Path) -> Result<()> {

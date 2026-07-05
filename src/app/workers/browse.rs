@@ -64,7 +64,9 @@ fn spawn_browse_worker(
 
                         // Show known-good cached data immediately, then refresh it below.
                         if force_refresh {
-                            if let Ok(Some(cached)) = persistence::cache_get(&page_portable, &cache_key) {
+                            if let Ok(Some(cached)) =
+                                cache_get_blocking(page_portable.clone(), cache_key.clone()).await
+                            {
                                 if let Ok(payload) = serde_json::from_slice(&cached) {
                                     let _ = page_tx.send(BrowseEvent::PageLoaded {
                                         _nonce: nonce,
@@ -360,6 +362,29 @@ fn isolated_browse_json_client(
         .build())
 }
 
+async fn cache_get_blocking(
+    portable: PortablePaths,
+    cache_key: String,
+) -> Result<Option<Vec<u8>>> {
+    tokio::task::spawn_blocking(move || persistence::cache_get(&portable, &cache_key))
+        .await
+        .map_err(|err| anyhow!("cache read worker failed: {err}"))?
+}
+
+fn cache_put_blocking_detached(
+    portable: &PortablePaths,
+    cache_key: &str,
+    cache_type: &'static str,
+    bytes: Vec<u8>,
+    max_bytes: u64,
+) {
+    let portable = portable.clone();
+    let cache_key = cache_key.to_string();
+    std::mem::drop(tokio::task::spawn_blocking(move || {
+        let _ = persistence::cache_put(&portable, &cache_key, cache_type, &bytes, max_bytes);
+    }));
+}
+
 async fn load_browse_page_with_cache(
     portable: &PortablePaths,
     custom_proxy: Option<CustomProxyConfig>,
@@ -377,7 +402,7 @@ async fn load_browse_page_with_cache(
     Option<String>,
 )> {
     if !force_refresh {
-        if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+        if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
             if let Ok(payload) =
                 serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::BrowseRecord>>(&cached)
             {
@@ -434,12 +459,13 @@ async fn load_browse_page_with_cache(
     match fetch_result {
         Ok(payload) => {
             if let Ok(bytes) = serde_json::to_vec(&payload) {
-                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
+                cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
             Ok((payload, None))
         }
         Err(err) if force_refresh => {
-            if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+            if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
+            {
                 if let Ok(payload) = serde_json::from_slice::<
                     gamebanana::ApiEnvelope<gamebanana::BrowseRecord>,
                 >(&cached)
@@ -461,7 +487,7 @@ async fn load_character_categories_with_cache(
     cache_key: &str,
 ) -> Result<(Vec<gamebanana::CharacterCategory>, bool)> {
     if !force_refresh {
-        if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+        if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
             if let Ok(categories) =
                 serde_json::from_slice::<Vec<gamebanana::CharacterCategory>>(&cached)
             {
@@ -481,12 +507,13 @@ async fn load_character_categories_with_cache(
     {
         Ok(categories) => {
             if let Ok(bytes) = serde_json::to_vec(&categories) {
-                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
+                cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
             Ok((categories, false))
         }
         Err(err) if force_refresh => {
-            if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+            if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
+            {
                 if let Ok(categories) =
                     serde_json::from_slice::<Vec<gamebanana::CharacterCategory>>(&cached)
                 {
@@ -513,7 +540,7 @@ async fn load_profile_with_cache(
                 return Ok((profile, false));
             }
         }
-        if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+        if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
             if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached) {
                 return Ok((profile, false));
             }
@@ -523,12 +550,13 @@ async fn load_profile_with_cache(
     match gamebanana::fetch_profile_async(client, mod_id).await {
         Ok(profile) => {
             if let Ok(bytes) = serde_json::to_vec(&profile) {
-                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
+                cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
             Ok((profile, false))
         }
         Err(err) if force_refresh => {
-            if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+            if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
+            {
                 if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
                 {
                     return Ok((profile, true));
@@ -548,7 +576,7 @@ async fn load_updates_with_cache(
     cache_key: &str,
 ) -> Result<(gamebanana::ApiEnvelope<gamebanana::UpdateRecord>, bool)> {
     if !force_refresh {
-        if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+        if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
             if let Ok(updates) =
                 serde_json::from_slice::<gamebanana::ApiEnvelope<gamebanana::UpdateRecord>>(&cached)
             {
@@ -560,12 +588,13 @@ async fn load_updates_with_cache(
     match gamebanana::fetch_updates_async(client, mod_id).await {
         Ok(updates) => {
             if let Ok(bytes) = serde_json::to_vec(&updates) {
-                let _ = persistence::cache_put(portable, cache_key, "browse-json", &bytes, 0);
+                cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
             Ok((updates, false))
         }
         Err(err) if force_refresh => {
-            if let Some(cached) = persistence::cache_get(portable, cache_key)? {
+            if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
+            {
                 if let Ok(updates) = serde_json::from_slice::<
                     gamebanana::ApiEnvelope<gamebanana::UpdateRecord>,
                 >(&cached)
@@ -615,8 +644,20 @@ fn spawn_browse_image_workers(
                     thumb_limiter.acquire().await.ok()
                 };
                 let bytes_result = async {
-                    if let Some(cached) = persistence::cache_get(&portable, &cache_key)? {
-                        return Ok::<(Vec<u8>, bool), anyhow::Error>((cached, true));
+                    let portable_for_get = portable.clone();
+                    let cache_key_for_get = cache_key.clone();
+                    match handle
+                        .spawn_blocking(move || {
+                            persistence::cache_get(&portable_for_get, &cache_key_for_get)
+                        })
+                        .await
+                    {
+                        Ok(Ok(Some(cached))) => {
+                            return Ok::<(Vec<u8>, bool), anyhow::Error>((cached, true));
+                        }
+                        Ok(Ok(None)) => {}
+                        Ok(Err(err)) => return Err(err),
+                        Err(err) => return Err(anyhow!("image cache read worker failed: {err}")),
                     }
                     let bytes = client
                         .get(&url)
@@ -671,13 +712,18 @@ fn spawn_browse_image_workers(
                                     return;
                                 }
                                 if !from_cache {
-                                    let _ = persistence::cache_put(
-                                        &portable,
-                                        &cache_key,
-                                        "browse-img",
-                                        &bytes,
-                                        limit,
-                                    );
+                                    let portable_for_put = portable.clone();
+                                    let cache_key_for_put = cache_key.clone();
+                                    let bytes_for_cache = bytes.clone();
+                                    std::mem::drop(handle.spawn_blocking(move || {
+                                        let _ = persistence::cache_put(
+                                            &portable_for_put,
+                                            &cache_key_for_put,
+                                            "browse-img",
+                                            &bytes_for_cache,
+                                            limit,
+                                        );
+                                    }));
                                 }
                                 let _ = tx.send(BrowseImageResult {
                                     texture_key,
@@ -693,7 +739,14 @@ fn spawn_browse_image_workers(
                                     return;
                                 }
                                 if from_cache {
-                                    let _ = persistence::cache_remove(&portable, &cache_key);
+                                    let portable_for_remove = portable.clone();
+                                    let cache_key_for_remove = cache_key.clone();
+                                    std::mem::drop(handle.spawn_blocking(move || {
+                                        let _ = persistence::cache_remove(
+                                            &portable_for_remove,
+                                            &cache_key_for_remove,
+                                        );
+                                    }));
                                 }
                                 let _ = tx.send(BrowseImageResult {
                                     texture_key,

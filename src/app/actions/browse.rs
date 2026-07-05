@@ -1309,13 +1309,14 @@ impl HestiaApp {
         }
     }
 
-    fn process_browse_image_queue(&mut self) {
+    fn process_browse_image_queue(&mut self, ctx: &egui::Context) {
         // CONTEXTUAL THROTTLING: Suspend background work to prioritize current user focus
         let now = Instant::now();
         self.browse_image_retry_after
             .retain(|_, retry_after| *retry_after > now);
         let mut allowed_keys = HashSet::with_capacity(32);
         let mut focus_mode = false;
+        let pointer_motion_throttle = Self::pointer_motion_image_throttle_active(ctx);
 
         if let Some(overlay) = &self.browse_state.screenshot_overlay {
             focus_mode = true;
@@ -1392,10 +1393,21 @@ impl HestiaApp {
         });
         let max_parallel = self.browse_thumbnail_parallelism();
         let mut i = 0;
+        let mut deferred_for_pointer_motion = false;
         while self.browse_image_inflight.len() < max_parallel && i < self.browse_image_queue.len() {
             let job = &self.browse_image_queue[i];
             let job_key = &job.texture_key;
             if focus_mode && !allowed_keys.contains(job_key) {
+                i += 1;
+                continue;
+            }
+            let pointer_motion_allowed = if job.load_full {
+                allowed_keys.contains(job_key) || job.priority <= 1
+            } else {
+                !job.skip_texture && job.priority <= 20
+            };
+            if pointer_motion_throttle && !pointer_motion_allowed {
+                deferred_for_pointer_motion = true;
                 i += 1;
                 continue;
             }
@@ -1416,6 +1428,9 @@ impl HestiaApp {
                 self.browse_image_queue.insert(i, job);
                 break;
             }
+        }
+        if deferred_for_pointer_motion {
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
     }
 
