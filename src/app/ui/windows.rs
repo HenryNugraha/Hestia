@@ -959,7 +959,8 @@ impl HestiaApp {
                         ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
 
                         for tool in &tools {
-                            let is_missing = !tool.path.is_file();
+                            let is_missing =
+                                !self.cached_path_is_file(&tool.path, Duration::from_secs(1));
                             let allow_hover_cursor = self.dragging_window_tool_id.is_none();
                             let is_dragging_this = self
                                 .dragging_window_tool_id

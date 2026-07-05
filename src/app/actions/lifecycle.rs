@@ -368,6 +368,7 @@ impl HestiaApp {
             my_mod_overlay_images: Vec::new(),
             game_icon_textures,
             tool_icon_textures: HashMap::new(),
+            tool_icon_texture_failures: HashMap::new(),
             game_cover_textures,
             mod_thumbnail_placeholder,
             mod_cover_textures,

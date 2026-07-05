@@ -244,6 +244,7 @@ pub struct HestiaApp {
     pending_cover_requests: HashSet<String>,
     youtube_icon_texture: Option<egui::TextureHandle>,
     app_icon_texture: Option<egui::TextureHandle>,
+    tool_icon_texture_failures: HashMap<String, Instant>,
     browse_request_tx: WorkerTx<BrowseRequest>,
     browse_event_rx: WorkerRx<BrowseEvent>,
     browse_image_request_tx: WorkerTx<BrowseImageRequest>,

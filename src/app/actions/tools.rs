@@ -7,10 +7,21 @@ struct DiscoveredGameTool {
 
 impl HestiaApp {
     fn ensure_tool_icon_texture(&mut self, ctx: &egui::Context, tool: &ToolEntry) {
-        if self.tool_icon_textures.contains_key(&tool.id) || !tool.path.is_file() {
+        let now = Instant::now();
+        if let Some(failed_at) = self.tool_icon_texture_failures.get(&tool.id).copied() {
+            if now.duration_since(failed_at) < Duration::from_secs(TOOL_ICON_FAILURE_RETRY_SECS) {
+                return;
+            }
+            self.tool_icon_texture_failures.remove(&tool.id);
+        }
+
+        if self.tool_icon_textures.contains_key(&tool.id)
+            || !self.cached_path_is_file(&tool.path, Duration::from_secs(1))
+        {
             return;
         }
         let Some(image) = load_exe_icon_color_image(&tool.path, TOOL_ICON_TEXTURE_SIZE) else {
+            self.tool_icon_texture_failures.insert(tool.id.clone(), now);
             return;
         };
         let texture = ctx.load_texture(
@@ -18,6 +29,7 @@ impl HestiaApp {
             image,
             egui::TextureOptions::LINEAR,
         );
+        self.tool_icon_texture_failures.remove(&tool.id);
         self.tool_icon_textures.insert(tool.id.clone(), texture);
     }
 
@@ -322,6 +334,8 @@ impl HestiaApp {
             }
             let key = Self::normalize_tool_path_key(&tool.path);
             if manual_keys.contains(&key) {
+                self.tool_icon_textures.remove(&tool.id);
+                self.tool_icon_texture_failures.remove(&tool.id);
                 changed = true;
                 return false;
             }
@@ -332,6 +346,7 @@ impl HestiaApp {
                 {
                     if tool.path != discovered.path {
                         self.tool_icon_textures.remove(&tool.id);
+                        self.tool_icon_texture_failures.remove(&tool.id);
                     }
                     tool.label = discovered.label.clone();
                     tool.path = discovered.path.clone();
@@ -340,6 +355,8 @@ impl HestiaApp {
                 }
                 true
             } else {
+                self.tool_icon_textures.remove(&tool.id);
+                self.tool_icon_texture_failures.remove(&tool.id);
                 changed = true;
                 false
             }
@@ -446,6 +463,7 @@ impl HestiaApp {
         };
         let tool = self.state.tools.remove(index);
         self.tool_icon_textures.remove(&tool.id);
+        self.tool_icon_texture_failures.remove(&tool.id);
         if tool.auto_detected {
             let key = Self::normalize_tool_path_key(&tool.path);
             let items = self.state.static_prefs.tool_blacklist.entry(tool.game_id.clone()).or_default();
