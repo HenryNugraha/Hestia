@@ -1,4 +1,91 @@
 impl HestiaApp {
+    fn browse_card_install_context_menu_row(
+        ui: &mut Ui,
+        enabled: bool,
+        icon: Icon,
+        label: &str,
+        fill: Color32,
+    ) -> egui::Response {
+        let row_height = ui.spacing().interact_size.y.max(28.0);
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_height),
+            if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.visuals();
+            let radius = egui::CornerRadius::same(3);
+            let bg_fill = if enabled && response.hovered() {
+                fill.linear_multiply(1.08)
+            } else {
+                fill
+            };
+            ui.painter().rect_filled(rect, radius, bg_fill);
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                egui::Stroke::new(1.0, fill),
+                egui::StrokeKind::Inside,
+            );
+
+            let text_color = if enabled {
+                Color32::from_rgb(225, 229, 233)
+            } else {
+                visuals
+                    .widgets
+                    .inactive
+                    .fg_stroke
+                    .color
+                    .linear_multiply(0.55)
+            };
+            let mut job = LayoutJob::default();
+            job.append(
+                &icon_char(icon).to_string(),
+                0.0,
+                TextFormat {
+                    font_id: egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                    color: text_color,
+                    ..Default::default()
+                },
+            );
+            job.append(
+                " ",
+                0.0,
+                TextFormat {
+                    font_id: egui::FontId::proportional(13.0),
+                    color: text_color,
+                    ..Default::default()
+                },
+            );
+            job.append(
+                label,
+                0.0,
+                TextFormat {
+                    font_id: egui::FontId::proportional(13.0),
+                    color: text_color,
+                    ..Default::default()
+                },
+            );
+
+            let galley = ui.painter().layout_job(job);
+            let text_pos = egui::pos2(
+                rect.left() + ui.spacing().button_padding.x,
+                rect.center().y - galley.size().y * 0.5,
+            );
+            ui.painter().galley(text_pos, galley, text_color);
+        }
+
+        if enabled {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        } else {
+            response
+        }
+    }
+
     fn render_browse_left_pane(&mut self, ui: &mut Ui) {
         let text = self.text();
         let age_now = Local::now();
@@ -781,21 +868,14 @@ impl HestiaApp {
                             let selected_game_ready = self.selected_game_can_download_mods();
                             let selected_game_setup_message = self.selected_game_mod_setup_message();
 
-                            let install_response = ui.add_enabled(
-                                !install_blocked && selected_game_ready,
-                                egui::Button::new(icon_text_sized(
-                                    Icon::PackagePlus,
-                                    text.install(),
-                                    13.0,
-                                    13.0,
-                                ))
-                                .fill(Color32::from_rgb(180, 78, 35))
-                                .stroke(egui::Stroke::new(
-                                    1.0,
-                                    Color32::from_rgb(180, 78, 35),
-                                ))
-                                .corner_radius(radius),
-                            ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let install_enabled = !install_blocked && selected_game_ready;
+                            let install_response = Self::browse_card_install_context_menu_row(
+                                ui,
+                                install_enabled,
+                                Icon::PackagePlus,
+                                text.install(),
+                                Color32::from_rgb(180, 78, 35),
+                            );
                             if !selected_game_ready {
                                 install_response
                                     .clone()
@@ -812,7 +892,7 @@ impl HestiaApp {
                             }
 
                             let install_disabled_response = ui.add_enabled(
-                                !install_blocked && selected_game_ready,
+                                install_enabled,
                                 egui::Button::new(icon_text_sized(
                                     Icon::PackagePlus,
                                     text.install_disabled(),
