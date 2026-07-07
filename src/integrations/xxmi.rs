@@ -530,16 +530,7 @@ pub fn launch_path_with_raw_args(path: &Path, raw_args: &str) -> Result<()> {
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
-    #[cfg(windows)]
-    {
-        let working_dir = path.parent();
-        return shell_execute_open(path, &arg_refs, working_dir)
-            .map_err(anyhow::Error::from)
-            .with_context(|| format!("failed to launch {}", path.display()));
-    }
-
-    #[allow(unreachable_code)]
-    launch_executable_with_args(path, &arg_refs, false, "tool")
+    launch_executable_with_args(path, &arg_refs, true, "tool")
 }
 
 pub fn launch_vanilla_executable(path: &Path) -> Result<()> {
@@ -1177,7 +1168,10 @@ fn extract_metadata(
                     .strip_prefix(root)
                     .map(|relative| relative.to_string_lossy().to_string())
                     .ok();
-                if !trimmed.is_empty() && !is_noise_metadata_text(trimmed) {
+                if !trimmed.is_empty()
+                    && !is_noise_metadata_text(trimmed)
+                    && !is_generated_text_payload(path, trimmed)
+                {
                     if let Some(relative) = relative.clone() {
                         let source_index = text_sources.len();
                         text_sources.push(ExtractedMetadataTextSource {
@@ -1296,6 +1290,30 @@ fn is_noise_metadata_text(text: &str) -> bool {
         })
 }
 
+fn is_generated_text_payload(path: &Path, text: &str) -> bool {
+    has_generated_text_name(path) && text.lines().take(80).any(is_shader_payload_line)
+}
+
+fn has_generated_text_name(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .split(['-', '_', '.', ' '])
+        .any(|part| part.len() >= 12 && part.chars().all(|ch| ch.is_ascii_hexdigit()))
+}
+
+fn is_shader_payload_line(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("//")
+        || line.starts_with("ps_")
+        || line.starts_with("vs_")
+        || line.starts_with("dcl_")
+        || line.starts_with("def ")
+        || line.starts_with("mov ")
+        || line.starts_with("mul ")
+        || line.starts_with("texld")
+}
+
 fn text_mentions_rabbitfx_requirement(text: &str) -> bool {
     let normalized = text
         .to_ascii_lowercase()
@@ -1330,6 +1348,22 @@ mod tests {
             sanitize_personal_note_content("one\n\n\n\n\ntwo"),
             Some("one\n\n\n\n\ntwo".to_string())
         );
+    }
+
+    #[test]
+    fn generated_shader_text_is_not_metadata_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(
+            root.join("f86e7a367fd097f0-ps_replace.txt"),
+            "// Resource replacement\nps_5_0\ndef c0, 1, 0, 0, 0",
+        )
+        .unwrap();
+
+        let extracted = extract_metadata(root, None, false).unwrap();
+
+        assert!(extracted.description.is_none());
+        assert!(extracted.text_sources.is_empty());
     }
 
     #[test]
