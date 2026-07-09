@@ -166,6 +166,7 @@ impl eframe::App for HestiaApp {
             self.render_pending_import(&ctx);
             self.update_main_window_state(&ctx);
         });
+        self.handle_window_close_shortcuts(&ctx);
         // Control repaint behavior to reduce CPU usage on idle
         // Only request continuous repaints when necessary
         let has_pending_browse_request = self.browse_state.loading_page
@@ -207,5 +208,153 @@ impl eframe::App for HestiaApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.cancel_all_gif_work();
+    }
+}
+
+impl HestiaApp {
+    fn handle_window_close_shortcuts(&mut self, ctx: &egui::Context) {
+        let close_all_requested = ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                egui::Key::W,
+            ))
+        });
+        if close_all_requested {
+            self.close_all_noncritical_windows();
+            return;
+        }
+
+        let critical_window_open = !self.pending_imports.is_empty()
+            || !self.pending_conflicts.is_empty()
+            || self.browse_state.file_prompt.is_some()
+            || self.browse_state.screenshot_overlay.is_some();
+        if critical_window_open {
+            return;
+        }
+
+        let close_requested = ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                || input.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::CTRL,
+                    egui::Key::W,
+                ))
+        });
+        if close_requested {
+            self.close_frontmost_window(ctx);
+        }
+    }
+
+    fn close_frontmost_window(&mut self, ctx: &egui::Context) {
+        let foreground_id = ctx.memory(|memory| {
+            memory
+                .areas()
+                .top_layer_id(egui::Order::Foreground)
+                .map(|layer| layer.id)
+        });
+        if foreground_id.is_some_and(|id| self.close_window_by_id(id)) {
+            return;
+        }
+
+        let Some(id) = ctx.top_layer_id().map(|layer| layer.id) else {
+            return;
+        };
+
+        self.close_window_by_id(id);
+    }
+
+    fn close_all_noncritical_windows(&mut self) {
+        let mut save_state = false;
+
+        if self.mod_detail_open {
+            self.set_selected_mod_id(None);
+        }
+        if self.browse_detail_open {
+            self.browse_detail_open = false;
+            self.browse_state.selected_mod_id = None;
+        }
+        if self.state.show_whats_new {
+            self.state.show_whats_new = false;
+        }
+        if self.state.show_feedback_survey {
+            self.state.show_feedback_survey = false;
+            save_state = true;
+        }
+        if self.state.show_tasks {
+            self.state.show_tasks = false;
+            save_state = true;
+        }
+        if self.state.show_tools {
+            self.state.show_tools = false;
+            save_state = true;
+        }
+        if self.settings_open {
+            self.settings_open = false;
+        }
+        if self.state.show_log {
+            self.state.show_log = false;
+            save_state = true;
+        }
+        if self.tool_launch_options_prompt.is_some() {
+            self.tool_launch_options_prompt = None;
+        }
+
+        if save_state {
+            self.save_state();
+        }
+    }
+
+    fn close_window_by_id(&mut self, id: egui::Id) -> bool {
+        if let Some(prompt) = &self.tool_launch_options_prompt {
+            if id == egui::Id::new(("tool_launch_options", prompt.tool_id.clone())) {
+                self.tool_launch_options_prompt = None;
+                return true;
+            }
+        }
+
+        if id == egui::Id::new("mod_detail_window") && self.mod_detail_open {
+            self.set_selected_mod_id(None);
+            true
+        } else if id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID) && self.browse_detail_open {
+            self.browse_detail_open = false;
+            self.browse_state.selected_mod_id = None;
+            true
+        } else if id == egui::Id::new(("whats_new_window", self.whats_new_window_nonce))
+            && self.state.show_whats_new
+        {
+            self.state.show_whats_new = false;
+            true
+        } else if id == egui::Id::new(("feedback_survey_window", self.feedback_survey_window_nonce))
+            && self.state.show_feedback_survey
+        {
+            self.state.show_feedback_survey = false;
+            self.save_state();
+            true
+        } else if id == egui::Id::new(("tasks_window", self.tasks_window_nonce))
+            && self.state.show_tasks
+        {
+            self.state.show_tasks = false;
+            self.save_state();
+            true
+        } else if id == egui::Id::new(("tools_window", self.tools_window_nonce))
+            && self.state.show_tools
+        {
+            self.state.show_tools = false;
+            self.save_state();
+            true
+        } else if id == egui::Id::new("settings_window") && self.settings_open {
+            self.settings_open = false;
+            true
+        } else if id == egui::Id::new(("log_window", self.log_window_nonce)) && self.state.show_log
+        {
+            self.state.show_log = false;
+            self.save_state();
+            true
+        } else {
+            false
+        }
     }
 }

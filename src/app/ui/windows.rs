@@ -88,6 +88,7 @@ impl HestiaApp {
         if force_default_pos {
             self.whats_new_force_default_pos = false;
         }
+
         self.state.show_whats_new = whats_new_open;
     }
 
@@ -1525,13 +1526,14 @@ impl HestiaApp {
             .last_right_pane_rect
             .unwrap_or_else(|| ctx.viewport_rect());
 
+        let window_id = egui::Id::new(("tool_launch_options", tool.id.clone()));
         egui::Window::new(icon_text_sized(
             Icon::Terminal,
             text.tool_launch_options(),
             14.0,
             14.0,
         ))
-        .id(egui::Id::new(("tool_launch_options", tool.id.clone())))
+        .id(window_id)
         .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
         .default_size(egui::vec2(360.0, 172.0))
         .order(egui::Order::Foreground)
@@ -2260,6 +2262,7 @@ impl HestiaApp {
             14.0,
             14.0,
         ))
+        .id(egui::Id::new("settings_window"))
         .open(&mut settings_open)
         .title_bar(true)
         .frame(settings_frame);
@@ -2278,7 +2281,7 @@ impl HestiaApp {
             window = window.default_width(400.0).default_height(400.0);
         }
 
-        let settings_response = window.show(ctx, |ui| {
+        let _ = window.show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let radius = egui::CornerRadius::same(3);
                 ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
@@ -3736,7 +3739,6 @@ impl HestiaApp {
                 apply_vertical_scroll_navigation(ui, scroll_navigation, true);
             });
         });
-        let _ = settings_response;
         self.settings_open = settings_open;
         if should_save {
             self.save_state();
