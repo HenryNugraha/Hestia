@@ -4,23 +4,47 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "15 June 2026",
-    "15 Juni 2026",
-    "2026年 6月 15日",
-    "15 июня 2026",
+    "12 July 2026",
+    "12 Juli 2026",
+    "2026年 7月 12日",
+    "12 июль 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
+        "Added support for Neverness to Everness / NTE (.pak mods)",
+        "Menambahkan dukungan untuk Neverness to Everness / NTE (mod .pak)",
+        "新增对 Neverness to Everness / NTE（.pak 模组）的支持",
+        "Добавлена поддержка модов Neverness to Everness / NTE (.pak)",
+    ),
+    l10n(
         concat!(
-            "Added app translation to Bahasa Indonesia & Chinese\n",
+            "Added support for proxy settings.\n",
+            "▸ Settings > Advanced > Proxy"
+        ),
+        concat!(
+            "Menambahkan dukungan untuk pengaturan proksi.\n",
+            "▸ Setelan > Lanjutan > Proksi"
+        ),
+        concat!(
+            "新增代理设置支持。\n",
+            "▸ 设置 > 高级 > 代理"
+        ),
+        concat!(
+            "Добавлена поддержка настроек прокси.\n",
+            "▸ Настройки > Дополнительно > Прокси"
+        ),
+    ),
+    l10n(
+        concat!(
+            "Added app translation to Russian\n",
             "▸ Settings > Advanced > Appearance > Languages"
         ),
         concat!(
-            "Menambahkan terjemahan aplikasi ke Bahasa Indonesia & Mandarin\n",
+            "Menambahkan terjemahan aplikasi ke bahasa Rusia\n",
             "▸ Setelan > Lanjutan > Tampilan > Bahasa"
         ),
         concat!(
-            "新增印度尼西亚语和简体中文翻译\n",
+            "新增俄语应用翻译\n",
             "▸ 设置 > 高级 > 外观 > 语言"
         ),
         concat!(
@@ -29,28 +53,10 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
         ),
     ),
     l10n(
-        concat!(
-            "Added experimental translate button for mod title and description\n",
-            "▸ Server is unstable, can be VERY SLOW"
-        ),
-        concat!(
-            "Menambahkan tombol terjemah untuk judul dan deskripsi mod\n",
-            "▸ Server tidak stabil, bisa sangat LAMBAT"
-        ),
-        concat!(
-            "为 mod 标题和描述添加了实验性翻译按钮\n",
-            "▸ 服务器不稳定，速度可能会非常慢"
-        ),
-        concat!(
-            "Добавлена экспериментальная кнопка перевода названия и описания мода\n",
-            "▸ Сервер нестабилен и может быть ОЧЕНЬ медленным"
-        ),
-    ),
-    l10n(
-        "Added support for resuming downloads",
-        "Menambahkan dukungan untuk melanjutkan unduhan",
-        "新增支持断点续传功能",
-        "Добавлена поддержка возобновления загрузок",
+        "Refactored much of the code to improve performance",
+        "Melakukan refaktor pada banyak bagian kode untuk meningkatkan performa",
+        "重构了大量代码以提升性能",
+        "Выполнен рефакторинг значительной части кода для повышения производительности",
     ),
 ];
 
@@ -64,45 +70,80 @@ pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
 );
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
-        "language_indonesia_quality",
+        "translate_tool",
         l10n(
-            "If using INDONESIAN localization: How do you like it?",
-            "Jika pakai BAHASA INDONESIA: Bagaimana menurutmu?",
-            "如果你用印度尼西亚语：你觉得怎么样？",
-            "Если используете ИНДОНЕЗИЙСКУЮ локализацию: как она вам?",
+            "Have you used the translate button on mods?",
+            "Apakah kamu pernah menggunakan tombol terjemahkan pada mod?",
+            "你使用过模组上的翻译按钮吗？",
+            "Вы использовали кнопку перевода для модов?",
         ),
         &[
-            a(1, l10n("Great", "Bagus", "很好", "Отлично")),
-            a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
-            a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
+            a(
+                1,
+                l10n(
+                    "Good and fast",
+                    "Bagus dan cepat",
+                    "效果好且速度快",
+                    "Хорошо и быстро",
+                ),
+            ),
+            a(
+                2,
+                l10n(
+                    "Good but slow",
+                    "Bagus, tapi lambat",
+                    "效果好，但速度慢",
+                    "Хорошо, но медленно",
+                ),
+            ),
+            a(
+                3,
+                l10n(
+                    "Poor but fast",
+                    "Buruk, tapi cepat",
+                    "效果差，但速度快",
+                    "Плохо, но быстро",
+                ),
+            ),
             a(
                 4,
-                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
+                l10n(
+                    "Poor and slow",
+                    "Buruk dan lambat",
+                    "效果差且速度慢",
+                    "Плохо и медленно",
+                ),
+            ),
+            a(
+                5,
+                l10n(
+                    "Don't use it / didn't know about it",
+                    "Tidak pakai / tidak tahu fitur ini",
+                    "不用 / 不知道有这个功能",
+                    "Не пользуюсь / не знаю про эту функцию",
+                ),
             ),
         ],
     ),
     q(
-        "language_chinese_quality",
+        "language_russian_quality",
         l10n(
-            "If using CHINESE localization: How do you like it?",
-            "Jika pakai MANDARIN: Bagaimana menurutmu?",
-            "如果你使用中文版：你觉得怎么样？",
-            "Если используете КИТАЙСКУЮ локализацию: как она вам?",
+            "If using RUSSIAN localization: How do you like it?",
+            "Jika pakai BAHASA RUSIA: Bagaimana menurutmu?",
+            "如果你用俄语：你觉得怎么样？",
+            "Если используете РУССКУЮ локализацию: как она вам?",
         ),
         &[
             a(1, l10n("Great", "Bagus", "很好", "Отлично")),
             a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
             a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
-            a(
-                4,
-                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
-            ),
+            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
         ],
     ),
 ];
 pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: L10n = l10n(
-    "Feature requests? Issues? Let me know!",
-    "Permintaan fitur? Masalah? Infokan aja!",
-    "有功能建议或遇到了问题？告诉我！（最好用英文）",
-    "Пожелания к функциям? Проблемы? Сообщите мне!",
+    "Anything else? Feature requests, issues, or suggestions are welcome!",
+    "Ada lagi? Permintaan fitur, masalah, atau saran boleh ditulis di sini!",
+    "还有其他想说的吗？欢迎提出功能需求、问题或建议！",
+    "Есть что добавить? Пишите о пожеланиях, проблемах или предложениях!",
 );

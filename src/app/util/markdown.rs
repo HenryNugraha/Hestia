@@ -1,3 +1,26 @@
+static RENDER_EMBED_IMAGE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\((gif-preview-[a-f0-9]+|rail:[a-f0-9]+)\)").unwrap());
+static YOUTUBE_EMBED_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\{\{hestia-youtube:([A-Za-z0-9_-]{6,})\}\}").unwrap());
+static YOUTUBE_URL_RES: Lazy<Vec<Regex>> = Lazy::new(|| {
+    [
+        r#"(?i)(?:youtube\.com/embed/)([A-Za-z0-9_-]{6,})"#,
+        r#"(?i)(?:youtube\.com/watch\?[^"'\s<>]*v=)([A-Za-z0-9_-]{6,})"#,
+        r#"(?i)(?:youtu\.be/)([A-Za-z0-9_-]{6,})"#,
+    ]
+    .into_iter()
+    .map(|pattern| Regex::new(pattern).unwrap())
+    .collect()
+});
+static HTML_IMAGE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?is)<img\b(?P<attrs>[^>]*?)>"#).unwrap());
+static HTML_IFRAME_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?is)<iframe\b(?P<attrs>[^>]*?)>(?:\s*</iframe>)?"#).unwrap());
+static HTML_SRC_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\bsrc\s*=\s*["']([^"']+)["']"#).unwrap());
+static HTML_DATA_SRC_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\b(?:data-src|data-preview)\s*=\s*["']([^"']+)["']"#).unwrap());
+
 fn normalize_markdown_image_dest(raw: &str) -> String {
     let s = raw.trim();
     let url = if s.starts_with('<') {
@@ -86,8 +109,7 @@ fn markdown_static_image_texture_key(dest: &str) -> String {
 
 fn extract_markdown_images(markdown: &str) -> Vec<(usize, usize, String)> {
     let mut images = Vec::new();
-    let img_re = Regex::new(r"!\[([^\]]*)\]\((gif-preview-[a-f0-9]+|rail:[a-f0-9]+)\)").unwrap();
-    for cap in img_re.captures_iter(markdown) {
+    for cap in RENDER_EMBED_IMAGE_RE.captures_iter(markdown) {
         if let (Some(m), Some(key_match)) = (cap.get(0), cap.get(2)) {
             images.push((m.start(), m.end(), key_match.as_str().to_string()));
         }
@@ -97,13 +119,7 @@ fn extract_markdown_images(markdown: &str) -> Vec<(usize, usize, String)> {
 
 fn extract_youtube_video_id(url: &str) -> Option<String> {
     let trimmed = url.trim();
-    let patterns = [
-        r#"(?i)(?:youtube\.com/embed/)([A-Za-z0-9_-]{6,})"#,
-        r#"(?i)(?:youtube\.com/watch\?[^"'\s<>]*v=)([A-Za-z0-9_-]{6,})"#,
-        r#"(?i)(?:youtu\.be/)([A-Za-z0-9_-]{6,})"#,
-    ];
-    for pattern in patterns {
-        let re = Regex::new(pattern).ok()?;
+    for re in YOUTUBE_URL_RES.iter() {
         if let Some(caps) = re.captures(trimmed) {
             if let Some(video_id) = caps.get(1) {
                 return Some(video_id.as_str().to_string());
@@ -118,10 +134,8 @@ fn youtube_watch_url(video_id: &str) -> String {
 }
 
 fn extract_markdown_youtube_embeds(markdown: &str) -> Vec<(usize, usize, String)> {
-    let Ok(re) = Regex::new(r"\{\{hestia-youtube:([A-Za-z0-9_-]{6,})\}\}") else {
-        return Vec::new();
-    };
-    re.captures_iter(markdown)
+    YOUTUBE_EMBED_RE
+        .captures_iter(markdown)
         .filter_map(|caps| {
             let whole = caps.get(0)?;
             let video_id = caps.get(1)?.as_str().to_string();
@@ -372,15 +386,9 @@ fn prepare_markdown_for_display(
     portable: &PortablePaths,
 ) -> String {
     let detective = "https://images.gamebanana.com/static/img/mascots/detective.png";
-    let img_re = Regex::new(r#"(?is)<img\b(?P<attrs>[^>]*?)>"#).unwrap();
-    let iframe_re = Regex::new(r#"(?is)<iframe\b(?P<attrs>[^>]*?)>(?:\s*</iframe>)?"#).unwrap();
-    let src_re = Regex::new(r#"(?i)\bsrc\s*=\s*["']([^"']+)["']"#).unwrap();
-    let data_src_re =
-        Regex::new(r#"(?i)\b(?:data-src|data-preview)\s*=\s*["']([^"']+)["']"#).unwrap();
-
-    let iframe_sanitized_html = iframe_re.replace_all(html, |caps: &regex::Captures| {
+    let iframe_sanitized_html = HTML_IFRAME_RE.replace_all(html, |caps: &regex::Captures| {
         let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let src = src_re
+        let src = HTML_SRC_RE
             .captures(attrs)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str())
@@ -392,14 +400,14 @@ fn prepare_markdown_for_display(
         }
     });
 
-    let sanitized_html = img_re.replace_all(&iframe_sanitized_html, |caps: &regex::Captures| {
+    let sanitized_html = HTML_IMAGE_RE.replace_all(&iframe_sanitized_html, |caps: &regex::Captures| {
         let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let src = src_re
+        let src = HTML_SRC_RE
             .captures(attrs)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str())
             .unwrap_or_default();
-        let data = data_src_re
+        let data = HTML_DATA_SRC_RE
             .captures(attrs)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str())

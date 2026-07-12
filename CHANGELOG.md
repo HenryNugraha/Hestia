@@ -1,18 +1,49 @@
 # Changelog
 
-## [1.7.0-alpha] - 2026-xx-xx
+## [1.7.0-alpha] - 2026-07-12
 
 ### Added
-- Rus lang
+
+- Added Russian localization (ru-RU).
+- Added support for proxy settings.
+- Added the mod folder size to the mod details window, next to its category label.
+- Added explanations of the tools available in the Tools window.
+- Added an option to hide empty category folders.
+- Added an option to automatically translate mods when they are opened.
+- Added the F7 hotkey to translate a mod when the mod details window is open.
+- Added the Esc hotkey to close the currently focused window.
+- Added the Ctrl+W hotkey to close the currently focused window.
+- Added the Ctrl+Shift+W hotkey to close all windows.
+- Added Page Up, Page Down, Home, and End hotkeys to most windows.
+- Added two new font sets: Elegant and Traditional.
+- Added a button in the header to open the mods folder.
 
 ### Changed
-- Rust & deps upgrade (egui stays 0.33)
-- Performance optimization
-- UI refinement for rus
+
+- Upgraded Rust and dependency versions.
+- Refactored much of the code to improve performance.
+- Slightly adjusted the UI to accommodate Russian text, which tends to be longer.
+- Adjusted the lookup order for the `hestia.toml` configuration file to prioritize any existing file.
+- Revamped the guide shown when no games are enabled.
+- Formatted like and download counts.
+- Added a cooldown period before automatically checking for mod updates to avoid hammering GameBanana's servers.
+- Enabled the translation service to translate metadata.
+- Enabled font changing on non-Windows platforms.
+- Adjusted the log window to allow text selection.
+- Improved file tracking when checking for updates to mods with multiple files.
+- Improved the handling of category folder and mod deletion.
+- Tweaked the control buttons when Hestia is maximized.
+- Refined the context menu to allow opening a mod's GameBanana page either within Hestia or in the system's default browser.
+- Renamed "Game & Path" to "Games" in the Settings menu.
 
 ### Fixed
-- ?
 
+- Fixed the image decoder becoming stuck when receiving unexpected input, which prevented further images from being rendered until Hestia was restarted.
+- Fixed the initial mod scan not being triggered after a deep scan was completed.
+- Fixed the Tools window continuing to show the last selected game when all games were disabled.
+- Fixed missing translations for some strings.
+- Fixed mods for a specific character not being sorted by date when "Recent Updated" was selected.
+- Fixed tools launched from Hestia being forcibly closed when Hestia exited.
 
 ## [1.6.0] - 2026-06-15
 

@@ -1585,11 +1585,18 @@ impl HestiaApp {
     }
 
     fn dispatch_selected_game_refresh(&mut self, game_id: String) {
+        let existing_mods = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| mod_entry.game_id == game_id)
+            .cloned()
+            .collect();
         let request = RefreshRequest {
             game_id: game_id.clone(),
             games: self.state.games.clone(),
             use_default_mods_path: self.state.static_prefs.use_default_mods_path,
-            existing_mods: self.state.mods.clone(),
+            existing_mods,
         };
         if self.refresh_request_tx.send(request).is_ok() {
             self.refresh_inflight = true;

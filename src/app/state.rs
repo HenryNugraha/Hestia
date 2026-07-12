@@ -69,6 +69,17 @@ struct LibraryCardCache {
     rows: Arc<Vec<LibraryCardRow>>,
 }
 
+enum LogDisplayRow {
+    Date { text: String, gap_before: bool },
+    Entry { text: String },
+}
+
+#[derive(Default)]
+struct LogDisplayCache {
+    key: Option<(u64, bool)>,
+    rows: Vec<LogDisplayRow>,
+}
+
 impl Default for LibraryCardCache {
     fn default() -> Self {
         Self {
@@ -193,6 +204,8 @@ pub struct HestiaApp {
     log_scroll_to_bottom: bool,
     log_window_nonce: u64,
     log_force_default_pos: bool,
+    log_revision: u64,
+    log_display_cache: LogDisplayCache,
     tools_window_nonce: u64,
     tools_force_default_pos: bool,
     tool_launch_options_prompt: Option<ToolLaunchOptionsPrompt>,

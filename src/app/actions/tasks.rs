@@ -11,6 +11,7 @@ impl HestiaApp {
                 .operations
                 .truncate(persistence::LOG_HISTORY_LIMIT);
         }
+        self.log_revision = self.log_revision.wrapping_add(1);
         if let Err(err) = persistence::append_operation_log(&self.portable, &entry) {
             self.report_error_message(
                 format!("failed to persist log history: {err:#}"),
@@ -20,6 +21,33 @@ impl HestiaApp {
         if self.state.show_log {
             self.log_scroll_to_bottom = true;
         }
+    }
+
+    fn rebuild_log_display_cache_if_needed(&mut self, use_24h: bool) {
+        let key = (self.log_revision, use_24h);
+        if self.log_display_cache.key == Some(key) {
+            return;
+        }
+
+        let mut rows = Vec::with_capacity(self.state.operations.len().saturating_mul(2));
+        let mut last_date: Option<String> = None;
+        for entry in self.state.operations.iter().rev() {
+            let (date, time) = format_log_timestamp(entry.timestamp, use_24h);
+            if last_date.as_deref() != Some(date.as_str()) {
+                rows.push(LogDisplayRow::Date {
+                    text: date.clone(),
+                    gap_before: last_date.is_some(),
+                });
+                last_date = Some(date);
+            }
+            rows.push(LogDisplayRow::Entry {
+                text: format!("[{}] {}", time, sanitize_log_subject(&entry.summary)),
+            });
+        }
+        self.log_display_cache = LogDisplayCache {
+            key: Some(key),
+            rows,
+        };
     }
 
     fn log_action(&mut self, action: &str, subject: &str) {

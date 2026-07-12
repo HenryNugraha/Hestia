@@ -431,6 +431,8 @@ impl HestiaApp {
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let text = self.text();
+        let use_24h = system_uses_24h_time();
+        self.rebuild_log_display_cache_if_needed(use_24h);
         let log_frame =
             egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(12));
         let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, text.log(), 14.0, 14.0))
@@ -462,7 +464,6 @@ impl HestiaApp {
             const LOG_DATE_ROW_HEIGHT: f32 = 22.0;
             const LOG_ENTRY_ROW_HEIGHT: f32 = 19.0;
             const LOG_DATE_GAP: f32 = 12.0;
-            let use_24h = system_uses_24h_time();
             let scroll_rect = ui.available_rect_before_wrap();
             let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
             ScrollArea::vertical()
@@ -471,11 +472,9 @@ impl HestiaApp {
                 .show(ui, |ui| {
                     apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                     let viewport = ui.clip_rect().expand(90.0);
-                    let mut last_date: Option<String> = None;
-                    for entry in self.state.operations.iter().rev() {
-                        let (date, time) = format_log_timestamp(entry.timestamp, use_24h);
-                        if last_date.as_deref() != Some(date.as_str()) {
-                            if last_date.is_some() {
+                    for row in &self.log_display_cache.rows {
+                        if let LogDisplayRow::Date { text, gap_before } = row {
+                            if *gap_before {
                                 ui.add_space(LOG_DATE_GAP);
                             }
                             let row_top = ui.cursor().top();
@@ -484,7 +483,7 @@ impl HestiaApp {
                                 ui.add_space(LOG_DATE_ROW_HEIGHT);
                             } else {
                                 let response = ui.add(
-                                    egui::Label::new(bold(date.clone(), None).underline())
+                                    egui::Label::new(bold(text.clone(), None).underline())
                                         .selectable(true),
                                 );
                                 let used_height = response.rect.height();
@@ -492,18 +491,17 @@ impl HestiaApp {
                                     ui.add_space(LOG_DATE_ROW_HEIGHT - used_height);
                                 }
                             }
-                            last_date = Some(date);
+                            continue;
                         }
+                        let LogDisplayRow::Entry { text } = row else {
+                            continue;
+                        };
                         let row_top = ui.cursor().top();
                         let row_bottom = row_top + LOG_ENTRY_ROW_HEIGHT;
                         if row_bottom < viewport.top() || row_top > viewport.bottom() {
                             ui.add_space(LOG_ENTRY_ROW_HEIGHT);
                         } else {
-                            let summary = sanitize_log_subject(&entry.summary);
-                            let response = ui.add(
-                                egui::Label::new(format!("[{}] {}", time, summary))
-                                    .selectable(true),
-                            );
+                            let response = ui.add(egui::Label::new(text).selectable(true));
                             let used_height = response.rect.height();
                             if used_height < LOG_ENTRY_ROW_HEIGHT {
                                 ui.add_space(LOG_ENTRY_ROW_HEIGHT - used_height);

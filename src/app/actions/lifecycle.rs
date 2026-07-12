@@ -336,6 +336,8 @@ impl HestiaApp {
             log_scroll_to_bottom,
             log_window_nonce,
             log_force_default_pos,
+            log_revision: 0,
+            log_display_cache: LogDisplayCache::default(),
             tools_window_nonce,
             tools_force_default_pos,
             tool_launch_options_prompt: None,

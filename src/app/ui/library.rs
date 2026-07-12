@@ -3374,23 +3374,27 @@ impl HestiaApp {
         tile_ui.add_enabled_ui(enabled, |ui| {
             static_label(ui, icon_rich(icon, 21.0, accent));
             ui.add_space(10.0);
-            ui.vertical(|ui| {
-                ui.add_space(1.0);
-                static_label(
-                    ui,
-                    RichText::new(title)
-                        .size(14.5)
-                        .strong()
-                        .color(Color32::from_rgb(226, 230, 236)),
-                );
-                ui.add_space(-2.0);
-                static_label(
-                    ui,
-                    RichText::new(description)
-                        .size(12.5)
-                        .color(Color32::from_gray(160)),
-                );
-            });
+            let text_width = ui.available_width();
+            ui.allocate_ui_with_layout(
+                egui::vec2(text_width, 34.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    static_label(
+                        ui,
+                        RichText::new(title)
+                            .size(14.5)
+                            .strong()
+                            .color(Color32::from_rgb(226, 230, 236)),
+                    );
+                    ui.add_space(-2.0);
+                    static_label(
+                        ui,
+                        RichText::new(description)
+                            .size(12.5)
+                            .color(Color32::from_gray(160)),
+                    );
+                },
+            );
         });
 
         response
