@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.1-alpha] - 2026-07-12
+
+### Fixed
+- Fixed heavy stuttering when playing game...hopefully
+
 ## [1.7.0] - 2026-07-12
 
 ### Added

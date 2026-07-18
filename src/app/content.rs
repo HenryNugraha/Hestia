@@ -4,63 +4,21 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "12 July 2026",
-    "12 Juli 2026",
-    "2026年 7月 12日",
-    "12 июль 2026",
+    "xx July 2026",
+    "xx Juli 2026",
+    "2026年 7月 xx日",
+    "xx июль 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
-        "Added support for Neverness to Everness / NTE (.pak mods)",
-        "Menambahkan dukungan untuk Neverness to Everness / NTE (mod .pak)",
-        "新增对 Neverness to Everness / NTE（.pak 模组）的支持",
-        "Добавлена поддержка модов Neverness to Everness / NTE (.pak)",
-    ),
-    l10n(
-        concat!(
-            "Added support for proxy settings.\n",
-            "▸ Settings > Advanced > Proxy"
-        ),
-        concat!(
-            "Menambahkan dukungan untuk pengaturan proksi.\n",
-            "▸ Setelan > Lanjutan > Proksi"
-        ),
-        concat!(
-            "新增代理设置支持。\n",
-            "▸ 设置 > 高级 > 代理"
-        ),
-        concat!(
-            "Добавлена поддержка настроек прокси.\n",
-            "▸ Настройки > Дополнительно > Прокси"
-        ),
-    ),
-    l10n(
-        concat!(
-            "Added app translation to Russian\n",
-            "▸ Settings > Advanced > Appearance > Languages"
-        ),
-        concat!(
-            "Menambahkan terjemahan aplikasi ke bahasa Rusia\n",
-            "▸ Setelan > Lanjutan > Tampilan > Bahasa"
-        ),
-        concat!(
-            "新增俄语应用翻译\n",
-            "▸ 设置 > 高级 > 外观 > 语言"
-        ),
-        concat!(
-            "Добавлен перевод приложения на русский язык\n",
-            "▸ Настройки > Дополнительно > Внешний вид > Язык"
-        ),
-    ),
-    l10n(
-        "Refactored much of the code to improve performance",
-        "Melakukan refaktor pada banyak bagian kode untuk meningkatkan performa",
-        "重构了大量代码以提升性能",
-        "Выполнен рефакторинг значительной части кода для повышения производительности",
-    ),
+        "Performance optimizations and lag reduction",
+        "Optimisasi performa dan pengurangan lag",
+        "性能优化和延迟减少",
+        "Оптимизация производительности и снижение задержек",
+    )
 ];
 
-pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
+pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = false;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;
 pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
     "Quick Feedback",

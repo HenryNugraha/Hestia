@@ -1112,6 +1112,7 @@ impl HestiaApp {
     }
 
     fn consume_gif_animation_events(&mut self, ctx: &egui::Context) {
+        let mut markdown_relayout_needed = false;
         while let Ok(event) = self.gif_animation_event_rx.try_recv() {
             self.gif_animation_requests_in_flight =
                 self.gif_animation_requests_in_flight.saturating_sub(1);
@@ -1150,7 +1151,7 @@ impl HestiaApp {
                     };
                     self.animated_gif_state.insert(texture_key.clone(), state);
 
-                    self.browse_commonmark_cache = CommonMarkCache::default();
+                    markdown_relayout_needed = true;
                     ctx.request_repaint();
                 }
                 GifAnimationEvent::Failed {
@@ -1170,6 +1171,11 @@ impl HestiaApp {
                     ctx.request_repaint();
                 }
             }
+        }
+        // Reset once per batch: the reset forces a full markdown re-layout, so doing
+        // it per event during a burst of GIF arrivals is wasted work.
+        if markdown_relayout_needed {
+            self.browse_commonmark_cache = CommonMarkCache::default();
         }
     }
 
@@ -1218,8 +1224,13 @@ impl HestiaApp {
 
         if let Some(request) = request {
             let texture_key = texture_key.to_string();
-            self.pending_gif_animations
-                .insert(texture_key.clone(), cancel);
+            self.pending_gif_animations.insert(
+                texture_key.clone(),
+                PendingGifAnimation {
+                    cancel,
+                    started_at: Instant::now(),
+                },
+            );
             if self.gif_animation_request_tx.send(request).is_err() {
                 self.pending_gif_animations.remove(&texture_key);
             } else {
@@ -1238,9 +1249,9 @@ impl HestiaApp {
     }
 
     fn cancel_invisible_gif_work(&mut self) {
-        for (texture_key, cancel) in &self.pending_gif_animations {
+        for (texture_key, pending) in &self.pending_gif_animations {
             if !self.visible_gif_texture_keys.contains(texture_key) {
-                cancel.store(true, Ordering::Relaxed);
+                pending.cancel.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -1251,8 +1262,8 @@ impl HestiaApp {
         }
         self.pending_gif_previews.clear();
         self.gif_preview_requests_in_flight = 0;
-        for cancel in self.pending_gif_animations.values() {
-            cancel.store(true, Ordering::Relaxed);
+        for pending in self.pending_gif_animations.values() {
+            pending.cancel.store(true, Ordering::Relaxed);
         }
         self.pending_gif_animations.clear();
         self.gif_animation_requests_in_flight = 0;
@@ -1264,6 +1275,49 @@ impl HestiaApp {
 
     fn gif_requests_in_flight(&self) -> usize {
         self.gif_preview_requests_in_flight + self.gif_animation_requests_in_flight
+    }
+
+    fn enforce_gif_work_timeouts(&mut self) {
+        // GIF workers report every request back, including cancelled ones, but a panicked
+        // or hung decode would leave its pending entry (and in-flight slot) held forever,
+        // which keeps the idle repaint poll alive. Drop requests that outlive any
+        // legitimate decode time. The event consumers tolerate a late reply for an
+        // already-dropped key, and the counters saturate at zero.
+        const GIF_WORK_HARD_TIMEOUT: Duration = Duration::from_secs(60);
+
+        let timed_out: Vec<String> = self
+            .pending_gif_previews
+            .iter()
+            .filter(|(_, pending)| pending.started_at.elapsed() >= GIF_WORK_HARD_TIMEOUT)
+            .map(|(out_key, _)| out_key.clone())
+            .collect();
+        for out_key in timed_out {
+            if let Some(pending) = self.pending_gif_previews.remove(&out_key) {
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.gif_preview_requests_in_flight =
+                    self.gif_preview_requests_in_flight.saturating_sub(1);
+                self.log_warn(format!(
+                    "gif preview timed out without a worker response; dropping it: {out_key}"
+                ));
+            }
+        }
+
+        let timed_out: Vec<String> = self
+            .pending_gif_animations
+            .iter()
+            .filter(|(_, pending)| pending.started_at.elapsed() >= GIF_WORK_HARD_TIMEOUT)
+            .map(|(texture_key, _)| texture_key.clone())
+            .collect();
+        for texture_key in timed_out {
+            if let Some(pending) = self.pending_gif_animations.remove(&texture_key) {
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.gif_animation_requests_in_flight =
+                    self.gif_animation_requests_in_flight.saturating_sub(1);
+                self.log_warn(format!(
+                    "gif animation timed out without a worker response; dropping it: {texture_key}"
+                ));
+            }
+        }
     }
 
     fn update_gif_animations(&mut self, ctx: &egui::Context) {
@@ -1340,6 +1394,7 @@ impl HestiaApp {
     }
 
     fn consume_gif_preview_events(&mut self, ctx: &egui::Context) {
+        let mut markdown_relayout_needed = false;
         while let Ok(event) = self.gif_preview_event_rx.try_recv() {
             self.gif_preview_requests_in_flight =
                 self.gif_preview_requests_in_flight.saturating_sub(1);
@@ -1361,7 +1416,7 @@ impl HestiaApp {
                     let texture =
                         ctx.load_texture(&texture_key, image, egui::TextureOptions::LINEAR);
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
-                    self.browse_commonmark_cache = CommonMarkCache::default();
+                    markdown_relayout_needed = true;
                 }
                 GifPreviewEvent::Failed { out_png } => {
                     let out_key = out_png.to_string_lossy().to_string();
@@ -1369,6 +1424,11 @@ impl HestiaApp {
                 }
             }
             ctx.request_repaint();
+        }
+        // Reset once per batch: the reset forces a full markdown re-layout, so doing
+        // it per event during a burst of GIF arrivals is wasted work.
+        if markdown_relayout_needed {
+            self.browse_commonmark_cache = CommonMarkCache::default();
         }
     }
 
@@ -1471,6 +1531,7 @@ impl HestiaApp {
             PendingGifPreview {
                 texture_key: texture_key.to_string(),
                 cancel: Arc::clone(&cancel),
+                started_at: Instant::now(),
             },
         );
         let sent = if let Some(path) = local_path {

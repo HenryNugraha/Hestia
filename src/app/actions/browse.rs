@@ -436,6 +436,77 @@ impl HestiaApp {
         );
     }
 
+    fn enforce_browse_request_timeouts(&mut self) {
+        // The browse worker normally reports every request back, but a wedged or dead
+        // worker would leave these loading flags set forever, which keeps the idle
+        // repaint poll alive. Drop requests that outlive any legitimate lifetime.
+        const BROWSE_REQUEST_HARD_TIMEOUT: Duration = Duration::from_secs(90);
+
+        let timed_out: Vec<u64> = self
+            .browse_state
+            .loading_details
+            .iter()
+            .filter(|(_, started_at)| started_at.elapsed() >= BROWSE_REQUEST_HARD_TIMEOUT)
+            .map(|(mod_id, _)| *mod_id)
+            .collect();
+        for mod_id in timed_out {
+            self.browse_state.loading_details.remove(&mod_id);
+            self.browse_detail_request_nonces.remove(&mod_id);
+            let mut i = 0;
+            while i < self.browse_state.pending_installs.len() {
+                if self.browse_state.pending_installs[i].mod_id == mod_id {
+                    let pending = self.browse_state.pending_installs.remove(i);
+                    self.update_task_status(pending.task_id, TaskStatus::Failed);
+                } else {
+                    i += 1;
+                }
+            }
+            self.log_warn(format!(
+                "detail request timed out without a worker response; dropping it: mod {mod_id}"
+            ));
+        }
+
+        if self.browse_state.character_categories_loading
+            && self
+                .browse_state
+                .character_categories_started_at
+                .is_some_and(|started_at| started_at.elapsed() >= BROWSE_REQUEST_HARD_TIMEOUT)
+        {
+            self.browse_state.character_categories_loading = false;
+            self.log_warn(
+                "character category request timed out without a worker response; dropping it"
+                    .to_string(),
+            );
+        }
+    }
+
+    fn enforce_browse_image_timeouts(&mut self) {
+        // The image worker has its own network timeouts and reports failures back, so a
+        // request that lives this long means the worker died or hung. Stuck entries both
+        // occupy download slots forever and keep the idle repaint poll alive.
+        const BROWSE_IMAGE_HARD_TIMEOUT: Duration = Duration::from_secs(120);
+
+        let timed_out: Vec<String> = self
+            .browse_image_inflight
+            .iter()
+            .filter(|(_, inflight)| inflight.started_at.elapsed() >= BROWSE_IMAGE_HARD_TIMEOUT)
+            .map(|(texture_key, _)| texture_key.clone())
+            .collect();
+        for texture_key in timed_out {
+            if let Some(inflight) = self.browse_image_inflight.remove(&texture_key) {
+                inflight.cancel.store(true, Ordering::Relaxed);
+                self.browse_image_retry_after.insert(
+                    texture_key.clone(),
+                    Instant::now() + Duration::from_secs(BROWSE_IMAGE_RETRY_COOLDOWN_SECS),
+                );
+                self.log_warn(format!(
+                    "image request stalled without a worker response; dropping it: {}",
+                    inflight.request.url
+                ));
+            }
+        }
+    }
+
     fn request_browse_character_categories(&mut self, force_refresh: bool) {
         let Some(game) = self.selected_game().cloned() else {
             return;
@@ -461,6 +532,7 @@ impl HestiaApp {
         }
         self.browse_state.character_categories_game_id = Some(game.definition.id.clone());
         self.browse_state.character_categories_loading = true;
+        self.browse_state.character_categories_started_at = Some(Instant::now());
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
         if self
             .browse_request_tx
@@ -523,14 +595,16 @@ impl HestiaApp {
 
     fn request_browse_detail(&mut self, mod_id: u64) {
         if self.browse_state.details.contains_key(&mod_id)
-            || self.browse_state.loading_details.contains(&mod_id)
+            || self.browse_state.loading_details.contains_key(&mod_id)
         {
             return;
         }
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
         self.browse_detail_request_nonces
             .insert(mod_id, self.browse_request_nonce);
-        self.browse_state.loading_details.insert(mod_id);
+        self.browse_state
+            .loading_details
+            .insert(mod_id, Instant::now());
         let cached_profile_json = if self.browse_state.refresh_page_cache_for_session {
             None
         } else {
@@ -615,7 +689,7 @@ impl HestiaApp {
             .keys()
             .copied()
             .filter(|mod_id| Some(*mod_id) != selected)
-            .filter(|mod_id| !loading.contains(mod_id))
+            .filter(|mod_id| !loading.contains_key(mod_id))
             .filter(|mod_id| !pending_installs.contains(mod_id))
             .collect::<Vec<_>>();
         while self.browse_state.details.len() > BROWSE_DETAIL_CACHE_LIMIT {
@@ -1148,23 +1222,21 @@ impl HestiaApp {
                     self.prewarm_markdown_images(&markdown);
 
                     let mut description_image_keys = HashSet::with_capacity(16);
-                    if let Ok(image_regex) = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)") {
-                        for cap in image_regex.captures_iter(&markdown) {
-                            if let Some(url_match) = cap.get(2) {
-                                let url = url_match.as_str();
-                                if url.starts_with("http") && !is_gif_dest(url) {
-                                    description_image_keys.insert(hash64_hex(url.as_bytes()));
-                                    description_image_keys.insert(Self::browse_thumb_texture_key(
-                                        url,
-                                        ThumbnailProfile::Card,
-                                    ));
-                                    self.queue_browse_image(
-                                        url.to_string(),
-                                        Some(self.browse_detail_generation),
-                                        true,
-                                        100, // Description images background
-                                    );
-                                }
+                    for cap in MARKDOWN_IMAGE_URL_RE.captures_iter(&markdown) {
+                        if let Some(url_match) = cap.get(2) {
+                            let url = url_match.as_str();
+                            if url.starts_with("http") && !is_gif_dest(url) {
+                                description_image_keys.insert(hash64_hex(url.as_bytes()));
+                                description_image_keys.insert(Self::browse_thumb_texture_key(
+                                    url,
+                                    ThumbnailProfile::Card,
+                                ));
+                                self.queue_browse_image(
+                                    url.to_string(),
+                                    Some(self.browse_detail_generation),
+                                    true,
+                                    100, // Description images background
+                                );
                             }
                         }
                     }
@@ -1421,6 +1493,7 @@ impl HestiaApp {
                     cancel_key: job.cancel_key,
                     skip_texture: job.skip_texture,
                     load_full: job.load_full,
+                    started_at: Instant::now(),
                 },
             );
             if self.browse_image_request_tx.send(job.clone()).is_err() {

@@ -348,7 +348,7 @@ pub struct HestiaApp {
     gif_dest_by_texture_key: HashMap<String, String>,
     pending_gif_previews: HashMap<String, PendingGifPreview>,
     gif_preview_requests_in_flight: usize,
-    pending_gif_animations: HashMap<String, Arc<AtomicBool>>,
+    pending_gif_animations: HashMap<String, PendingGifAnimation>,
     gif_animation_requests_in_flight: usize,
     animated_gif_state: HashMap<String, AnimatedGifState>,
     visible_gif_process_texture_keys: HashSet<String>,
@@ -419,9 +419,10 @@ struct BrowseState {
     character_categories_game_id: Option<String>,
     character_categories: Vec<BrowseCharacterCategory>,
     character_categories_loading: bool,
+    character_categories_started_at: Option<Instant>,
     selected_character_category: Option<BrowseCharacterCategory>,
     details: HashMap<u64, BrowseDetailCache>,
-    loading_details: HashSet<u64>,
+    loading_details: HashMap<u64, Instant>,
     pending_installs: Vec<PendingBrowseInstall>,
     file_prompt: Option<BrowseFilePrompt>,
     screenshot_overlay: Option<BrowseOverlayImage>,
@@ -695,6 +696,12 @@ struct GifAnimation {
 struct PendingGifPreview {
     texture_key: String,
     cancel: Arc<AtomicBool>,
+    started_at: Instant,
+}
+
+struct PendingGifAnimation {
+    cancel: Arc<AtomicBool>,
+    started_at: Instant,
 }
 
 enum GifPreviewRequest {
@@ -856,6 +863,7 @@ struct BrowseImageInflight {
     cancel_key: Option<u64>,
     skip_texture: bool,
     load_full: bool,
+    started_at: Instant,
 }
 
 struct BrowseImageFailure {

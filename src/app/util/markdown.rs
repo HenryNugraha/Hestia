@@ -270,32 +270,29 @@ fn persist_source_images_bg(
     Ok(rel_paths)
 }
 
+static HTML_IMG_SRC_URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)<img[^>]+src=["']([^"']+)["']"#).unwrap());
+static MARKDOWN_IMAGE_LINK_URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"!\[[^\]]*\]\(([^)]+)\)").unwrap());
+
 fn extract_image_urls_from_html_like_text(text: &str) -> Vec<String> {
     let is_placeholder = |url: &str| {
         url.eq_ignore_ascii_case("https://images.gamebanana.com/static/img/mascots/detective.png")
     };
     let mut urls = Vec::new();
-    if let Ok(img_re) = Regex::new(r#"(?i)<img[^>]+src=["']([^"']+)["']"#) {
-        for cap in img_re.captures_iter(text) {
-            if let Some(m) = cap.get(1) {
-                let url = m.as_str().trim();
-                if (url.starts_with("http://") || url.starts_with("https://"))
-                    && !is_placeholder(url)
-                {
-                    urls.push(url.to_string());
-                }
+    for cap in HTML_IMG_SRC_URL_RE.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            let url = m.as_str().trim();
+            if (url.starts_with("http://") || url.starts_with("https://")) && !is_placeholder(url) {
+                urls.push(url.to_string());
             }
         }
     }
-    if let Ok(md_re) = Regex::new(r"!\[[^\]]*\]\(([^)]+)\)") {
-        for cap in md_re.captures_iter(text) {
-            if let Some(m) = cap.get(1) {
-                let url = m.as_str().trim();
-                if (url.starts_with("http://") || url.starts_with("https://"))
-                    && !is_placeholder(url)
-                {
-                    urls.push(url.to_string());
-                }
+    for cap in MARKDOWN_IMAGE_LINK_URL_RE.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            let url = m.as_str().trim();
+            if (url.starts_with("http://") || url.starts_with("https://")) && !is_placeholder(url) {
+                urls.push(url.to_string());
             }
         }
     }

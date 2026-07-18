@@ -174,7 +174,8 @@ impl HestiaApp {
                 });
             });
 
-        ctx.request_repaint();
+        // Poll for scan progress at a bounded rate; an unconditional immediate repaint
+        // here would render at maximum rate for as long as the overlay is visible.
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 

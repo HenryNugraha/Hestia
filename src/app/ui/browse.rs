@@ -845,11 +845,11 @@ impl HestiaApp {
                             ui.add_space(-2.0);
                             let detail = self.browse_state.details.get(&card.id).cloned();
                             if detail.is_none() {
-                                if !self.browse_state.loading_details.contains(&card.id) {
+                                if !self.browse_state.loading_details.contains_key(&card.id) {
                                     self.request_browse_detail(card.id);
                                 }
                                 ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::Progress);
-                                ui.ctx().request_repaint();
+                                request_animation_repaint(ui.ctx());
                                 static_label(
                                     ui,
                                     RichText::new(text.browse_loading())
@@ -934,10 +934,10 @@ impl HestiaApp {
                             }
                         });
                         if egui::Popup::is_id_open(ui.ctx(), popup_id)
-                            && self.browse_state.loading_details.contains(&card.id)
+                            && self.browse_state.loading_details.contains_key(&card.id)
                         {
                             ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::Progress);
-                            ui.ctx().request_repaint();
+                            request_animation_repaint(ui.ctx());
                         }
                     }
                 });
@@ -1126,7 +1126,7 @@ impl HestiaApp {
                     );
                 },
             );
-            ui.ctx().request_repaint();
+            request_animation_repaint(ui.ctx());
             return;
         }
 

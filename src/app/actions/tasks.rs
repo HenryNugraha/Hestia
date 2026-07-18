@@ -689,7 +689,7 @@ impl HestiaApp {
                         egui::CornerRadius::same(4),
                         Color32::from_rgb(60, 140, 200).linear_multiply(0.6),
                     );
-                    ui.ctx().request_repaint();
+                    request_animation_repaint(ui.ctx());
                 } else {
                     let filled_rect = egui::Rect::from_min_size(
                         rect.min,
@@ -700,7 +700,7 @@ impl HestiaApp {
                         egui::CornerRadius::same(4),
                         Color32::from_rgb(60, 140, 200),
                     );
-                    ui.ctx().request_repaint();
+                    request_animation_repaint(ui.ctx());
                 }
 
                 let text_color = Color32::WHITE;

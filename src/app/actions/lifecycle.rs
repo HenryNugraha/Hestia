@@ -84,16 +84,17 @@ impl HestiaApp {
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
-        let (icon_request_tx, icon_request_rx) = tokio_mpsc::unbounded_channel::<IconRequest>();
-        let (icon_result_tx, icon_result_rx) = tokio_mpsc::unbounded_channel::<IconResult>();
+        let _ = UI_REPAINT_CONTEXT.set(cc.egui_ctx.clone());
+        let (icon_request_tx, icon_request_rx) = worker_channel::<IconRequest>();
+        let (icon_result_tx, icon_result_rx) = worker_channel::<IconResult>();
         spawn_icon_worker(&runtime_services, icon_request_rx, icon_result_tx);
         let image_generation = Arc::new(AtomicU64::new(0));
         let (mod_image_request_tx, mod_image_request_rx) =
-            tokio_mpsc::unbounded_channel::<LocalModImageRequest>();
+            worker_channel::<LocalModImageRequest>();
         let (mod_image_result_tx, mod_image_result_rx) =
-            tokio_mpsc::unbounded_channel::<LocalModImageResult>();
+            worker_channel::<LocalModImageResult>();
         let (manual_image_event_tx, manual_image_event_rx) =
-            tokio_mpsc::unbounded_channel::<ManualImageEvent>();
+            worker_channel::<ManualImageEvent>();
         let cache_limit_bytes =
             Arc::new(AtomicU64::new(state.static_prefs.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
@@ -105,12 +106,12 @@ impl HestiaApp {
             mod_image_result_tx,
         );
         let game_icon_textures = HashMap::new();
-        let (cover_request_tx, cover_request_rx) = tokio_mpsc::unbounded_channel::<CoverRequest>();
-        let (cover_result_tx, cover_result_rx) = tokio_mpsc::unbounded_channel::<CoverResult>();
+        let (cover_request_tx, cover_request_rx) = worker_channel::<CoverRequest>();
+        let (cover_result_tx, cover_result_rx) = worker_channel::<CoverResult>();
         spawn_cover_worker(&runtime_services, cover_request_rx, cover_result_tx);
         let (install_request_tx, install_request_rx) =
-            tokio_mpsc::unbounded_channel::<InstallRequest>();
-        let (install_event_tx, install_event_rx) = tokio_mpsc::unbounded_channel::<InstallEvent>();
+            worker_channel::<InstallRequest>();
+        let (install_event_tx, install_event_rx) = worker_channel::<InstallEvent>();
         spawn_install_workers(
             &runtime_services,
             portable.clone(),
@@ -118,8 +119,8 @@ impl HestiaApp {
             install_event_tx,
         );
         let (browse_request_tx, browse_request_rx) =
-            tokio_mpsc::unbounded_channel::<BrowseRequest>();
-        let (browse_event_tx, browse_event_rx) = tokio_mpsc::unbounded_channel::<BrowseEvent>();
+            worker_channel::<BrowseRequest>();
+        let (browse_event_tx, browse_event_rx) = worker_channel::<BrowseEvent>();
         spawn_browse_worker(
             &runtime_services,
             portable.clone(),
@@ -127,9 +128,9 @@ impl HestiaApp {
             browse_event_tx,
         );
         let (browse_image_request_tx, browse_image_request_rx) =
-            tokio_mpsc::unbounded_channel::<BrowseImageRequest>();
+            worker_channel::<BrowseImageRequest>();
         let (browse_image_result_tx, browse_image_result_rx) =
-            tokio_mpsc::unbounded_channel::<BrowseImageResult>();
+            worker_channel::<BrowseImageResult>();
         let youtube_icon_texture =
             load_image_texture(&cc.egui_ctx, youtube_icon_bytes(), "youtube-icon");
         spawn_browse_image_workers(
@@ -140,23 +141,23 @@ impl HestiaApp {
             browse_image_result_tx,
         );
         let (browse_download_result_tx, browse_download_event_rx) =
-            tokio_mpsc::unbounded_channel::<BrowseDownloadEvent>();
+            worker_channel::<BrowseDownloadEvent>();
         let (app_update_event_tx, app_update_event_rx) =
-            tokio_mpsc::unbounded_channel::<AppUpdateEvent>();
-        let (proxy_apply_tx, proxy_apply_rx) = tokio_mpsc::unbounded_channel::<ProxyApplyEvent>();
+            worker_channel::<AppUpdateEvent>();
+        let (proxy_apply_tx, proxy_apply_rx) = worker_channel::<ProxyApplyEvent>();
         let (feedback_survey_submit_tx, feedback_survey_worker_rx) =
-            tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitRequest>();
+            worker_channel::<FeedbackSurveySubmitRequest>();
         let (feedback_survey_worker_tx, feedback_survey_submit_rx) =
-            tokio_mpsc::unbounded_channel::<FeedbackSurveySubmitEvent>();
+            worker_channel::<FeedbackSurveySubmitEvent>();
         spawn_feedback_survey_submit_worker(
             &runtime_services,
             feedback_survey_worker_rx,
             feedback_survey_worker_tx,
         );
         let (translation_request_tx, translation_request_rx) =
-            tokio_mpsc::unbounded_channel::<TranslationRequest>();
+            worker_channel::<TranslationRequest>();
         let (translation_event_tx, translation_event_rx) =
-            tokio_mpsc::unbounded_channel::<TranslationEvent>();
+            worker_channel::<TranslationEvent>();
         spawn_translation_worker(
             &runtime_services,
             &portable,
@@ -164,9 +165,9 @@ impl HestiaApp {
             translation_event_tx,
         );
         let (update_check_tx, update_check_worker_rx) =
-            tokio_mpsc::unbounded_channel::<UpdateCheckRequest>();
+            worker_channel::<UpdateCheckRequest>();
         let (update_check_worker_tx, update_check_rx) =
-            tokio_mpsc::unbounded_channel::<UpdateCheckResult>();
+            worker_channel::<UpdateCheckResult>();
         spawn_update_check_worker(
             &runtime_services,
             portable.clone(),
@@ -174,9 +175,9 @@ impl HestiaApp {
             update_check_worker_tx,
         );
         let (refresh_request_tx, refresh_request_rx) =
-            tokio_mpsc::unbounded_channel::<RefreshRequest>();
+            worker_channel::<RefreshRequest>();
         let (refresh_result_tx, refresh_result_rx) =
-            tokio_mpsc::unbounded_channel::<RefreshEvent>();
+            worker_channel::<RefreshEvent>();
         spawn_selected_game_refresh_worker(
             &runtime_services,
             refresh_request_rx,
@@ -195,9 +196,9 @@ impl HestiaApp {
         state.mods.clear();
         Self::auto_detect_game_paths(&mut state);
         let (startup_scan_tx, startup_scan_rx) =
-            tokio_mpsc::unbounded_channel::<StartupScanEvent>();
+            worker_channel::<StartupScanEvent>();
         let (startup_path_scan_tx, startup_path_scan_rx) =
-            tokio_mpsc::unbounded_channel::<StartupPathScanEvent>();
+            worker_channel::<StartupPathScanEvent>();
         let startup_path_targets = if startup_path_scan_due {
             Self::startup_path_scan_targets(&state, false)
         } else {
@@ -241,18 +242,18 @@ impl HestiaApp {
         let texture_ram_budget_bytes = Self::detect_texture_ram_budget_bytes();
 
         let (gif_preview_request_tx, gif_preview_request_rx) =
-            tokio_mpsc::unbounded_channel::<GifPreviewRequest>();
+            worker_channel::<GifPreviewRequest>();
         let (gif_preview_event_tx, gif_preview_event_rx) =
-            tokio_mpsc::unbounded_channel::<GifPreviewEvent>();
+            worker_channel::<GifPreviewEvent>();
         spawn_gif_preview_worker(
             &runtime_services,
             gif_preview_request_rx,
             gif_preview_event_tx,
         );
         let (gif_animation_request_tx, gif_animation_request_rx) =
-            tokio_mpsc::unbounded_channel::<GifAnimationRequest>();
+            worker_channel::<GifAnimationRequest>();
         let (gif_animation_event_tx, gif_animation_event_rx) =
-            tokio_mpsc::unbounded_channel::<GifAnimationEvent>();
+            worker_channel::<GifAnimationEvent>();
         spawn_gif_animation_worker(
             &runtime_services,
             gif_animation_request_rx,
@@ -762,7 +763,7 @@ impl HestiaApp {
             self.request_browse_character_categories(true);
         }
         if let Some(mod_id) = self.browse_state.selected_mod_id.filter(|mod_id| {
-            self.browse_detail_open && self.browse_state.loading_details.contains(mod_id)
+            self.browse_detail_open && self.browse_state.loading_details.contains_key(mod_id)
         }) {
             self.browse_state.loading_details.remove(&mod_id);
             self.request_browse_detail(mod_id);

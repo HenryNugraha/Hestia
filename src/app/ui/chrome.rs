@@ -355,7 +355,7 @@ impl HestiaApp {
                                 let is_reload_rotating =
                                     is_reload_busy || now < self.reload_spin_until;
                                 if is_reload_rotating {
-                                    ui.ctx().request_repaint();
+                                    request_animation_repaint(ui.ctx());
                                 }
                                 ui.add_enabled_ui(!is_reload_rotating, |ui| {
                                     let response = titlebar_action_button_with_spinner(
@@ -781,7 +781,7 @@ impl HestiaApp {
                         });
                     next_y += response.response.rect.height() + TOAST_SPACING;
                 }
-                ui.ctx().request_repaint();
+                request_animation_repaint(ui.ctx());
             }
 
             window_drag_strip(ui, 4.0);

@@ -121,7 +121,7 @@ mod path_scan_tests {
         let executable = temp.path().join("nested").join("target.exe");
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         fs::write(&executable, []).unwrap();
-        let (event_tx, mut event_rx) = tokio_mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = worker_channel();
         let cancel = AtomicBool::new(false);
 
         let stopped = scan_path_roots(
@@ -142,7 +142,7 @@ mod path_scan_tests {
     fn stops_before_walking_when_cancellation_is_requested() {
         let temp = tempfile::tempdir().unwrap();
         fs::write(temp.path().join("target.exe"), []).unwrap();
-        let (event_tx, mut event_rx) = tokio_mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = worker_channel();
         let cancel = AtomicBool::new(true);
 
         let stopped = scan_path_roots(

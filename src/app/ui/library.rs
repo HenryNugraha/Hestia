@@ -7904,7 +7904,7 @@ impl HestiaApp {
                                             Vec2::splat(32.0),
                                         );
                                         ui.put(spinner_rect, egui::Spinner::new().size(30.0));
-                                        ui.ctx().request_repaint();
+                                        request_animation_repaint(ui.ctx());
                                     } else {
                                         ui.painter().text(
                                             egui::pos2(rect.center().x, rect.min.y + 48.0),

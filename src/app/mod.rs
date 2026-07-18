@@ -80,6 +80,29 @@ include!("ui/mod.rs");
 include!("workers/mod.rs");
 include!("util/mod.rs");
 
+static UI_REPAINT_CONTEXT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+
+/// Wake the UI event loop so a freshly sent worker event is consumed on the next
+/// frame instead of waiting for a poll tick. Safe to call from any thread; no-op
+/// until the GUI is up.
+fn wake_ui() {
+    if let Some(ctx) = UI_REPAINT_CONTEXT.get() {
+        ctx.request_repaint();
+    }
+}
+
+/// Continuous repaints are for visible animation only. When the window is not
+/// focused, present at a bounded rate instead: an occluded window's buffer swap may
+/// not block on vsync, and the resulting present spam contends with a foreground
+/// game's frame pacing even while overall CPU/GPU usage stays low.
+fn request_animation_repaint(ctx: &egui::Context) {
+    if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+        ctx.request_repaint();
+    } else {
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+}
+
 impl eframe::App for HestiaApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         set_current_language(self.state.static_prefs.language);
@@ -114,6 +137,9 @@ impl eframe::App for HestiaApp {
         self.visible_gif_process_texture_keys.clear();
         self.evict_textures_to_budget(ctx.input(|i| i.time));
         self.enforce_browse_page_timeout();
+        self.enforce_browse_request_timeouts();
+        self.enforce_browse_image_timeouts();
+        self.enforce_gif_work_timeouts();
         self.detect_drag_and_drop(ctx);
         self.handle_shortcuts(ctx);
 
@@ -183,22 +209,29 @@ impl eframe::App for HestiaApp {
             || self.reload_spin_until > ctx.input(|i| i.time)
             || self.app_update_button_spin_until > ctx.input(|i| i.time);
 
+        // Worker sends wake the UI directly (see wake_ui), so these polls are a safety
+        // net for work that can no longer report back, not the primary wake path. Poll
+        // gently while the window is unfocused: background presents contend with a
+        // foreground game's frame pacing.
+        let poll_delay = if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(500)
+        };
         if needs_continuous_repaint {
-            ctx.request_repaint();
+            request_animation_repaint(&ctx);
         } else if has_pending_browse_image_work || has_pending_gif_work {
-            // Worker channels do not wake egui themselves. Poll while images/GIFs are in
-            // flight so completed downloads/decodes are consumed without waiting for input.
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(poll_delay);
         } else if has_pending_browse_request {
-            // Worker channels do not wake egui themselves. Poll while a Browse request is in
-            // flight so completed results are consumed even without user interaction.
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(poll_delay);
         } else if relative_time_visible {
             // Relative-time labels advance at minute granularity. Wake once per minute rather
             // than continuously repainting while the app is idle.
             ctx.request_repaint_after(Duration::from_secs(60));
         } else if self.pending_events.has_worker_events || self.pending_events.has_process_work {
-            ctx.request_repaint();
+            // A queue that cannot drain must never drive vsync-rate repaints, which
+            // contend with fullscreen games even at low CPU/GPU usage.
+            ctx.request_repaint_after(poll_delay);
         }
     }
 

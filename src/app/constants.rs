@@ -110,12 +110,36 @@ const RAIL_THUMBNAIL_WIDTH: u32 = 585;
 const RAIL_THUMBNAIL_HEIGHT: u32 = 330;
 const BROWSE_DETAIL_CACHE_LIMIT: usize = 4;
 
-// App worker channel aliases.
-type WorkerTx<T> = tokio_mpsc::UnboundedSender<T>;
+// App worker channels. Sending wakes the UI event loop (see wake_ui) so worker
+// results are consumed promptly without the UI having to poll for them.
+pub(crate) struct WorkerTx<T>(tokio_mpsc::UnboundedSender<T>);
 type WorkerRx<T> = tokio_mpsc::UnboundedReceiver<T>;
+
+impl<T> Clone for WorkerTx<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> WorkerTx<T> {
+    fn send(&self, value: T) -> Result<(), tokio_mpsc::error::SendError<T>> {
+        let result = self.0.send(value);
+        if result.is_ok() {
+            wake_ui();
+        }
+        result
+    }
+}
+
+fn worker_channel<T>() -> (WorkerTx<T>, WorkerRx<T>) {
+    let (tx, rx) = tokio_mpsc::unbounded_channel();
+    (WorkerTx(tx), rx)
+}
 
 // Markdown image extraction for GameBanana descriptions.
 static MARKDOWN_IMAGE_DEST_RE: Lazy<Regex> = Lazy::new(|| {
     // Matches ![alt](dest) or ![alt](<dest>) handling nested parentheses and spaces
     Regex::new(r"!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)\s*\)").unwrap()
 });
+static MARKDOWN_IMAGE_URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap());
