@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.7.1-alpha] - 2026-07-12
+## [1.7.1] - 2026-07-12
 
 ### Added
 - Added support for installing split archives.
