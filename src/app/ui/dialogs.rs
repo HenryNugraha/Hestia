@@ -951,6 +951,17 @@ impl HestiaApp {
                     image_paths.push(path);
                     continue;
                 }
+                if let Some(first_volume) = importing::resolve_split_archive(&path) {
+                    // All parts of one split set map to the same first volume,
+                    // so dropping mod.rar.0001 + mod.rar.0002 queues one install.
+                    if first_volume != path && !seen_paths.insert(first_volume.clone()) {
+                        self.install_batch_stats.skipped += 1;
+                        continue;
+                    }
+                    batch_sources.push(ImportSource::Archive(first_volume));
+                    queued_count += 1;
+                    continue;
+                }
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                     match ext.to_lowercase().as_str() {
                         "zip" | "rar" | "7z" => {

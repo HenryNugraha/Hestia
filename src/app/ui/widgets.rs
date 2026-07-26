@@ -825,6 +825,44 @@ fn static_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respons
         .on_hover_cursor(egui::CursorIcon::Default)
 }
 
+/// Width of the widest entry in `texts` laid out on a single line.
+fn widest_text_width(ui: &Ui, texts: &[&str], style: egui::TextStyle) -> f32 {
+    let font_id = style.resolve(ui.style());
+    texts.iter().fold(0.0_f32, |widest, text| {
+        let width = ui
+            .painter()
+            .layout_no_wrap((*text).to_owned(), font_id.clone(), Color32::PLACEHOLDER)
+            .size()
+            .x;
+        widest.max(width)
+    })
+}
+
+/// Width a settings column needs so its labels and combo box values all stay on
+/// one line, whichever value happens to be selected.
+fn settings_column_width(ui: &Ui, labels: &[&str], combo_values: &[&str]) -> f32 {
+    let label_width = widest_text_width(ui, labels, egui::TextStyle::Body);
+    let combo_width = if combo_values.is_empty() {
+        0.0
+    } else {
+        let spacing = ui.spacing();
+        let chrome = spacing.icon_width + spacing.icon_spacing + spacing.button_padding.x * 2.0;
+        (widest_text_width(ui, combo_values, egui::TextStyle::Button) + chrome)
+            .max(spacing.combo_width)
+    };
+    label_width.max(combo_width) + 6.0
+}
+
+/// Split a two-column settings block so the left column fits `left_needed`
+/// without starving the right one. Falls back to a 32% split when the block is
+/// too narrow to satisfy both columns.
+fn settings_left_column_width(ui: &Ui, left_needed: f32, right_needed: f32) -> f32 {
+    let available = ui.available_width();
+    let fallback = available * 0.32;
+    let max_width = (available - right_needed - ui.spacing().item_spacing.x).max(fallback);
+    left_needed.clamp(fallback, max_width)
+}
+
 fn toggle_switch(ui: &mut Ui, value: &mut bool) -> egui::Response {
     let size = Vec2::new(32.0, 16.0);
     toggle_switch_sized(ui, value, size)

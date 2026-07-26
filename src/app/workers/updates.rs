@@ -10,25 +10,26 @@ fn spawn_update_check_worker(
         while let Some(request) = rx.recv().await {
             let client = runtime_services.http_client();
             let generation = request.generation;
-            let mut grouped: HashMap<u64, Vec<(usize, String, Option<i64>, FileSetRecipe)>> =
+            let mut grouped: HashMap<(u64, bool), Vec<(usize, String, Option<i64>, FileSetRecipe)>> =
                 HashMap::with_capacity(request.items.len());
-            for (idx, (local_mod_id, _game_id, gb_id, local_sync_ts, file_set)) in
+            for (idx, (local_mod_id, _game_id, gb_id, local_sync_ts, file_set, gb_is_tool)) in
                 request.items.into_iter().enumerate()
             {
                 grouped
-                    .entry(gb_id)
+                    .entry((gb_id, gb_is_tool))
                     .or_default()
                     .push((idx, local_mod_id, local_sync_ts, file_set));
             }
 
             let stream = futures_util::stream::iter(grouped.into_iter().map(
-                |(gb_id, local_items)| {
+                |((gb_id, gb_is_tool), local_items)| {
                     let client = client.clone();
                     let portable = portable.clone();
                     let json_limiter = Arc::clone(&json_limiter);
                     async move {
                         let _permit = json_limiter.acquire().await.ok();
-                        match gamebanana::fetch_profile_async(&client, gb_id).await {
+                        match gamebanana::fetch_profile_async_typed(&client, gb_id, gb_is_tool).await
+                        {
                             Ok(profile) => {
                                 let snapshot = profile_to_snapshot(&profile);
                                 let is_unavailable = gamebanana::is_unavailable(&profile);
@@ -37,7 +38,7 @@ fn spawn_update_check_worker(
                                 if let Some(raw) = raw_json.as_deref() {
                                     let _ = persistence::cache_put(
                                         &portable,
-                                        &gamebanana::profile_cache_key(gb_id),
+                                        &gamebanana::profile_cache_key_typed(gb_id, gb_is_tool),
                                         "browse-json",
                                         raw.as_bytes(),
                                         0,

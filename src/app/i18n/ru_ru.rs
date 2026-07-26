@@ -138,6 +138,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "файл", // DialogFile
     "Архивы", // DialogFileFilterArchives
     "Исполняемый файл", // DialogFileFilterExecutable
+    "Все файлы", // DialogFileFilterAllFiles
     "Сначала откройте сведения о непривязанном моде", // DialogOpenUnlinkedModDetailFirst
     "Установка: {count} модов", // DialogInstallingCount
     "Не удалось создать папку модов", // DialogCouldNotCreateModsFolder

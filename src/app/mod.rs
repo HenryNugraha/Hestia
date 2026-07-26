@@ -159,6 +159,12 @@ impl eframe::App for HestiaApp {
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
 
+        // Sampled before any UI runs: popups close themselves on Escape *during*
+        // rendering (without consuming the key), so by end of frame the memory
+        // already reports no open popup and the close-window handler below would
+        // also fire on the same key press.
+        let popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
+
         // Render UI
         egui::CentralPanel::default().show(root_ui, |ui| {
             install_resize_handles(&ctx);
@@ -192,7 +198,7 @@ impl eframe::App for HestiaApp {
             self.render_pending_import(&ctx);
             self.update_main_window_state(&ctx);
         });
-        self.handle_window_close_shortcuts(&ctx);
+        self.handle_window_close_shortcuts(&ctx, popup_open_at_frame_start);
         // Control repaint behavior to reduce CPU usage on idle
         // Only request continuous repaints when necessary
         let has_pending_browse_request = self.browse_state.loading_page
@@ -245,7 +251,7 @@ impl eframe::App for HestiaApp {
 }
 
 impl HestiaApp {
-    fn handle_window_close_shortcuts(&mut self, ctx: &egui::Context) {
+    fn handle_window_close_shortcuts(&mut self, ctx: &egui::Context, popup_was_open: bool) {
         let close_all_requested = ctx.input_mut(|input| {
             input.consume_shortcut(&egui::KeyboardShortcut::new(
                 egui::Modifiers {
@@ -269,19 +275,25 @@ impl HestiaApp {
             return;
         }
 
-        let close_requested = ctx.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                || input.consume_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::CTRL,
-                    egui::Key::W,
-                ))
+        // While a popup/context menu is open, Escape belongs to it: egui closes
+        // the popup itself, so leave the key alone and keep the window open.
+        let escape_requested = !popup_was_open
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let ctrl_w_requested = ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::W,
+            ))
         });
-        if close_requested {
-            self.close_frontmost_window(ctx);
+        if escape_requested || ctrl_w_requested {
+            let closed = self.close_frontmost_window(ctx);
+            if !closed && escape_requested && !self.selected_mods.is_empty() {
+                self.selected_mods.clear();
+            }
         }
     }
 
-    fn close_frontmost_window(&mut self, ctx: &egui::Context) {
+    fn close_frontmost_window(&mut self, ctx: &egui::Context) -> bool {
         let foreground_id = ctx.memory(|memory| {
             memory
                 .areas()
@@ -289,14 +301,14 @@ impl HestiaApp {
                 .map(|layer| layer.id)
         });
         if foreground_id.is_some_and(|id| self.close_window_by_id(id)) {
-            return;
+            return true;
         }
 
         let Some(id) = ctx.top_layer_id().map(|layer| layer.id) else {
-            return;
+            return false;
         };
 
-        self.close_window_by_id(id);
+        self.close_window_by_id(id)
     }
 
     fn close_all_noncritical_windows(&mut self) {

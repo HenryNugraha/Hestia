@@ -1218,6 +1218,32 @@ impl HestiaApp {
         }
     }
 
+    /// Category id used for filtering/grouping. Falls back to matching the legacy
+    /// plain-text category name against existing categories, mirroring
+    /// `mod_category_label`, so name-only mods land in their category folder
+    /// instead of silently dropping into the leftover bucket.
+    fn effective_mod_category_id(&self, mod_entry: &ModEntry) -> Option<String> {
+        if let Some(category_id) = mod_entry.metadata.user.category_id.as_deref() {
+            if self.state.categories.iter().any(|category| {
+                category.id == category_id && category.game_id == mod_entry.game_id
+            }) {
+                return Some(category_id.to_string());
+            }
+        }
+        let legacy = mod_entry.metadata.user.category.trim();
+        if legacy.is_empty() {
+            return None;
+        }
+        self.state
+            .categories
+            .iter()
+            .find(|category| {
+                category.game_id == mod_entry.game_id
+                    && category.name.trim().eq_ignore_ascii_case(legacy)
+            })
+            .map(|category| category.id.clone())
+    }
+
     fn categories_for_game(&self, game_id: &str) -> Vec<ModCategory> {
         let mut categories: Vec<ModCategory> = self
             .state
@@ -1641,6 +1667,24 @@ impl HestiaApp {
         self.save_state();
     }
 
+    /// Shared tail for every "move mods into a folder" surface (drag-and-drop, card
+    /// context menu, batch menus). The mods leave the folder the user is looking at,
+    /// so they must not linger in the batch selection, and a detail window showing
+    /// one of them is now pinned to a mod that moved out from under it.
+    fn finish_mod_category_move(&mut self, mod_ids: &[String], close_mod_detail: bool) {
+        let detail_moved = close_mod_detail
+            && self
+                .selected_mod_id
+                .as_ref()
+                .is_some_and(|selected_id| mod_ids.iter().any(|mod_id| mod_id == selected_id));
+        for mod_id in mod_ids {
+            self.selected_mods.remove(mod_id);
+        }
+        if detail_moved {
+            self.set_selected_mod_id(None);
+        }
+    }
+
     fn assign_selected_mods_category(&mut self, category_id: Option<String>) {
         let selected_ids: Vec<String> = self.selected_mods.iter().cloned().collect();
         if selected_ids.is_empty() {
@@ -1678,6 +1722,7 @@ impl HestiaApp {
             let _ = xxmi::save_mod_metadata(mod_entry);
             logs.push((mod_name, old_category));
         }
+        self.finish_mod_category_move(&selected_ids, true);
         if logs.is_empty() {
             return;
         }
@@ -2054,7 +2099,11 @@ impl HestiaApp {
                     {
                         match target {
                             CategoryPickerTarget::Single { mod_id, .. } => {
-                                self.assign_mod_category(mod_id, None);
+                                let moved = mod_id.to_string();
+                                self.assign_mod_category(&moved, None);
+                                // This picker is anchored inside the mod detail window,
+                                // so keep it open — only drop the stale grid selection.
+                                self.finish_mod_category_move(&[moved], false);
                             }
                             CategoryPickerTarget::Bulk { .. } => {
                                 self.assign_selected_mods_category(None);
@@ -2199,10 +2248,12 @@ impl HestiaApp {
                                         {
                                             match target {
                                                 CategoryPickerTarget::Single { mod_id, .. } => {
+                                                    let moved = mod_id.to_string();
                                                     self.assign_mod_category(
-                                                        mod_id,
+                                                        &moved,
                                                         Some(category.id.clone()),
                                                     );
+                                                    self.finish_mod_category_move(&[moved], false);
                                                 }
                                                 CategoryPickerTarget::Bulk { .. } => {
                                                     self.assign_selected_mods_category(Some(
@@ -2521,6 +2572,7 @@ impl HestiaApp {
                             .clicked()
                             {
                                 self.assign_mod_category(mod_id, None);
+                                self.finish_mod_category_move(&[mod_id.to_string()], true);
                                 ui.close();
                             }
                         });
@@ -2600,6 +2652,7 @@ impl HestiaApp {
                                     && !row_response.dragged()
                                 {
                                     self.assign_mod_category(mod_id, Some(category.id.clone()));
+                                    self.finish_mod_category_move(&[mod_id.to_string()], true);
                                     ui.close();
                                 }
                                 if self
@@ -4805,13 +4858,15 @@ impl HestiaApp {
                             (ModStatus::Archived, text.mod_status_label(&ModStatus::Archived), status_color(&ModStatus::Archived)),
                         ];
                         let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
+                        // No folder tiles are visible while drilled into a category,
+                        // so there is nowhere to drop a dragged mod.
                         let mod_drag_enabled = matches!(
                             self.state.static_prefs.library_group_mode,
                             LibraryGroupMode::Category
                         ) && matches!(
                             self.state.static_prefs.library_category_display_mode,
                             LibraryCategoryDisplayMode::Folders
-                        );
+                        ) && selected_category_folder_id.is_none();
                         let dragging_category_id = self.dragging_category_id.clone();
                         let dragging_category_target_index =
                             self.dragging_category_target_index;
@@ -7129,17 +7184,10 @@ impl HestiaApp {
                         if let Some((mod_ids, category_id)) =
                             pending_mod_category_assignment.filter(|_| mod_drag_enabled)
                         {
-                            let moved_selected_mod =
-                                self.selected_mod_id.as_ref().is_some_and(|selected_id| {
-                                    mod_ids.iter().any(|mod_id| mod_id == selected_id)
-                                });
                             for mod_id in &mod_ids {
                                 self.assign_mod_category(mod_id, Some(category_id.clone()));
-                                self.selected_mods.remove(mod_id);
                             }
-                            if moved_selected_mod {
-                                self.set_selected_mod_id(None);
-                            }
+                            self.finish_mod_category_move(&mod_ids, true);
                             self.dragging_mod_ids.clear();
                         } else if !self.dragging_mod_ids.is_empty()
                             && !ui.ctx().input(|input| input.pointer.primary_down())
@@ -8120,7 +8168,14 @@ impl HestiaApp {
                     let can_offer_personal_note_choice = !linked
                         && personal_note_source.is_none()
                         && !selected.metadata.extracted.text_sources.is_empty();
-                    let can_add_personal_note = !linked
+                    // Under `Always` the metadata section must render for every mod;
+                    // linked mods without any text source would otherwise have no
+                    // content at all, so the add-note affordance is their body.
+                    let can_add_personal_note = (!linked
+                        || matches!(
+                            self.state.static_prefs.metadata_visibility,
+                            MetadataVisibility::Always
+                        ))
                         && selected.metadata.extracted.text_sources.is_empty()
                         && !personal_note_editing;
                     let metadata_as_description = matches!(
@@ -8686,9 +8741,9 @@ impl HestiaApp {
                                 static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
                                 ui.group(|ui| {
                                     let mut changed = false;
-                                    let mut link_and_sync_id: Option<u64> = None;
+                                    let mut link_and_sync_id: Option<(u64, bool)> = None;
                                     let mut unlink_requested = false;
-                                    let mut open_in_browse_id: Option<u64> = None;
+                                    let mut open_in_browse_id: Option<(u64, bool)> = None;
                                     let mut copy_gb_id: Option<u64> = None;
                                     if let Some(mod_entry) = self.selected_mod_mut() {
                                         let input_id = ui.make_persistent_id(("gb_link_input", &mod_entry.id));
@@ -8696,6 +8751,10 @@ impl HestiaApp {
 
                                         let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
                                         let gb_id = source.gamebanana.as_ref().map(|g| g.mod_id).unwrap_or(0);
+                                        let gb_is_tool = source
+                                            .gamebanana
+                                            .as_ref()
+                                            .is_some_and(|g| gamebanana::is_tool_url(&g.url));
                                         let is_linked = gb_id > 0;
 
                                         if is_linked {
@@ -8757,7 +8816,7 @@ impl HestiaApp {
                                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                     .clicked()
                                                 {
-                                                    open_in_browse_id = Some(gb_id);
+                                                    open_in_browse_id = Some((gb_id, gb_is_tool));
                                                 }
                                             });
                                             ui.add_space(-3.0);
@@ -8767,7 +8826,7 @@ impl HestiaApp {
                                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                     .clicked()
                                                 {
-                                                    link_and_sync_id = Some(gb_id);
+                                                    link_and_sync_id = Some((gb_id, gb_is_tool));
                                                 }
                                                 ui.add_space(-2.0);
                                                 if ui
@@ -8790,14 +8849,14 @@ impl HestiaApp {
                                                         .margin(egui::Margin::same(6))
                                                 );
                                                 ui.add_space(-6.0);
-                                                let parsed_id = parse_gb_id(&input_str);
+                                                let parsed_link = parse_gb_link(&input_str);
                                                 if ui
-                                                    .add_enabled(parsed_id.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
+                                                    .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
                                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                     .clicked()
                                                 {
-                                                    if let Some(id) = parsed_id {
-                                                        link_and_sync_id = Some(id);
+                                                    if let Some(link) = parsed_link {
+                                                        link_and_sync_id = Some(link);
                                                         input_str.clear();
                                                     }
                                                 }
@@ -8891,8 +8950,16 @@ impl HestiaApp {
                                         ui.data_mut(|d| d.insert_temp(input_id, input_str));
                                     }
 
-                                    if let Some(id) = open_in_browse_id {
-                                        self.open_linked_mod_in_browse(id);
+                                    if let Some((id, is_tool)) = open_in_browse_id {
+                                        if is_tool {
+                                            // The in-app browse detail only understands the Mod
+                                            // namespace; tool pages open in the system browser.
+                                            ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                                gamebanana::browser_url_typed(id, true),
+                                            ));
+                                        } else {
+                                            self.open_linked_mod_in_browse(id);
+                                        }
                                     }
                                     if let Some(id) = copy_gb_id {
                                         ui.ctx().copy_text(id.to_string());
@@ -8909,13 +8976,13 @@ impl HestiaApp {
                                         self.save_state();
                                     }
 
-                                    if let Some(id) = link_and_sync_id {
+                                    if let Some((id, is_tool)) = link_and_sync_id {
                                         let mut mod_entry_id = None;
                                         if let Some(mod_entry) = self.selected_mod_mut() {
                                             let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
                                             source.gamebanana = Some(GameBananaLink {
                                                 mod_id: id,
-                                                url: gamebanana::browser_url(id),
+                                                url: gamebanana::browser_url_typed(id, is_tool),
                                             });
                                             source.history.updated_at = Some(Utc::now());
 

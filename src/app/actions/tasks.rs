@@ -18,9 +18,6 @@ impl HestiaApp {
                 Some(self.text().could_not_save_data()),
             );
         }
-        if self.state.show_log {
-            self.log_scroll_to_bottom = true;
-        }
     }
 
     fn rebuild_log_display_cache_if_needed(&mut self, use_24h: bool) {
@@ -79,11 +76,14 @@ impl HestiaApp {
     }
 
     fn task_title_for_source(source: &ImportSource) -> String {
-        Self::import_source_path(source)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("mod")
-            .to_string()
+        match source {
+            ImportSource::Archive(path) => importing::source_display_file_name(path),
+            ImportSource::Folder(path) => path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("mod")
+                .to_string(),
+        }
     }
 
     fn add_task(
@@ -133,7 +133,7 @@ impl HestiaApp {
         let now = Utc::now();
         let game_id = self.selected_game().map(|game| game.definition.id.clone());
         let total_size = match &job.source {
-            ImportSource::Archive(path) => fs::metadata(path).ok().map(|m| m.len()),
+            ImportSource::Archive(path) => importing::archive_source_total_size(path),
             _ => None,
         };
         if job.reuse_existing_task {
@@ -418,13 +418,29 @@ impl HestiaApp {
             return;
         }
 
+        // Off-screen rows advance by an estimate; once a row has been rendered
+        // its real advance is cached and reused, otherwise the total content
+        // height oscillates as rows cross the viewport edge and the scroll
+        // position jitters at the bottom. Row height depends on the wrap width
+        // and the task status, so the cache is invalidated on both.
+        let width = ui.available_width();
+        if (self.task_row_advance_cache_width - width).abs() > 0.5 {
+            self.task_row_advance_cache_width = width;
+            self.task_row_advance_cache.clear();
+        }
+
         let viewport = ui.clip_rect().expand(180.0);
         for task in tasks {
-            let row_height = Self::task_row_height(task);
+            let row_advance = self
+                .task_row_advance_cache
+                .get(&task.id)
+                .filter(|(status, _)| *status == task.status)
+                .map(|(_, advance)| *advance)
+                .unwrap_or_else(|| Self::task_row_height(task));
             let row_top = ui.cursor().top();
-            let row_bottom = row_top + row_height;
+            let row_bottom = row_top + row_advance;
             if row_bottom < viewport.top() || row_top > viewport.bottom() {
-                ui.add_space(row_height);
+                ui.add_space(row_advance);
                 continue;
             }
 
@@ -432,6 +448,9 @@ impl HestiaApp {
                 self.render_task_row(ui, task);
             });
             ui.add_space(8.0);
+            let measured = ui.cursor().top() - row_top;
+            self.task_row_advance_cache
+                .insert(task.id, (task.status, measured));
         }
 
         if scroll_to_top {

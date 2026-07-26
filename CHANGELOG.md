@@ -2,8 +2,28 @@
 
 ## [1.7.1-alpha] - 2026-07-12
 
+### Added
+- Added support for installing split archives.
+
+### Changed
+- Disabled dragging mods when already inside a category folder.
+- Refined further the logic in selecting files for mod auto-update.
+- Changed ESC button behavior to close context menu first before closing any window.
+- Enabled clearing selected mods by pressing ESC.
+
 ### Fixed
-- Fixed heavy stuttering when playing game...hopefully
+- Fixed heavy stuttering when playing game (hopefully).
+- Fixed scrolling in fullview mode skipping several images at once when the system mouse scroll step is set high.
+- Fixed potential issue causing downloaded mod to be installed in an Unlinked state.
+- Fixed issue in console log preventing scrolling down.
+- Fixed Task window jittering when scrolling to the bottom edge.
+- Fixed mod detail metadata is not showing at all when "Always Show" is selected.
+- Fixed left column width on Settings > General > Behavior being too narrow.
+- Fixed filtering by characters not showing all mods.
+- Fixed mod card's context menu accessible from header.
+- Fixed scrolling through images in fullview mode skipping some images.
+- Fixed mods staying selected, and the mod detail window staying open, after assigning them to a category from a context menu (dragging them into the folder already cleared both).
+- Fixed mods selection not being cleared after moving them to a category.
 
 ## [1.7.0] - 2026-07-12
 

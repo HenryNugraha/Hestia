@@ -219,6 +219,8 @@ pub struct HestiaApp {
     tasks_force_default_pos: bool,
     tasks_tab: TasksTab,
     tasks_scroll_to_edge: bool,
+    task_row_advance_cache: HashMap<u64, (TaskStatus, f32)>,
+    task_row_advance_cache_width: f32,
     install_queue: VecDeque<InstallJob>,
     install_batch_active: bool,
     install_batch_stats: InstallBatchStats,
@@ -311,7 +313,7 @@ pub struct HestiaApp {
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
     update_check_generation: u64,
-    update_check_active_items: Vec<(String, String, u64, Option<i64>, FileSetRecipe)>,
+    update_check_active_items: Vec<(String, String, u64, Option<i64>, FileSetRecipe, bool)>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
     refresh_request_tx: WorkerTx<RefreshRequest>,
@@ -426,6 +428,9 @@ struct BrowseState {
     pending_installs: Vec<PendingBrowseInstall>,
     file_prompt: Option<BrowseFilePrompt>,
     screenshot_overlay: Option<BrowseOverlayImage>,
+    overlay_scroll_accum: f32,
+    overlay_scroll_last_event_at: f64,
+    overlay_scroll_last_step_at: f64,
 }
 
 #[derive(Clone)]
@@ -511,7 +516,7 @@ struct PendingBrowseInstallMeta {
 
 struct UpdateCheckRequest {
     generation: u64,
-    items: Vec<(String, String, u64, Option<i64>, FileSetRecipe)>, // mod_id, game_id, gb_id, old_update_ts, file_set
+    items: Vec<(String, String, u64, Option<i64>, FileSetRecipe, bool)>, // mod_id, game_id, gb_id, old_update_ts, file_set, gb_is_tool
 }
 
 struct UpdateCheckResult {

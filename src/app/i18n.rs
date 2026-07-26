@@ -140,6 +140,7 @@ enum TextKey {
     DialogFile,
     DialogFileFilterArchives,
     DialogFileFilterExecutable,
+    DialogFileFilterAllFiles,
     DialogOpenUnlinkedModDetailFirst,
     DialogInstallingCount,
     DialogCouldNotCreateModsFolder,
@@ -1172,6 +1173,10 @@ impl TextCatalog {
 
     fn file_filter_executable(self) -> &'static str {
         self.get(TextKey::DialogFileFilterExecutable)
+    }
+
+    fn file_filter_all_files(self) -> &'static str {
+        self.get(TextKey::DialogFileFilterAllFiles)
     }
 
     fn open_unlinked_mod_detail_first(self) -> &'static str {

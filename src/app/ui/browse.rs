@@ -788,11 +788,16 @@ impl HestiaApp {
                             });
                         let popup_id =
                             ui.id().with(("browse_card_context_menu_popup", card.id));
+                        let visible_card_rect =
+                            card_frame.response.rect.intersect(ui.clip_rect());
+                        let pointer_on_visible_card =
+                            ui.rect_contains_pointer(visible_card_rect);
                         let open_context_menu = ui.ctx().input(|i| {
                             i.pointer.secondary_clicked()
+                                && pointer_on_visible_card
                                 && i.pointer
                                     .hover_pos()
-                                    .is_some_and(|pos| card_frame.response.rect.contains(pos))
+                                    .is_some_and(|pos| visible_card_rect.contains(pos))
                         });
                         egui::Popup::new(
                             popup_id,
@@ -2568,12 +2573,65 @@ impl HestiaApp {
                     {
                         action = Some(NavAction::Next);
                     }
-                    if i.smooth_scroll_delta().y > 0.0 {
-                        action = Some(NavAction::Prev);
-                    } else if i.smooth_scroll_delta().y < 0.0 {
-                        action = Some(NavAction::Next);
-                    }
                 });
+
+                // Read the raw wheel events instead of the frame scroll delta:
+                // egui smooths a single notch out over several frames, so a large
+                // system scroll step used to fire one step per frame and blow
+                // through the whole gallery on one flick.
+                let (wheel_lines, now) = ui.input(|i| {
+                    let lines = i.events.iter().fold(0.0_f32, |acc, event| match event {
+                        egui::Event::MouseWheel {
+                            unit,
+                            delta,
+                            modifiers,
+                            ..
+                        } if !modifiers.ctrl && !modifiers.command => {
+                            acc + match unit {
+                                egui::MouseWheelUnit::Point => {
+                                    delta.y / OVERLAY_SCROLL_POINTS_PER_LINE
+                                }
+                                egui::MouseWheelUnit::Line => delta.y,
+                                egui::MouseWheelUnit::Page => delta.y * OVERLAY_SCROLL_LINES_PER_PAGE,
+                            }
+                        }
+                        _ => acc,
+                    });
+                    (lines, i.time)
+                });
+
+                if wheel_lines != 0.0 {
+                    let stale = now - self.browse_state.overlay_scroll_last_event_at
+                        > OVERLAY_SCROLL_IDLE_RESET_SECS;
+                    let reversed = self.browse_state.overlay_scroll_accum != 0.0
+                        && self.browse_state.overlay_scroll_accum.signum() != wheel_lines.signum();
+                    if stale || reversed {
+                        self.browse_state.overlay_scroll_accum = 0.0;
+                    }
+                    self.browse_state.overlay_scroll_last_event_at = now;
+                    self.browse_state.overlay_scroll_accum += wheel_lines;
+                }
+
+                if action.is_none()
+                    && self.browse_state.overlay_scroll_accum.abs() >= OVERLAY_SCROLL_LINES_PER_STEP
+                {
+                    let since_step = now - self.browse_state.overlay_scroll_last_step_at;
+                    if since_step >= OVERLAY_SCROLL_STEP_COOLDOWN_SECS {
+                        action = Some(if self.browse_state.overlay_scroll_accum > 0.0 {
+                            NavAction::Prev
+                        } else {
+                            NavAction::Next
+                        });
+                        // Drop the remainder so an oversized delta cannot queue up
+                        // extra steps on the following frames.
+                        self.browse_state.overlay_scroll_accum = 0.0;
+                        self.browse_state.overlay_scroll_last_step_at = now;
+                    } else {
+                        ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                            OVERLAY_SCROLL_STEP_COOLDOWN_SECS - since_step,
+                        ));
+                    }
+                }
 
                 self.queue_overlay_full_texture(&current_key);
                 let animation_key = gif_animation_texture_key(&current_key);
@@ -2706,6 +2764,7 @@ impl HestiaApp {
         match action {
             Some(NavAction::Close) => {
                 self.browse_state.screenshot_overlay = None;
+                self.browse_state.overlay_scroll_accum = 0.0;
                 self.my_mod_overlay_images.clear();
             }
             Some(NavAction::Next) => {

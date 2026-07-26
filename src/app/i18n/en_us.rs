@@ -138,6 +138,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "file", // DialogFile
     "Archives", // DialogFileFilterArchives
     "Executable", // DialogFileFilterExecutable
+    "All files", // DialogFileFilterAllFiles
     "Open an unlinked mod detail first", // DialogOpenUnlinkedModDetailFirst
     "Installing: {count} mod(s)", // DialogInstallingCount
     "Could not create mods folder", // DialogCouldNotCreateModsFolder

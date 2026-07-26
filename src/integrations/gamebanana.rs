@@ -515,10 +515,10 @@ pub async fn fetch_character_browse_page_async(
     sort: crate::model::BrowseSort,
     nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Index")?;
+    let mut url = Url::parse("https://gamebanana.com/apiv13/Mod/Index")?;
     let sort = match sort {
         crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
-        crate::model::BrowseSort::RecentUpdated => "Generic_LatestUpdated",
+        crate::model::BrowseSort::RecentUpdated => "Generic_NewAndUpdated",
     };
     {
         let mut query_pairs = url.query_pairs_mut();
@@ -617,8 +617,28 @@ pub async fn fetch_search_page_async(
         .context("failed to parse GameBanana search results")
 }
 
+/// GameBanana hosts tools (e.g. RabbitFX) in a separate API namespace from
+/// mods; the numeric ids are not interchangeable between the two, so a tool
+/// link must be fetched via `Tool`, never `Mod`.
+pub fn is_tool_url(url: &str) -> bool {
+    url.contains("/tools/")
+}
+
+fn item_api_kind(is_tool: bool) -> &'static str {
+    if is_tool { "Tool" } else { "Mod" }
+}
+
 pub fn fetch_profile(client: &Client, mod_id: u64) -> Result<ProfileResponse> {
-    let url = format!("https://gamebanana.com/apiv11/Mod/{mod_id}/ProfilePage");
+    fetch_profile_typed(client, mod_id, false)
+}
+
+pub fn fetch_profile_typed(
+    client: &Client,
+    mod_id: u64,
+    is_tool: bool,
+) -> Result<ProfileResponse> {
+    let kind = item_api_kind(is_tool);
+    let url = format!("https://gamebanana.com/apiv11/{kind}/{mod_id}/ProfilePage");
     client
         .get(url)
         .send()
@@ -633,7 +653,16 @@ pub async fn fetch_profile_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
 ) -> Result<ProfileResponse> {
-    let url = format!("https://gamebanana.com/apiv11/Mod/{mod_id}/ProfilePage");
+    fetch_profile_async_typed(client, mod_id, false).await
+}
+
+pub async fn fetch_profile_async_typed(
+    client: &ClientWithMiddleware,
+    mod_id: u64,
+    is_tool: bool,
+) -> Result<ProfileResponse> {
+    let kind = item_api_kind(is_tool);
+    let url = format!("https://gamebanana.com/apiv11/{kind}/{mod_id}/ProfilePage");
     let response = client
         .get(url)
         .send()
@@ -684,6 +713,14 @@ pub fn full_image_url(image: &PreviewImage) -> String {
 
 pub fn browser_url(mod_id: u64) -> String {
     format!("https://gamebanana.com/mods/{mod_id}")
+}
+
+pub fn browser_url_typed(mod_id: u64, is_tool: bool) -> String {
+    if is_tool {
+        format!("https://gamebanana.com/tools/{mod_id}")
+    } else {
+        browser_url(mod_id)
+    }
 }
 
 pub fn all_authors(profile: &ProfileResponse) -> Vec<String> {
@@ -774,4 +811,14 @@ fn json_cache_key_v2(tags: &[(&str, String)]) -> String {
 
 pub fn profile_cache_key(mod_id: u64) -> String {
     format!("gb-json:profile:{mod_id}")
+}
+
+/// Tool and mod ids live in different namespaces, so a tool profile must not
+/// overwrite the cache slot of the mod that happens to share its number.
+pub fn profile_cache_key_typed(mod_id: u64, is_tool: bool) -> String {
+    if is_tool {
+        format!("gb-json:profile-tool:{mod_id}")
+    } else {
+        profile_cache_key(mod_id)
+    }
 }

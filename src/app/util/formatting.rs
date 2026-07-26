@@ -14,15 +14,21 @@ fn current_language() -> Option<AppLanguage> {
     }
 }
 
-fn parse_gb_id(input: &str) -> Option<u64> {
+/// Returns the GameBanana id and whether it points at the Tool namespace
+/// (e.g. RabbitFX lives under gamebanana.com/tools/). A bare number is
+/// treated as a mod id.
+fn parse_gb_link(input: &str) -> Option<(u64, bool)> {
     let input = input.trim();
     if let Ok(id) = input.parse::<u64>() {
-        return Some(id);
+        return Some((id, false));
     }
-    if let Some(idx) = input.find("/mods/") {
-        let rest = &input[idx + 6..];
-        let id_part = rest.split('/').next()?;
-        return id_part.parse::<u64>().ok();
+    for (marker, is_tool) in [("/mods/", false), ("/tools/", true)] {
+        if let Some(idx) = input.find(marker) {
+            let rest = &input[idx + marker.len()..];
+            if let Some(id) = rest.split('/').next().and_then(|part| part.parse::<u64>().ok()) {
+                return Some((id, is_tool));
+            }
+        }
     }
     None
 }

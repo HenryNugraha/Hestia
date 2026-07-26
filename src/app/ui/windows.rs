@@ -427,7 +427,6 @@ impl HestiaApp {
             return;
         }
         let mut log_open = self.state.show_log;
-        let stick_to_bottom = self.log_scroll_to_bottom;
         let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
         let text = self.text();
@@ -466,45 +465,56 @@ impl HestiaApp {
             const LOG_DATE_GAP: f32 = 12.0;
             let scroll_rect = ui.available_rect_before_wrap();
             let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
+            // stick_to_bottom is egui's stateful stick: it follows new lines only
+            // while the view is at the bottom and releases as soon as the user
+            // scrolls up, so it must stay enabled rather than be re-armed per line.
             ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .stick_to_bottom(stick_to_bottom)
+                .stick_to_bottom(true)
                 .show(ui, |ui| {
                     apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                     let viewport = ui.clip_rect().expand(90.0);
+                    let wrap_width = ui.available_width();
+                    let spacing_y = ui.spacing().item_spacing.y;
                     for row in &self.log_display_cache.rows {
-                        if let LogDisplayRow::Date { text, gap_before } = row {
-                            if *gap_before {
-                                ui.add_space(LOG_DATE_GAP);
-                            }
-                            let row_top = ui.cursor().top();
-                            let row_bottom = row_top + LOG_DATE_ROW_HEIGHT;
-                            if row_bottom < viewport.top() || row_top > viewport.bottom() {
-                                ui.add_space(LOG_DATE_ROW_HEIGHT);
-                            } else {
-                                let response = ui.add(
-                                    egui::Label::new(bold(text.clone(), None).underline())
-                                        .selectable(true),
-                                );
-                                let used_height = response.rect.height();
-                                if used_height < LOG_DATE_ROW_HEIGHT {
-                                    ui.add_space(LOG_DATE_ROW_HEIGHT - used_height);
+                        let (widget_text, min_height): (egui::WidgetText, f32) = match row {
+                            LogDisplayRow::Date { text, gap_before } => {
+                                if *gap_before {
+                                    ui.add_space(LOG_DATE_GAP);
                                 }
+                                (
+                                    bold(text.clone(), None).underline().into(),
+                                    LOG_DATE_ROW_HEIGHT,
+                                )
                             }
-                            continue;
-                        }
-                        let LogDisplayRow::Entry { text } = row else {
-                            continue;
+                            LogDisplayRow::Entry { text } => {
+                                (text.as_str().into(), LOG_ENTRY_ROW_HEIGHT)
+                            }
                         };
+                        // Off-screen rows must advance by the exact height the
+                        // rendered label occupies (wrapped lines are taller than
+                        // the one-line minimum); estimates that run short make the
+                        // total content height change while scrolling, so the
+                        // bottom keeps receding.
+                        let galley = widget_text.into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Wrap),
+                            wrap_width,
+                            egui::TextStyle::Body,
+                        );
+                        let row_height = galley.size().y.max(min_height);
                         let row_top = ui.cursor().top();
-                        let row_bottom = row_top + LOG_ENTRY_ROW_HEIGHT;
+                        let row_bottom = row_top + row_height;
                         if row_bottom < viewport.top() || row_top > viewport.bottom() {
-                            ui.add_space(LOG_ENTRY_ROW_HEIGHT);
+                            // Widgets advance the cursor by their rect plus item
+                            // spacing; add_space adds none, so include it here to
+                            // mirror the rendered path exactly.
+                            ui.add_space(row_height + spacing_y);
                         } else {
-                            let response = ui.add(egui::Label::new(text).selectable(true));
+                            let response = ui.add(egui::Label::new(galley).selectable(true));
                             let used_height = response.rect.height();
-                            if used_height < LOG_ENTRY_ROW_HEIGHT {
-                                ui.add_space(LOG_ENTRY_ROW_HEIGHT - used_height);
+                            if used_height < row_height {
+                                ui.add_space(row_height - used_height);
                             }
                         }
                     }
@@ -535,7 +545,7 @@ impl HestiaApp {
                 });
         }
 
-        if stick_to_bottom {
+        if just_opened {
             self.log_scroll_to_bottom = false;
         }
         if force_default_pos {
@@ -2341,7 +2351,32 @@ impl HestiaApp {
                             let tool_launch_behavior = self.state.static_prefs.tool_launch_behavior;
                             let after_install = self.state.static_prefs.after_install_behavior;
                             let meta_vis = self.state.static_prefs.metadata_visibility;
-                            let left_column_width = ui.available_width() * 0.32;
+                            let left_column_needed = settings_column_width(
+                                ui,
+                                &[text.when_launching_game(), text.after_installing_mod()],
+                                &[
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                    text.after_install_behavior(AfterInstallBehavior::DoNothing),
+                                    text.after_install_behavior(AfterInstallBehavior::AddToSelection),
+                                    text.after_install_behavior(AfterInstallBehavior::OpenModDetail),
+                                ],
+                            );
+                            let right_column_needed = settings_column_width(
+                                ui,
+                                &[text.when_launching_tool(), text.mod_detail_metadata()],
+                                &[
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                    text.metadata_visibility(MetadataVisibility::Never),
+                                    text.metadata_visibility(MetadataVisibility::OnlyIfNoDescription),
+                                    text.metadata_visibility(MetadataVisibility::Always),
+                                ],
+                            );
+                            let left_column_width =
+                                settings_left_column_width(ui, left_column_needed, right_column_needed);
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);

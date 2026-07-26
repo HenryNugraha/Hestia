@@ -5,6 +5,12 @@ fn tracked_file_meta_from_mod_file(file: &gamebanana::ModFile) -> TrackedFileMet
         date_added: file.date_added,
         version: file.version.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(|v| v.to_string()),
         archived: file.is_archived,
+        label: file
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string),
     }
 }
 
@@ -155,6 +161,7 @@ fn resolve_tracked_files(
                     date_added: 0,
                     version: None,
                     archived: false,
+                    label: None,
                 });
             }
         }
@@ -162,6 +169,31 @@ fn resolve_tracked_files(
     }
 
     ResolvedTrackedFiles::Untracked
+}
+
+fn normalized_file_label(label: &str) -> String {
+    label
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+/// Pairs a tracked file with a candidate through the author-assigned file label
+/// ("Main File" vs "Experimental"). This is the only usable lineage signal when
+/// file names are random hashes and every re-upload replaces the old file.
+fn file_label_lineage_matches(tracked: &TrackedFileMeta, candidate: &gamebanana::ModFile) -> bool {
+    let tracked_label = tracked
+        .label
+        .as_deref()
+        .map(normalized_file_label)
+        .filter(|label| !label.is_empty());
+    let candidate_label = candidate
+        .description
+        .as_deref()
+        .map(normalized_file_label)
+        .filter(|label| !label.is_empty());
+    matches!((tracked_label, candidate_label), (Some(a), Some(b)) if a == b)
 }
 
 fn normalized_file_stem_for_lineage(file_name: &str) -> String {
@@ -410,11 +442,15 @@ fn evaluate_file_set_update_group(
                             && !remote_file_matches_tracked(candidate, tracked)
                     })
                     .map(|tracked| {
-                        file_lineage_similarity(
-                            &tracked.file_name,
-                            &candidate.file_name,
-                            &common_prefix,
-                        )
+                        if file_label_lineage_matches(tracked, candidate) {
+                            1.0
+                        } else {
+                            file_lineage_similarity(
+                                &tracked.file_name,
+                                &candidate.file_name,
+                                &common_prefix,
+                            )
+                        }
                     })
                     .fold(0.0_f32, f32::max),
                 ResolvedTrackedFiles::MissingSource | ResolvedTrackedFiles::Untracked => 0.0,
@@ -737,6 +773,34 @@ fn backfill_selected_files_meta(file_set: &mut FileSetRecipe, profile: &gamebana
     true
 }
 
+/// Adopts labels onto tracked files persisted before labels existed, while the
+/// original file can still be found remotely. Once the author re-uploads (old
+/// file gone), the label is the only way to identify the successor.
+fn backfill_tracked_file_labels(
+    file_set: &mut FileSetRecipe,
+    profile: &gamebanana::ProfileResponse,
+) -> bool {
+    let mut changed = false;
+    for tracked in &mut file_set.selected_files_meta {
+        if tracked.label.is_some() {
+            continue;
+        }
+        let label = profile
+            .files
+            .iter()
+            .chain(profile.archived_files.iter())
+            .find(|file| remote_file_matches_tracked(file, tracked))
+            .and_then(|file| file.description.as_deref())
+            .map(str::trim)
+            .filter(|label| !label.is_empty());
+        if let Some(label) = label {
+            tracked.label = Some(label.to_string());
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn determine_update_state(local_ts: Option<i64>, profile: &gamebanana::ProfileResponse) -> ModUpdateState {
     if gamebanana::is_unavailable(profile) {
         return ModUpdateState::MissingSource;
@@ -818,7 +882,7 @@ impl HestiaApp {
     fn update_check_item_for_mod(
         &self,
         mod_entry_id: &str,
-    ) -> Option<(String, String, u64, Option<i64>, FileSetRecipe)> {
+    ) -> Option<(String, String, u64, Option<i64>, FileSetRecipe, bool)> {
         let mod_entry = self.state.mods.iter().find(|m| m.id == mod_entry_id)?;
         let source = mod_entry.source.as_ref()?;
         let link = source.gamebanana.as_ref()?;
@@ -831,12 +895,13 @@ impl HestiaApp {
             link.mod_id,
             local_sync_ts,
             source.file_set.clone(),
+            gamebanana::is_tool_url(&link.url),
         ))
     }
 
     fn dispatch_update_check_items(
         &mut self,
-        items: Vec<(String, String, u64, Option<i64>, FileSetRecipe)>,
+        items: Vec<(String, String, u64, Option<i64>, FileSetRecipe, bool)>,
     ) {
         if items.is_empty() {
             return;
@@ -968,6 +1033,7 @@ impl HestiaApp {
                 link.mod_id,
                 local_sync_ts,
                 source.file_set.clone(),
+                gamebanana::is_tool_url(&link.url),
             ));
         }
         if state_changed_without_fetch {
@@ -984,7 +1050,7 @@ impl HestiaApp {
             self.update_check_inflight = false;
             let checked_game_ids: HashSet<String> = self.update_check_active_items
                 .iter()
-                .map(|(_, game_id, _, _, _)| game_id.clone())
+                .map(|(_, game_id, _, _, _, _)| game_id.clone())
                 .collect();
             self.update_check_active_items.clear();
             let mut warn_lines: Vec<String> = Vec::new();
@@ -1055,6 +1121,7 @@ impl HestiaApp {
                         source.update_check_retry_after = retry_after;
                         if let Some(profile) = profile.as_deref() {
                             let _ = backfill_selected_files_meta(&mut source.file_set, profile);
+                            let _ = backfill_tracked_file_labels(&mut source.file_set, profile);
                         }
                         if let Some(s) = snapshot {
                             source.snapshot = Some(s);
@@ -1693,6 +1760,31 @@ impl HestiaApp {
         }
     }
 
+    /// The install worker and the disk scanner build these paths independently,
+    /// so separator style, verbatim prefixes, and casing can differ for the same
+    /// location on Windows. Exact `PathBuf` equality would then leave a freshly
+    /// installed mod unmatched here — and therefore permanently Unlinked, since
+    /// this match is what carries the GameBanana metadata onto the new entry.
+    fn install_path_matches_mod_root(installed: &Path, mod_root: &Path) -> bool {
+        if installed == mod_root {
+            return true;
+        }
+        let normalized_components = |path: &Path| -> Vec<String> {
+            path.components()
+                .map(|component| {
+                    let text = component
+                        .as_os_str()
+                        .to_string_lossy()
+                        .to_ascii_lowercase();
+                    text.strip_prefix(r"\\?\")
+                        .map(str::to_string)
+                        .unwrap_or(text)
+                })
+                .collect()
+        };
+        normalized_components(installed) == normalized_components(mod_root)
+    }
+
     fn resolve_pending_install_finalization_for_game(&mut self, game_id: &str) -> bool {
         let mut finalized_any = false;
         let job_ids: Vec<u64> = self.pending_install_finalize.keys().copied().collect();
@@ -1704,7 +1796,7 @@ impl HestiaApp {
                 self.state
                     .mods
                     .iter()
-                    .find(|m| m.root_path == *path)
+                    .find(|m| Self::install_path_matches_mod_root(path, &m.root_path))
                     .is_some_and(|m| m.game_id == game_id)
             });
             if !belongs_to_game {
@@ -1743,7 +1835,12 @@ impl HestiaApp {
         let mut newly_installed_ids = Vec::with_capacity(installed_paths.len());
 
         for (i, path) in installed_paths.iter().enumerate() {
-            if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.root_path == *path) {
+            if let Some(mod_entry) = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|m| Self::install_path_matches_mod_root(path, &m.root_path))
+            {
                 if i == 0 {
                     first_mod_name = mod_entry.folder_name.clone();
                     primary_id = Some(mod_entry.id.clone());
@@ -1877,7 +1974,7 @@ impl HestiaApp {
                 .map(|m| {
                     installed_candidate_labels
                         .iter()
-                        .filter(|(path, _)| path == &m.root_path)
+                        .filter(|(path, _)| Self::install_path_matches_mod_root(path, &m.root_path))
                         .map(|(_, label)| label.clone())
                         .collect::<Vec<_>>()
                 })
@@ -2474,6 +2571,99 @@ mod update_signature_tests {
             determine_file_set_update_state(&file_set, Some(100), &profile),
             ModUpdateState::UpToDate
         );
+    }
+
+    fn labeled_mod_file(
+        id: u64,
+        file_name: &str,
+        date_added: i64,
+        label: &str,
+    ) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            description: Some(label.to_string()),
+            ..mod_file(id, file_name, date_added)
+        }
+    }
+
+    // RabbitFX ships files named `v<version>_<hash>.zip`; every release replaces
+    // both variants, so the file label is the only way to tell which new file
+    // succeeds the one that was installed.
+    #[test]
+    fn label_match_maps_hash_named_reupload_to_tracked_variant() {
+        let old_main = labeled_mod_file(10, "v23_9f8e7d.zip", 100, "Main File");
+        let new_main = labeled_mod_file(30, "v24_a1b2c3.zip", 300, "main file");
+        let new_experimental = labeled_mod_file(40, "v42_d4e5f6.zip", 300, "Experimental");
+        let profile = profile(vec![new_main, new_experimental], 300);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&old_main)],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            determine_file_set_update_state(&file_set, Some(100), &profile),
+            ModUpdateState::UpdateAvailable
+        );
+        let signature = compute_update_signature(&file_set, &profile).unwrap();
+        assert_eq!(signature.files.len(), 1);
+        assert_eq!(signature.files[0].file_id, 30);
+    }
+
+    #[test]
+    fn label_match_assigns_each_variant_to_its_own_mod() {
+        let old_main = labeled_mod_file(10, "v23_9f8e7d.zip", 100, "Main File");
+        let old_experimental = labeled_mod_file(20, "v41_112233.zip", 100, "Experimental");
+        let new_main = labeled_mod_file(30, "v24_a1b2c3.zip", 300, "Main File");
+        let new_experimental = labeled_mod_file(40, "v42_d4e5f6.zip", 300, "Experimental");
+        let profile = profile(vec![new_main, new_experimental], 300);
+        let items = vec![
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&old_main)],
+                    ..Default::default()
+                },
+            ),
+            (
+                Some(100),
+                FileSetRecipe {
+                    selected_files_meta: vec![tracked_file_meta_from_mod_file(&old_experimental)],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        let evaluations = evaluate_file_set_update_group(&items, &profile);
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpdateAvailable);
+        let main_signature = evaluations[0].signature.as_ref().unwrap();
+        assert_eq!(main_signature.files.len(), 1);
+        assert_eq!(main_signature.files[0].file_id, 30);
+
+        assert_eq!(evaluations[1].state, ModUpdateState::UpdateAvailable);
+        let experimental_signature = evaluations[1].signature.as_ref().unwrap();
+        assert_eq!(experimental_signature.files.len(), 1);
+        assert_eq!(experimental_signature.files[0].file_id, 40);
+    }
+
+    #[test]
+    fn backfill_adopts_labels_from_still_existing_remote_files() {
+        let unlabeled = mod_file(10, "v23_9f8e7d.zip", 100);
+        let mut file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&unlabeled)],
+            ..Default::default()
+        };
+        assert!(file_set.selected_files_meta[0].label.is_none());
+
+        let remote = labeled_mod_file(10, "v23_9f8e7d.zip", 100, "Main File");
+        let profile = profile(vec![remote], 100);
+
+        assert!(backfill_tracked_file_labels(&mut file_set, &profile));
+        assert_eq!(
+            file_set.selected_files_meta[0].label.as_deref(),
+            Some("Main File")
+        );
+        // Second pass is a no-op.
+        assert!(!backfill_tracked_file_labels(&mut file_set, &profile));
     }
 
     #[test]

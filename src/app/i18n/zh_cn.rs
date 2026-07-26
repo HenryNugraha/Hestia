@@ -138,6 +138,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "文件", // DialogFile
     "压缩包", // DialogFileFilterArchives
     "可执行文件", // DialogFileFilterExecutable
+    "所有文件", // DialogFileFilterAllFiles
     "请先打开未链接 Mod 的详情", // DialogOpenUnlinkedModDetailFirst
     "正在安装：{count} 个 Mod", // DialogInstallingCount
     "无法创建 Mod 文件夹", // DialogCouldNotCreateModsFolder

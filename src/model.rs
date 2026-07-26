@@ -1071,14 +1071,34 @@ pub struct FileSetRecipe {
     pub selected_candidate_labels: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TrackedFileMeta {
     pub file_id: u64,
     pub file_name: String,
     pub date_added: i64,
     pub version: Option<String>,
     pub archived: bool,
+    /// GameBanana file label (`_sDescription`, e.g. "Main File" / "Experimental").
+    /// Labels are the only stable lineage signal when authors upload files with
+    /// meaningless names (RabbitFX ships `v24_<hash>.zip`-style names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
+
+/// `label` is matching metadata, not file identity: persisted
+/// `ignored_update_signature`s predate the field and must keep comparing equal
+/// to freshly computed signatures that now carry labels.
+impl PartialEq for TrackedFileMeta {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_id == other.file_id
+            && self.file_name == other.file_name
+            && self.date_added == other.date_added
+            && self.version == other.version
+            && self.archived == other.archived
+    }
+}
+
+impl Eq for TrackedFileMeta {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct IgnoredUpdateSignature {

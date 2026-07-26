@@ -138,6 +138,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "file", // DialogFile
     "Arsip", // DialogFileFilterArchives
     "Executable", // DialogFileFilterExecutable
+    "Semua file", // DialogFileFilterAllFiles
     "Buka detail mod yang belum tertaut terlebih dahulu", // DialogOpenUnlinkedModDetailFirst
     "Memasang: {count} mod", // DialogInstallingCount
     "Tidak dapat membuat folder mod", // DialogCouldNotCreateModsFolder

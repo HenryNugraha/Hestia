@@ -205,6 +205,284 @@ pub fn validate_install_folder_name(name: &str) -> Result<()> {
         .with_context(|| format!("invalid install folder name: {name}"))
 }
 
+const SUPPORTED_ARCHIVE_EXTENSIONS: [&str; 3] = ["zip", "7z", "rar"];
+const SPLIT_PART_SUFFIX_MAX_DIGITS: usize = 6;
+
+fn is_supported_archive_extension(ext: &str) -> bool {
+    SUPPORTED_ARCHIVE_EXTENSIONS
+        .iter()
+        .any(|supported| ext.eq_ignore_ascii_case(supported))
+}
+
+/// Detects raw byte-split archive volumes like `mod.rar.0001` or `mod.7z.001`.
+/// Returns the base archive path (`mod.rar`) and the part number.
+fn numeric_split_part(path: &Path) -> Option<(PathBuf, u64)> {
+    let suffix = path.extension()?.to_str()?;
+    if suffix.is_empty()
+        || suffix.len() > SPLIT_PART_SUFFIX_MAX_DIGITS
+        || !suffix.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let part = suffix.parse().ok()?;
+    let base = path.with_extension("");
+    let base_ext = base.extension()?.to_str()?;
+    is_supported_archive_extension(base_ext).then_some((base, part))
+}
+
+/// Detects native RAR multi-volume naming like `mod.part2.rar`.
+/// Returns the stem before `.partN` and the part number.
+fn rar_part_number(path: &Path) -> Option<(String, u64)> {
+    let ext = path.extension()?.to_str()?;
+    if !ext.eq_ignore_ascii_case("rar") {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    let idx = stem.to_ascii_lowercase().rfind(".part")?;
+    let digits = &stem[idx + ".part".len()..];
+    if digits.is_empty()
+        || digits.len() > SPLIT_PART_SUFFIX_MAX_DIGITS
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((stem[..idx].to_string(), digits.parse().ok()?))
+}
+
+/// Detects old-style RAR volume naming (`mod.r00`, `mod.r01`, ...).
+/// Returns the main `mod.rar` volume if it exists next to the part.
+fn rar_old_style_main_volume(path: &Path) -> Option<PathBuf> {
+    let ext = path.extension()?.to_str()?.as_bytes();
+    if !(ext.len() == 3
+        && ext[0].eq_ignore_ascii_case(&b'r')
+        && ext[1].is_ascii_digit()
+        && ext[2].is_ascii_digit())
+    {
+        return None;
+    }
+    let main = path.with_extension("rar");
+    main.is_file().then_some(main)
+}
+
+fn split_part_parent(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
+
+/// If `path` is one volume of a split archive, returns the volume extraction
+/// should start from, so every part of a set maps to the same install source.
+/// Returns `None` when `path` is not a recognized split volume.
+pub fn resolve_split_archive(path: &Path) -> Option<PathBuf> {
+    if let Some((base, _)) = numeric_split_part(path) {
+        let first = collect_numeric_split_parts(&base)
+            .ok()
+            .and_then(|parts| parts.into_iter().next());
+        return Some(first.unwrap_or_else(|| path.to_path_buf()));
+    }
+    if let Some((prefix, _)) = rar_part_number(path) {
+        let mut best: Option<(u64, PathBuf)> = None;
+        if let Ok(entries) = fs::read_dir(split_part_parent(path)) {
+            for entry in entries.flatten() {
+                let candidate = entry.path();
+                let Some((candidate_prefix, number)) = rar_part_number(&candidate) else {
+                    continue;
+                };
+                if !candidate_prefix.eq_ignore_ascii_case(&prefix) {
+                    continue;
+                }
+                if best.as_ref().is_none_or(|(smallest, _)| number < *smallest) {
+                    best = Some((number, candidate));
+                }
+            }
+        }
+        return Some(
+            best.map(|(_, first)| first)
+                .unwrap_or_else(|| path.to_path_buf()),
+        );
+    }
+    rar_old_style_main_volume(path)
+}
+
+/// File-picker extensions for the archive filter: the plain archive formats
+/// plus the first-part suffixes of split sets. Selecting part 1 is enough --
+/// the remaining volumes are picked up from the same folder automatically.
+/// The list must stay small: Windows' file dialog crashes on huge filters.
+pub fn archive_picker_extensions() -> &'static [&'static str] {
+    &["zip", "rar", "7z", "001", "0001"]
+}
+
+/// Display name for an import source file: split volumes show the base
+/// archive name (`mod.7z.001` -> `mod.7z`, `mod.part2.rar` -> `mod.rar`).
+pub fn source_display_file_name(path: &Path) -> String {
+    if let Some((base, _)) = numeric_split_part(path) {
+        if let Some(name) = base.file_name().and_then(OsStr::to_str) {
+            return name.to_string();
+        }
+    }
+    if let Some((prefix, _)) = rar_part_number(path)
+        && !prefix.is_empty()
+    {
+        return format!("{prefix}.rar");
+    }
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("mod")
+        .to_string()
+}
+
+/// Size of an archive source on disk; for split sets, the sum of all volumes.
+pub fn archive_source_total_size(path: &Path) -> Option<u64> {
+    if numeric_split_part(path).is_some() {
+        if let Some(parts) = resolve_split_archive(path)
+            .and_then(|first| numeric_split_part(&first))
+            .and_then(|(base, _)| collect_numeric_split_parts(&base).ok())
+        {
+            return Some(
+                parts
+                    .iter()
+                    .filter_map(|part| fs::metadata(part).ok())
+                    .map(|meta| meta.len())
+                    .sum(),
+            );
+        }
+    }
+    if let Some((prefix, _)) = rar_part_number(path) {
+        let mut total = 0u64;
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir(split_part_parent(path)) {
+            for entry in entries.flatten() {
+                let candidate = entry.path();
+                let same_set = rar_part_number(&candidate)
+                    .is_some_and(|(candidate_prefix, _)| {
+                        candidate_prefix.eq_ignore_ascii_case(&prefix)
+                    });
+                if same_set && let Ok(meta) = fs::metadata(&candidate) {
+                    total += meta.len();
+                    found = true;
+                }
+            }
+        }
+        if found {
+            return Some(total);
+        }
+    }
+    fs::metadata(path).ok().map(|meta| meta.len())
+}
+
+fn import_source_label(path: &Path) -> String {
+    if let Some((base, _)) = numeric_split_part(path) {
+        return base
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .unwrap_or("mod")
+            .to_string();
+    }
+    if let Some((prefix, _)) = rar_part_number(path)
+        && !prefix.is_empty()
+    {
+        return prefix;
+    }
+    path.file_stem()
+        .or_else(|| path.file_name())
+        .and_then(OsStr::to_str)
+        .unwrap_or("mod")
+        .to_string()
+}
+
+fn collect_numeric_split_parts(base: &Path) -> Result<Vec<PathBuf>> {
+    let base_name = base
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| anyhow!("split archive has an invalid base name"))?;
+    let mut parts: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(split_part_parent(base))? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some((candidate_base, number)) = numeric_split_part(&path) else {
+            continue;
+        };
+        let matches_base = candidate_base
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(base_name));
+        if matches_base {
+            parts.push((number, path));
+        }
+    }
+    if parts.is_empty() {
+        bail!("found no volumes of split archive {base_name}");
+    }
+    parts.sort_by_key(|(number, _)| *number);
+    for pair in parts.windows(2) {
+        if pair[0].0 == pair[1].0 {
+            bail!(
+                "split archive has conflicting volumes: {} and {}",
+                pair[0].1.display(),
+                pair[1].1.display()
+            );
+        }
+    }
+    let first = parts[0].0;
+    if first > 1 {
+        bail!("split archive {base_name} is missing part 1 (found parts starting at {first})");
+    }
+    for (offset, (number, _)) in parts.iter().enumerate() {
+        let expected = first + offset as u64;
+        if *number != expected {
+            bail!("split archive {base_name} is missing part {expected}");
+        }
+    }
+    Ok(parts.into_iter().map(|(_, path)| path).collect())
+}
+
+fn join_split_parts(parts: &[PathBuf], joined: &Path, cancel: Option<&CancelFlag>) -> Result<()> {
+    let mut output = fs::File::create(joined)
+        .with_context(|| format!("failed to create joined archive {}", joined.display()))?;
+    let mut buffer = vec![0u8; ZIP_COPY_BUFFER_BYTES];
+    for part in parts {
+        let mut input = fs::File::open(part)
+            .with_context(|| format!("failed to open split volume {}", part.display()))?;
+        loop {
+            if let Some(flag) = cancel {
+                check_cancel(flag)?;
+            }
+            let bytes_read = input.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut output, &buffer[..bytes_read])?;
+        }
+    }
+    Ok(())
+}
+
+fn extract_split_archive(
+    part: &Path,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    let (base, _) = numeric_split_part(part)
+        .ok_or_else(|| anyhow!("not a split archive volume: {}", part.display()))?;
+    let parts = collect_numeric_split_parts(&base)?;
+    let base_name = base
+        .file_name()
+        .ok_or_else(|| anyhow!("split archive has an invalid base name"))?
+        .to_os_string();
+    let extract_root = persistence::runtime_temp_extract_dir();
+    fs::create_dir_all(&extract_root)?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix("join-")
+        .tempdir_in(&extract_root)
+        .context("failed to create temp dir for joining split archive")?;
+    let joined = temp_dir.path().join(base_name);
+    join_split_parts(&parts, &joined, cancel)?;
+    extract_archive_impl(&joined, destination, cancel)
+}
+
 fn zip_top_level_sanitize_map(
     archive: &mut zip::ZipArchive<fs::File>,
 ) -> Result<Option<HashMap<OsString, OsString>>> {
@@ -439,12 +717,7 @@ fn inspect_directory(
         bail!("import source is empty");
     } else {
         let label = match source {
-            ImportSource::Folder(path) | ImportSource::Archive(path) => path
-                .file_stem()
-                .or_else(|| path.file_name())
-                .and_then(OsStr::to_str)
-                .unwrap_or("mod")
-                .to_string(),
+            ImportSource::Folder(path) | ImportSource::Archive(path) => import_source_label(path),
         };
         candidates.push(ImportCandidate {
             label,
@@ -512,12 +785,7 @@ fn inspect_directory_cancelable(
         bail!("import source is empty");
     } else {
         let label = match source {
-            ImportSource::Folder(path) | ImportSource::Archive(path) => path
-                .file_stem()
-                .or_else(|| path.file_name())
-                .and_then(OsStr::to_str)
-                .unwrap_or("mod")
-                .to_string(),
+            ImportSource::Folder(path) | ImportSource::Archive(path) => import_source_label(path),
         };
         candidates.push(ImportCandidate {
             label,
@@ -534,18 +802,7 @@ fn inspect_directory_cancelable(
 
 #[allow(dead_code)]
 fn extract_archive(archive: &Path, destination: &Path) -> Result<()> {
-    let extension = archive
-        .extension()
-        .and_then(OsStr::to_str)
-        .map(|s| s.to_ascii_lowercase())
-        .ok_or_else(|| anyhow!("unsupported archive with no extension"))?;
-
-    match extension.as_str() {
-        "zip" => extract_zip(archive, destination),
-        "7z" => extract_7z(archive, destination),
-        "rar" => extract_rar(archive, destination),
-        _ => bail!("unsupported archive format: {}", extension),
-    }
+    extract_archive_impl(archive, destination, None)
 }
 
 fn extract_archive_cancelable(
@@ -553,7 +810,20 @@ fn extract_archive_cancelable(
     destination: &Path,
     cancel: &CancelFlag,
 ) -> Result<()> {
-    check_cancel(cancel)?;
+    extract_archive_impl(archive, destination, Some(cancel))
+}
+
+fn extract_archive_impl(
+    archive: &Path,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    if let Some(flag) = cancel {
+        check_cancel(flag)?;
+    }
+    if numeric_split_part(archive).is_some() {
+        return extract_split_archive(archive, destination, cancel);
+    }
     let extension = archive
         .extension()
         .and_then(OsStr::to_str)
@@ -561,9 +831,9 @@ fn extract_archive_cancelable(
         .ok_or_else(|| anyhow!("unsupported archive with no extension"))?;
 
     match extension.as_str() {
-        "zip" => extract_zip_cancelable(archive, destination, cancel),
-        "7z" => extract_7z_cancelable(archive, destination, cancel),
-        "rar" => extract_rar_cancelable(archive, destination, cancel),
+        "zip" => extract_zip_with_cancel(archive, destination, cancel),
+        "7z" => extract_7z_with_cancel(archive, destination, cancel),
+        "rar" => extract_rar_with_cancel(archive, destination, cancel),
         _ => bail!("unsupported archive format: {}", extension),
     }
 }
@@ -571,10 +841,6 @@ fn extract_archive_cancelable(
 #[allow(dead_code)]
 fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
     extract_zip_with_cancel(archive, destination, None)
-}
-
-fn extract_zip_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
-    extract_zip_with_cancel(archive, destination, Some(cancel))
 }
 
 #[derive(Clone)]
@@ -762,23 +1028,26 @@ fn create_file_with_parent_recovery(path: &Path) -> Result<fs::File> {
     }
 }
 
-#[allow(dead_code)]
-fn extract_7z(archive: &Path, destination: &Path) -> Result<()> {
-    sevenz_rust::decompress_file(archive, destination).context("failed to extract .7z archive")
-}
-
-fn extract_7z_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
-    check_cancel(cancel)?;
+fn extract_7z_with_cancel(
+    archive: &Path,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
     sevenz_rust::decompress_file(archive, destination).context("failed to extract .7z archive")?;
-    check_cancel(cancel)?;
+    if let Some(flag) = cancel {
+        check_cancel(flag)?;
+    }
     Ok(())
 }
 
-#[allow(dead_code)]
-fn extract_rar(archive: &Path, destination: &Path) -> Result<()> {
-    match extract_rar_with_unrar(archive, destination, None) {
+fn extract_rar_with_cancel(
+    archive: &Path,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    match extract_rar_with_unrar(archive, destination, cancel) {
         Ok(()) => Ok(()),
-        Err(unrar_err) => extract_rar_with_7z_fallback(archive, destination, None, unrar_err),
+        Err(unrar_err) => extract_rar_with_7z_fallback(archive, destination, cancel, unrar_err),
     }
 }
 
@@ -802,16 +1071,6 @@ fn extract_rar_with_unrar(
             .context("failed to extract .rar entry")?;
     }
     Ok(())
-}
-
-fn extract_rar_cancelable(archive: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
-    check_cancel(cancel)?;
-    match extract_rar_with_unrar(archive, destination, Some(cancel)) {
-        Ok(()) => Ok(()),
-        Err(unrar_err) => {
-            extract_rar_with_7z_fallback(archive, destination, Some(cancel), unrar_err)
-        }
-    }
 }
 
 fn extract_rar_with_7z_fallback(
@@ -1220,6 +1479,179 @@ mod tests {
             fs::read_to_string(installed.join("nested").join("mod.ini")).unwrap(),
             "demo"
         );
+    }
+
+    fn write_demo_zip(path: &Path) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("Mod/readme.txt", options).unwrap();
+        writer.write_all(b"split demo payload").unwrap();
+        writer.finish().unwrap();
+    }
+
+    fn split_file_into_parts(source: &Path, part_paths: &[PathBuf]) {
+        let bytes = fs::read(source).unwrap();
+        let chunk = bytes.len().div_ceil(part_paths.len());
+        for (index, part) in part_paths.iter().enumerate() {
+            let start = index * chunk;
+            let end = (start + chunk).min(bytes.len());
+            fs::write(part, &bytes[start..end]).unwrap();
+        }
+        fs::remove_file(source).unwrap();
+    }
+
+    #[test]
+    fn numeric_split_part_detects_supported_bases_only() {
+        let (base, part) = numeric_split_part(Path::new("mods/Foo.rar.0001")).unwrap();
+        assert_eq!(base, Path::new("mods/Foo.rar"));
+        assert_eq!(part, 1);
+        let (base, part) = numeric_split_part(Path::new("Foo.7z.002")).unwrap();
+        assert_eq!(base, Path::new("Foo.7z"));
+        assert_eq!(part, 2);
+        assert!(numeric_split_part(Path::new("Foo.rar")).is_none());
+        assert!(numeric_split_part(Path::new("Foo.part1.rar")).is_none());
+        assert!(numeric_split_part(Path::new("Foo.0001")).is_none());
+        assert!(numeric_split_part(Path::new("Foo.txt.0001")).is_none());
+    }
+
+    #[test]
+    fn split_zip_volumes_extract_after_joining() {
+        let temp = tempfile::tempdir().unwrap();
+        let whole = temp.path().join("Cool Mod.zip");
+        write_demo_zip(&whole);
+        let parts = [
+            temp.path().join("Cool Mod.zip.001"),
+            temp.path().join("Cool Mod.zip.002"),
+        ];
+        split_file_into_parts(&whole, &parts);
+
+        let destination = temp.path().join("extract");
+        extract_archive(&parts[0], &destination).unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("Mod").join("readme.txt")).unwrap(),
+            "split demo payload"
+        );
+
+        // Any part of the set resolves to the same full extraction.
+        let from_second = temp.path().join("extract-second");
+        extract_archive(&parts[1], &from_second).unwrap();
+        assert!(from_second.join("Mod").join("readme.txt").exists());
+    }
+
+    #[test]
+    fn split_archive_with_missing_part_reports_the_gap() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("Foo.zip.001"), b"a").unwrap();
+        fs::write(temp.path().join("Foo.zip.003"), b"c").unwrap();
+
+        let destination = temp.path().join("extract");
+        let err = extract_archive(&temp.path().join("Foo.zip.001"), &destination).unwrap_err();
+        assert!(
+            err.to_string().contains("missing part 2"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn split_archive_missing_first_part_reports_it() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("Foo.zip.0002"), b"b").unwrap();
+
+        let destination = temp.path().join("extract");
+        let err = extract_archive(&temp.path().join("Foo.zip.0002"), &destination).unwrap_err();
+        assert!(
+            err.to_string().contains("missing part 1"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn resolve_split_archive_maps_every_part_to_the_first_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("Foo.rar.0001");
+        let second = temp.path().join("Foo.rar.0002");
+        fs::write(&first, b"a").unwrap();
+        fs::write(&second, b"b").unwrap();
+        assert_eq!(resolve_split_archive(&second).unwrap(), first);
+        assert_eq!(resolve_split_archive(&first).unwrap(), first);
+
+        let part1 = temp.path().join("Bar.part1.rar");
+        let part2 = temp.path().join("Bar.part2.rar");
+        fs::write(&part1, b"a").unwrap();
+        fs::write(&part2, b"b").unwrap();
+        assert_eq!(resolve_split_archive(&part2).unwrap(), part1);
+
+        let main = temp.path().join("Old.rar");
+        let old_part = temp.path().join("Old.r00");
+        fs::write(&main, b"a").unwrap();
+        fs::write(&old_part, b"b").unwrap();
+        assert_eq!(resolve_split_archive(&old_part).unwrap(), main);
+
+        assert!(resolve_split_archive(&temp.path().join("Plain.zip")).is_none());
+    }
+
+    #[test]
+    fn source_display_file_name_strips_part_suffixes() {
+        assert_eq!(
+            source_display_file_name(Path::new("Cool Mod.7z.001")),
+            "Cool Mod.7z"
+        );
+        assert_eq!(
+            source_display_file_name(Path::new("Cool Mod.rar.0002")),
+            "Cool Mod.rar"
+        );
+        assert_eq!(
+            source_display_file_name(Path::new("Cool Mod.part2.rar")),
+            "Cool Mod.rar"
+        );
+        assert_eq!(
+            source_display_file_name(Path::new("Cool Mod.zip")),
+            "Cool Mod.zip"
+        );
+    }
+
+    #[test]
+    fn archive_source_total_size_sums_all_volumes() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("Foo.7z.001");
+        let second = temp.path().join("Foo.7z.002");
+        fs::write(&first, vec![0u8; 10]).unwrap();
+        fs::write(&second, vec![0u8; 7]).unwrap();
+        assert_eq!(archive_source_total_size(&first), Some(17));
+        assert_eq!(archive_source_total_size(&second), Some(17));
+
+        let part1 = temp.path().join("Bar.part1.rar");
+        let part2 = temp.path().join("Bar.part2.rar");
+        fs::write(&part1, vec![0u8; 4]).unwrap();
+        fs::write(&part2, vec![0u8; 3]).unwrap();
+        assert_eq!(archive_source_total_size(&part1), Some(7));
+
+        let plain = temp.path().join("Baz.zip");
+        fs::write(&plain, vec![0u8; 5]).unwrap();
+        assert_eq!(archive_source_total_size(&plain), Some(5));
+    }
+
+    #[test]
+    fn archive_picker_extensions_cover_formats_and_first_part_suffixes() {
+        let extensions = archive_picker_extensions();
+        for expected in ["zip", "rar", "7z", "001", "0001"] {
+            assert!(
+                extensions.iter().any(|ext| *ext == expected),
+                "missing extension {expected}"
+            );
+        }
+        assert!(
+            extensions.len() < 10,
+            "picker filter must stay small; Windows' file dialog crashes on huge filters"
+        );
+    }
+
+    #[test]
+    fn import_source_label_strips_split_volume_suffixes() {
+        assert_eq!(import_source_label(Path::new("Cool Mod.rar.0001")), "Cool Mod");
+        assert_eq!(import_source_label(Path::new("Cool Mod.part1.rar")), "Cool Mod");
+        assert_eq!(import_source_label(Path::new("Cool Mod.zip")), "Cool Mod");
     }
 
     #[test]

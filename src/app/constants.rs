@@ -41,6 +41,15 @@ const TOAST_SPACING: f32 = 6.0;
 const TOAST_OFFSET: f32 = -108.0;
 const TOAST_MAX_WIDTH: f32 = CARD_WIDTH * 3.0;
 
+// Fullview image overlay wheel navigation. Wheel input is accumulated into
+// discrete steps so one physical notch never advances more than one image,
+// regardless of how large the system scroll step is.
+const OVERLAY_SCROLL_LINES_PER_STEP: f32 = 1.0;
+const OVERLAY_SCROLL_POINTS_PER_LINE: f32 = 50.0;
+const OVERLAY_SCROLL_LINES_PER_PAGE: f32 = 20.0;
+const OVERLAY_SCROLL_STEP_COOLDOWN_SECS: f64 = 0.12;
+const OVERLAY_SCROLL_IDLE_RESET_SECS: f64 = 0.35;
+
 // Settings and background worker refresh intervals.
 const SETTINGS_USAGE_REFRESH_SECS: f64 = 5.0;
 

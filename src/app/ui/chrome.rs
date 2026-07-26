@@ -202,7 +202,11 @@ impl HestiaApp {
                                 }
                                 if response.clicked() {
                                     if let Some(paths) = FileDialog::new()
-                                        .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
+                                        .add_filter(
+                                            text.file_filter_archives(),
+                                            importing::archive_picker_extensions(),
+                                        )
+                                        .add_filter(text.file_filter_all_files(), &["*"])
                                         .pick_files()
                                     {
                                         let sources = paths
@@ -223,7 +227,11 @@ impl HestiaApp {
                                         .clicked()
                                     {
                                         if let Some(paths) = FileDialog::new()
-                                            .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
+                                            .add_filter(
+                                                text.file_filter_archives(),
+                                                importing::archive_picker_extensions(),
+                                            )
+                                            .add_filter(text.file_filter_all_files(), &["*"])
                                             .pick_files()
                                         {
                                             let sources = paths
@@ -244,7 +252,11 @@ impl HestiaApp {
                                         .clicked()
                                     {
                                         if let Some(paths) = FileDialog::new()
-                                            .add_filter(text.file_filter_archives(), &["zip", "rar", "7z"])
+                                            .add_filter(
+                                                text.file_filter_archives(),
+                                                importing::archive_picker_extensions(),
+                                            )
+                                            .add_filter(text.file_filter_all_files(), &["*"])
                                             .pick_files()
                                         {
                                             let sources = paths

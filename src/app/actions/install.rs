@@ -55,7 +55,7 @@ impl HestiaApp {
                     );
                     if let Some(task) = self.state.tasks.iter_mut().find(|t| t.id == job_id) {
                         task.total_size = self.install_inflight.get(&job_id).and_then(|job| match &job.source {
-                            ImportSource::Archive(path) => fs::metadata(path).ok().map(|m| m.len()),
+                            ImportSource::Archive(path) => importing::archive_source_total_size(path),
                             ImportSource::Folder(_) => None,
                         });
                     }
@@ -200,6 +200,15 @@ impl HestiaApp {
 
         let mut added_any = false;
         for source in sources {
+            // Split archive volumes all normalize to their first part so the
+            // queue dedupe below collapses a multi-part set into one install.
+            let source = match source {
+                ImportSource::Archive(path) => {
+                    let path = importing::resolve_split_archive(&path).unwrap_or(path);
+                    ImportSource::Archive(path)
+                }
+                other => other,
+            };
             let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
                 self.report_warn(self.text().select_game_first(), None);
                 return;

@@ -352,6 +352,8 @@ impl HestiaApp {
             tasks_force_default_pos,
             tasks_tab: TasksTab::Installs,
             tasks_scroll_to_edge: false,
+            task_row_advance_cache: HashMap::new(),
+            task_row_advance_cache_width: 0.0,
             install_queue: VecDeque::new(),
             install_batch_active: false,
             install_batch_stats: InstallBatchStats::default(),
@@ -1891,7 +1893,7 @@ impl HestiaApp {
                         Self::has_modified_update_available(mod_entry),
                         mod_has_local_changes_for_update_check(mod_entry),
                         Self::ignored_update_kind(mod_entry),
-                        mod_entry.metadata.user.category_id.clone(),
+                        self.effective_mod_category_id(mod_entry),
                         self.mod_category_label(mod_entry),
                     )
                 })
