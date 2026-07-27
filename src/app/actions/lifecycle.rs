@@ -184,8 +184,22 @@ impl HestiaApp {
             refresh_result_tx,
         );
         let (profile_request_tx, profile_request_rx) = worker_channel::<ProfileRequest>();
+        let (profile_archive_tx, profile_archive_rx) = worker_channel::<ProfileArchiveJob>();
         let (profile_event_tx, profile_event_rx) = worker_channel::<ProfileEvent>();
-        spawn_profile_worker(&runtime_services, profile_request_rx, profile_event_tx);
+        let profile_archive_coordinator = Arc::new(ProfileArchiveCoordinator::default());
+        spawn_profile_archive_worker(
+            &runtime_services,
+            profile_archive_rx,
+            profile_event_tx.clone(),
+            Arc::clone(&profile_archive_coordinator),
+        );
+        spawn_profile_worker(
+            &runtime_services,
+            profile_request_rx,
+            profile_event_tx,
+            profile_archive_tx,
+            profile_archive_coordinator,
+        );
         let app_icon_texture = load_title_icon_texture(&cc.egui_ctx, app_icon_bytes(), "app-icon");
         let selected_game = resolve_last_selected_game(&state).unwrap_or(0);
         let game_cover_textures = HashMap::new();
@@ -464,6 +478,7 @@ impl HestiaApp {
             profile_operation_inflight: None,
             profile_next_operation_id: 1,
             profile_recovery_queue: VecDeque::new(),
+            profile_recovery_failed: false,
             profile_name_prompt: None,
             profile_name_target_id: None,
             profile_name_draft: String::new(),
@@ -518,7 +533,13 @@ impl HestiaApp {
     }
 
     fn complete_startup_launch(&mut self, ctx: &egui::Context) {
-        if !self.startup_launch_pending || self.proxy_apply_inflight {
+        let profile_recovery_pending = self
+            .profile_operation_inflight
+            .as_ref()
+            .is_some_and(|operation| operation.kind == ProfileOperationKind::Recover)
+            || !self.profile_recovery_queue.is_empty()
+            || self.profile_recovery_failed;
+        if !self.startup_launch_pending || self.proxy_apply_inflight || profile_recovery_pending {
             return;
         }
         self.startup_launch_pending = false;

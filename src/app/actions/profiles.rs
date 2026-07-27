@@ -98,6 +98,7 @@ impl HestiaApp {
             file_count: 0,
             portable_metadata,
             categories,
+            source_fingerprint: None,
         }
     }
 
@@ -157,6 +158,10 @@ impl HestiaApp {
         profiles::profile_archive_path(game, self.state.static_prefs.use_default_mods_path, id)
     }
 
+    fn profile_path_for(&self, game: &GameInstall, id: Uuid) -> Result<PathBuf> {
+        profiles::profile_path(game, self.state.static_prefs.use_default_mods_path, id)
+    }
+
     fn active_profile_id(&self, game_id: &str) -> Option<Uuid> {
         self.state
             .profiles_by_game
@@ -171,9 +176,10 @@ impl HestiaApp {
             .map(|metadata| metadata.display_name.clone())
             .or_else(|| spec.display_name.clone());
         let target_display_name = spec.target_display_name.clone();
-        let extracts_before_archiving = spec.kind == ProfileOperationKind::Switch
-            || (spec.kind == ProfileOperationKind::Duplicate
-                && spec.source_profile_id != spec.profile_id);
+        let prepares_before_activating = matches!(
+            spec.kind,
+            ProfileOperationKind::Switch | ProfileOperationKind::Duplicate
+        );
         if self
             .profile_request_tx
             .send(ProfileRequest::Execute(spec.clone()))
@@ -186,7 +192,7 @@ impl HestiaApp {
             kind: spec.kind,
             source_display_name,
             target_display_name,
-            extracts_before_archiving,
+            prepares_before_activating,
             cancel: spec.cancel,
             progress: spec.progress,
             stage: spec.stage,
@@ -206,7 +212,6 @@ impl HestiaApp {
         target_display_name: Option<String>,
         source_archive: Option<PathBuf>,
         target_archive: Option<PathBuf>,
-        target_archive_sha256: Option<String>,
         target_categories: Option<Vec<ModCategory>>,
         metadata: Option<profiles::ProfileArchiveMetadata>,
     ) -> Result<()> {
@@ -231,7 +236,6 @@ impl HestiaApp {
             target_display_name,
             source_archive,
             target_archive,
-            target_archive_sha256,
             target_categories,
             metadata,
             delete_behavior: self.state.static_prefs.delete_behavior,
@@ -382,7 +386,6 @@ impl HestiaApp {
         catalog.profiles.push(ProfileRecord {
             id,
             display_name: "Default".to_string(),
-            archive_sha256: None,
             archive_size: None,
             uncompressed_size: None,
             file_count: None,
@@ -438,7 +441,6 @@ impl HestiaApp {
             metadata.as_ref().map(|m| m.display_name.clone()),
             Some(display_name),
             active_archive,
-            None,
             None,
             Some(Vec::new()),
             metadata,
@@ -510,7 +512,6 @@ impl HestiaApp {
             Some(display_name),
             source_archive,
             None,
-            source_record.archive_sha256.clone(),
             source_categories,
             metadata,
         )
@@ -544,8 +545,9 @@ impl HestiaApp {
             bail!("target profile does not exist");
         }
         let target_archive = self.profile_archive_for(&game, target_id)?;
-        if !target_archive.is_file() {
-            bail!("target profile archive is missing");
+        let target_profile = self.profile_path_for(&game, target_id)?;
+        if !target_archive.is_file() && !target_profile.is_dir() {
+            bail!("target profile data is missing");
         }
         let metadata = active_id.and_then(|id| {
             self.state
@@ -564,17 +566,6 @@ impl HestiaApp {
                 })
         });
         let active_archive = active_id.and_then(|id| self.profile_archive_for(&game, id).ok());
-        let target_sha = self
-            .state
-            .profiles_by_game
-            .get(game_id)
-            .and_then(|catalog| {
-                catalog
-                    .profiles
-                    .iter()
-                    .find(|profile| profile.id == target_id)
-            })
-            .and_then(|profile| profile.archive_sha256.clone());
         let target_display_name = self
             .state
             .profiles_by_game
@@ -608,7 +599,6 @@ impl HestiaApp {
             target_display_name,
             active_archive,
             Some(target_archive),
-            target_sha,
             target_categories,
             metadata,
         )
@@ -703,11 +693,11 @@ impl HestiaApp {
             Some(archive),
             None,
             None,
-            None,
         )
     }
 
     fn dispatch_profile_recovery(&mut self) {
+        self.profile_recovery_failed = false;
         self.profile_recovery_queue = self.state.games.clone().into();
         self.dispatch_next_profile_recovery();
     }
@@ -719,7 +709,7 @@ impl HestiaApp {
         let Some(game) = self.profile_recovery_queue.pop_front() else {
             return;
         };
-        let _ = self.begin_profile_operation(
+        if let Err(error) = self.begin_profile_operation(
             game.definition.id.clone(),
             game,
             ProfileOperationKind::Recover,
@@ -732,8 +722,13 @@ impl HestiaApp {
             None,
             None,
             None,
-            None,
-        );
+        ) {
+            self.profile_recovery_failed = true;
+            self.report_error_message(
+                format!("profile recovery could not start: {error:#}"),
+                Some("Profile recovery failed"),
+            );
+        }
     }
 
     fn apply_profile_archive_result(
@@ -751,7 +746,6 @@ impl HestiaApp {
                 .iter_mut()
                 .find(|profile| profile.id == profile_id)
             {
-                profile.archive_sha256 = Some(archive.sha256.clone());
                 profile.archive_size = Some(archive.bytes);
                 profile.uncompressed_size = Some(archive.uncompressed_size);
                 profile.file_count = Some(archive.file_count);
@@ -762,38 +756,90 @@ impl HestiaApp {
 
     fn consume_profile_events(&mut self) {
         while let Ok(event) = self.profile_event_rx.try_recv() {
-            let event_id = match &event {
-                ProfileEvent::Completed { operation_id, .. }
-                | ProfileEvent::Failed { operation_id, .. }
-                | ProfileEvent::Canceled { operation_id, .. } => *operation_id,
-            };
-            if self
-                .profile_operation_inflight
-                .as_ref()
-                .is_none_or(|operation| operation.operation_id != event_id)
-            {
-                continue;
-            }
-            let Some(inflight) = self.profile_operation_inflight.take() else {
-                continue;
-            };
-            let was_recovery = inflight.kind == ProfileOperationKind::Recover;
             match event {
-                ProfileEvent::Completed {
+                ProfileEvent::ArchiveCompleted {
                     game_id,
-                    kind,
                     profile_id,
-                    target_profile_id,
-                    display_name,
                     archive,
-                    active_profile_marker,
-                    ..
                 } => {
-                    if let Some(archive) = &archive {
-                        self.apply_profile_archive_result(&game_id, profile_id, archive);
+                    self.apply_profile_archive_result(&game_id, Some(profile_id), &archive);
+                    self.save_state();
+                    continue;
+                }
+                ProfileEvent::ArchiveFailed {
+                    game_id,
+                    profile_id,
+                    error,
+                } => {
+                    self.report_error_message(
+                        format!(
+                            "background profile compression failed for {game_id}/{profile_id}: {error}"
+                        ),
+                        Some("Profile compression failed"),
+                    );
+                    continue;
+                }
+                event => {
+                    let event_id = match &event {
+                        ProfileEvent::Completed { operation_id, .. }
+                        | ProfileEvent::Failed { operation_id, .. }
+                        | ProfileEvent::Canceled { operation_id, .. } => *operation_id,
+                        ProfileEvent::ArchiveCompleted { .. }
+                        | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
+                    };
+                    if self
+                        .profile_operation_inflight
+                        .as_ref()
+                        .is_none_or(|operation| operation.operation_id != event_id)
+                    {
+                        continue;
                     }
-                    let existing_name = self
-                        .state
+                    let Some(inflight) = self.profile_operation_inflight.take() else {
+                        continue;
+                    };
+                    let was_recovery = inflight.kind == ProfileOperationKind::Recover;
+                    let recovery_blocking = was_recovery
+                        && matches!(
+                            &event,
+                            ProfileEvent::Failed {
+                                recovery_blocking: true,
+                                ..
+                            }
+                        );
+                    self.consume_foreground_profile_event(event, inflight);
+                    if was_recovery {
+                        if recovery_blocking {
+                            self.profile_recovery_failed = true;
+                        }
+                        self.dispatch_next_profile_recovery();
+                    }
+                }
+            }
+        }
+    }
+
+    fn consume_foreground_profile_event(
+        &mut self,
+        event: ProfileEvent,
+        inflight: ProfileOperationInflight,
+    ) {
+        match event {
+            ProfileEvent::Completed {
+                game_id,
+                kind,
+                profile_id,
+                target_profile_id,
+                display_name,
+                archive,
+                active_profile_marker,
+                warnings,
+                ..
+            } => {
+                if let Some(archive) = &archive {
+                    self.apply_profile_archive_result(&game_id, profile_id, archive);
+                }
+                let existing_name =
+                    self.state
                         .profiles_by_game
                         .get(&game_id)
                         .and_then(|catalog| {
@@ -802,27 +848,61 @@ impl HestiaApp {
                             })
                         })
                         .map(|profile| profile.display_name.clone());
-                    let success_name = display_name
-                        .clone()
-                        .or_else(|| existing_name.clone())
-                        .map(|name| self.text().profile_display_name(&name));
-                    let active_profile_categories = active_profile_marker
-                        .as_ref()
-                        .and_then(|marker| marker.categories.clone());
-                    let catalog = self
-                        .state
-                        .profiles_by_game
-                        .entry(game_id.clone())
-                        .or_default();
-                    match kind {
-                        ProfileOperationKind::Create | ProfileOperationKind::Duplicate => {
-                            let id = target_profile_id.expect("target profile id");
+                let success_name = display_name
+                    .clone()
+                    .or_else(|| existing_name.clone())
+                    .map(|name| self.text().profile_display_name(&name));
+                let active_profile_categories = active_profile_marker
+                    .as_ref()
+                    .and_then(|marker| marker.categories.clone());
+                let catalog = self
+                    .state
+                    .profiles_by_game
+                    .entry(game_id.clone())
+                    .or_default();
+                match kind {
+                    ProfileOperationKind::Create | ProfileOperationKind::Duplicate => {
+                        let id = target_profile_id.expect("target profile id");
+                        if !catalog.profiles.iter().any(|profile| profile.id == id) {
+                            catalog.profiles.push(ProfileRecord {
+                                id,
+                                display_name: display_name.unwrap_or_else(|| "Profile".to_string()),
+                                archive_size: None,
+                                uncompressed_size: None,
+                                file_count: None,
+                                created_at: Some(Utc::now()),
+                                updated_at: Some(Utc::now()),
+                                portable_metadata: HashMap::new(),
+                                categories: Some(
+                                    active_profile_categories.clone().unwrap_or_default(),
+                                ),
+                            });
+                        }
+                        catalog.active_profile_id = Some(id);
+                    }
+                    ProfileOperationKind::Switch => catalog.active_profile_id = target_profile_id,
+                    ProfileOperationKind::Rename => {
+                        if let Some(profile) = catalog
+                            .profiles
+                            .iter_mut()
+                            .find(|profile| Some(profile.id) == profile_id)
+                        {
+                            profile.display_name =
+                                display_name.unwrap_or_else(|| profile.display_name.clone());
+                            profile.updated_at = Some(Utc::now());
+                        }
+                    }
+                    ProfileOperationKind::Delete => catalog
+                        .profiles
+                        .retain(|profile| Some(profile.id) != profile_id),
+                    ProfileOperationKind::Recover => {
+                        if let Some(id) = target_profile_id {
                             if !catalog.profiles.iter().any(|profile| profile.id == id) {
                                 catalog.profiles.push(ProfileRecord {
                                     id,
                                     display_name: display_name
+                                        .clone()
                                         .unwrap_or_else(|| "Profile".to_string()),
-                                    archive_sha256: None,
                                     archive_size: None,
                                     uncompressed_size: None,
                                     file_count: None,
@@ -836,178 +916,87 @@ impl HestiaApp {
                             }
                             catalog.active_profile_id = Some(id);
                         }
-                        ProfileOperationKind::Switch => {
-                            catalog.active_profile_id = target_profile_id
-                        }
-                        ProfileOperationKind::Rename => {
-                            if let Some(profile) = catalog
-                                .profiles
-                                .iter_mut()
-                                .find(|profile| Some(profile.id) == profile_id)
-                            {
-                                profile.display_name =
-                                    display_name.unwrap_or_else(|| profile.display_name.clone());
-                                profile.updated_at = Some(Utc::now());
-                            }
-                        }
-                        ProfileOperationKind::Delete => catalog
-                            .profiles
-                            .retain(|profile| Some(profile.id) != profile_id),
-                        ProfileOperationKind::Recover => {
-                            if let Some(id) = target_profile_id {
-                                if !catalog.profiles.iter().any(|profile| profile.id == id) {
-                                    catalog.profiles.push(ProfileRecord {
-                                        id,
-                                        display_name: display_name
-                                            .clone()
-                                            .unwrap_or_else(|| "Profile".to_string()),
-                                        archive_sha256: None,
-                                        archive_size: None,
-                                        uncompressed_size: None,
-                                        file_count: None,
-                                        created_at: Some(Utc::now()),
-                                        updated_at: Some(Utc::now()),
-                                        portable_metadata: HashMap::new(),
-                                        categories: Some(
-                                            active_profile_categories.clone().unwrap_or_default(),
-                                        ),
-                                    });
-                                }
-                                catalog.active_profile_id = Some(id);
-                            }
-                        }
                     }
-                    if let Some(marker) = active_profile_marker.as_ref() {
-                        if let Some(profile) = catalog
-                            .profiles
-                            .iter_mut()
-                            .find(|profile| profile.id == marker.profile_id)
-                        {
-                            profile.categories = marker.categories.clone();
-                        }
+                }
+                if let Some(marker) = active_profile_marker.as_ref() {
+                    if let Some(profile) = catalog
+                        .profiles
+                        .iter_mut()
+                        .find(|profile| profile.id == marker.profile_id)
+                    {
+                        profile.categories = marker.categories.clone();
                     }
-                    if matches!(
-                        kind,
-                        ProfileOperationKind::Create
-                            | ProfileOperationKind::Duplicate
-                            | ProfileOperationKind::Switch
-                            | ProfileOperationKind::Recover
-                    ) {
-                        if let Some(categories) = active_profile_categories.clone() {
-                            self.state
-                                .categories
-                                .retain(|category| category.game_id != game_id);
-                            self.state.categories.extend(
-                                Self::sanitize_profile_categories(&game_id, Some(categories))
-                                    .unwrap_or_default(),
-                            );
-                            if self
-                                .selected_game()
-                                .is_some_and(|game| game.definition.id == game_id)
-                            {
-                                self.selected_category_folder_id = None;
-                                self.selected_category_ids.clear();
-                                self.category_rename_target_id = None;
-                                self.category_rename_focus_target_id = None;
-                                self.category_rename_surface = None;
-                                self.category_rename_name.clear();
-                                self.dragging_category_id = None;
-                                self.dragging_category_target_index = None;
-                                self.settings_dragging_category_ids.clear();
-                                self.settings_dragging_category_target_index = None;
-                                self.library_card_cache.key = None;
-                            }
-                        }
-                    }
-                    self.save_state();
-                    let mut active_archive_cleanup_failed = None;
-                    if matches!(
-                        kind,
-                        ProfileOperationKind::Switch | ProfileOperationKind::Recover
-                    ) {
-                        if let (Some(target_id), Some(game)) = (
-                            target_profile_id,
-                            self.state
-                                .games
-                                .iter()
-                                .find(|game| game.definition.id == game_id)
-                                .cloned(),
-                        ) {
-                            match self.profile_archive_for(&game, target_id).and_then(|path| {
-                                if path.exists() {
-                                    std::fs::remove_file(&path).map_err(anyhow::Error::from)?;
-                                }
-                                Ok(())
-                            }) {
-                                Ok(()) => {
-                                    if let Some(profile) =
-                                        self.state.profiles_by_game.get_mut(&game_id).and_then(
-                                            |catalog| {
-                                                catalog
-                                                    .profiles
-                                                    .iter_mut()
-                                                    .find(|profile| profile.id == target_id)
-                                            },
-                                        )
-                                    {
-                                        profile.archive_sha256 = None;
-                                        profile.archive_size = None;
-                                        profile.uncompressed_size = None;
-                                        profile.file_count = None;
-                                    }
-                                    self.save_state();
-                                }
-                                Err(error) => active_archive_cleanup_failed = Some(error),
-                            }
-                        }
-                    }
-                    if matches!(
-                        kind,
-                        ProfileOperationKind::Create
-                            | ProfileOperationKind::Duplicate
-                            | ProfileOperationKind::Switch
-                    ) {
-                        self.queue_game_refresh(game_id);
-                    }
-                    if let Some(error) = active_archive_cleanup_failed {
-                        self.report_error_message(
-                            format!("profile activated, but its stale archive could not be removed: {error:#}"),
-                            Some(self.text().profile_operation_failed()),
+                }
+                if matches!(
+                    kind,
+                    ProfileOperationKind::Create
+                        | ProfileOperationKind::Duplicate
+                        | ProfileOperationKind::Switch
+                        | ProfileOperationKind::Recover
+                ) {
+                    if let Some(categories) = active_profile_categories.clone() {
+                        self.state
+                            .categories
+                            .retain(|category| category.game_id != game_id);
+                        self.state.categories.extend(
+                            Self::sanitize_profile_categories(&game_id, Some(categories))
+                                .unwrap_or_default(),
                         );
-                    } else if let Some(name) = success_name {
-                        let message = match kind {
-                            ProfileOperationKind::Create => {
-                                Some(self.text().profile_created(&name))
-                            }
-                            ProfileOperationKind::Duplicate => {
-                                Some(self.text().profile_duplicated(&name))
-                            }
-                            ProfileOperationKind::Switch => {
-                                Some(self.text().profile_activated(&name))
-                            }
-                            ProfileOperationKind::Delete => {
-                                Some(self.text().profile_deleted(&name))
-                            }
-                            _ => None,
-                        };
-                        if let Some(message) = message {
-                            self.set_message_ok(message);
+                        if self
+                            .selected_game()
+                            .is_some_and(|game| game.definition.id == game_id)
+                        {
+                            self.selected_category_folder_id = None;
+                            self.selected_category_ids.clear();
+                            self.category_rename_target_id = None;
+                            self.category_rename_focus_target_id = None;
+                            self.category_rename_surface = None;
+                            self.category_rename_name.clear();
+                            self.dragging_category_id = None;
+                            self.dragging_category_target_index = None;
+                            self.settings_dragging_category_ids.clear();
+                            self.settings_dragging_category_target_index = None;
+                            self.library_card_cache.key = None;
                         }
                     }
-                    let _ = inflight;
                 }
-                ProfileEvent::Failed { game_id, error, .. } => {
-                    self.report_error_message(
-                        format!("profile operation failed for {game_id}: {error}"),
-                        Some("Profile operation failed"),
-                    );
+                self.save_state();
+                if matches!(
+                    kind,
+                    ProfileOperationKind::Create
+                        | ProfileOperationKind::Duplicate
+                        | ProfileOperationKind::Switch
+                ) {
+                    self.queue_game_refresh(game_id);
                 }
-                ProfileEvent::Canceled { .. } => {
-                    self.set_message_ok(self.text().profile_canceled())
+                for warning in warnings {
+                    self.report_error_message(warning, Some("Profile data preserved"));
                 }
+                if let Some(name) = success_name {
+                    let message = match kind {
+                        ProfileOperationKind::Create => Some(self.text().profile_created(&name)),
+                        ProfileOperationKind::Duplicate => {
+                            Some(self.text().profile_duplicated(&name))
+                        }
+                        ProfileOperationKind::Switch => Some(self.text().profile_activated(&name)),
+                        ProfileOperationKind::Delete => Some(self.text().profile_deleted(&name)),
+                        _ => None,
+                    };
+                    if let Some(message) = message {
+                        self.set_message_ok(message);
+                    }
+                }
+                let _ = inflight;
             }
-            if was_recovery {
-                self.dispatch_next_profile_recovery();
+            ProfileEvent::Failed { game_id, error, .. } => {
+                self.report_error_message(
+                    format!("profile operation failed for {game_id}: {error}"),
+                    Some("Profile operation failed"),
+                );
+            }
+            ProfileEvent::Canceled { .. } => self.set_message_ok(self.text().profile_canceled()),
+            ProfileEvent::ArchiveCompleted { .. } | ProfileEvent::ArchiveFailed { .. } => {
+                unreachable!()
             }
         }
     }

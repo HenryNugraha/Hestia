@@ -1470,7 +1470,6 @@ mod tests {
                 profiles: vec![crate::model::ProfileRecord {
                     id: profile_id,
                     display_name: "Default".to_string(),
-                    archive_sha256: Some("abc".to_string()),
                     archive_size: Some(123),
                     uncompressed_size: Some(456),
                     file_count: Some(7),
@@ -1487,12 +1486,22 @@ mod tests {
             },
         );
         let raw = toml::to_string(&AppPreferences::from(&state)).unwrap();
+        assert!(!raw.contains("archive_sha256"));
         let saved: AppPreferences = toml::from_str(&raw).unwrap();
         let catalog = saved.profiles_by_game.get("wuwa").unwrap();
         assert_eq!(catalog.active_profile_id, Some(profile_id));
         assert_eq!(catalog.profiles[0].display_name, "Default");
         assert_eq!(catalog.profiles[0].file_count, Some(7));
         assert_eq!(catalog.profiles[0].categories.as_ref().unwrap().len(), 1);
+
+        let legacy_profile_id = uuid::Uuid::new_v4();
+        let legacy_raw = format!(
+            "version = 7\ngames = []\n[profiles_by_game.wuwa]\nactive_profile_id = \"{legacy_profile_id}\"\n\n[[profiles_by_game.wuwa.profiles]]\nid = \"{legacy_profile_id}\"\ndisplay_name = \"Legacy\"\narchive_sha256 = \"abc\"\n"
+        );
+        let legacy_config: AppPreferences = toml::from_str(&legacy_raw).unwrap();
+        let legacy_catalog = legacy_config.profiles_by_game.get("wuwa").unwrap();
+        assert_eq!(legacy_catalog.profiles[0].display_name, "Legacy");
+        assert_eq!(legacy_catalog.profiles[0].archive_size, None);
     }
 
     #[test]
@@ -1508,7 +1517,6 @@ mod tests {
                     crate::model::ProfileRecord {
                         id: missing_id,
                         display_name: "Legacy".to_string(),
-                        archive_sha256: None,
                         archive_size: None,
                         uncompressed_size: None,
                         file_count: None,
@@ -1520,7 +1528,6 @@ mod tests {
                     crate::model::ProfileRecord {
                         id: empty_id,
                         display_name: "Empty".to_string(),
-                        archive_sha256: None,
                         archive_size: None,
                         uncompressed_size: None,
                         file_count: None,

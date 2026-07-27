@@ -325,6 +325,7 @@ pub struct HestiaApp {
     profile_operation_inflight: Option<ProfileOperationInflight>,
     profile_next_operation_id: u64,
     profile_recovery_queue: VecDeque<GameInstall>,
+    profile_recovery_failed: bool,
     profile_name_prompt: Option<ProfileOperationKind>,
     profile_name_target_id: Option<Uuid>,
     profile_name_draft: String,
@@ -1245,10 +1246,30 @@ struct ProfileOperationInflight {
     kind: ProfileOperationKind,
     source_display_name: Option<String>,
     target_display_name: Option<String>,
-    extracts_before_archiving: bool,
+    prepares_before_activating: bool,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
     stage: Arc<RwLock<String>>,
+}
+
+#[derive(Default)]
+struct ProfileArchiveCoordinator {
+    state: Mutex<ProfileArchiveCoordinatorState>,
+    changed: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct ProfileArchiveCoordinatorState {
+    foreground_active: bool,
+    archive_running: bool,
+}
+
+#[derive(Clone)]
+struct ProfileArchiveJob {
+    game_id: String,
+    game: GameInstall,
+    use_default_mods_path: bool,
+    profile_id: Uuid,
 }
 
 #[derive(Clone)]
@@ -1265,7 +1286,6 @@ struct ProfileOperationSpec {
     target_display_name: Option<String>,
     source_archive: Option<PathBuf>,
     target_archive: Option<PathBuf>,
-    target_archive_sha256: Option<String>,
     target_categories: Option<Vec<ModCategory>>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
     delete_behavior: DeleteBehavior,
@@ -1296,11 +1316,23 @@ enum ProfileEvent {
         display_name: Option<String>,
         archive: Option<crate::integrations::profiles::ArchiveResult>,
         active_profile_marker: Option<ActiveProfileMarker>,
+        warnings: Vec<String>,
+    },
+    ArchiveCompleted {
+        game_id: String,
+        profile_id: Uuid,
+        archive: crate::integrations::profiles::ArchiveResult,
+    },
+    ArchiveFailed {
+        game_id: String,
+        profile_id: Uuid,
+        error: String,
     },
     Failed {
         operation_id: u64,
         game_id: String,
         error: String,
+        recovery_blocking: bool,
     },
     Canceled {
         operation_id: u64,

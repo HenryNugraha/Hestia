@@ -1,25 +1,27 @@
 //! Per-game profile storage and `.tzst` archive primitives.
 //!
-//! The active profile is represented by the live game directories.  Inactive profiles are
-//! tar+zstd archives below a backend-specific `Mods_Profiles` directory.  This module deliberately
-//! contains no UI or switching policy; callers can compose the primitives into a transactional
-//! switch operation.
+//! The active profile is represented by the live game directories. Inactive profiles normally
+//! live in tar+zstd archives below a backend-specific `Mods_Profiles` directory; a
+//! `<uuid>.profile` container is the crash-safe authoritative copy while background compression
+//! is pending. This module deliberately contains no UI or switching policy; callers can compose
+//! the primitives into a transactional switch operation.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashSet,
     fs::{self, File},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     rc::Rc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tar::{Archive, Builder, EntryType, Header};
 use uuid::Uuid;
+use xxhash_rust::xxh3::xxh3_64;
 use zstd::stream::{read::Decoder, write::Encoder};
 
 use crate::model::{GameBackend, GameInstall, MODS_PROFILES_DIR, ModCategory};
@@ -33,7 +35,7 @@ pub const PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT: &str = "Archived";
 pub const PROFILE_README_CONTENT: &str = "\
 Hestia profile archives
 
-The .tzst files in this folder are Hestia profile archives. Each file contains a tar archive compressed with Zstandard.
+Inactive profiles are normally stored as <uuid>.profile.tzst archives. While Hestia is switching or compressing a profile, its data may temporarily be stored in a <uuid>.profile folder. Temporary .part, .bak, and .conflict files are managed automatically.
 
 You can open them with:
 - Windows 11 File Explorer (with current system updates)
@@ -58,9 +60,25 @@ impl ProfileRoots {
         self.profiles_dir.join(PROFILE_STAGING_DIR)
     }
 
+    /// Canonical loose profile container path (`<uuid>.profile`).
+    pub fn profile_path(&self, profile_id: Uuid) -> PathBuf {
+        self.profiles_dir.join(format!("{profile_id}.profile"))
+    }
+
+    /// Canonical compressed profile archive path (`<uuid>.profile.tzst`).
     pub fn archive_path(&self, profile_id: Uuid) -> PathBuf {
         self.profiles_dir
-            .join(format!("{profile_id}.{PROFILE_ARCHIVE_EXTENSION}"))
+            .join(format!("{profile_id}.profile.{PROFILE_ARCHIVE_EXTENSION}"))
+    }
+
+    /// Sibling path used while atomically writing a profile archive.
+    pub fn archive_part_path(&self, profile_id: Uuid) -> PathBuf {
+        archive_sidecar_path(&self.archive_path(profile_id), "part")
+    }
+
+    /// Sibling backup path used while atomically replacing a profile archive.
+    pub fn archive_backup_path(&self, profile_id: Uuid) -> PathBuf {
+        archive_sidecar_path(&self.archive_path(profile_id), "bak")
     }
 }
 
@@ -133,6 +151,14 @@ pub fn profile_archive_path(
     Ok(profile_roots(game, use_default_mods_path)?.archive_path(profile_id))
 }
 
+pub fn profile_path(
+    game: &GameInstall,
+    use_default_mods_path: bool,
+    profile_id: Uuid,
+) -> Result<PathBuf> {
+    Ok(profile_roots(game, use_default_mods_path)?.profile_path(profile_id))
+}
+
 /// Return free bytes on the volume hosting profile storage.  Callers should invoke this before
 /// staging a switch, reserving space for both the extracted target and the outgoing archive.
 pub fn available_profile_space(path: &Path) -> Result<u64> {
@@ -177,12 +203,14 @@ pub struct ProfileArchiveMetadata {
     /// written before categories became profile-scoped; `Some(vec![])` is intentional empty.
     #[serde(default)]
     pub categories: Option<Vec<ModCategory>>,
+    /// Fingerprint of the source roots used to create the archive. Older archives omit it.
+    #[serde(default)]
+    pub source_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveResult {
     pub archive_path: PathBuf,
-    pub sha256: String,
     pub bytes: u64,
     pub uncompressed_size: u64,
     pub file_count: u64,
@@ -207,32 +235,6 @@ pub struct ArchiveReadProgress {
 }
 
 pub type ReadProgressCallback<'a> = &'a mut dyn FnMut(ArchiveReadProgress) -> Result<()>;
-
-struct ProfileArchiveHashReader {
-    file: File,
-    hasher: Sha256,
-}
-
-impl ProfileArchiveHashReader {
-    fn new(path: &Path) -> Result<Self> {
-        Ok(Self {
-            file: File::open(path)?,
-            hasher: Sha256::new(),
-        })
-    }
-
-    fn finish_sha256(self) -> String {
-        format_sha256(self.hasher)
-    }
-}
-
-impl Read for ProfileArchiveHashReader {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.file.read(buffer)?;
-        self.hasher.update(&buffer[..read]);
-        Ok(read)
-    }
-}
 
 #[derive(Default)]
 struct ProfileArchiveProgressState {
@@ -295,9 +297,26 @@ impl<R: Read> Read for ProfileArchiveProgressReader<'_, R> {
     }
 }
 
-/// Create a profile archive atomically through a sibling `.tzst.part` file.
+/// Create a profile archive atomically through a sibling `.profile.tzst.part` file.
+#[cfg(test)]
 pub fn create_profile_archive_with_progress(
     roots: &ProfileRoots,
+    metadata: &ProfileArchiveMetadata,
+    destination: &Path,
+    progress: Option<ProgressCallback<'_>>,
+) -> Result<ArchiveResult> {
+    ensure_tzst_path(destination)?;
+    if metadata.format_version == 0 {
+        bail!("profile archive format version must be non-zero");
+    }
+    let inventory = inspect_profile_source(roots)?;
+    create_profile_archive_from_inventory_with_progress(&inventory, metadata, destination, progress)
+}
+
+/// Create an archive from a previously inspected source inventory without walking the source
+/// roots again. The inventory can be reused for fingerprint/reuse decisions before writing.
+pub fn create_profile_archive_from_inventory_with_progress(
+    inventory: &ProfileSourceInventory,
     metadata: &ProfileArchiveMetadata,
     destination: &Path,
     mut progress: Option<ProgressCallback<'_>>,
@@ -306,24 +325,11 @@ pub fn create_profile_archive_with_progress(
     if metadata.format_version == 0 {
         bail!("profile archive format version must be non-zero");
     }
-    validate_source_tree(&roots.mods)?;
-    if let Some(path) = &roots.archived {
-        validate_source_tree(path)?;
-    }
-    if let Some(path) = &roots.disabled {
-        validate_source_tree(path)?;
-    }
-    let mut stats = SourceStats::default();
-    collect_source_stats(&roots.mods, &mut stats)?;
-    if let Some(path) = &roots.archived {
-        collect_source_stats(path, &mut stats)?;
-    }
-    if let Some(path) = &roots.disabled {
-        collect_source_stats(path, &mut stats)?;
-    }
+    let stats = &inventory.stats;
     let mut archive_metadata = metadata.clone();
     archive_metadata.uncompressed_size = stats.bytes;
     archive_metadata.file_count = stats.files;
+    archive_metadata.source_fingerprint = Some(inventory.fingerprint.clone());
     if let Some(callback) = progress.as_deref_mut() {
         callback(ArchiveProgress {
             total_files: stats.files,
@@ -331,6 +337,9 @@ pub fn create_profile_archive_with_progress(
             ..ArchiveProgress::default()
         })?;
     }
+    let shared_progress = progress
+        .take()
+        .map(|callback| Rc::new(RefCell::new(callback)));
 
     let parent = destination
         .parent()
@@ -350,10 +359,10 @@ pub fn create_profile_archive_with_progress(
     let file = File::create(&staging)
         .with_context(|| format!("failed to create {}", staging.display()))?;
     let mut encoder = Encoder::new(file, -1).context("failed to initialize zstd encoder")?;
-    let threads = num_cpus::get().max(1) as u32;
-    // Match the zstd CLI's `-T0` behavior by using all available logical processors.
+    // Keep compression single-core for background profile operations. Level -1 is zstd's
+    // fast mode 1, preserving the previous throughput-oriented compression setting.
     encoder
-        .multithread(threads)
+        .multithread(1)
         .context("failed to configure zstd worker threads")?;
     encoder
         .include_checksum(true)
@@ -367,29 +376,26 @@ pub fn create_profile_archive_with_progress(
         total_bytes: stats.bytes,
         ..ArchiveProgress::default()
     };
-    append_tree(
+    append_inventory(
         &mut builder,
-        &roots.mods,
-        "Mods",
+        &inventory.mods,
         &mut processed,
-        &mut progress,
+        shared_progress.as_ref(),
     )?;
-    if let Some(path) = &roots.archived {
-        append_tree(
+    if let Some(inventory) = &inventory.archived {
+        append_inventory(
             &mut builder,
-            path,
-            "Mods_Archived",
+            inventory,
             &mut processed,
-            &mut progress,
+            shared_progress.as_ref(),
         )?;
     }
-    if let Some(path) = &roots.disabled {
-        append_tree(
+    if let Some(inventory) = &inventory.disabled {
+        append_inventory(
             &mut builder,
-            path,
-            "Disabled",
+            inventory,
             &mut processed,
-            &mut progress,
+            shared_progress.as_ref(),
         )?;
         append_empty_dir(&mut builder, PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT)?;
     }
@@ -398,14 +404,14 @@ pub fn create_profile_archive_with_progress(
         .context("failed to finalize tar stream")?;
     let mut file = encoder.finish().context("failed to finalize zstd stream")?;
     file.flush()?;
+    file.sync_all()
+        .context("failed to sync completed profile archive")?;
     drop(file);
 
     let bytes = fs::metadata(&staging)?.len();
-    let sha256 = sha256_file(&staging)?;
     commit_archive_part(&staging, destination)?;
     Ok(ArchiveResult {
         archive_path: destination.to_path_buf(),
-        sha256,
         bytes,
         uncompressed_size: stats.bytes,
         file_count: stats.files,
@@ -428,35 +434,14 @@ pub fn extract_profile_archive(
 pub fn extract_profile_archive_with_progress(
     archive_path: &Path,
     destination: &Path,
-    progress: Option<ProgressCallback<'_>>,
-) -> Result<ProfileArchiveMetadata> {
-    extract_profile_archive_impl(archive_path, destination, None, progress, None)
-}
-
-/// Extract and verify an archive in one compressed-input pass.
-///
-/// The checksum is compared only after extraction has completed in the disposable staging
-/// directory, so callers can validate the selected profile before touching the active roots.
-pub fn extract_profile_archive_verified_with_progress(
-    archive_path: &Path,
-    destination: &Path,
-    expected_sha256: Option<&str>,
     read_progress: Option<ReadProgressCallback<'_>>,
 ) -> Result<ProfileArchiveMetadata> {
-    extract_profile_archive_impl(
-        archive_path,
-        destination,
-        expected_sha256,
-        None,
-        read_progress,
-    )
+    extract_profile_archive_impl(archive_path, destination, read_progress)
 }
 
 fn extract_profile_archive_impl(
     archive_path: &Path,
     destination: &Path,
-    expected_sha256: Option<&str>,
-    mut progress: Option<ProgressCallback<'_>>,
     read_progress: Option<ReadProgressCallback<'_>>,
 ) -> Result<ProfileArchiveMetadata> {
     ensure_tzst_path(archive_path)?;
@@ -468,8 +453,7 @@ fn extract_profile_archive_impl(
         fs::create_dir_all(destination)?;
     }
 
-    let hash_reader = ProfileArchiveHashReader::new(archive_path)?;
-    let decoder = Decoder::new(hash_reader)?;
+    let decoder = Decoder::new(File::open(archive_path)?)?;
     let progress_state = Rc::new(ProfileArchiveProgressState::default());
     let mut progress_reader =
         ProfileArchiveProgressReader::new(decoder, Rc::clone(&progress_state), read_progress);
@@ -512,12 +496,11 @@ fn extract_profile_archive_impl(
                 .payload_start
                 .set(progress_state.raw_bytes_read.get());
             progress_state.payload_total.set(parsed.uncompressed_size);
-            processed.total_files = parsed.file_count;
-            processed.total_bytes = parsed.uncompressed_size;
             metadata = Some(parsed);
-            if let Some(callback) = progress.as_deref_mut() {
-                callback(processed)?;
-            }
+            // Keep profile.json in the extracted loose container. It is part of the container's
+            // self-contained metadata even though it is excluded from payload counts.
+            fs::write(destination.join(PROFILE_METADATA_FILE), &bytes)
+                .with_context(|| "failed to materialize extracted profile.json")?;
             continue;
         }
         entry
@@ -526,9 +509,6 @@ fn extract_profile_archive_impl(
         if entry_type.is_file() {
             processed.files_processed += 1;
             processed.bytes_processed += size;
-        }
-        if let Some(callback) = progress.as_deref_mut() {
-            callback(processed)?;
         }
     }
     let metadata = metadata.context("profile archive is missing profile.json")?;
@@ -546,17 +526,8 @@ fn extract_profile_archive_impl(
     drop(archive);
     io::copy(&mut progress_reader, &mut io::sink())?;
     let decoder = progress_reader.finish();
-    let reader = decoder.finish().into_inner();
-    let actual_sha256 = reader.finish_sha256();
-    if let Some(expected_sha256) = expected_sha256
-        && !actual_sha256.eq_ignore_ascii_case(expected_sha256.trim())
-    {
-        bail!(
-            "profile archive checksum mismatch: expected {}, got {}",
-            expected_sha256,
-            actual_sha256
-        );
-    }
+    // Finishing the decoder forces zstd to verify its frame checksum and trailing input.
+    let _ = decoder.finish();
     Ok(metadata)
 }
 
@@ -588,29 +559,6 @@ pub fn read_profile_archive_metadata(archive_path: &Path) -> Result<ProfileArchi
     bail!("profile archive is missing profile.json")
 }
 
-/// Compute the SHA-256 digest of a completed `.tzst` archive.
-#[cfg(test)]
-pub fn profile_archive_sha256(archive_path: &Path) -> Result<String> {
-    ensure_tzst_path(archive_path)?;
-    if !archive_path.is_file() {
-        bail!("profile archive does not exist: {}", archive_path.display());
-    }
-    sha256_file(archive_path)
-}
-
-#[cfg(test)]
-pub fn verify_profile_archive_sha256(archive_path: &Path, expected: &str) -> Result<()> {
-    let actual = profile_archive_sha256(archive_path)?;
-    if !actual.eq_ignore_ascii_case(expected.trim()) {
-        bail!(
-            "profile archive checksum mismatch: expected {}, got {}",
-            expected,
-            actual
-        );
-    }
-    Ok(())
-}
-
 fn append_json<W: Write>(
     builder: &mut Builder<W>,
     path: &str,
@@ -626,37 +574,45 @@ fn append_json<W: Write>(
     Ok(())
 }
 
-fn append_tree<W: Write>(
-    builder: &mut Builder<W>,
-    source: &Path,
-    archive_name: &str,
-    progress: &mut ArchiveProgress,
-    callback: &mut Option<ProgressCallback<'_>>,
-) -> Result<()> {
-    if !source.exists() {
-        append_empty_dir(builder, archive_name)?;
-        return Ok(());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceEntryKind {
+    Directory,
+    File,
+}
+
+#[derive(Debug)]
+struct SourceEntry {
+    source_path: PathBuf,
+    archive_path: PathBuf,
+    kind: SourceEntryKind,
+    size: u64,
+    modified: Option<(u64, u32)>,
+}
+
+#[derive(Debug, Default)]
+struct SourceInventory {
+    present: bool,
+    archive_name: String,
+    entries: Vec<SourceEntry>,
+    files: u64,
+    bytes: u64,
+}
+
+/// Opaque, validated inventory of all source roots that will be written to a profile archive.
+/// The inventory owns no source files; it retains paths and metadata for reuse by callers.
+#[derive(Debug)]
+pub struct ProfileSourceInventory {
+    mods: SourceInventory,
+    archived: Option<SourceInventory>,
+    disabled: Option<SourceInventory>,
+    stats: SourceStats,
+    fingerprint: String,
+}
+
+impl ProfileSourceInventory {
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
-    for item in walkdir::WalkDir::new(source).follow_links(false) {
-        let item = item?;
-        let relative = item.path().strip_prefix(source)?;
-        let target = if relative.as_os_str().is_empty() {
-            PathBuf::from(archive_name)
-        } else {
-            PathBuf::from(archive_name).join(relative)
-        };
-        if item.file_type().is_dir() {
-            builder.append_dir(&target, item.path())?;
-        } else if item.file_type().is_file() {
-            builder.append_path_with_name(item.path(), &target)?;
-            progress.files_processed += 1;
-            progress.bytes_processed += item.metadata()?.len();
-            if let Some(callback) = callback.as_deref_mut() {
-                callback(*progress)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -665,26 +621,259 @@ struct SourceStats {
     bytes: u64,
 }
 
-fn collect_source_stats(path: &Path, stats: &mut SourceStats) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
+const ARCHIVE_PROGRESS_CHUNK_SIZE: usize = 64 * 1024;
+
+struct ArchiveSourceReader<'progress, 'callback> {
+    file: File,
+    progress: &'progress mut ArchiveProgress,
+    callback: Option<Rc<RefCell<ProgressCallback<'callback>>>>,
+}
+
+impl Read for ArchiveSourceReader<'_, '_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let limit = buffer.len().min(ARCHIVE_PROGRESS_CHUNK_SIZE);
+        let read = self.file.read(&mut buffer[..limit])?;
+        if read != 0 {
+            self.progress.bytes_processed =
+                self.progress.bytes_processed.saturating_add(read as u64);
+            if let Some(callback) = &self.callback {
+                callback.borrow_mut()(*self.progress)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+            }
+        }
+        Ok(read)
     }
+}
+
+impl SourceStats {
+    fn add(&mut self, inventory: &SourceInventory) {
+        self.files = self.files.saturating_add(inventory.files);
+        self.bytes = self.bytes.saturating_add(inventory.bytes);
+    }
+}
+
+/// Validate and inventory one live root. The resulting entries are reused for archive writing,
+/// so source paths/types are not walked a second time.
+fn inventory_source_tree(path: &Path, archive_name: &str) -> Result<SourceInventory> {
+    let root_metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(SourceInventory {
+                archive_name: archive_name.to_string(),
+                ..SourceInventory::default()
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if root_metadata.file_type().is_symlink() {
+        bail!("profile roots cannot contain symlinks: {}", path.display());
+    }
+    if !root_metadata.is_dir() {
+        bail!("profile root is not a directory: {}", path.display());
+    }
+
+    let mut inventory = SourceInventory {
+        present: true,
+        archive_name: archive_name.to_string(),
+        ..SourceInventory::default()
+    };
     for item in walkdir::WalkDir::new(path).follow_links(false) {
         let item = item?;
-        if item.file_type().is_file() {
-            stats.files += 1;
-            stats.bytes += item.metadata()?.len();
+        let file_type = item.file_type();
+        if file_type.is_symlink() {
+            bail!(
+                "profile roots cannot contain symlinks: {}",
+                item.path().display()
+            );
+        }
+        let relative = item.path().strip_prefix(path)?;
+        let archive_path = if relative.as_os_str().is_empty() {
+            PathBuf::from(archive_name)
+        } else {
+            PathBuf::from(archive_name).join(relative)
+        };
+        let source_metadata = item.metadata()?;
+        let (kind, size) = if file_type.is_dir() {
+            (SourceEntryKind::Directory, 0)
+        } else if file_type.is_file() {
+            let size = source_metadata.len();
+            inventory.files = inventory.files.saturating_add(1);
+            inventory.bytes = inventory.bytes.saturating_add(size);
+            (SourceEntryKind::File, size)
+        } else {
+            bail!(
+                "profile roots contain unsupported file: {}",
+                item.path().display()
+            );
+        };
+        // Windows can update directory mtimes lazily after child creation. Directory mtimes are
+        // not payload content, so only regular-file mtimes participate in the stable fingerprint.
+        let modified = (kind == SourceEntryKind::File)
+            .then(|| source_metadata.modified().ok())
+            .flatten()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| (duration.as_secs(), duration.subsec_nanos()));
+        inventory.entries.push(SourceEntry {
+            source_path: item.path().to_path_buf(),
+            archive_path,
+            kind,
+            size,
+            modified,
+        });
+    }
+    Ok(inventory)
+}
+
+fn source_fingerprint_for_inventories(
+    mods: &SourceInventory,
+    archived: Option<&SourceInventory>,
+    disabled: Option<&SourceInventory>,
+) -> String {
+    let mut records = Vec::new();
+    append_fingerprint_records(&mut records, mods);
+    if let Some(inventory) = archived {
+        append_fingerprint_records(&mut records, inventory);
+    }
+    if let Some(inventory) = disabled {
+        append_fingerprint_records(&mut records, inventory);
+    }
+    let mut bytes = Vec::new();
+    for record in records {
+        bytes.extend_from_slice(record.as_bytes());
+        bytes.push(b'\n');
+    }
+    format!("{:016x}", xxh3_64(&bytes))
+}
+
+fn append_fingerprint_records(records: &mut Vec<String>, inventory: &SourceInventory) {
+    records.push(format!(
+        "root\0{}\0{}",
+        inventory.archive_name, inventory.present
+    ));
+    let mut entries = inventory
+        .entries
+        .iter()
+        .map(|entry| {
+            let kind = match entry.kind {
+                SourceEntryKind::Directory => 'd',
+                SourceEntryKind::File => 'f',
+            };
+            let modified = entry.modified.map_or_else(
+                || "-".to_string(),
+                |(seconds, nanos)| format!("{seconds}:{nanos}"),
+            );
+            let path = entry.archive_path.to_string_lossy().replace('\\', "/");
+            format!("entry\0{kind}\0{path}\0{}\0{modified}", entry.size)
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    records.extend(entries);
+}
+
+/// Compute the stable filesystem fingerprint used in profile archive metadata.
+///
+/// A `None` fingerprint in an older archive means callers cannot safely skip recompression.
+pub fn inspect_profile_source(roots: &ProfileRoots) -> Result<ProfileSourceInventory> {
+    let mods = inventory_source_tree(&roots.mods, "Mods")?;
+    let archived = roots
+        .archived
+        .as_deref()
+        .map(|path| inventory_source_tree(path, "Mods_Archived"))
+        .transpose()?;
+    let disabled = roots
+        .disabled
+        .as_deref()
+        .map(|path| inventory_source_tree(path, "Disabled"))
+        .transpose()?;
+    let mut stats = SourceStats::default();
+    stats.add(&mods);
+    if let Some(inventory) = &archived {
+        stats.add(inventory);
+    }
+    if let Some(inventory) = &disabled {
+        stats.add(inventory);
+    }
+    let fingerprint =
+        source_fingerprint_for_inventories(&mods, archived.as_ref(), disabled.as_ref());
+    Ok(ProfileSourceInventory {
+        mods,
+        archived,
+        disabled,
+        stats,
+        fingerprint,
+    })
+}
+
+#[cfg(test)]
+pub fn profile_source_fingerprint(roots: &ProfileRoots) -> Result<String> {
+    Ok(inspect_profile_source(roots)?.fingerprint().to_owned())
+}
+
+fn append_inventory<'a, W: Write>(
+    builder: &mut Builder<W>,
+    inventory: &SourceInventory,
+    progress: &mut ArchiveProgress,
+    callback: Option<&Rc<RefCell<ProgressCallback<'a>>>>,
+) -> Result<()> {
+    if !inventory.present {
+        // Missing optional roots are represented in the archive as empty directories for
+        // backward-compatible extraction layout.
+        append_empty_dir(builder, &inventory.archive_name)?;
+        return Ok(());
+    }
+    for entry in &inventory.entries {
+        match entry.kind {
+            SourceEntryKind::Directory => {
+                builder.append_dir(&entry.archive_path, &entry.source_path)?
+            }
+            SourceEntryKind::File => {
+                let metadata = fs::metadata(&entry.source_path)?;
+                if !metadata.is_file() {
+                    bail!(
+                        "profile source changed from a file: {}",
+                        entry.source_path.display()
+                    );
+                }
+                let mut header = Header::new_gnu();
+                header.set_metadata(&metadata);
+                header.set_entry_type(EntryType::Regular);
+                header.set_size(entry.size);
+                let mut reader = ArchiveSourceReader {
+                    file: File::open(&entry.source_path)?,
+                    progress,
+                    callback: callback.cloned(),
+                };
+                builder.append_data(&mut header, &entry.archive_path, &mut reader)?;
+                progress.files_processed += 1;
+                if let Some(callback) = callback {
+                    callback.borrow_mut()(*progress)?;
+                }
+            }
         }
     }
     Ok(())
 }
 
 fn commit_archive_part(staging: &Path, destination: &Path) -> Result<()> {
-    let backup = PathBuf::from(format!("{}.bak", destination.display()));
+    let backup = archive_sidecar_path(destination, "bak");
     if backup.exists() {
-        fs::remove_file(&backup)?;
+        fs::rename(&backup, next_archive_conflict_path(destination)).with_context(|| {
+            format!(
+                "failed to preserve existing profile archive backup {}",
+                backup.display()
+            )
+        })?;
     }
-    let had_existing = destination.exists();
+    let mut had_existing = destination.is_file();
+    if destination.exists() && !had_existing {
+        fs::rename(destination, next_archive_conflict_path(destination)).with_context(|| {
+            format!(
+                "failed to preserve profile archive collision {}",
+                destination.display()
+            )
+        })?;
+        had_existing = false;
+    }
     if had_existing {
         fs::rename(destination, &backup).with_context(|| {
             format!(
@@ -707,6 +896,40 @@ fn commit_archive_part(staging: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn next_archive_conflict_path(archive: &Path) -> PathBuf {
+    let parent = archive.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = archive
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("profile.tzst");
+    let stem = file_name.strip_suffix(".tzst").unwrap_or(file_name);
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    for suffix in 0u32.. {
+        let candidate = if suffix == 0 {
+            parent.join(format!("{stem}.conflict-{nonce}.tzst"))
+        } else {
+            parent.join(format!("{stem}.conflict-{nonce}-{suffix}.tzst"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn archive_sidecar_path(archive: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = archive.to_path_buf();
+    let extension = archive
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or(PROFILE_ARCHIVE_EXTENSION);
+    sidecar.set_extension(format!("{extension}.{suffix}"));
+    sidecar
+}
+
 fn append_empty_dir<W: Write>(builder: &mut Builder<W>, path: &str) -> Result<()> {
     let mut header = Header::new_gnu();
     header.set_entry_type(EntryType::Directory);
@@ -714,31 +937,6 @@ fn append_empty_dir<W: Write>(builder: &mut Builder<W>, path: &str) -> Result<()
     header.set_size(0);
     header.set_cksum();
     builder.append_data(&mut header, format!("{path}/"), io::empty())?;
-    Ok(())
-}
-
-fn validate_source_tree(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
-    }
-    if !path.is_dir() {
-        bail!("profile root is not a directory: {}", path.display());
-    }
-    for item in walkdir::WalkDir::new(path).follow_links(false) {
-        let item = item?;
-        if item.file_type().is_symlink() {
-            bail!(
-                "profile roots cannot contain symlinks: {}",
-                item.path().display()
-            );
-        }
-        if !item.file_type().is_dir() && !item.file_type().is_file() {
-            bail!(
-                "profile roots contain unsupported file: {}",
-                item.path().display()
-            );
-        }
-    }
     Ok(())
 }
 
@@ -810,28 +1008,6 @@ fn ensure_tzst_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 128 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format_sha256(hasher))
-}
-
-fn format_sha256(hasher: Sha256) -> String {
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +1033,104 @@ mod tests {
             Some(PathBuf::from(r"C:\Games\Mods_Archived"))
         );
         assert!(paths.disabled.is_none());
+    }
+
+    #[test]
+    fn profile_paths_use_canonical_container_and_archive_names() {
+        let temp = tempdir().unwrap();
+        let roots = ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        let profile_id = Uuid::nil();
+        assert_eq!(
+            roots.profile_path(profile_id),
+            roots
+                .profiles_dir
+                .join("00000000-0000-0000-0000-000000000000.profile")
+        );
+        let archive = roots.archive_path(profile_id);
+        assert_eq!(
+            archive,
+            roots
+                .profiles_dir
+                .join("00000000-0000-0000-0000-000000000000.profile.tzst")
+        );
+        assert_eq!(
+            roots.archive_part_path(profile_id),
+            PathBuf::from(format!("{}.part", archive.display()))
+        );
+        assert_eq!(
+            roots.archive_backup_path(profile_id),
+            PathBuf::from(format!("{}.bak", archive.display()))
+        );
+    }
+
+    #[test]
+    fn source_fingerprint_tracks_payload_changes() {
+        let temp = tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        fs::create_dir_all(&mods).unwrap();
+        let roots = ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: mods.clone(),
+            archived: None,
+            disabled: None,
+        };
+        fs::write(mods.join("payload.bin"), b"one").unwrap();
+        let first = profile_source_fingerprint(&roots).unwrap();
+        fs::write(mods.join("payload.bin"), b"two-and-more").unwrap();
+        let second = profile_source_fingerprint(&roots).unwrap();
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn failed_archive_commit_restores_existing_final() {
+        let temp = tempdir().unwrap();
+        let destination = temp.path().join("profile.profile.tzst");
+        let staging = temp.path().join("profile.profile.tzst.part");
+        fs::write(&destination, b"old archive").unwrap();
+        let error = commit_archive_part(&staging, &destination).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("failed to commit profile archive")
+        );
+        assert_eq!(fs::read(&destination).unwrap(), b"old archive");
+        assert!(!destination.with_extension("tzst.bak").exists());
+    }
+
+    #[test]
+    fn archive_commit_preserves_preexisting_backup_collision() -> Result<()> {
+        let temp = tempdir().unwrap();
+        let destination = temp.path().join("profile.profile.tzst");
+        let staging = temp.path().join("profile.profile.tzst.part");
+        let backup = archive_sidecar_path(&destination, "bak");
+        fs::write(&destination, b"old archive").unwrap();
+        fs::write(&backup, b"stale backup").unwrap();
+        fs::write(&staging, b"new archive").unwrap();
+
+        commit_archive_part(&staging, &destination).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new archive");
+        assert!(!backup.exists());
+        let conflicts = fs::read_dir(temp.path())?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let conflict = conflicts
+            .into_iter()
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("profile.profile.conflict-") && name.ends_with(".tzst")
+                    })
+            })
+            .context("preexisting backup collision was not preserved")?;
+        assert_eq!(fs::read(conflict).unwrap(), b"stale backup");
+        Ok::<(), anyhow::Error>(())
     }
 
     #[test]
@@ -910,30 +1184,41 @@ mod tests {
                 name: "Gameplay/Illegal?.txt".to_string(),
                 order: 3,
             }]),
+            source_fingerprint: None,
         };
-        let destination = roots.profiles_dir.join("default.tzst");
-        let result =
-            create_profile_archive_with_progress(&roots, &metadata, &destination, None).unwrap();
+        let destination = roots.archive_path(metadata.profile_id);
+        let inventory = inspect_profile_source(&roots).unwrap();
+        assert_eq!(
+            inventory.fingerprint(),
+            profile_source_fingerprint(&roots).unwrap()
+        );
+        let result = create_profile_archive_from_inventory_with_progress(
+            &inventory,
+            &metadata,
+            &destination,
+            None,
+        )
+        .unwrap();
         assert_eq!(result.archive_path, destination);
-        assert_eq!(result.sha256.len(), 64);
         let manifest = read_profile_archive_metadata(&destination).unwrap();
         assert_eq!(manifest.profile_id, metadata.profile_id);
         assert_eq!(manifest.display_name, metadata.display_name);
         assert_eq!(manifest.categories, metadata.categories);
         assert_eq!(manifest.file_count, 2);
         assert_eq!(manifest.uncompressed_size, 6);
-        assert_eq!(profile_archive_sha256(&destination).unwrap(), result.sha256);
-        verify_profile_archive_sha256(&destination, &result.sha256).unwrap();
+        assert_eq!(
+            manifest.source_fingerprint,
+            Some(profile_source_fingerprint(&roots).unwrap())
+        );
         let extracted = temp.path().join("extract");
         let mut read_updates = Vec::new();
         let mut read_progress = |update: ArchiveReadProgress| -> Result<()> {
             read_updates.push(update);
             Ok(())
         };
-        let extracted_metadata = extract_profile_archive_verified_with_progress(
+        let extracted_metadata = extract_profile_archive_with_progress(
             &destination,
             &extracted,
-            Some(&result.sha256),
             Some(&mut read_progress),
         )
         .unwrap();
@@ -962,18 +1247,13 @@ mod tests {
             fs::read(extracted.join("Mods_Archived/old.txt")).unwrap(),
             b"old"
         );
-
-        let checksum_error = extract_profile_archive_verified_with_progress(
-            &destination,
-            &temp.path().join("checksum-error"),
-            Some(&"0".repeat(64)),
-            None,
-        )
-        .unwrap_err();
-        assert!(
-            checksum_error
-                .to_string()
-                .contains("profile archive checksum mismatch")
+        assert_eq!(
+            serde_json::from_slice::<ProfileArchiveMetadata>(
+                &fs::read(extracted.join(PROFILE_METADATA_FILE)).unwrap()
+            )
+            .unwrap()
+            .profile_id,
+            metadata.profile_id
         );
 
         let mut cancellation_observed = false;
@@ -985,10 +1265,9 @@ mod tests {
             Ok(())
         };
         assert!(
-            extract_profile_archive_verified_with_progress(
+            extract_profile_archive_with_progress(
                 &destination,
                 &temp.path().join("canceled-extract"),
-                Some(&result.sha256),
                 Some(&mut cancel),
             )
             .is_err()
@@ -997,7 +1276,58 @@ mod tests {
     }
 
     #[test]
-    fn verified_extraction_reports_and_cancels_inside_a_large_file() {
+    fn archive_progress_cancels_inside_large_file() {
+        let temp = tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        fs::create_dir_all(&mods).unwrap();
+        fs::write(mods.join("large.bin"), vec![0x5a; 4 * 1024 * 1024]).unwrap();
+        let roots = ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: mods.clone(),
+            archived: None,
+            disabled: None,
+        };
+        let metadata = ProfileArchiveMetadata {
+            format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
+            profile_id: Uuid::new_v4(),
+            game_id: "test".to_string(),
+            display_name: "Canceled".to_string(),
+            backend: GameBackend::Xxmi,
+            created_at: Utc::now(),
+            uncompressed_size: 0,
+            file_count: 0,
+            portable_metadata: HashMap::new(),
+            categories: Some(Vec::new()),
+            source_fingerprint: None,
+        };
+        let destination = roots.archive_path(metadata.profile_id);
+        let mut canceled = false;
+        let mut callback = |update: ArchiveProgress| -> Result<()> {
+            if update.bytes_processed > 0 {
+                canceled = true;
+                bail!("archive canceled inside payload");
+            }
+            Ok(())
+        };
+        let error = create_profile_archive_with_progress(
+            &roots,
+            &metadata,
+            &destination,
+            Some(&mut callback),
+        )
+        .unwrap_err();
+        assert!(canceled);
+        assert!(
+            error
+                .to_string()
+                .contains("archive canceled inside payload")
+        );
+        assert!(mods.join("large.bin").is_file());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn extraction_reports_and_cancels_inside_a_large_file() {
         let temp = tempdir().unwrap();
         let mods = temp.path().join("Mods");
         fs::create_dir_all(&mods).unwrap();
@@ -1020,9 +1350,10 @@ mod tests {
             file_count: 0,
             portable_metadata: HashMap::new(),
             categories: Some(Vec::new()),
+            source_fingerprint: None,
         };
-        let destination = roots.profiles_dir.join("large.tzst");
-        let result =
+        let destination = roots.archive_path(metadata.profile_id);
+        let _result =
             create_profile_archive_with_progress(&roots, &metadata, &destination, None).unwrap();
 
         let mut updates = Vec::new();
@@ -1030,10 +1361,9 @@ mod tests {
             updates.push(update);
             Ok(())
         };
-        extract_profile_archive_verified_with_progress(
+        extract_profile_archive_with_progress(
             &destination,
             &temp.path().join("large-extract"),
-            Some(&result.sha256),
             Some(&mut progress),
         )
         .unwrap();
@@ -1052,10 +1382,9 @@ mod tests {
             Ok(())
         };
         assert!(
-            extract_profile_archive_verified_with_progress(
+            extract_profile_archive_with_progress(
                 &destination,
                 &temp.path().join("large-canceled"),
-                Some(&result.sha256),
                 Some(&mut cancel),
             )
             .is_err()

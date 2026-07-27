@@ -157,40 +157,31 @@ fn profile_progress_footer_rects(
 
 fn profile_timeline_stages(
     kind: ProfileOperationKind,
-    extracts_before_archiving: bool,
+    prepares_before_activating: bool,
 ) -> &'static [ProfileTimelineStage] {
-    const CREATE: &[ProfileTimelineStage] = &[
-        ProfileTimelineStage::Archiving,
-        ProfileTimelineStage::Activating,
-    ];
-    const ARCHIVE_FIRST: &[ProfileTimelineStage] = &[
-        ProfileTimelineStage::Archiving,
+    const ACTIVATE_ONLY: &[ProfileTimelineStage] = &[ProfileTimelineStage::Activating];
+    const PREPARE_FIRST: &[ProfileTimelineStage] = &[
         ProfileTimelineStage::Extracting,
-        ProfileTimelineStage::Activating,
-    ];
-    const EXTRACT_FIRST: &[ProfileTimelineStage] = &[
-        ProfileTimelineStage::Extracting,
-        ProfileTimelineStage::Archiving,
         ProfileTimelineStage::Activating,
     ];
 
     match kind {
-        ProfileOperationKind::Create => CREATE,
+        ProfileOperationKind::Create => ACTIVATE_ONLY,
         ProfileOperationKind::Duplicate | ProfileOperationKind::Switch
-            if extracts_before_archiving =>
+            if prepares_before_activating =>
         {
-            EXTRACT_FIRST
+            PREPARE_FIRST
         }
-        _ => ARCHIVE_FIRST,
+        _ => ACTIVATE_ONLY,
     }
 }
 
 fn profile_timeline_active_stage(stage: &str) -> Option<ProfileTimelineStage> {
     if stage.contains("Archiving") || stage.contains("Current profile archived") {
         Some(ProfileTimelineStage::Archiving)
-    } else if stage.contains("Validating")
+    } else if stage.contains("Preparing selected")
         || stage.contains("Extracting")
-        || stage.contains("Target profile staged")
+        || stage.contains("Selected profile prepared")
     {
         Some(ProfileTimelineStage::Extracting)
     } else if stage.contains("Committing")
@@ -218,19 +209,17 @@ fn profile_timeline_stage_progress(
             }
         }
         ProfileTimelineStage::Extracting => {
-            if worker_stage.contains("Target profile staged") {
+            if worker_stage.contains("Selected profile prepared") {
                 1.0
-            } else if progress <= 45.0 {
-                ((progress - 25.0) / 15.0).clamp(0.0, 1.0)
             } else {
-                ((progress - 55.0) / 20.0).clamp(0.0, 1.0)
+                ((progress - 10.0) / 50.0).clamp(0.0, 1.0)
             }
         }
         ProfileTimelineStage::Activating => {
             if worker_stage.contains("committed") {
                 1.0
             } else {
-                ((progress - 75.0) / 20.0).clamp(0.0, 1.0)
+                ((progress - 70.0) / 25.0).clamp(0.0, 1.0)
             }
         }
     }
@@ -730,7 +719,7 @@ impl HestiaApp {
                 _ => text.switching_profile(),
             }
         };
-        let commit_started = stage.contains("Committing") || stage.contains("committed");
+        let commit_started = stage.contains("Activating") || stage.contains("committed");
         let cancel_requested = inflight.cancel.load(Ordering::Relaxed);
         let app_locked = self.profile_operation_locks_app();
         let cancel = if app_locked {
@@ -749,7 +738,8 @@ impl HestiaApp {
                 .as_deref()
                 .map(|name| text.profile_display_name(name))
                 .unwrap_or_else(|| self.active_profile_name());
-            let timeline_stages = profile_timeline_stages(kind, inflight.extracts_before_archiving);
+            let timeline_stages =
+                profile_timeline_stages(kind, inflight.prepares_before_activating);
             let active_stage = profile_timeline_active_stage(&stage).unwrap_or(timeline_stages[0]);
             let active_index = timeline_stages
                 .iter()
@@ -1077,7 +1067,6 @@ mod profile_switcher_geometry_tests {
             profile_timeline_stages(ProfileOperationKind::Switch, true),
             &[
                 ProfileTimelineStage::Extracting,
-                ProfileTimelineStage::Archiving,
                 ProfileTimelineStage::Activating,
             ]
         );
@@ -1086,12 +1075,8 @@ mod profile_switcher_geometry_tests {
     #[test]
     fn profile_worker_stages_map_to_the_expected_timeline_rows() {
         assert_eq!(
-            profile_timeline_active_stage("Validating target profile"),
+            profile_timeline_active_stage("Preparing selected profile"),
             Some(ProfileTimelineStage::Extracting)
-        );
-        assert_eq!(
-            profile_timeline_active_stage("Archiving current profile"),
-            Some(ProfileTimelineStage::Archiving)
         );
         assert_eq!(
             profile_timeline_active_stage("Committing profile switch"),

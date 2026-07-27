@@ -373,8 +373,6 @@ pub struct ProfileRecord {
     pub id: Uuid,
     pub display_name: String,
     #[serde(default)]
-    pub archive_sha256: Option<String>,
-    #[serde(default)]
     pub archive_size: Option<u64>,
     #[serde(default)]
     pub uncompressed_size: Option<u64>,

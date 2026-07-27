@@ -124,7 +124,7 @@ Requirements:
 - Windows
 - A Rust toolchain with Rust 2024 edition support
 
-Build a release executable:
+Build a release executable (it will take a while):
 
 ```powershell
 cargo build --release
