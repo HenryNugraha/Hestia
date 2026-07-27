@@ -481,6 +481,39 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Параметры обновлений:", // LibraryUpdatePreferences
     "Синхронизация с GameBanana…", // LibrarySyncingGameBanana
 
+    // Window: Profiles
+    "Профили", // ProfilesTitle
+    "Профиль", // ProfilesLabel
+    "Стандартный", // ProfilesDefault
+    "Новый профиль", // ProfilesNew
+    "Новый профиль", // ProfilesCreateEmpty
+    "Дублировать профиль", // ProfilesDuplicateCurrent
+    "Переименовать профиль", // ProfilesRename
+    "Удалить профиль", // ProfilesDelete
+    "Имя профиля", // ProfilesName
+    "Переключить профиль", // ProfilesSwitch
+    "Переключение профиля…", // ProfilesSwitching
+    "Создание профиля…", // ProfilesCreating
+    "Дублирование профиля…", // ProfilesDuplicating
+    "Удаление профиля…", // ProfilesDeleting
+    "Архивирование текущего профиля…", // ProfilesArchivingCurrent
+    "Распаковка выбранного профиля…", // ProfilesExtractingSelected
+    "Активация выбранного профиля…", // ProfilesActivatingSelected
+    "Неактивные профили сжимаются для экономии места на диске.", // ProfilesInactiveCompressedNote
+    "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
+    "Сначала завершите текущую установку, обновление, сканирование или операцию с профилями.", // ProfilesFinishCurrentOperationFirst
+    "Выберите игру для управления профилями.", // ProfilesSelectGame
+    "Требуется хотя бы один профиль.", // ProfilesAtLeastOneRequired
+    "Переключитесь на другой профиль, прежде чем удалять этот.", // ProfilesSwitchBeforeDelete
+    "Удалить профиль «{name}»?", // ProfilesDeleteConfirmation
+    "Моды, отключенные моды и архивированные моды будут удалены в соответствии с выбранным поведением удаления.", // ProfilesDeleteConfirmationDetails
+    "Профиль создан: {name}", // ProfilesCreated
+    "Профиль дублирован: {name}", // ProfilesDuplicated
+    "Профиль переименован: {name}", // ProfilesRenamed
+    "Профиль удалён: {name}", // ProfilesDeleted
+    "Профиль активирован: {name}", // ProfilesActivated
+    "Операция с профилем отменена", // ProfilesCanceled
+
     // Window: Settings
     "Опции", // SettingsWindowTitle
     "Общие", // SettingsTabGeneral

@@ -183,6 +183,9 @@ impl HestiaApp {
             refresh_request_rx,
             refresh_result_tx,
         );
+        let (profile_request_tx, profile_request_rx) = worker_channel::<ProfileRequest>();
+        let (profile_event_tx, profile_event_rx) = worker_channel::<ProfileEvent>();
+        spawn_profile_worker(&runtime_services, profile_request_rx, profile_event_tx);
         let app_icon_texture = load_title_icon_texture(&cc.egui_ctx, app_icon_bytes(), "app-icon");
         let selected_game = resolve_last_selected_game(&state).unwrap_or(0);
         let game_cover_textures = HashMap::new();
@@ -456,6 +459,15 @@ impl HestiaApp {
             refresh_result_rx,
             refresh_inflight: false,
             refresh_pending_selected_game: None,
+            profile_request_tx,
+            profile_event_rx,
+            profile_operation_inflight: None,
+            profile_next_operation_id: 1,
+            profile_recovery_queue: VecDeque::new(),
+            profile_name_prompt: None,
+            profile_name_target_id: None,
+            profile_name_draft: String::new(),
+            pending_profile_delete_id: None,
             pending_reload_summary: None,
             pending_install_finalize: HashMap::new(),
             pending_known_installed_paths: HashSet::new(),
@@ -496,6 +508,7 @@ impl HestiaApp {
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
+        app.dispatch_profile_recovery();
         if app.state.static_prefs.use_custom_proxy
             && !app.state.static_prefs.custom_proxy_url.trim().is_empty()
         {
@@ -512,6 +525,7 @@ impl HestiaApp {
         self.retry_pending_feedback_survey_on_launch();
         self.set_selected_game(self.startup_selected_game, ctx);
         self.ensure_selected_game_enabled(ctx);
+        let _ = self.ensure_selected_game_default_profile();
         let startup_path_targets = std::mem::take(&mut self.startup_path_targets_pending);
         if startup_path_targets.is_empty() {
             self.dispatch_startup_mod_scan();
@@ -3127,7 +3141,8 @@ impl HestiaApp {
             || !self.startup_scan_rx.is_empty()
             || !self.translation_event_rx.is_empty()
             || !self.install_event_rx.is_empty()
-            || !self.refresh_result_rx.is_empty();
+            || !self.refresh_result_rx.is_empty()
+            || !self.profile_event_rx.is_empty();
 
         self.pending_events.has_worker_events = has_events;
         has_events

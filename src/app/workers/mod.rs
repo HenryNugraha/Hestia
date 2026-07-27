@@ -6,3 +6,4 @@ include!("refresh.rs");
 include!("survey.rs");
 include!("translation.rs");
 include!("updates.rs");
+include!("profiles.rs");

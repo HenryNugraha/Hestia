@@ -103,8 +103,12 @@ impl HestiaApp {
                                 (Icon::FolderOpen, text.open_mods_folder()),
                                 (Icon::RefreshCw, text.reload()),
                             ];
-                            let max_lines =
-                                buttons.iter().map(|(_, l)| l.lines().count()).max().unwrap_or(1);
+                            let max_lines = buttons
+                                .iter()
+                                .map(|(_, l)| l.lines().count())
+                                .max()
+                                .unwrap_or(1)
+                                .max(2);
 
                             let selected_game_readiness = self.selected_game_readiness();
                             let selected_game_ready = selected_game_readiness
@@ -399,6 +403,16 @@ impl HestiaApp {
                                     }
                                 });
                             });
+                            let profile_cursor_x = ui.cursor().left();
+                            let profile_right_edge = self
+                                .last_right_pane_rect
+                                .map(|rect| rect.left())
+                                .unwrap_or(profile_cursor_x + 260.0);
+                            let profile_slot_width =
+                                (profile_right_edge - profile_cursor_x).max(1.0);
+                            let profile_width = profile_slot_width.min(260.0);
+                            ui.add_space((profile_slot_width - profile_width).max(0.0));
+                            self.render_profile_titlebar_action(ui, profile_width);
 
                             let remaining_width = ui.available_width().max(0.0);
                             let pinned_tools = self.selected_game_pinned_tools();

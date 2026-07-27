@@ -481,6 +481,39 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Preferensi Pembaruan:", // LibraryUpdatePreferences
     "Menyinkronkan dengan GameBanana…", // LibrarySyncingGameBanana
 
+    // Window: Profiles
+    "Profil", // ProfilesTitle
+    "Profil", // ProfilesLabel
+    "Standar", // ProfilesDefault
+    "Profil baru", // ProfilesNew
+    "Profil baru", // ProfilesCreateEmpty
+    "Duplikatkan profil", // ProfilesDuplicateCurrent
+    "Ubah nama profil", // ProfilesRename
+    "Hapus profil", // ProfilesDelete
+    "Nama profil", // ProfilesName
+    "Ganti profil", // ProfilesSwitch
+    "Mengganti profil…", // ProfilesSwitching
+    "Membuat profil…", // ProfilesCreating
+    "Menduplikat profil…", // ProfilesDuplicating
+    "Menghapus profil…", // ProfilesDeleting
+    "Mengarsipkan profil saat ini…", // ProfilesArchivingCurrent
+    "Mengekstrak profil yang dipilih…", // ProfilesExtractingSelected
+    "Mengaktifkan profil yang dipilih…", // ProfilesActivatingSelected
+    "Profil yang tidak aktif dikompresi untuk menghemat ruang disk.", // ProfilesInactiveCompressedNote
+    "Operasi profil gagal", // ProfilesOperationFailed
+    "Selesaikan pemasangan, pembaruan, pemindaian, atau operasi profil saat ini terlebih dahulu.", // ProfilesFinishCurrentOperationFirst
+    "Pilih game untuk mengelola profil.", // ProfilesSelectGame
+    "Diperlukan setidaknya satu profil.", // ProfilesAtLeastOneRequired
+    "Ganti ke profil lain sebelum menghapus profil ini.", // ProfilesSwitchBeforeDelete
+    "Hapus profil \"{name}\"?", // ProfilesDeleteConfirmation
+    "Mod, mod nonaktif, dan mod yang diarsipkan akan dihapus menggunakan perilaku penghapusan yang telah Anda atur.", // ProfilesDeleteConfirmationDetails
+    "Profil dibuat: {name}", // ProfilesCreated
+    "Profil diduplikatkan: {name}", // ProfilesDuplicated
+    "Nama profil diubah: {name}", // ProfilesRenamed
+    "Profil dihapus: {name}", // ProfilesDeleted
+    "Profil diaktifkan: {name}", // ProfilesActivated
+    "Operasi profil dibatalkan", // ProfilesCanceled
+
     // Window: Settings
     "Setelan", // SettingsWindowTitle
     "Umum", // SettingsTabGeneral

@@ -4,31 +4,17 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "26 July 2026",
-    "26 Juli 2026",
-    "2026年 7月 26日",
-    "26 июль 2026",
+    "xx August 2026",
+    "xx Agustus 2026",
+    "2026年 8月 xx日",
+    "xx августа 2026",
 );
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
-    l10n(
-        "Various interface fixes and improvements",
-        "Berbagai perbaikan dan peningkatan tampilan",
-        "多项界面修复与改进",
-        "Ряд исправлений и улучшений интерфейса",
-    ),
-    l10n(
-        "Further refined selecting files for mod auto-update",
-        "Penyempurnaan lebih lanjut pada pemilihan file untuk pembaruan otomatis mod",
-        "进一步改进了模组自动更新时的文件选择",
-        "Доработан выбор файлов для автообновления модов",
-    ),
-    l10n(
-        "Fixed filtering specific character's mods not showing all mods",
-        "Memperbaiki filter mod berdasarkan karakter tertentu yang tidak menampilkan semua mod",
-        "修复了按特定角色过滤模组时未显示全部模组的问题",
-        "Исправлена фильтрация модов по персонажу: теперь отображаются все моды",
-    )
-];
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
+    "Added profiles feature",
+    "Menambahkan fitur profil",
+    "新增配置文件功能",
+    "Добавлена функция профилей",
+)];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = false;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;

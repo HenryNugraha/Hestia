@@ -18,8 +18,8 @@ use xxhash_rust::xxh3::xxh3_64;
 use crate::model::{
     AppLanguage, AppState, FeedbackSurveyState, GameInstall, LibraryFolder, MOD_META_DIR,
     MOD_META_FILE, ModCategory, ModCategorySortMode, OperationLogEntry, PortableModState,
-    StagedAppUpdate, StaticPreferences, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus,
-    TasksLayout, TasksOrder, ToolEntry,
+    ProfileCatalog, StagedAppUpdate, StaticPreferences, TaskEntry, TaskKind, TaskRetryPayload,
+    TaskStatus, TasksLayout, TasksOrder, ToolEntry,
 };
 
 #[derive(Debug, Clone)]
@@ -81,6 +81,8 @@ struct AppPreferences {
     staged_app_update: Option<StagedAppUpdate>,
     #[serde(default)]
     last_update_check_time_by_game: HashMap<String, DateTime<Utc>>,
+    #[serde(default)]
+    profiles_by_game: HashMap<String, ProfileCatalog>,
     // Flatten static preferences for backward compatibility
     #[serde(flatten)]
     static_prefs: StaticPreferences,
@@ -110,6 +112,7 @@ impl From<&AppState> for AppPreferences {
                 .clone(),
             staged_app_update: state.staged_app_update.clone(),
             last_update_check_time_by_game: state.last_update_check_time_by_game.clone(),
+            profiles_by_game: state.profiles_by_game.clone(),
             static_prefs: state.static_prefs.clone(),
         }
     }
@@ -375,6 +378,12 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.category_sort_mode_by_game = prefs.category_sort_mode_by_game;
     state.staged_app_update = prefs.staged_app_update;
     state.last_update_check_time_by_game = prefs.last_update_check_time_by_game;
+    state.profiles_by_game = prefs.profiles_by_game;
+
+    // Profiles written before category ownership was introduced have `None` here. Copy the
+    // legacy per-game global definitions once, preserving an explicit `Some(vec![])` as empty.
+    let profile_categories_migrated =
+        migrate_profile_categories(&mut state.profiles_by_game, &state.categories);
 
     // Move static preferences (single assignment, no field-by-field copying)
     state.static_prefs = prefs.static_prefs;
@@ -386,10 +395,34 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
             prefs.create_downloaded_mod_category_by_game,
         );
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
-    state.preferences_need_save =
-        preferences_need_save || app_version_needs_save || language_needs_save || games_need_save;
+    state.preferences_need_save = preferences_need_save
+        || profile_categories_migrated
+        || app_version_needs_save
+        || language_needs_save
+        || games_need_save;
     initialize_tool_orders(&mut state, loaded_version);
     Ok(state)
+}
+
+fn migrate_profile_categories(
+    profiles_by_game: &mut HashMap<String, ProfileCatalog>,
+    categories: &[ModCategory],
+) -> bool {
+    let mut changed = false;
+    for (game_id, catalog) in profiles_by_game {
+        let legacy_categories: Vec<ModCategory> = categories
+            .iter()
+            .filter(|category| category.game_id == *game_id)
+            .cloned()
+            .collect();
+        for profile in &mut catalog.profiles {
+            if profile.categories.is_none() {
+                profile.categories = Some(legacy_categories.clone());
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn merge_seeded_games(saved_games: Vec<GameInstall>) -> (Vec<GameInstall>, bool) {
@@ -1421,6 +1454,94 @@ mod tests {
         let saved: AppPreferences = toml::from_str(&raw).unwrap();
 
         assert!(saved.static_prefs.always_translate_mod_details);
+    }
+
+    #[test]
+    fn profile_catalog_defaults_and_roundtrips() {
+        let old_config: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
+        assert!(old_config.profiles_by_game.is_empty());
+
+        let mut state = AppState::default();
+        let profile_id = uuid::Uuid::new_v4();
+        state.profiles_by_game.insert(
+            "wuwa".to_string(),
+            crate::model::ProfileCatalog {
+                active_profile_id: Some(profile_id),
+                profiles: vec![crate::model::ProfileRecord {
+                    id: profile_id,
+                    display_name: "Default".to_string(),
+                    archive_sha256: Some("abc".to_string()),
+                    archive_size: Some(123),
+                    uncompressed_size: Some(456),
+                    file_count: Some(7),
+                    created_at: None,
+                    updated_at: None,
+                    portable_metadata: HashMap::new(),
+                    categories: Some(vec![crate::model::ModCategory {
+                        id: "cat-1".to_string(),
+                        game_id: "wuwa".to_string(),
+                        name: "Profile category".to_string(),
+                        order: 0,
+                    }]),
+                }],
+            },
+        );
+        let raw = toml::to_string(&AppPreferences::from(&state)).unwrap();
+        let saved: AppPreferences = toml::from_str(&raw).unwrap();
+        let catalog = saved.profiles_by_game.get("wuwa").unwrap();
+        assert_eq!(catalog.active_profile_id, Some(profile_id));
+        assert_eq!(catalog.profiles[0].display_name, "Default");
+        assert_eq!(catalog.profiles[0].file_count, Some(7));
+        assert_eq!(catalog.profiles[0].categories.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn profile_category_migration_preserves_missing_vs_explicit_empty() {
+        let game_id = "wuwa".to_string();
+        let missing_id = uuid::Uuid::new_v4();
+        let empty_id = uuid::Uuid::new_v4();
+        let mut profiles = HashMap::from([(
+            game_id.clone(),
+            crate::model::ProfileCatalog {
+                active_profile_id: Some(missing_id),
+                profiles: vec![
+                    crate::model::ProfileRecord {
+                        id: missing_id,
+                        display_name: "Legacy".to_string(),
+                        archive_sha256: None,
+                        archive_size: None,
+                        uncompressed_size: None,
+                        file_count: None,
+                        created_at: None,
+                        updated_at: None,
+                        portable_metadata: HashMap::new(),
+                        categories: None,
+                    },
+                    crate::model::ProfileRecord {
+                        id: empty_id,
+                        display_name: "Empty".to_string(),
+                        archive_sha256: None,
+                        archive_size: None,
+                        uncompressed_size: None,
+                        file_count: None,
+                        created_at: None,
+                        updated_at: None,
+                        portable_metadata: HashMap::new(),
+                        categories: Some(Vec::new()),
+                    },
+                ],
+            },
+        )]);
+        let categories = vec![ModCategory {
+            id: "cat-1".to_string(),
+            game_id: game_id.clone(),
+            name: "Legacy category".to_string(),
+            order: 0,
+        }];
+        assert!(migrate_profile_categories(&mut profiles, &categories));
+        let migrated = &profiles[&game_id].profiles;
+        assert_eq!(migrated[0].categories.as_ref().unwrap().len(), 1);
+        assert!(migrated[1].categories.as_ref().unwrap().is_empty());
     }
 
     #[test]

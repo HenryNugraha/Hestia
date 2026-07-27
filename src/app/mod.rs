@@ -34,7 +34,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     importing::{self, PreparedImport},
-    integrations::{gamebanana, unrealengine, xxmi},
+    integrations::{gamebanana, profiles, unrealengine, xxmi},
     model::{
         AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseDownloadTaskFile,
         BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier, ConflictChoice, CustomProxyConfig,
@@ -43,10 +43,10 @@ use crate::{
         ImportResolution, ImportSource, LaunchBehavior, LibraryCategoryDisplayMode,
         LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory,
         ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
-        ModifiedUpdateBehavior, OperationLogEntry, SearchSort, StagedAppUpdate, TaskEntry,
-        TaskKind, TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry,
-        TrackedFileMeta, UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
-        default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
+        ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileRecord, SearchSort,
+        StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus, TasksLayout,
+        TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode, default_modded_exe_candidates,
+        default_mods_path, default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
         default_unreal_pak_mods_path_from_exe, default_vanilla_exe_candidates, feedback_survey,
         registry_modded_exe_candidates, registry_vanilla_exe_candidates,
         shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
@@ -127,6 +127,7 @@ impl eframe::App for HestiaApp {
             self.handle_translation_events();
             self.consume_install_events();
             self.consume_refresh_events();
+            self.consume_profile_events();
         }
         self.complete_startup_launch(ctx);
 
@@ -140,8 +141,10 @@ impl eframe::App for HestiaApp {
         self.enforce_browse_request_timeouts();
         self.enforce_browse_image_timeouts();
         self.enforce_gif_work_timeouts();
-        self.detect_drag_and_drop(ctx);
-        self.handle_shortcuts(ctx);
+        if !self.profile_operation_locks_app() {
+            self.detect_drag_and_drop(ctx);
+            self.handle_shortcuts(ctx);
+        }
 
         // Process queues - only when there's work
         if self.check_pending_process_work() {
@@ -164,6 +167,28 @@ impl eframe::App for HestiaApp {
         // already reports no open popup and the close-window handler below would
         // also fire on the same key press.
         let popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
+        let profile_operation_locks_app = self.profile_operation_locks_app();
+        if profile_operation_locks_app {
+            if ctx.input(|input| input.viewport().close_requested()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            ctx.memory_mut(|memory| memory.stop_text_input());
+            ctx.input_mut(|input| {
+                input.raw.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Paste(_)
+                            | egui::Event::Text(_)
+                            | egui::Event::Key { .. }
+                            | egui::Event::Ime(_)
+                    )
+                });
+                input.keys_down.clear();
+                input.smooth_scroll_delta = Vec2::ZERO;
+            });
+        }
 
         // Render UI
         egui::CentralPanel::default().show(root_ui, |ui| {
@@ -196,6 +221,9 @@ impl eframe::App for HestiaApp {
 
             self.render_pending_conflict(&ctx);
             self.render_pending_import(&ctx);
+            // Blocking profile operations are modal and must stay above every
+            // other Hestia window and overlay.
+            self.render_profile_dialogs(&ctx);
             self.update_main_window_state(&ctx);
         });
         self.handle_window_close_shortcuts(&ctx, popup_open_at_frame_start);
@@ -252,6 +280,10 @@ impl eframe::App for HestiaApp {
 
 impl HestiaApp {
     fn handle_window_close_shortcuts(&mut self, ctx: &egui::Context, popup_was_open: bool) {
+        if self.profile_operation_locks_app() {
+            return;
+        }
+
         let close_all_requested = ctx.input_mut(|input| {
             input.consume_shortcut(&egui::KeyboardShortcut::new(
                 egui::Modifiers {

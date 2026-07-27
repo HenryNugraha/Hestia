@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.0-alpha] - 2026-08-xx
+
+### Added
+- profiles
+
+### Changed
+- 
+
+### Fixed
+- 
+
 ## [1.7.1] - 2026-07-26
 
 ### Added

@@ -481,6 +481,39 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Update Preferences:", // LibraryUpdatePreferences
     "Syncing with GameBanana…", // LibrarySyncingGameBanana
 
+    // Window: Profiles
+    "Profiles", // ProfilesTitle
+    "Profile", // ProfilesLabel
+    "Default", // ProfilesDefault
+    "New profile", // ProfilesNew
+    "New profile", // ProfilesCreateEmpty
+    "Duplicate profile", // ProfilesDuplicateCurrent
+    "Rename profile", // ProfilesRename
+    "Delete profile", // ProfilesDelete
+    "Profile name", // ProfilesName
+    "Switch profile", // ProfilesSwitch
+    "Switching profile…", // ProfilesSwitching
+    "Creating profile…", // ProfilesCreating
+    "Duplicating profile…", // ProfilesDuplicating
+    "Deleting profile…", // ProfilesDeleting
+    "Archiving current profile…", // ProfilesArchivingCurrent
+    "Extracting selected profile…", // ProfilesExtractingSelected
+    "Activating selected profile…", // ProfilesActivatingSelected
+    "Inactive profiles are compressed to save disk space.", // ProfilesInactiveCompressedNote
+    "Profile operation failed", // ProfilesOperationFailed
+    "Finish the current install, update, scan, or profile operation first.", // ProfilesFinishCurrentOperationFirst
+    "Select a game to manage profiles.", // ProfilesSelectGame
+    "At least one profile is required.", // ProfilesAtLeastOneRequired
+    "Switch to another profile before deleting this one.", // ProfilesSwitchBeforeDelete
+    "Delete profile \"{name}\"?", // ProfilesDeleteConfirmation
+    "Its mods, disabled mods, and archived mods will be removed using your configured delete behavior.", // ProfilesDeleteConfirmationDetails
+    "Profile created: {name}", // ProfilesCreated
+    "Profile duplicated: {name}", // ProfilesDuplicated
+    "Profile renamed: {name}", // ProfilesRenamed
+    "Profile deleted: {name}", // ProfilesDeleted
+    "Profile activated: {name}", // ProfilesActivated
+    "Profile operation canceled", // ProfilesCanceled
+
     // Window: Settings
     "Settings", // SettingsWindowTitle
     "General", // SettingsTabGeneral

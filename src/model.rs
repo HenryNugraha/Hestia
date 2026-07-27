@@ -14,6 +14,7 @@ pub const UNREAL_DISABLED_MODS_DIR: &str = "~mods-disabledByHestia";
 pub const MOD_META_DIR: &str = "⬢HESTIA";
 pub const MOD_META_FILE: &str = "metadata.json";
 pub const PERSONAL_NOTE_FILE: &str = "Personal Note.txt";
+pub const MODS_PROFILES_DIR: &str = "Mods_Profiles";
 
 fn serde_default_true() -> bool {
     true
@@ -314,6 +315,10 @@ pub struct AppState {
     pub preferences_need_save: bool,
     #[serde(default)]
     pub last_update_check_time_by_game: HashMap<String, DateTime<Utc>>,
+    /// Profile catalogs are keyed by stable game definition id.  Payloads live in the game's
+    /// `Mods_Profiles` directory and are not embedded in the application state.
+    #[serde(default)]
+    pub profiles_by_game: HashMap<String, ProfileCatalog>,
     // Static preferences inlined for backward compatibility
     #[serde(flatten)]
     pub static_prefs: StaticPreferences,
@@ -347,9 +352,44 @@ impl Default for AppState {
             staged_app_update: None,
             preferences_need_save: false,
             last_update_check_time_by_game: HashMap::new(),
+            profiles_by_game: HashMap::new(),
             static_prefs: StaticPreferences::default(),
         }
     }
+}
+
+/// Persisted profile catalog for one game. UUIDs are independent from display names so a rename
+/// never changes the archive identity.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProfileCatalog {
+    #[serde(default)]
+    pub active_profile_id: Option<Uuid>,
+    #[serde(default)]
+    pub profiles: Vec<ProfileRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileRecord {
+    pub id: Uuid,
+    pub display_name: String,
+    #[serde(default)]
+    pub archive_sha256: Option<String>,
+    #[serde(default)]
+    pub archive_size: Option<u64>,
+    #[serde(default)]
+    pub uncompressed_size: Option<u64>,
+    #[serde(default)]
+    pub file_count: Option<u64>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub portable_metadata: HashMap<String, serde_json::Value>,
+    /// Category definitions captured for this profile. `None` means this record predates
+    /// profile-scoped categories and should be migrated from the game's legacy global list.
+    #[serde(default)]
+    pub categories: Option<Vec<ModCategory>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -606,7 +646,7 @@ pub struct StagedAppUpdate {
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModCategory {
     pub id: String,
     pub game_id: String,

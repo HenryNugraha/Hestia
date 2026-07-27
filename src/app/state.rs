@@ -320,6 +320,15 @@ pub struct HestiaApp {
     refresh_result_rx: WorkerRx<RefreshEvent>,
     refresh_inflight: bool,
     refresh_pending_selected_game: Option<String>,
+    profile_request_tx: WorkerTx<ProfileRequest>,
+    profile_event_rx: WorkerRx<ProfileEvent>,
+    profile_operation_inflight: Option<ProfileOperationInflight>,
+    profile_next_operation_id: u64,
+    profile_recovery_queue: VecDeque<GameInstall>,
+    profile_name_prompt: Option<ProfileOperationKind>,
+    profile_name_target_id: Option<Uuid>,
+    profile_name_draft: String,
+    pending_profile_delete_id: Option<Uuid>,
     pending_reload_summary: Option<(String, Vec<ReloadSnapshot>)>,
     pending_install_finalize: HashMap<u64, PendingInstallFinalize>,
     pending_known_installed_paths: HashSet<PathBuf>,
@@ -1217,6 +1226,84 @@ enum RefreshEvent {
     Failed {
         game_id: String,
         error: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileOperationKind {
+    Create,
+    Duplicate,
+    Switch,
+    Rename,
+    Delete,
+    Recover,
+}
+
+#[derive(Clone)]
+struct ProfileOperationInflight {
+    operation_id: u64,
+    kind: ProfileOperationKind,
+    source_display_name: Option<String>,
+    target_display_name: Option<String>,
+    extracts_before_archiving: bool,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
+    stage: Arc<RwLock<String>>,
+}
+
+#[derive(Clone)]
+struct ProfileOperationSpec {
+    operation_id: u64,
+    game_id: String,
+    game: GameInstall,
+    use_default_mods_path: bool,
+    kind: ProfileOperationKind,
+    profile_id: Option<Uuid>,
+    source_profile_id: Option<Uuid>,
+    target_profile_id: Option<Uuid>,
+    display_name: Option<String>,
+    target_display_name: Option<String>,
+    source_archive: Option<PathBuf>,
+    target_archive: Option<PathBuf>,
+    target_archive_sha256: Option<String>,
+    target_categories: Option<Vec<ModCategory>>,
+    metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
+    delete_behavior: DeleteBehavior,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
+    stage: Arc<RwLock<String>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct ActiveProfileMarker {
+    profile_id: Uuid,
+    display_name: String,
+    #[serde(default)]
+    categories: Option<Vec<ModCategory>>,
+}
+
+enum ProfileRequest {
+    Execute(ProfileOperationSpec),
+}
+
+enum ProfileEvent {
+    Completed {
+        operation_id: u64,
+        game_id: String,
+        kind: ProfileOperationKind,
+        profile_id: Option<Uuid>,
+        target_profile_id: Option<Uuid>,
+        display_name: Option<String>,
+        archive: Option<crate::integrations::profiles::ArchiveResult>,
+        active_profile_marker: Option<ActiveProfileMarker>,
+    },
+    Failed {
+        operation_id: u64,
+        game_id: String,
+        error: String,
+    },
+    Canceled {
+        operation_id: u64,
     },
 }
 

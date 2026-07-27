@@ -481,6 +481,39 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "更新偏好：", // LibraryUpdatePreferences
     "正在与 GameBanana 同步…", // LibrarySyncingGameBanana
 
+    // Window: Profiles
+    "配置文件", // ProfilesTitle
+    "配置文件", // ProfilesLabel
+    "默认", // ProfilesDefault
+    "新建配置文件", // ProfilesNew
+    "新建配置文件", // ProfilesCreateEmpty
+    "复制配置文件", // ProfilesDuplicateCurrent
+    "重命名配置文件", // ProfilesRename
+    "删除配置文件", // ProfilesDelete
+    "配置文件名称", // ProfilesName
+    "切换配置文件", // ProfilesSwitch
+    "正在切换配置文件…", // ProfilesSwitching
+    "正在创建配置文件…", // ProfilesCreating
+    "正在复制配置文件…", // ProfilesDuplicating
+    "正在删除配置文件…", // ProfilesDeleting
+    "正在归档当前配置文件…", // ProfilesArchivingCurrent
+    "正在解压所选配置文件…", // ProfilesExtractingSelected
+    "正在激活所选配置文件…", // ProfilesActivatingSelected
+    "未激活的配置文件会进行压缩，以节省磁盘空间。", // ProfilesInactiveCompressedNote
+    "配置文件操作失败", // ProfilesOperationFailed
+    "请先完成当前的安装、更新、扫描或配置文件操作。", // ProfilesFinishCurrentOperationFirst
+    "请选择一个游戏来管理配置文件。", // ProfilesSelectGame
+    "至少需要一个配置文件。", // ProfilesAtLeastOneRequired
+    "请先切换到其他配置文件，再删除此配置文件。", // ProfilesSwitchBeforeDelete
+    "删除配置文件“{name}”？", // ProfilesDeleteConfirmation
+    "其中的模组、已禁用模组和已归档模组将按照您配置的删除行为移除。", // ProfilesDeleteConfirmationDetails
+    "已创建配置文件：{name}", // ProfilesCreated
+    "已复制配置文件：{name}", // ProfilesDuplicated
+    "已重命名配置文件：{name}", // ProfilesRenamed
+    "已删除配置文件：{name}", // ProfilesDeleted
+    "已激活配置文件：{name}", // ProfilesActivated
+    "配置文件操作已取消", // ProfilesCanceled
+
     // Window: Settings
     "设置", // SettingsWindowTitle
     "常规", // SettingsTabGeneral

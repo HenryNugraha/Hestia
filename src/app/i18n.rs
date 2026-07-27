@@ -479,6 +479,38 @@ enum TextKey {
     LibraryUpdatePreferences,
     LibrarySyncingGameBanana,
 
+    ProfilesTitle,
+    ProfilesLabel,
+    ProfilesDefault,
+    ProfilesNew,
+    ProfilesCreateEmpty,
+    ProfilesDuplicateCurrent,
+    ProfilesRename,
+    ProfilesDelete,
+    ProfilesName,
+    ProfilesSwitch,
+    ProfilesSwitching,
+    ProfilesCreating,
+    ProfilesDuplicating,
+    ProfilesDeleting,
+    ProfilesArchivingCurrent,
+    ProfilesExtractingSelected,
+    ProfilesActivatingSelected,
+    ProfilesInactiveCompressedNote,
+    ProfilesOperationFailed,
+    ProfilesFinishCurrentOperationFirst,
+    ProfilesSelectGame,
+    ProfilesAtLeastOneRequired,
+    ProfilesSwitchBeforeDelete,
+    ProfilesDeleteConfirmation,
+    ProfilesDeleteConfirmationDetails,
+    ProfilesCreated,
+    ProfilesDuplicated,
+    ProfilesRenamed,
+    ProfilesDeleted,
+    ProfilesActivated,
+    ProfilesCanceled,
+
     SettingsWindowTitle,
     SettingsTabGeneral,
     SettingsTabCategory,
@@ -1750,7 +1782,8 @@ impl TextCatalog {
     }
 
     fn downloaded(self, title: &str) -> String {
-        self.get(TextKey::BrowseDownloaded).replace("{title}", title)
+        self.get(TextKey::BrowseDownloaded)
+            .replace("{title}", title)
     }
 
     fn could_not_prepare_install(self) -> &'static str {
@@ -1996,12 +2029,8 @@ impl TextCatalog {
         match mode {
             ModCategorySortMode::Manual => self.get(TextKey::LibraryCategorySortManual),
             ModCategorySortMode::ByNameAsc => self.get(TextKey::LibraryCategorySortByNameAsc),
-            ModCategorySortMode::ByModCountAsc => {
-                self.get(TextKey::LibraryCategorySortByLeastMods)
-            }
-            ModCategorySortMode::ByModCountDesc => {
-                self.get(TextKey::LibraryCategorySortByMostMods)
-            }
+            ModCategorySortMode::ByModCountAsc => self.get(TextKey::LibraryCategorySortByLeastMods),
+            ModCategorySortMode::ByModCountDesc => self.get(TextKey::LibraryCategorySortByMostMods),
         }
     }
 
@@ -2400,8 +2429,7 @@ impl TextCatalog {
     }
 
     fn renamed_to(self, name: &str) -> String {
-        self.get(TextKey::LibraryRenamedTo)
-            .replace("{name}", name)
+        self.get(TextKey::LibraryRenamedTo).replace("{name}", name)
     }
 
     fn personal_note(self) -> &'static str {
@@ -2548,6 +2576,159 @@ impl TextCatalog {
         self.get(TextKey::LibrarySyncingGameBanana)
     }
 
+    fn profiles(self) -> &'static str {
+        self.get(TextKey::ProfilesTitle)
+    }
+
+    fn profile_label(self) -> &'static str {
+        self.get(TextKey::ProfilesLabel)
+    }
+
+    fn default_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesDefault)
+    }
+
+    fn is_default_profile_name(value: &str) -> bool {
+        let normalized = value.trim().to_lowercase();
+        [
+            EN_US[TextKey::ProfilesDefault as usize],
+            ID_ID[TextKey::ProfilesDefault as usize],
+            ZH_CN[TextKey::ProfilesDefault as usize],
+            RU_RU[TextKey::ProfilesDefault as usize],
+        ]
+        .into_iter()
+        .any(|candidate| candidate.to_lowercase() == normalized)
+    }
+
+    fn profile_names_equal(left: &str, right: &str) -> bool {
+        if Self::is_default_profile_name(left) && Self::is_default_profile_name(right) {
+            return true;
+        }
+        left.trim().to_lowercase() == right.trim().to_lowercase()
+    }
+
+    fn profile_display_name(self, stored_name: &str) -> String {
+        if Self::is_default_profile_name(stored_name) {
+            self.default_profile().to_string()
+        } else {
+            stored_name.to_string()
+        }
+    }
+
+    fn new_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesNew)
+    }
+
+    fn create_empty_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesCreateEmpty)
+    }
+
+    fn duplicate_current_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateCurrent)
+    }
+
+    fn rename_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesRename)
+    }
+
+    fn delete_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesDelete)
+    }
+
+    fn profile_name(self) -> &'static str {
+        self.get(TextKey::ProfilesName)
+    }
+
+    fn switch_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesSwitch)
+    }
+
+    fn switching_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesSwitching)
+    }
+
+    fn creating_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesCreating)
+    }
+
+    fn duplicating_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicating)
+    }
+
+    fn deleting_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesDeleting)
+    }
+
+    fn archiving_current_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesArchivingCurrent)
+    }
+
+    fn extracting_selected_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesExtractingSelected)
+    }
+
+    fn activating_selected_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesActivatingSelected)
+    }
+
+    fn inactive_profiles_compressed_note(self) -> &'static str {
+        self.get(TextKey::ProfilesInactiveCompressedNote)
+    }
+
+    fn profile_operation_failed(self) -> &'static str {
+        self.get(TextKey::ProfilesOperationFailed)
+    }
+
+    fn profile_finish_current_operation_first(self) -> &'static str {
+        self.get(TextKey::ProfilesFinishCurrentOperationFirst)
+    }
+
+    fn profile_select_game(self) -> &'static str {
+        self.get(TextKey::ProfilesSelectGame)
+    }
+
+    fn profile_at_least_one_required(self) -> &'static str {
+        self.get(TextKey::ProfilesAtLeastOneRequired)
+    }
+
+    fn profile_switch_before_delete(self) -> &'static str {
+        self.get(TextKey::ProfilesSwitchBeforeDelete)
+    }
+
+    fn profile_delete_confirmation(self, name: &str) -> String {
+        self.get(TextKey::ProfilesDeleteConfirmation)
+            .replace("{name}", name)
+    }
+
+    fn profile_delete_confirmation_details(self) -> &'static str {
+        self.get(TextKey::ProfilesDeleteConfirmationDetails)
+    }
+
+    fn profile_created(self, name: &str) -> String {
+        self.get(TextKey::ProfilesCreated).replace("{name}", name)
+    }
+
+    fn profile_duplicated(self, name: &str) -> String {
+        self.get(TextKey::ProfilesDuplicated)
+            .replace("{name}", name)
+    }
+
+    fn profile_renamed(self, name: &str) -> String {
+        self.get(TextKey::ProfilesRenamed).replace("{name}", name)
+    }
+
+    fn profile_deleted(self, name: &str) -> String {
+        self.get(TextKey::ProfilesDeleted).replace("{name}", name)
+    }
+
+    fn profile_activated(self, name: &str) -> String {
+        self.get(TextKey::ProfilesActivated).replace("{name}", name)
+    }
+
+    fn profile_canceled(self) -> &'static str {
+        self.get(TextKey::ProfilesCanceled)
+    }
+
     fn settings(self) -> &'static str {
         self.get(TextKey::SettingsWindowTitle)
     }
@@ -2594,7 +2775,9 @@ impl TextCatalog {
 
     fn library_group_mode(self, group_mode: LibraryGroupMode) -> &'static str {
         match group_mode {
-            LibraryGroupMode::Category => self.get(TextKey::SettingsGeneralInstalledModsGroupCategory),
+            LibraryGroupMode::Category => {
+                self.get(TextKey::SettingsGeneralInstalledModsGroupCategory)
+            }
             LibraryGroupMode::Status => self.get(TextKey::SettingsGeneralInstalledModsGroupStatus),
             LibraryGroupMode::None => self.get(TextKey::SettingsGeneralInstalledModsGroupNone),
         }
@@ -2727,8 +2910,12 @@ impl TextCatalog {
 
     fn delete_behavior(self, behavior: DeleteBehavior) -> &'static str {
         match behavior {
-            DeleteBehavior::RecycleBin => self.get(TextKey::SettingsGeneralOperationalMoveToRecycleBin),
-            DeleteBehavior::Permanent => self.get(TextKey::SettingsGeneralOperationalDeletePermanently),
+            DeleteBehavior::RecycleBin => {
+                self.get(TextKey::SettingsGeneralOperationalMoveToRecycleBin)
+            }
+            DeleteBehavior::Permanent => {
+                self.get(TextKey::SettingsGeneralOperationalDeletePermanently)
+            }
         }
     }
 
@@ -3174,6 +3361,8 @@ impl HestiaApp {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     fn is_key_name(value: &str) -> bool {
         let mut chars = value.chars();
         chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -3215,6 +3404,7 @@ mod tests {
             ("en_us", catalog_comment_keys(include_str!("i18n/en_us.rs"))),
             ("id_id", catalog_comment_keys(include_str!("i18n/id_id.rs"))),
             ("zh_cn", catalog_comment_keys(include_str!("i18n/zh_cn.rs"))),
+            ("ru_ru", catalog_comment_keys(include_str!("i18n/ru_ru.rs"))),
         ];
 
         for (language, comments) in catalogs {
@@ -3225,11 +3415,29 @@ mod tests {
             );
             for (index, (expected, actual)) in keys.iter().zip(comments.iter()).enumerate() {
                 assert_eq!(
-                    actual,
-                    expected,
+                    actual, expected,
                     "{language} catalog key mismatch at index {index}"
                 );
             }
         }
+    }
+
+    #[test]
+    fn localized_default_profile_names_follow_the_active_language() {
+        let chinese_default = TextCatalog::new(AppLanguage::ChineseSimplified).default_profile();
+        let russian = TextCatalog::new(AppLanguage::Russian);
+
+        assert_eq!(
+            russian.profile_display_name(chinese_default),
+            russian.default_profile()
+        );
+        assert!(TextCatalog::profile_names_equal(
+            chinese_default,
+            TextCatalog::new(AppLanguage::English).default_profile()
+        ));
+        assert!(TextCatalog::profile_names_equal(
+            TextCatalog::new(AppLanguage::Indonesian).default_profile(),
+            russian.default_profile()
+        ));
     }
 }
