@@ -323,6 +323,7 @@ pub struct HestiaApp {
     profile_request_tx: WorkerTx<ProfileRequest>,
     profile_event_rx: WorkerRx<ProfileEvent>,
     profile_operation_inflight: Option<ProfileOperationInflight>,
+    profile_compression_states: HashMap<(String, Uuid), ProfileCompressionUiState>,
     profile_next_operation_id: u64,
     profile_recovery_queue: VecDeque<GameInstall>,
     profile_recovery_failed: bool,
@@ -1240,6 +1241,13 @@ enum ProfileOperationKind {
     Recover,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileCompressionUiState {
+    Queued,
+    Running,
+    Failed,
+}
+
 #[derive(Clone)]
 struct ProfileOperationInflight {
     operation_id: u64,
@@ -1262,6 +1270,7 @@ struct ProfileArchiveCoordinator {
 struct ProfileArchiveCoordinatorState {
     foreground_active: bool,
     archive_running: bool,
+    archive_not_before: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -1288,7 +1297,6 @@ struct ProfileOperationSpec {
     target_archive: Option<PathBuf>,
     target_categories: Option<Vec<ModCategory>>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
-    delete_behavior: DeleteBehavior,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
     stage: Arc<RwLock<String>>,
@@ -1322,6 +1330,23 @@ enum ProfileEvent {
         game_id: String,
         profile_id: Uuid,
         archive: crate::integrations::profiles::ArchiveResult,
+    },
+    ArchiveQueued {
+        game_id: String,
+        profile_id: Uuid,
+        delay_seconds: u64,
+    },
+    ArchiveStarted {
+        game_id: String,
+        profile_id: Uuid,
+    },
+    ArchiveCanceled {
+        game_id: String,
+        profile_id: Uuid,
+    },
+    ArchiveSkipped {
+        game_id: String,
+        profile_id: Uuid,
     },
     ArchiveFailed {
         game_id: String,

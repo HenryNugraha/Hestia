@@ -33,16 +33,35 @@ pub const PROFILE_README_FILE: &str = "readme.txt";
 pub const PROFILE_STAGING_DIR: &str = ".staging";
 pub const PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT: &str = "Archived";
 pub const PROFILE_README_CONTENT: &str = "\
-Hestia profile archives
+Hestia Profile Storage
 
-Inactive profiles are normally stored as <uuid>.profile.tzst archives. While Hestia is switching or compressing a profile, its data may temporarily be stored in a <uuid>.profile folder. Temporary .part, .bak, and .conflict files are managed automatically.
+This folder stores inactive Hestia profiles. The active profile remains in the game's normal Mods folder.
 
-You can open them with:
-- Windows 11 File Explorer (with current system updates)
+WHAT YOU MAY SEE
+
+<profile-id>.profile.tzst
+A compressed inactive profile. It is a TAR archive compressed with Zstandard.
+
+<profile-id>.profile
+A temporary uncompressed profile. Hestia may keep this folder while switching profiles or preparing compression.
+
+.part, .bak, .conflict, and .deleting files
+Temporary recovery files created by Hestia. They are normally cleaned up automatically.
+
+OPENING AN ARCHIVE
+
+You can inspect .tzst archives with:
+- Windows 11 File Explorer with current system updates
 - 7-Zip 24.05 or newer
 - WinRAR 6.21 or newer
 
-Hestia manages these archives automatically. Do not rename, modify, move, or delete them while Hestia is running.
+IMPORTANT
+
+Profile names are stored by Hestia, so archive filenames use internal profile IDs instead.
+
+Do not rename, edit, move, or delete anything in this folder while Hestia is running. Manage profiles through Hestia whenever possible.
+
+If Hestia or Windows closes during profile switching or compression, reopen Hestia and allow it to recover the profile data. Do not manually remove temporary files first.
 ";
 
 /// The live roots captured by a profile archive.  XXMI uses `archived`; Unreal uses `disabled`

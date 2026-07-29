@@ -484,8 +484,11 @@ enum TextKey {
     ProfilesDefault,
     ProfilesNew,
     ProfilesCreateEmpty,
+    ProfilesNewDescription,
     ProfilesDuplicateCurrent,
+    ProfilesDuplicateDescription,
     ProfilesRename,
+    ProfilesRenameDescription,
     ProfilesDelete,
     ProfilesName,
     ProfilesSwitch,
@@ -497,6 +500,16 @@ enum TextKey {
     ProfilesExtractingSelected,
     ProfilesActivatingSelected,
     ProfilesInactiveCompressedNote,
+    ProfilesStatusLabel,
+    ProfilesCompressionActive,
+    ProfilesCompressionQueued,
+    ProfilesCompressionRunning,
+    ProfilesCompressionComplete,
+    ProfilesCompressionFailed,
+    ProfilesCompressionUnavailable,
+    ProfilesArchiveSize,
+    ProfilesPreviousArchiveSize,
+    ProfilesNoArchiveYet,
     ProfilesOperationFailed,
     ProfilesFinishCurrentOperationFirst,
     ProfilesSelectGame,
@@ -2623,12 +2636,24 @@ impl TextCatalog {
         self.get(TextKey::ProfilesCreateEmpty)
     }
 
+    fn profile_new_description(self) -> &'static str {
+        self.get(TextKey::ProfilesNewDescription)
+    }
+
     fn duplicate_current_profile(self) -> &'static str {
         self.get(TextKey::ProfilesDuplicateCurrent)
     }
 
+    fn profile_duplicate_description(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateDescription)
+    }
+
     fn rename_profile(self) -> &'static str {
         self.get(TextKey::ProfilesRename)
+    }
+
+    fn profile_rename_description(self) -> &'static str {
+        self.get(TextKey::ProfilesRenameDescription)
     }
 
     fn delete_profile(self) -> &'static str {
@@ -2673,6 +2698,46 @@ impl TextCatalog {
 
     fn inactive_profiles_compressed_note(self) -> &'static str {
         self.get(TextKey::ProfilesInactiveCompressedNote)
+    }
+
+    fn profile_status_label(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusLabel)
+    }
+
+    fn profile_compression_active(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionActive)
+    }
+
+    fn profile_compression_queued(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionQueued)
+    }
+
+    fn profile_compression_running(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionRunning)
+    }
+
+    fn profile_compression_complete(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionComplete)
+    }
+
+    fn profile_compression_failed(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionFailed)
+    }
+
+    fn profile_compression_unavailable(self) -> &'static str {
+        self.get(TextKey::ProfilesCompressionUnavailable)
+    }
+
+    fn profile_archive_size(self) -> &'static str {
+        self.get(TextKey::ProfilesArchiveSize)
+    }
+
+    fn profile_previous_archive_size(self) -> &'static str {
+        self.get(TextKey::ProfilesPreviousArchiveSize)
+    }
+
+    fn profile_no_archive_yet(self) -> &'static str {
+        self.get(TextKey::ProfilesNoArchiveYet)
     }
 
     fn profile_operation_failed(self) -> &'static str {

@@ -487,8 +487,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "默认", // ProfilesDefault
     "新建配置文件", // ProfilesNew
     "新建配置文件", // ProfilesCreateEmpty
+    "创建一套独立的模组和分类。", // ProfilesNewDescription
     "复制配置文件", // ProfilesDuplicateCurrent
+    "复制当前配置文件中的模组和分类。", // ProfilesDuplicateDescription
     "重命名配置文件", // ProfilesRename
+    "为此配置文件选择一个新名称。", // ProfilesRenameDescription
     "删除配置文件", // ProfilesDelete
     "配置文件名称", // ProfilesName
     "切换配置文件", // ProfilesSwitch
@@ -500,13 +503,23 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "正在解压所选配置文件…", // ProfilesExtractingSelected
     "正在激活所选配置文件…", // ProfilesActivatingSelected
     "未激活的配置文件会进行压缩，以节省磁盘空间。", // ProfilesInactiveCompressedNote
+    "状态", // ProfilesStatusLabel
+    "当前配置文件", // ProfilesCompressionActive
+    "等待压缩", // ProfilesCompressionQueued
+    "正在压缩", // ProfilesCompressionRunning
+    "已压缩", // ProfilesCompressionComplete
+    "压缩失败", // ProfilesCompressionFailed
+    "未压缩", // ProfilesCompressionUnavailable
+    "压缩包大小", // ProfilesArchiveSize
+    "先前的压缩包大小", // ProfilesPreviousArchiveSize
+    "尚无压缩包", // ProfilesNoArchiveYet
     "配置文件操作失败", // ProfilesOperationFailed
     "请先完成当前的安装、更新、扫描或配置文件操作。", // ProfilesFinishCurrentOperationFirst
     "请选择一个游戏来管理配置文件。", // ProfilesSelectGame
     "至少需要一个配置文件。", // ProfilesAtLeastOneRequired
     "请先切换到其他配置文件，再删除此配置文件。", // ProfilesSwitchBeforeDelete
     "删除配置文件“{name}”？", // ProfilesDeleteConfirmation
-    "其中的模组、已禁用模组和已归档模组将按照您配置的删除行为移除。", // ProfilesDeleteConfirmationDetails
+    "此配置文件中的模组将被永久删除。已删除的数据无法恢复。", // ProfilesDeleteConfirmationDetails
     "已创建配置文件：{name}", // ProfilesCreated
     "已复制配置文件：{name}", // ProfilesDuplicated
     "已重命名配置文件：{name}", // ProfilesRenamed

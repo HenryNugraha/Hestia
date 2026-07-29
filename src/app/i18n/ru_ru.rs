@@ -487,8 +487,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Стандартный", // ProfilesDefault
     "Новый профиль", // ProfilesNew
     "Новый профиль", // ProfilesCreateEmpty
+    "Создайте отдельный набор модов и категорий.", // ProfilesNewDescription
     "Дублировать профиль", // ProfilesDuplicateCurrent
+    "Создайте копию модов и категорий текущего профиля.", // ProfilesDuplicateDescription
     "Переименовать профиль", // ProfilesRename
+    "Выберите новое имя для этого профиля.", // ProfilesRenameDescription
     "Удалить профиль", // ProfilesDelete
     "Имя профиля", // ProfilesName
     "Переключить профиль", // ProfilesSwitch
@@ -500,13 +503,23 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Распаковка выбранного профиля…", // ProfilesExtractingSelected
     "Активация выбранного профиля…", // ProfilesActivatingSelected
     "Неактивные профили сжимаются для экономии места на диске.", // ProfilesInactiveCompressedNote
+    "Статус", // ProfilesStatusLabel
+    "Активный профиль", // ProfilesCompressionActive
+    "Ожидает сжатия", // ProfilesCompressionQueued
+    "Сжимается", // ProfilesCompressionRunning
+    "Сжат", // ProfilesCompressionComplete
+    "Ошибка сжатия", // ProfilesCompressionFailed
+    "Не сжат", // ProfilesCompressionUnavailable
+    "Размер архива", // ProfilesArchiveSize
+    "Размер предыдущего архива", // ProfilesPreviousArchiveSize
+    "Архива пока нет", // ProfilesNoArchiveYet
     "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
     "Сначала завершите текущую установку, обновление, сканирование или операцию с профилями.", // ProfilesFinishCurrentOperationFirst
     "Выберите игру для управления профилями.", // ProfilesSelectGame
     "Требуется хотя бы один профиль.", // ProfilesAtLeastOneRequired
     "Переключитесь на другой профиль, прежде чем удалять этот.", // ProfilesSwitchBeforeDelete
     "Удалить профиль «{name}»?", // ProfilesDeleteConfirmation
-    "Моды, отключенные моды и архивированные моды будут удалены в соответствии с выбранным поведением удаления.", // ProfilesDeleteConfirmationDetails
+    "Моды этого профиля будут удалены НАВСЕГДА. Восстановить удалённые данные невозможно.", // ProfilesDeleteConfirmationDetails
     "Профиль создан: {name}", // ProfilesCreated
     "Профиль дублирован: {name}", // ProfilesDuplicated
     "Профиль переименован: {name}", // ProfilesRenamed

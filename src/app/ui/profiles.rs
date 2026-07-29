@@ -128,11 +128,176 @@ fn profile_switcher_control_rect(slot_rect: egui::Rect, pane_top: Option<f32>) -
     )
 }
 
+fn profile_selector_menu_frame(style: &egui::Style) -> egui::Frame {
+    let menu_radius = style.visuals.menu_corner_radius;
+    egui::Frame::popup(style)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 8,
+            bottom: 2,
+        })
+        .corner_radius(egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: menu_radius.sw,
+            se: menu_radius.se,
+        })
+}
+
+const PROFILE_SELECTOR_ROW_HEIGHT: f32 = 34.0;
+const PROFILE_SELECTOR_FOOTER_GAP: f32 = 1.0;
+const PROFILE_SELECTOR_VISIBLE_ROWS: usize = 7;
+const PROFILE_SELECTOR_DOT_RADIUS: f32 = 4.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileStorageTooltipState {
+    Active,
+    Queued,
+    Running,
+    Compressed,
+    Failed,
+    Unavailable,
+}
+
+fn profile_selector_list_max_height(row_gap: f32) -> f32 {
+    PROFILE_SELECTOR_ROW_HEIGHT * PROFILE_SELECTOR_VISIBLE_ROWS as f32
+        + row_gap * PROFILE_SELECTOR_VISIBLE_ROWS.saturating_sub(1) as f32
+}
+
+fn profile_storage_tooltip_state(
+    active: bool,
+    transient: Option<ProfileCompressionUiState>,
+    loose_exists: bool,
+    archive_exists: bool,
+    archive_part_exists: bool,
+) -> ProfileStorageTooltipState {
+    if active {
+        return ProfileStorageTooltipState::Active;
+    }
+    if let Some(transient) = transient {
+        return match transient {
+            ProfileCompressionUiState::Queued => ProfileStorageTooltipState::Queued,
+            ProfileCompressionUiState::Running => ProfileStorageTooltipState::Running,
+            ProfileCompressionUiState::Failed => ProfileStorageTooltipState::Failed,
+        };
+    }
+    if archive_part_exists {
+        ProfileStorageTooltipState::Running
+    } else if loose_exists {
+        ProfileStorageTooltipState::Queued
+    } else if archive_exists {
+        ProfileStorageTooltipState::Compressed
+    } else {
+        ProfileStorageTooltipState::Unavailable
+    }
+}
+
+fn paint_profile_selector_dot(painter: &egui::Painter, center: egui::Pos2, active: bool) {
+    if active {
+        painter.circle_filled(
+            center,
+            PROFILE_SELECTOR_DOT_RADIUS,
+            Color32::from_rgb(112, 164, 118),
+        );
+    } else {
+        painter.circle_stroke(
+            center,
+            PROFILE_SELECTOR_DOT_RADIUS,
+            egui::Stroke::new(1.25, Color32::from_rgb(145, 151, 159)),
+        );
+    }
+}
+
+fn profile_storage_tooltip_text(
+    text: TextCatalog,
+    state: ProfileStorageTooltipState,
+    archive_size: Option<u64>,
+) -> String {
+    let state_label = match state {
+        ProfileStorageTooltipState::Active => text.profile_compression_active(),
+        ProfileStorageTooltipState::Queued => text.profile_compression_queued(),
+        ProfileStorageTooltipState::Running => text.profile_compression_running(),
+        ProfileStorageTooltipState::Compressed => text.profile_compression_complete(),
+        ProfileStorageTooltipState::Failed => text.profile_compression_failed(),
+        ProfileStorageTooltipState::Unavailable => text.profile_compression_unavailable(),
+    };
+    let size_label = if archive_size.is_some()
+        && !matches!(
+            state,
+            ProfileStorageTooltipState::Compressed | ProfileStorageTooltipState::Unavailable
+        ) {
+        text.profile_previous_archive_size()
+    } else {
+        text.profile_archive_size()
+    };
+    let size = archive_size
+        .map(format_file_size)
+        .unwrap_or_else(|| text.profile_no_archive_yet().to_string());
+    format!(
+        "{}: {state_label}\n{size_label}: {size}",
+        text.profile_status_label()
+    )
+}
+
+fn profile_selector_action_row(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    enabled: bool,
+) -> egui::Response {
+    let row_width = ui.available_width().max(1.0);
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(row_width, PROFILE_SELECTOR_ROW_HEIGHT), sense);
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(7),
+            Color32::from_rgba_premultiplied(44, 47, 52, 205),
+        );
+    }
+    let icon_color = if enabled {
+        Color32::from_rgb(171, 177, 185)
+    } else {
+        Color32::from_rgb(112, 117, 124)
+    };
+    let text_color = if enabled {
+        Color32::from_rgb(218, 222, 227)
+    } else {
+        Color32::from_rgb(137, 142, 150)
+    };
+    ui.painter().text(
+        egui::pos2(rect.left() + 15.0, rect.center().y),
+        egui::Align2::CENTER_CENTER,
+        icon_char(icon),
+        egui::FontId::new(14.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+        icon_color,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 31.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        text_color,
+    );
+
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response.on_hover_cursor(egui::CursorIcon::NotAllowed)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileTimelineStage {
     Archiving,
     Extracting,
-    Activating,
+    Switching,
 }
 
 const PROFILE_TIMELINE_CIRCLE_X: f32 = 20.0;
@@ -155,14 +320,26 @@ fn profile_progress_footer_rects(
     (note_rect, cancel_rect)
 }
 
+fn profile_name_action_footer<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let size = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(
+        size,
+        egui::Layout::right_to_left(egui::Align::Center),
+        add_contents,
+    )
+}
+
 fn profile_timeline_stages(
     kind: ProfileOperationKind,
     prepares_before_activating: bool,
 ) -> &'static [ProfileTimelineStage] {
-    const ACTIVATE_ONLY: &[ProfileTimelineStage] = &[ProfileTimelineStage::Activating];
+    const ACTIVATE_ONLY: &[ProfileTimelineStage] = &[ProfileTimelineStage::Switching];
     const PREPARE_FIRST: &[ProfileTimelineStage] = &[
         ProfileTimelineStage::Extracting,
-        ProfileTimelineStage::Activating,
+        ProfileTimelineStage::Switching,
     ];
 
     match kind {
@@ -187,8 +364,9 @@ fn profile_timeline_active_stage(stage: &str) -> Option<ProfileTimelineStage> {
     } else if stage.contains("Committing")
         || stage.contains("committed")
         || stage.contains("Activating")
+        || stage.contains("Switching")
     {
-        Some(ProfileTimelineStage::Activating)
+        Some(ProfileTimelineStage::Switching)
     } else {
         None
     }
@@ -215,7 +393,7 @@ fn profile_timeline_stage_progress(
                 ((progress - 10.0) / 50.0).clamp(0.0, 1.0)
             }
         }
-        ProfileTimelineStage::Activating => {
+        ProfileTimelineStage::Switching => {
             if worker_stage.contains("committed") {
                 1.0
             } else {
@@ -327,17 +505,10 @@ impl HestiaApp {
             ))
             .on_hover_cursor(egui::CursorIcon::PointingHand);
 
-        let menu_radius = ui.style().visuals.menu_corner_radius;
-        let menu_frame = egui::Frame::popup(ui.style()).corner_radius(egui::CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: menu_radius.sw,
-            se: menu_radius.se,
-        });
         egui::Popup::menu(&response)
             .id(ui.id().with("profile_selector_popup"))
             .width(response.rect.width())
-            .frame(menu_frame)
+            .frame(profile_selector_menu_frame(ui.style()))
             .show(|ui| {
                 self.render_profile_selector_popup(ui);
             });
@@ -345,10 +516,13 @@ impl HestiaApp {
 
     fn render_profile_selector_popup(&mut self, ui: &mut Ui) {
         let text = self.text();
-        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+        let Some(game) = self.selected_game().cloned() else {
             static_label(ui, RichText::new(text.profile_select_game()));
             return;
         };
+        let game_id = game.definition.id.clone();
+        let profile_roots =
+            profiles::profile_roots(&game, self.state.static_prefs.use_default_mods_path).ok();
 
         let catalog = self
             .state
@@ -359,173 +533,220 @@ impl HestiaApp {
         let blocked = self.profile_operations_blocked();
 
         let profile_count = catalog.profiles.len();
-        for profile in catalog.profiles {
-            let active = catalog.active_profile_id == Some(profile.id);
-            let profile_name = text.profile_display_name(&profile.display_name);
-            let row_width = ui.available_width().max(1.0);
-            let (row_rect, _) = ui.allocate_exact_size(Vec2::new(row_width, 34.0), Sense::hover());
-            let menu_rect = egui::Rect::from_min_max(
-                egui::pos2(row_rect.right() - 32.0, row_rect.top() + 4.0),
-                egui::pos2(row_rect.right() - 4.0, row_rect.bottom() - 4.0),
-            );
-            let select_rect = egui::Rect::from_min_max(
-                row_rect.min,
-                egui::pos2(menu_rect.left(), row_rect.bottom()),
-            );
-            let select = ui.interact(
-                select_rect,
-                ui.id().with(("profile_row", profile.id)),
-                if active || blocked {
-                    Sense::hover()
-                } else {
-                    Sense::click()
-                },
-            );
-            let row_hovered = ui
-                .ctx()
-                .pointer_latest_pos()
-                .is_some_and(|position| row_rect.contains(position));
-            if active || row_hovered {
-                ui.painter().rect_filled(
-                    row_rect,
-                    egui::CornerRadius::same(7),
-                    if active {
-                        Color32::from_rgba_premultiplied(61, 66, 73, 220)
-                    } else {
-                        Color32::from_rgba_premultiplied(44, 47, 52, 205)
-                    },
-                );
-            }
-
-            ui.painter().text(
-                egui::pos2(row_rect.left() + 15.0, row_rect.center().y),
-                egui::Align2::CENTER_CENTER,
-                if active { "●" } else { "○" },
-                egui::FontId::proportional(13.0),
-                if active {
-                    Color32::from_rgb(112, 164, 118)
-                } else {
-                    Color32::from_rgb(145, 151, 159)
-                },
-            );
-            let name_font = egui::FontId::proportional(13.0);
-            let name_width = (select_rect.right() - row_rect.left() - 42.0).max(1.0);
-            let visible_name =
-                clamp_profile_switcher_name(ui, &profile_name, &name_font, name_width);
-            ui.painter().text(
-                egui::pos2(row_rect.left() + 31.0, row_rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                &visible_name,
-                name_font,
-                if active {
-                    Color32::from_rgb(239, 242, 245)
-                } else {
-                    Color32::from_rgb(218, 222, 227)
-                },
-            );
-
-            if visible_name != profile_name {
-                select.clone().on_hover_text(&profile_name);
-            }
-            if select.clicked() {
-                if let Err(error) = self.request_switch_profile(profile.id) {
-                    self.report_error_message(
-                        format!("failed to switch profile: {error:#}"),
-                        Some(text.profile_operation_failed()),
+        let active_profile_id = catalog.active_profile_id;
+        let profile_row_gap = ui.spacing().item_spacing.y;
+        let profile_list_max_height = profile_selector_list_max_height(profile_row_gap);
+        ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
+        ScrollArea::vertical()
+            .id_salt(("profile_selector_list", &game_id))
+            .max_height(profile_list_max_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = profile_row_gap;
+                for profile in catalog.profiles {
+                    let active = active_profile_id == Some(profile.id);
+                    let profile_name = text.profile_display_name(&profile.display_name);
+                    let row_width = ui.available_width().max(1.0);
+                    let (row_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(row_width, PROFILE_SELECTOR_ROW_HEIGHT),
+                        Sense::hover(),
                     );
-                }
-                egui::Popup::close_all(ui.ctx());
-            } else if !active && !blocked {
-                select
-                    .clone()
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-            } else if blocked && !active {
-                select
-                    .clone()
-                    .on_hover_text(text.profile_finish_current_operation_first())
-                    .on_hover_cursor(egui::CursorIcon::NotAllowed);
-            }
-
-            let mut menu_ui = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(menu_rect)
-                    .layout(egui::Layout::top_down(egui::Align::Center)),
-            );
-            menu_ui.style_mut().spacing.button_padding = egui::vec2(5.0, 3.0);
-            menu_ui.menu_button("", |ui| {
-                let rename = ui
-                    .add_enabled(
-                        !blocked,
-                        egui::Button::new(icon_text_sized(Icon::Pencil, text.rename(), 14.0, 13.0)),
-                    )
-                    .on_hover_text(text.rename());
-                if rename.clicked() {
-                    self.start_profile_name_prompt(
-                        ProfileOperationKind::Rename,
-                        Some(profile.id),
-                        profile_name.clone(),
+                    let menu_rect = egui::Rect::from_min_max(
+                        egui::pos2(row_rect.right() - 32.0, row_rect.top() + 4.0),
+                        egui::pos2(row_rect.right() - 4.0, row_rect.bottom() - 4.0),
                     );
-                    egui::Popup::close_all(ui.ctx());
-                } else if blocked {
-                    rename
-                        .on_disabled_hover_text(text.profile_finish_current_operation_first())
-                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                }
+                    let select_rect = egui::Rect::from_min_max(
+                        row_rect.min,
+                        egui::pos2(menu_rect.left(), row_rect.bottom()),
+                    );
+                    let select = ui.interact(
+                        select_rect,
+                        ui.id().with(("profile_row", profile.id)),
+                        if active || blocked {
+                            Sense::hover()
+                        } else {
+                            Sense::click()
+                        },
+                    );
+                    let row_hovered = ui
+                        .ctx()
+                        .pointer_latest_pos()
+                        .is_some_and(|position| row_rect.contains(position));
+                    if active || row_hovered {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            egui::CornerRadius::same(7),
+                            if active {
+                                Color32::from_rgba_premultiplied(61, 66, 73, 220)
+                            } else {
+                                Color32::from_rgba_premultiplied(44, 47, 52, 205)
+                            },
+                        );
+                    }
 
-                let delete = ui
-                    .add_enabled(
-                        !blocked && !active && profile_count > 1,
-                        egui::Button::new(icon_text_sized(Icon::Trash2, text.delete(), 14.0, 13.0)),
-                    )
-                    .on_hover_text(text.delete());
-                if delete.clicked() {
-                    self.pending_profile_delete_id = Some(profile.id);
-                    egui::Popup::close_all(ui.ctx());
-                } else if active {
-                    delete
-                        .on_disabled_hover_text(text.profile_switch_before_delete())
-                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                } else if profile_count <= 1 {
-                    delete
-                        .on_disabled_hover_text(text.profile_at_least_one_required())
-                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                } else if blocked {
-                    delete
-                        .on_disabled_hover_text(text.profile_finish_current_operation_first())
-                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                    paint_profile_selector_dot(
+                        ui.painter(),
+                        egui::pos2(row_rect.left() + 15.0, row_rect.center().y),
+                        active,
+                    );
+                    let name_font = egui::FontId::proportional(13.0);
+                    let name_width = (select_rect.right() - row_rect.left() - 42.0).max(1.0);
+                    let visible_name =
+                        clamp_profile_switcher_name(ui, &profile_name, &name_font, name_width);
+                    ui.painter().text(
+                        egui::pos2(row_rect.left() + 31.0, row_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        &visible_name,
+                        name_font,
+                        if active {
+                            Color32::from_rgb(239, 242, 245)
+                        } else {
+                            Color32::from_rgb(218, 222, 227)
+                        },
+                    );
+
+                    if select.hovered() {
+                        let transient = self
+                            .profile_compression_states
+                            .get(&(game_id.clone(), profile.id))
+                            .copied();
+                        let (loose_exists, archive_exists, archive_part_exists, archive_size) =
+                            profile_roots
+                                .as_ref()
+                                .map_or((false, false, false, None), |roots| {
+                                    let archive_path = roots.archive_path(profile.id);
+                                    let archive_metadata = fs::metadata(&archive_path)
+                                        .ok()
+                                        .filter(|entry| entry.is_file());
+                                    (
+                                        roots.profile_path(profile.id).is_dir(),
+                                        archive_metadata.is_some(),
+                                        roots.archive_part_path(profile.id).is_file(),
+                                        archive_metadata.map(|entry| entry.len()),
+                                    )
+                                });
+                        let storage_state = profile_storage_tooltip_state(
+                            active,
+                            transient,
+                            loose_exists,
+                            archive_exists,
+                            archive_part_exists,
+                        );
+                        let storage_details =
+                            profile_storage_tooltip_text(text, storage_state, archive_size);
+                        let mut tooltip = if visible_name != profile_name {
+                            format!("{profile_name}\n\n{storage_details}")
+                        } else {
+                            storage_details
+                        };
+                        if blocked && !active {
+                            tooltip.push_str("\n\n");
+                            tooltip.push_str(text.profile_finish_current_operation_first());
+                        }
+                        select.clone().on_hover_text(tooltip);
+                    }
+                    if select.clicked() {
+                        if let Err(error) = self.request_switch_profile(profile.id) {
+                            self.report_error_message(
+                                format!("failed to switch profile: {error:#}"),
+                                Some(text.profile_operation_failed()),
+                            );
+                        }
+                        egui::Popup::close_all(ui.ctx());
+                    } else if !active && !blocked {
+                        select
+                            .clone()
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    } else if blocked && !active {
+                        select.clone().on_hover_cursor(egui::CursorIcon::NotAllowed);
+                    }
+
+                    let mut menu_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(menu_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Center)),
+                    );
+                    menu_ui.style_mut().spacing.button_padding = egui::vec2(5.0, 3.0);
+                    menu_ui.menu_button("", |ui| {
+                        let rename = ui
+                            .add_enabled(
+                                !blocked,
+                                egui::Button::new(icon_text_sized(
+                                    Icon::Pencil,
+                                    text.rename(),
+                                    14.0,
+                                    13.0,
+                                )),
+                            )
+                            .on_hover_text(text.rename());
+                        if rename.clicked() {
+                            self.start_profile_name_prompt(
+                                ProfileOperationKind::Rename,
+                                Some(profile.id),
+                                profile_name.clone(),
+                            );
+                            egui::Popup::close_all(ui.ctx());
+                        } else if blocked {
+                            rename
+                                .on_disabled_hover_text(
+                                    text.profile_finish_current_operation_first(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        }
+
+                        let delete = ui
+                            .add_enabled(
+                                !blocked && !active && profile_count > 1,
+                                egui::Button::new(icon_text_sized(
+                                    Icon::Trash2,
+                                    text.delete(),
+                                    14.0,
+                                    13.0,
+                                )),
+                            )
+                            .on_hover_text(text.delete());
+                        if delete.clicked() {
+                            self.pending_profile_delete_id = Some(profile.id);
+                            egui::Popup::close_all(ui.ctx());
+                        } else if active {
+                            delete
+                                .on_disabled_hover_text(text.profile_switch_before_delete())
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        } else if profile_count <= 1 {
+                            delete
+                                .on_disabled_hover_text(text.profile_at_least_one_required())
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        } else if blocked {
+                            delete
+                                .on_disabled_hover_text(
+                                    text.profile_finish_current_operation_first(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        }
+                    });
                 }
             });
-        }
 
+        ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
         ui.separator();
-        ui.add_enabled_ui(!blocked, |ui| {
-            if ui
-                .button(icon_text_sized(
-                    Icon::Plus,
-                    text.create_empty_profile(),
-                    14.0,
-                    13.0,
-                ))
-                .clicked()
-            {
-                let name = self.next_profile_name(text.new_profile());
-                self.start_profile_name_prompt(ProfileOperationKind::Create, None, name);
-                ui.close();
-            }
-            if ui
-                .button(icon_text_sized(
-                    Icon::Copy,
-                    text.duplicate_current_profile(),
-                    14.0,
-                    13.0,
-                ))
-                .clicked()
-            {
-                let name = self.next_profile_name(&self.active_profile_name());
-                self.start_profile_name_prompt(ProfileOperationKind::Duplicate, None, name);
-                ui.close();
-            }
-        });
+        let create =
+            profile_selector_action_row(ui, Icon::Plus, text.create_empty_profile(), !blocked);
+        if create.clicked() {
+            let name = self.next_profile_name(text.new_profile());
+            self.start_profile_name_prompt(ProfileOperationKind::Create, None, name);
+            ui.close();
+        } else if blocked {
+            create.on_hover_text(text.profile_finish_current_operation_first());
+        }
+        let duplicate =
+            profile_selector_action_row(ui, Icon::Copy, text.duplicate_current_profile(), !blocked);
+        if duplicate.clicked() {
+            let name = self.next_profile_name(&self.active_profile_name());
+            self.start_profile_name_prompt(ProfileOperationKind::Duplicate, None, name);
+            ui.close();
+        } else if blocked {
+            duplicate.on_hover_text(text.profile_finish_current_operation_first());
+        }
         if blocked {
             static_label(
                 ui,
@@ -556,31 +777,71 @@ impl HestiaApp {
             ProfileOperationKind::Duplicate => text.duplicate_current_profile(),
             _ => text.new_profile(),
         };
+        let description = match kind {
+            ProfileOperationKind::Rename => text.profile_rename_description(),
+            ProfileOperationKind::Duplicate => text.profile_duplicate_description(),
+            _ => text.profile_new_description(),
+        };
+        let icon = match kind {
+            ProfileOperationKind::Rename => Icon::Pencil,
+            ProfileOperationKind::Duplicate => Icon::Copy,
+            _ => Icon::Users,
+        };
+        let icon_color = match kind {
+            ProfileOperationKind::Rename => Color32::from_rgb(166, 172, 181),
+            ProfileOperationKind::Duplicate => Color32::from_rgb(148, 192, 232),
+            _ => Color32::from_rgb(214, 104, 58),
+        };
         let mut submit = false;
         let mut cancel = false;
         let constrain_rect = self
             .last_right_pane_rect
             .unwrap_or_else(|| ctx.viewport_rect());
-        egui::Window::new(title)
+        egui::Window::new(icon_text_sized(icon, title, 14.0, 14.0))
             .id(egui::Id::new("profile_name_dialog"))
             .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
             .order(egui::Order::Foreground)
             .resizable(false)
             .collapsible(false)
-            .default_width(380.0)
+            .default_width(440.0)
             .constrain_to(constrain_rect)
+            .frame(
+                egui::Frame::window(&ctx.style_of(ctx.theme()))
+                    .inner_margin(egui::Margin::same(16))
+                    .stroke(egui::Stroke::new(1.0, icon_color.gamma_multiply(0.72))),
+            )
             .show(ctx, |ui| {
-                static_label(ui, RichText::new(text.profile_name()));
-                let edit = ui.add(
-                    TextEdit::singleline(&mut self.profile_name_draft).desired_width(f32::INFINITY),
-                );
-                if edit.gained_focus() {
-                    edit.request_focus();
-                }
-                submit = edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                cancel = ui.input(|input| input.key_pressed(egui::Key::Escape));
-                ui.add_space(8.0);
+                ui.set_width(440.0);
                 ui.horizontal(|ui| {
+                    ui.add_space(6.0);
+                    ui.add(egui::Label::new(icon_rich(icon, 64.0, icon_color)).selectable(false))
+                        .on_hover_cursor(egui::CursorIcon::Default);
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(346.0);
+                        static_label(ui, RichText::new(description).size(15.0).strong());
+                        ui.add_space(9.0);
+                        let edit = ui.add(
+                            TextEdit::singleline(&mut self.profile_name_draft)
+                                .desired_width(f32::INFINITY)
+                                .hint_text(
+                                    RichText::new(text.profile_name())
+                                        .color(Color32::from_rgb(145, 151, 160)),
+                                ),
+                        );
+                        if edit.gained_focus() {
+                            edit.request_focus();
+                        }
+                        submit = edit.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        cancel = ui.input(|input| input.key_pressed(egui::Key::Escape));
+                    });
+                    ui.add_space(4.0);
+                });
+                ui.add_space(5.0);
+                ui.separator();
+                ui.add_space(2.0);
+                profile_name_action_footer(ui, |ui| {
                     if ui.button(text.cancel()).clicked() {
                         cancel = true;
                     }
@@ -592,7 +853,7 @@ impl HestiaApp {
                     if ui
                         .add_enabled(
                             !self.profile_name_draft.trim().is_empty(),
-                            egui::Button::new(action_label),
+                            egui::Button::new(action_label).fill(Color32::from_rgb(180, 78, 35)),
                         )
                         .clicked()
                     {
@@ -644,42 +905,74 @@ impl HestiaApp {
         };
         let mut delete = false;
         let mut cancel = false;
-        egui::Window::new(text.delete_profile())
-            .id(egui::Id::new("profile_delete_dialog"))
-            .order(egui::Order::Foreground)
-            .resizable(false)
-            .collapsible(false)
-            .default_width(440.0)
-            .show(ctx, |ui| {
-                static_label(
-                    ui,
-                    RichText::new(text.profile_delete_confirmation(&profile_name))
-                        .size(16.0)
-                        .strong(),
-                );
-                static_label(
-                    ui,
-                    RichText::new(text.profile_delete_confirmation_details())
-                        .color(Color32::from_gray(170)),
-                );
+        let constrain_rect = self
+            .last_right_pane_rect
+            .unwrap_or_else(|| ctx.viewport_rect());
+        let warn_color = Color32::from_rgb(214, 96, 34);
+        egui::Window::new(icon_text_sized(
+            Icon::Trash2,
+            text.delete_profile(),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new("profile_delete_dialog"))
+        .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .default_width(440.0)
+        .constrain_to(constrain_rect)
+        .frame(
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, warn_color)),
+        )
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(icon_rich(Icon::Trash2, 64.0, warn_color)).selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(text.cancel()).clicked() {
-                        cancel = true;
-                    }
-                    if ui
-                        .button(icon_text_sized(
-                            Icon::Trash2,
-                            text.delete_profile(),
-                            14.0,
-                            13.0,
-                        ))
-                        .clicked()
-                    {
-                        delete = true;
-                    }
+                ui.vertical(|ui| {
+                    ui.set_width(340.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.profile_delete_confirmation(&profile_name))
+                            .size(17.0)
+                            .strong(),
+                    );
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.profile_delete_confirmation_details())
+                            .size(13.0)
+                            .color(Color32::from_rgb(170, 175, 183)),
+                    );
+                    ui.add_space(14.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(text.cancel()).clicked() {
+                            cancel = true;
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(icon_text_sized(
+                                    Icon::Trash2,
+                                    text.delete_profile(),
+                                    14.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35)),
+                            )
+                            .clicked()
+                        {
+                            delete = true;
+                        }
+                    });
                 });
             });
+        });
         if cancel {
             self.pending_profile_delete_id = None;
         } else if delete {
@@ -719,7 +1012,9 @@ impl HestiaApp {
                 _ => text.switching_profile(),
             }
         };
-        let commit_started = stage.contains("Activating") || stage.contains("committed");
+        let commit_started = stage.contains("Activating")
+            || stage.contains("Switching")
+            || stage.contains("committed");
         let cancel_requested = inflight.cancel.load(Ordering::Relaxed);
         let app_locked = self.profile_operation_locks_app();
         let cancel = if app_locked {
@@ -852,7 +1147,7 @@ impl HestiaApp {
                                 let icon = match timeline_stage {
                                     ProfileTimelineStage::Archiving => Icon::Archive,
                                     ProfileTimelineStage::Extracting => Icon::PackageOpen,
-                                    ProfileTimelineStage::Activating => Icon::Check,
+                                    ProfileTimelineStage::Switching => Icon::Check,
                                 };
                                 painter.text(
                                     center,
@@ -867,7 +1162,7 @@ impl HestiaApp {
                         let row_label = match timeline_stage {
                             ProfileTimelineStage::Archiving => text.archiving_current_profile(),
                             ProfileTimelineStage::Extracting => text.extracting_selected_profile(),
-                            ProfileTimelineStage::Activating => text.activating_selected_profile(),
+                            ProfileTimelineStage::Switching => text.switching_profile(),
                         };
                         let label_color = if active {
                             Color32::from_rgb(238, 240, 243)
@@ -981,6 +1276,7 @@ impl HestiaApp {
                             ui.add_sized(cancel_rect.size(), egui::Button::new(cancel_label))
                         })
                         .inner
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                 });
             response
@@ -1050,6 +1346,165 @@ mod profile_switcher_geometry_tests {
     }
 
     #[test]
+    fn profile_selector_menu_uses_deliberate_inner_padding_and_square_top_corners() {
+        let style = egui::Style::default();
+        let frame = profile_selector_menu_frame(&style);
+
+        assert_eq!(
+            frame.inner_margin,
+            egui::Margin {
+                left: 10,
+                right: 10,
+                top: 8,
+                bottom: 2,
+            }
+        );
+        assert_eq!(frame.corner_radius.nw, 0);
+        assert_eq!(frame.corner_radius.ne, 0);
+        assert_eq!(frame.corner_radius.sw, style.visuals.menu_corner_radius.sw);
+        assert_eq!(frame.corner_radius.se, style.visuals.menu_corner_radius.se);
+    }
+
+    #[test]
+    fn profile_selector_action_row_fills_the_menu_width_and_matches_profile_height() {
+        let ctx = egui::Context::default();
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert(
+            LUCIDE_FAMILY.to_string(),
+            FontData::from_static(LUCIDE_FONT_BYTES).into(),
+        );
+        fonts.families.insert(
+            FontFamily::Name(LUCIDE_FAMILY.into()),
+            vec![LUCIDE_FAMILY.to_string()],
+        );
+        ctx.set_fonts(fonts);
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(240.0);
+            ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
+            let create = profile_selector_action_row(ui, Icon::Plus, "New profile", true);
+            let duplicate = profile_selector_action_row(ui, Icon::Copy, "Duplicate profile", true);
+
+            assert_eq!(create.rect.width(), 240.0);
+            assert_eq!(create.rect.height(), PROFILE_SELECTOR_ROW_HEIGHT);
+            assert_eq!(duplicate.rect.width(), 240.0);
+            assert_eq!(
+                duplicate.rect.top() - create.rect.bottom(),
+                PROFILE_SELECTOR_FOOTER_GAP
+            );
+        });
+    }
+
+    #[test]
+    fn profile_selector_list_caps_at_seven_complete_rows() {
+        assert_eq!(
+            profile_selector_list_max_height(3.0),
+            PROFILE_SELECTOR_ROW_HEIGHT * 7.0 + 18.0
+        );
+    }
+
+    #[test]
+    fn profile_selector_footer_stays_below_the_scrolling_list() {
+        let ctx = egui::Context::default();
+        let scroll_rect = std::cell::Cell::new(None);
+        let footer_rect = std::cell::Cell::new(None);
+        let max_height = std::cell::Cell::new(0.0);
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(240.0);
+            ui.set_height(600.0);
+            let row_gap = ui.spacing().item_spacing.y;
+            max_height.set(profile_selector_list_max_height(row_gap));
+            ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
+            let scroll = ScrollArea::vertical()
+                .max_height(max_height.get())
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = row_gap;
+                    for _ in 0..10 {
+                        ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), PROFILE_SELECTOR_ROW_HEIGHT),
+                            Sense::hover(),
+                        );
+                    }
+                });
+            scroll_rect.set(Some(scroll.inner_rect));
+
+            ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
+            ui.separator();
+            let (_, footer) = ui.allocate_exact_size(
+                Vec2::new(ui.available_width(), PROFILE_SELECTOR_ROW_HEIGHT * 2.0),
+                Sense::hover(),
+            );
+            footer_rect.set(Some(footer.rect));
+        });
+
+        let scroll_rect = scroll_rect.get().expect("scroll area");
+        let footer_rect = footer_rect.get().expect("footer");
+        assert!(scroll_rect.height() <= max_height.get() + 0.1);
+        assert!(footer_rect.top() >= scroll_rect.bottom());
+    }
+
+    #[test]
+    fn profile_storage_tooltip_tracks_compression_through_completion() {
+        assert_eq!(
+            profile_storage_tooltip_state(
+                false,
+                Some(ProfileCompressionUiState::Queued),
+                true,
+                false,
+                false,
+            ),
+            ProfileStorageTooltipState::Queued
+        );
+        assert_eq!(
+            profile_storage_tooltip_state(
+                false,
+                Some(ProfileCompressionUiState::Running),
+                true,
+                false,
+                false,
+            ),
+            ProfileStorageTooltipState::Running
+        );
+        assert_eq!(
+            profile_storage_tooltip_state(false, None, false, true, false),
+            ProfileStorageTooltipState::Compressed
+        );
+        assert_eq!(
+            profile_storage_tooltip_state(
+                true,
+                Some(ProfileCompressionUiState::Running),
+                true,
+                true,
+                true
+            ),
+            ProfileStorageTooltipState::Active
+        );
+        assert_eq!(
+            profile_storage_tooltip_state(false, None, true, true, false),
+            ProfileStorageTooltipState::Queued
+        );
+        assert_eq!(
+            profile_storage_tooltip_state(
+                false,
+                Some(ProfileCompressionUiState::Failed),
+                true,
+                true,
+                false,
+            ),
+            ProfileStorageTooltipState::Failed
+        );
+
+        let text = TextCatalog::new(AppLanguage::English);
+        assert_eq!(
+            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Running, None),
+            "Status: Compressing\nArchive size: No archive yet"
+        );
+        assert_eq!(
+            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Compressed, Some(1024)),
+            "Status: Compressed\nArchive size: 1.0 KB"
+        );
+    }
+
+    #[test]
     fn profile_progress_footer_aligns_with_the_separator_edges() {
         let footer = egui::Rect::from_min_size(egui::pos2(45.0, 320.0), Vec2::new(500.0, 38.0));
         let (note, cancel) = profile_progress_footer_rects(footer, 104.0);
@@ -1062,12 +1517,28 @@ mod profile_switcher_geometry_tests {
     }
 
     #[test]
+    fn profile_name_action_footer_does_not_consume_remaining_window_height() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(440.0);
+            ui.set_height(300.0);
+            ui.add_space(100.0);
+            let top = ui.cursor().top();
+            let expected_height = ui.spacing().interact_size.y;
+            let response = profile_name_action_footer(ui, |ui| ui.button("Cancel"));
+
+            assert_eq!(response.response.rect.top(), top);
+            assert_eq!(response.response.rect.height(), expected_height);
+        });
+    }
+
+    #[test]
     fn switching_timeline_matches_the_safe_worker_order() {
         assert_eq!(
             profile_timeline_stages(ProfileOperationKind::Switch, true),
             &[
                 ProfileTimelineStage::Extracting,
-                ProfileTimelineStage::Activating,
+                ProfileTimelineStage::Switching,
             ]
         );
     }
@@ -1080,7 +1551,27 @@ mod profile_switcher_geometry_tests {
         );
         assert_eq!(
             profile_timeline_active_stage("Committing profile switch"),
-            Some(ProfileTimelineStage::Activating)
+            Some(ProfileTimelineStage::Switching)
+        );
+        assert_eq!(
+            profile_timeline_active_stage("Profile switch committed"),
+            Some(ProfileTimelineStage::Switching)
+        );
+        assert_eq!(
+            profile_timeline_stage_progress(
+                ProfileTimelineStage::Switching,
+                70,
+                "Switching profile",
+            ),
+            0.0
+        );
+        assert_eq!(
+            profile_timeline_stage_progress(
+                ProfileTimelineStage::Switching,
+                95,
+                "Switching profile",
+            ),
+            1.0
         );
     }
 

@@ -33,6 +33,11 @@ fn spawn_profile_worker(
                         warnings: output.warnings,
                     });
                     for job in background_archives {
+                        let _ = tx.send(ProfileEvent::ArchiveQueued {
+                            game_id: job.game_id.clone(),
+                            profile_id: job.profile_id,
+                            delay_seconds: PROFILE_ARCHIVE_GRACE_PERIOD.as_secs(),
+                        });
                         let _ = archive_tx.send(job);
                     }
                 }
@@ -73,17 +78,47 @@ fn spawn_profile_archive_worker(
     let handle = runtime_services.handle();
     runtime_services.spawn(async move {
         while let Some(job) = rx.recv().await {
+            let start_logged = Arc::new(AtomicBool::new(false));
             loop {
                 let blocking_job = job.clone();
                 let blocking_coordinator = Arc::clone(&coordinator);
+                let start_logged = Arc::clone(&start_logged);
+                let started_tx = tx.clone();
+                let started_game_id = job.game_id.clone();
+                let started_profile_id = job.profile_id;
                 let result = handle
                     .spawn_blocking(move || {
-                        execute_profile_archive_job(&blocking_job, &blocking_coordinator)
+                        let mut on_started = || {
+                            if !start_logged.swap(true, Ordering::Relaxed) {
+                                let _ = started_tx.send(ProfileEvent::ArchiveStarted {
+                                    game_id: started_game_id.clone(),
+                                    profile_id: started_profile_id,
+                                });
+                            }
+                        };
+                        execute_profile_archive_job(
+                            &blocking_job,
+                            &blocking_coordinator,
+                            &mut on_started,
+                        )
                     })
                     .await;
                 match result {
                     Ok(Ok(ProfileArchiveJobOutcome::Paused)) => continue,
-                    Ok(Ok(ProfileArchiveJobOutcome::Missing)) => break,
+                    Ok(Ok(ProfileArchiveJobOutcome::Missing)) => {
+                        let _ = tx.send(ProfileEvent::ArchiveSkipped {
+                            game_id: job.game_id.clone(),
+                            profile_id: job.profile_id,
+                        });
+                        break;
+                    }
+                    Ok(Ok(ProfileArchiveJobOutcome::Active)) => {
+                        let _ = tx.send(ProfileEvent::ArchiveCanceled {
+                            game_id: job.game_id.clone(),
+                            profile_id: job.profile_id,
+                        });
+                        break;
+                    }
                     Ok(Ok(ProfileArchiveJobOutcome::Completed(archive))) => {
                         let _ = tx.send(ProfileEvent::ArchiveCompleted {
                             game_id: job.game_id.clone(),
@@ -128,10 +163,15 @@ struct ProfileWorkerOutput {
 enum ProfileArchiveJobOutcome {
     Paused,
     Missing,
+    Active,
     Completed(crate::integrations::profiles::ArchiveResult),
 }
 
 const ACTIVE_PROFILE_MARKER_FILE: &str = "active_profile.json";
+const PROFILE_ARCHIVE_GRACE_PERIOD: Duration = Duration::from_secs(3);
+const PROFILE_SWITCH_FINISH_DELAY: Duration = Duration::from_millis(1_300);
+const PROFILE_SWITCH_FINISH_PROGRESS_START: u64 = 70;
+const PROFILE_SWITCH_FINISH_PROGRESS_STEPS: u32 = 25;
 
 #[derive(Debug)]
 enum ProfileWorkerError {
@@ -205,6 +245,7 @@ impl ProfileArchiveCoordinator {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.foreground_active = true;
+        self.changed.notify_all();
         while state.archive_running {
             state = self
                 .changed
@@ -221,11 +262,24 @@ impl ProfileArchiveCoordinator {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while state.foreground_active {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        loop {
+            while state.foreground_active {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+            if let Some(not_before) = state.archive_not_before
+                && let Some(remaining) = not_before.checked_duration_since(Instant::now())
+            {
+                let (next_state, _) = self
+                    .changed
+                    .wait_timeout(state, remaining)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                state = next_state;
+                continue;
+            }
+            break;
         }
         state.archive_running = true;
         ProfileArchiveRunningGuard {
@@ -253,6 +307,7 @@ impl Drop for ProfileArchiveForegroundGuard {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.foreground_active = false;
+        state.archive_not_before = Some(Instant::now() + PROFILE_ARCHIVE_GRACE_PERIOD);
         self.coordinator.changed.notify_all();
     }
 }
@@ -348,7 +403,7 @@ fn execute_profile_operation(
                 &marker,
                 &mut warnings,
             )?;
-            update_profile_progress(&spec.progress, &spec.stage, 95, "Profile switch committed");
+            finish_profile_switch(&spec);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Duplicate => {
@@ -378,7 +433,7 @@ fn execute_profile_operation(
                 &marker,
                 &mut warnings,
             )?;
-            update_profile_progress(&spec.progress, &spec.stage, 95, "Profile switch committed");
+            finish_profile_switch(&spec);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Switch => {
@@ -403,7 +458,7 @@ fn execute_profile_operation(
                 &marker,
                 &mut warnings,
             )?;
-            update_profile_progress(&spec.progress, &spec.stage, 95, "Profile switch committed");
+            finish_profile_switch(&spec);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Rename => {}
@@ -740,22 +795,10 @@ fn delete_profile_storage(
         if !path.exists() {
             continue;
         }
-        match spec.delete_behavior {
-            crate::model::DeleteBehavior::RecycleBin => {
-                trash::delete(&path).map_err(|error| {
-                    anyhow::anyhow!(
-                        "failed to move profile data {} to recycle bin: {error}",
-                        path.display()
-                    )
-                })?;
-            }
-            crate::model::DeleteBehavior::Permanent => {
-                if path.is_dir() {
-                    std::fs::remove_dir_all(path)?;
-                } else {
-                    std::fs::remove_file(path)?;
-                }
-            }
+        if path.is_dir() {
+            std::fs::remove_dir_all(path)?;
+        } else {
+            std::fs::remove_file(path)?;
         }
     }
     Ok(())
@@ -808,9 +851,29 @@ fn update_profile_progress(
     }
 }
 
+fn finish_profile_switch(spec: &ProfileOperationSpec) {
+    update_profile_progress(
+        &spec.progress,
+        &spec.stage,
+        PROFILE_SWITCH_FINISH_PROGRESS_START,
+        "Switching profile",
+    );
+    let step_delay = PROFILE_SWITCH_FINISH_DELAY / PROFILE_SWITCH_FINISH_PROGRESS_STEPS;
+    for step in 1..=PROFILE_SWITCH_FINISH_PROGRESS_STEPS {
+        std::thread::sleep(step_delay);
+        update_profile_progress(
+            &spec.progress,
+            &spec.stage,
+            PROFILE_SWITCH_FINISH_PROGRESS_START + u64::from(step),
+            "Switching profile",
+        );
+    }
+}
+
 fn execute_profile_archive_job(
     job: &ProfileArchiveJob,
     coordinator: &Arc<ProfileArchiveCoordinator>,
+    on_started: &mut dyn FnMut(),
 ) -> Result<ProfileArchiveJobOutcome> {
     use crate::integrations::profiles;
 
@@ -821,7 +884,7 @@ fn execute_profile_archive_job(
     let roots = profiles::profile_roots(&job.game, job.use_default_mods_path)?;
     profiles::ensure_profile_storage_layout(&roots)?;
     if profile_is_active(&roots, job.profile_id)? {
-        return Ok(ProfileArchiveJobOutcome::Missing);
+        return Ok(ProfileArchiveJobOutcome::Active);
     }
     let loose = roots.profile_path(job.profile_id);
     if !loose.exists() {
@@ -842,6 +905,7 @@ fn execute_profile_archive_job(
     {
         bail!("loose profile metadata does not match the queued profile");
     }
+    on_started();
     let loose_roots = profile_container_roots(&roots, &loose);
     let inventory = profiles::inspect_profile_source(&loose_roots)?;
     let fingerprint = inventory.fingerprint().to_owned();
@@ -868,7 +932,7 @@ fn execute_profile_archive_job(
                             return Ok(ProfileArchiveJobOutcome::Paused);
                         }
                         if profile_is_active(&roots, job.profile_id)? {
-                            return Ok(ProfileArchiveJobOutcome::Missing);
+                            return Ok(ProfileArchiveJobOutcome::Active);
                         }
                         let bytes = std::fs::metadata(&destination)?.len();
                         remove_loose_profile_after_archive(&roots, job.profile_id, &loose)?;
@@ -916,7 +980,7 @@ fn execute_profile_archive_job(
         return Ok(ProfileArchiveJobOutcome::Paused);
     }
     if profile_is_active(&roots, job.profile_id)? {
-        return Ok(ProfileArchiveJobOutcome::Missing);
+        return Ok(ProfileArchiveJobOutcome::Active);
     }
     remove_loose_profile_after_archive(&roots, job.profile_id, &loose)?;
     Ok(ProfileArchiveJobOutcome::Completed(archive))
@@ -1730,10 +1794,56 @@ mod profile_worker_tests {
             target_archive: None,
             target_categories: None,
             metadata: None,
-            delete_behavior: crate::model::DeleteBehavior::Permanent,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
             stage: Arc::new(RwLock::new(String::new())),
+        }
+    }
+
+    #[test]
+    fn foreground_profile_work_resets_the_three_second_archive_grace_period() {
+        let coordinator = Arc::new(ProfileArchiveCoordinator::default());
+        let before = Instant::now();
+        drop(coordinator.pause_for_foreground());
+        let state = coordinator.state.lock().unwrap();
+        let not_before = state.archive_not_before.unwrap();
+
+        assert_eq!(PROFILE_ARCHIVE_GRACE_PERIOD, Duration::from_secs(3));
+        assert!(not_before >= before + PROFILE_ARCHIVE_GRACE_PERIOD);
+        assert!(not_before <= Instant::now() + PROFILE_ARCHIVE_GRACE_PERIOD);
+    }
+
+    #[test]
+    fn profile_deletion_permanently_removes_every_container() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let game = xxmi_game(&mods);
+        let roots = profiles::profile_roots(&game, false).unwrap();
+        profiles::ensure_profile_storage_layout(&roots).unwrap();
+        let profile_id = Uuid::new_v4();
+        let loose = roots.profile_path(profile_id);
+        let archive = roots.archive_path(profile_id);
+        let part = roots.archive_part_path(profile_id);
+        let backup = roots.archive_backup_path(profile_id);
+        let legacy = roots.profiles_dir.join(format!("{profile_id}.tzst"));
+        std::fs::create_dir_all(&loose).unwrap();
+        std::fs::write(loose.join("payload.bin"), b"profile").unwrap();
+        for path in [&archive, &part, &backup, &legacy] {
+            std::fs::write(path, b"profile archive").unwrap();
+        }
+        let mut spec = recovery_spec(game);
+        spec.kind = ProfileOperationKind::Delete;
+        spec.profile_id = Some(profile_id);
+
+        delete_profile_storage(&spec, &roots).unwrap();
+
+        for path in [loose, archive, part, backup, legacy] {
+            assert!(
+                !path.exists(),
+                "{} should be permanently deleted",
+                path.display()
+            );
         }
     }
 
@@ -1760,6 +1870,7 @@ mod profile_worker_tests {
         )
         .unwrap();
 
+        let mut on_started = || {};
         let outcome = execute_profile_archive_job(
             &ProfileArchiveJob {
                 game_id: game.definition.id.clone(),
@@ -1768,9 +1879,10 @@ mod profile_worker_tests {
                 profile_id: active_id,
             },
             &Arc::new(ProfileArchiveCoordinator::default()),
+            &mut on_started,
         )
         .unwrap();
-        assert!(matches!(outcome, ProfileArchiveJobOutcome::Missing));
+        assert!(matches!(outcome, ProfileArchiveJobOutcome::Active));
         assert!(loose.join("Mods").join("preserve.txt").is_file());
 
         let (jobs, warnings) =
@@ -2072,7 +2184,6 @@ mod profile_worker_tests {
             target_archive: Some(archive.clone()),
             target_categories: None,
             metadata: Some(metadata(current_id, "Current")),
-            delete_behavior: crate::model::DeleteBehavior::Permanent,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
             stage: Arc::new(RwLock::new(String::new())),
@@ -2119,6 +2230,8 @@ mod profile_worker_tests {
         std::fs::create_dir_all(loose.join("Mods_Archived")).unwrap();
         std::fs::write(loose.join("Mods").join("payload.txt"), b"new payload").unwrap();
         write_profile_container_metadata(&loose, &metadata(profile_id, "Profile")).unwrap();
+        let mut started = false;
+        let mut on_started = || started = true;
         let outcome = execute_profile_archive_job(
             &ProfileArchiveJob {
                 game_id: game.definition.id.clone(),
@@ -2127,9 +2240,11 @@ mod profile_worker_tests {
                 profile_id,
             },
             &Arc::new(ProfileArchiveCoordinator::default()),
+            &mut on_started,
         )
         .unwrap();
 
+        assert!(started);
         assert!(matches!(outcome, ProfileArchiveJobOutcome::Completed(_)));
         assert!(!loose.exists());
         let extracted = temp.path().join("extracted");

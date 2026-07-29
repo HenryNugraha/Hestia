@@ -238,7 +238,6 @@ impl HestiaApp {
             target_archive,
             target_categories,
             metadata,
-            delete_behavior: self.state.static_prefs.delete_behavior,
             cancel,
             progress,
             stage,
@@ -754,16 +753,85 @@ impl HestiaApp {
         }
     }
 
+    fn profile_log_display_name(&self, game_id: &str, profile_id: Uuid) -> String {
+        self.state
+            .profiles_by_game
+            .get(game_id)
+            .and_then(|catalog| {
+                catalog
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.id == profile_id)
+            })
+            .map(|profile| self.text().profile_display_name(&profile.display_name))
+            .unwrap_or_else(|| profile_id.to_string())
+    }
+
     fn consume_profile_events(&mut self) {
         while let Ok(event) = self.profile_event_rx.try_recv() {
             match event {
+                ProfileEvent::ArchiveQueued {
+                    game_id,
+                    profile_id,
+                    delay_seconds,
+                } => {
+                    self.profile_compression_states.insert(
+                        (game_id.clone(), profile_id),
+                        ProfileCompressionUiState::Queued,
+                    );
+                    let name = self.profile_log_display_name(&game_id, profile_id);
+                    self.push_log(format!(
+                        "Profile compression queued ({delay_seconds}-second delay): {name}"
+                    ));
+                    continue;
+                }
+                ProfileEvent::ArchiveStarted {
+                    game_id,
+                    profile_id,
+                } => {
+                    self.profile_compression_states.insert(
+                        (game_id.clone(), profile_id),
+                        ProfileCompressionUiState::Running,
+                    );
+                    let name = self.profile_log_display_name(&game_id, profile_id);
+                    self.push_log(format!("Profile compression started: {name}"));
+                    continue;
+                }
+                ProfileEvent::ArchiveCanceled {
+                    game_id,
+                    profile_id,
+                } => {
+                    self.profile_compression_states
+                        .remove(&(game_id.clone(), profile_id));
+                    let name = self.profile_log_display_name(&game_id, profile_id);
+                    self.push_log(format!(
+                        "Profile compression canceled because the profile became active: {name}"
+                    ));
+                    continue;
+                }
+                ProfileEvent::ArchiveSkipped {
+                    game_id,
+                    profile_id,
+                } => {
+                    self.profile_compression_states
+                        .remove(&(game_id.clone(), profile_id));
+                    let name = self.profile_log_display_name(&game_id, profile_id);
+                    self.push_log(format!(
+                        "Profile compression skipped because loose profile data was no longer present: {name}"
+                    ));
+                    continue;
+                }
                 ProfileEvent::ArchiveCompleted {
                     game_id,
                     profile_id,
                     archive,
                 } => {
+                    self.profile_compression_states
+                        .remove(&(game_id.clone(), profile_id));
+                    let name = self.profile_log_display_name(&game_id, profile_id);
                     self.apply_profile_archive_result(&game_id, Some(profile_id), &archive);
                     self.save_state();
+                    self.push_log(format!("Profile compression completed: {name}"));
                     continue;
                 }
                 ProfileEvent::ArchiveFailed {
@@ -771,6 +839,10 @@ impl HestiaApp {
                     profile_id,
                     error,
                 } => {
+                    self.profile_compression_states.insert(
+                        (game_id.clone(), profile_id),
+                        ProfileCompressionUiState::Failed,
+                    );
                     self.report_error_message(
                         format!(
                             "background profile compression failed for {game_id}/{profile_id}: {error}"
@@ -784,7 +856,11 @@ impl HestiaApp {
                         ProfileEvent::Completed { operation_id, .. }
                         | ProfileEvent::Failed { operation_id, .. }
                         | ProfileEvent::Canceled { operation_id, .. } => *operation_id,
-                        ProfileEvent::ArchiveCompleted { .. }
+                        ProfileEvent::ArchiveQueued { .. }
+                        | ProfileEvent::ArchiveStarted { .. }
+                        | ProfileEvent::ArchiveCanceled { .. }
+                        | ProfileEvent::ArchiveSkipped { .. }
+                        | ProfileEvent::ArchiveCompleted { .. }
                         | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
                     };
                     if self
@@ -927,6 +1003,22 @@ impl HestiaApp {
                         profile.categories = marker.categories.clone();
                     }
                 }
+                if kind == ProfileOperationKind::Delete {
+                    if let Some(profile_id) = profile_id {
+                        self.profile_compression_states
+                            .remove(&(game_id.clone(), profile_id));
+                    }
+                } else if matches!(
+                    kind,
+                    ProfileOperationKind::Create
+                        | ProfileOperationKind::Duplicate
+                        | ProfileOperationKind::Switch
+                        | ProfileOperationKind::Recover
+                ) && let Some(active_id) = target_profile_id
+                {
+                    self.profile_compression_states
+                        .remove(&(game_id.clone(), active_id));
+                }
                 if matches!(
                     kind,
                     ProfileOperationKind::Create
@@ -995,9 +1087,12 @@ impl HestiaApp {
                 );
             }
             ProfileEvent::Canceled { .. } => self.set_message_ok(self.text().profile_canceled()),
-            ProfileEvent::ArchiveCompleted { .. } | ProfileEvent::ArchiveFailed { .. } => {
-                unreachable!()
-            }
+            ProfileEvent::ArchiveQueued { .. }
+            | ProfileEvent::ArchiveStarted { .. }
+            | ProfileEvent::ArchiveCanceled { .. }
+            | ProfileEvent::ArchiveSkipped { .. }
+            | ProfileEvent::ArchiveCompleted { .. }
+            | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
         }
     }
 }

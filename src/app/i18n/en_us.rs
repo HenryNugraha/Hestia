@@ -487,8 +487,11 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Default", // ProfilesDefault
     "New profile", // ProfilesNew
     "New profile", // ProfilesCreateEmpty
+    "Create a separate set of mods and categories.", // ProfilesNewDescription
     "Duplicate profile", // ProfilesDuplicateCurrent
+    "Create a copy of the current profile's mods and categories.", // ProfilesDuplicateDescription
     "Rename profile", // ProfilesRename
+    "Choose a new name for this profile.", // ProfilesRenameDescription
     "Delete profile", // ProfilesDelete
     "Profile name", // ProfilesName
     "Switch profile", // ProfilesSwitch
@@ -500,13 +503,23 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Extracting selected profile…", // ProfilesExtractingSelected
     "Activating selected profile…", // ProfilesActivatingSelected
     "Inactive profiles are compressed to save disk space.", // ProfilesInactiveCompressedNote
+    "Status", // ProfilesStatusLabel
+    "Active profile", // ProfilesCompressionActive
+    "Waiting to compress", // ProfilesCompressionQueued
+    "Compressing", // ProfilesCompressionRunning
+    "Compressed", // ProfilesCompressionComplete
+    "Compression failed", // ProfilesCompressionFailed
+    "Not compressed", // ProfilesCompressionUnavailable
+    "Archive size", // ProfilesArchiveSize
+    "Previous archive size", // ProfilesPreviousArchiveSize
+    "No archive yet", // ProfilesNoArchiveYet
     "Profile operation failed", // ProfilesOperationFailed
     "Finish the current install, update, scan, or profile operation first.", // ProfilesFinishCurrentOperationFirst
     "Select a game to manage profiles.", // ProfilesSelectGame
     "At least one profile is required.", // ProfilesAtLeastOneRequired
     "Switch to another profile before deleting this one.", // ProfilesSwitchBeforeDelete
     "Delete profile \"{name}\"?", // ProfilesDeleteConfirmation
-    "Its mods, disabled mods, and archived mods will be removed using your configured delete behavior.", // ProfilesDeleteConfirmationDetails
+    "This profile's mods will be PERMANENTLY deleted. There is no way to undo this.", // ProfilesDeleteConfirmationDetails
     "Profile created: {name}", // ProfilesCreated
     "Profile duplicated: {name}", // ProfilesDuplicated
     "Profile renamed: {name}", // ProfilesRenamed

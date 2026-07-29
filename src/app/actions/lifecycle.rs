@@ -476,6 +476,7 @@ impl HestiaApp {
             profile_request_tx,
             profile_event_rx,
             profile_operation_inflight: None,
+            profile_compression_states: HashMap::new(),
             profile_next_operation_id: 1,
             profile_recovery_queue: VecDeque::new(),
             profile_recovery_failed: false,

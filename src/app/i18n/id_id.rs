@@ -487,8 +487,11 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Standar", // ProfilesDefault
     "Profil baru", // ProfilesNew
     "Profil baru", // ProfilesCreateEmpty
+    "Buat kumpulan mod dan kategori yang terpisah.", // ProfilesNewDescription
     "Duplikatkan profil", // ProfilesDuplicateCurrent
+    "Buat salinan mod dan kategori dari profil saat ini.", // ProfilesDuplicateDescription
     "Ubah nama profil", // ProfilesRename
+    "Pilih nama baru untuk profil ini.", // ProfilesRenameDescription
     "Hapus profil", // ProfilesDelete
     "Nama profil", // ProfilesName
     "Ganti profil", // ProfilesSwitch
@@ -500,13 +503,23 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mengekstrak profil yang dipilih…", // ProfilesExtractingSelected
     "Mengaktifkan profil yang dipilih…", // ProfilesActivatingSelected
     "Profil yang tidak aktif dikompresi untuk menghemat ruang disk.", // ProfilesInactiveCompressedNote
+    "Status", // ProfilesStatusLabel
+    "Profil aktif", // ProfilesCompressionActive
+    "Menunggu untuk dikompresi", // ProfilesCompressionQueued
+    "Sedang dikompresi", // ProfilesCompressionRunning
+    "Sudah dikompresi", // ProfilesCompressionComplete
+    "Kompresi gagal", // ProfilesCompressionFailed
+    "Belum dikompresi", // ProfilesCompressionUnavailable
+    "Ukuran arsip", // ProfilesArchiveSize
+    "Ukuran arsip sebelumnya", // ProfilesPreviousArchiveSize
+    "Belum ada arsip", // ProfilesNoArchiveYet
     "Operasi profil gagal", // ProfilesOperationFailed
     "Selesaikan pemasangan, pembaruan, pemindaian, atau operasi profil saat ini terlebih dahulu.", // ProfilesFinishCurrentOperationFirst
     "Pilih game untuk mengelola profil.", // ProfilesSelectGame
     "Diperlukan setidaknya satu profil.", // ProfilesAtLeastOneRequired
     "Ganti ke profil lain sebelum menghapus profil ini.", // ProfilesSwitchBeforeDelete
     "Hapus profil \"{name}\"?", // ProfilesDeleteConfirmation
-    "Mod, mod nonaktif, dan mod yang diarsipkan akan dihapus menggunakan perilaku penghapusan yang telah Anda atur.", // ProfilesDeleteConfirmationDetails
+    "Mod dalam profil ini akan dihapus secara PERMANEN. Data yang terhapus tidak dapat dikembalikan.", // ProfilesDeleteConfirmationDetails
     "Profil dibuat: {name}", // ProfilesCreated
     "Profil diduplikatkan: {name}", // ProfilesDuplicated
     "Nama profil diubah: {name}", // ProfilesRenamed
