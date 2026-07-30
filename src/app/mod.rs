@@ -157,6 +157,10 @@ impl eframe::App for HestiaApp {
             self.process_app_update_download();
             self.process_install_queue();
         }
+
+        // Sampled after the queues have been serviced so the end of `ui` can tell
+        // whether rendering added work of its own.
+        self.image_queue_len_after_logic = self.pending_mod_image_queue.len();
     }
 
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -252,20 +256,37 @@ impl eframe::App for HestiaApp {
         } else {
             Duration::from_millis(500)
         };
+        // `logic` runs before `ui`, so image requests the UI just queued are not
+        // dispatched until another frame happens. Nothing else asks for that frame:
+        // a freshly installed mod's card would sit on the placeholder until the
+        // next idle tick or the next stray input event. Growth is the trigger, not
+        // mere non-emptiness — a queue held back by focus mode stays full frame
+        // after frame and must not drive repaints at vsync rate.
+        let queued_new_image_work =
+            self.pending_mod_image_queue.len() > self.image_queue_len_after_logic;
+        // `pending_events` was sampled in `logic`, before the UI could add to these.
+        let has_undispatched_work = !self.pending_mod_image_queue.is_empty()
+            || !self.pending_texture_uploads.is_empty()
+            || self.pending_events.has_worker_events
+            || self.pending_events.has_process_work;
         if needs_continuous_repaint {
             request_animation_repaint(&ctx);
+        } else if queued_new_image_work {
+            ctx.request_repaint();
         } else if has_pending_browse_image_work || has_pending_gif_work {
             ctx.request_repaint_after(poll_delay);
         } else if has_pending_browse_request {
             ctx.request_repaint_after(poll_delay);
-        } else if relative_time_visible {
-            // Relative-time labels advance at minute granularity. Wake once per minute rather
-            // than continuously repainting while the app is idle.
-            ctx.request_repaint_after(Duration::from_secs(60));
-        } else if self.pending_events.has_worker_events || self.pending_events.has_process_work {
+        } else if has_undispatched_work {
             // A queue that cannot drain must never drive vsync-rate repaints, which
             // contend with fullscreen games even at low CPU/GPU usage.
             ctx.request_repaint_after(poll_delay);
+        } else if relative_time_visible {
+            // Relative-time labels advance at minute granularity. Wake once per minute rather
+            // than continuously repainting while the app is idle. Checked last: this
+            // fires in every library and browse frame, so ahead of the branches above
+            // it would swallow their much shorter delays.
+            ctx.request_repaint_after(Duration::from_secs(60));
         }
     }
 

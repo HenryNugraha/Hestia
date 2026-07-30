@@ -58,6 +58,7 @@ impl HestiaApp {
         self.remove_tracked_texture(TextureKind::ModFull, mod_id);
         self.pending_mod_image_requests.remove(mod_id);
         self.pending_image_loads.remove(mod_id);
+        self.inflight_full_image_requests.remove(mod_id);
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != mod_id);
         self.pending_texture_uploads.retain(|item| match item {
@@ -73,6 +74,7 @@ impl HestiaApp {
         self.remove_tracked_texture(TextureKind::ModFull, &texture_key);
         self.pending_mod_image_requests.remove(&texture_key);
         self.pending_image_loads.remove(&texture_key);
+        self.inflight_full_image_requests.remove(&texture_key);
         self.pending_mod_image_queue
             .retain(|req| req.texture_key != texture_key);
         self.pending_texture_uploads.retain(|item| match item {
@@ -643,7 +645,16 @@ impl HestiaApp {
             return;
         };
         let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(&mod_entry);
-        let thumb_path = Self::resolve_mod_thumb_path(&mod_entry.root_path, ThumbnailProfile::Card);
+        // A mod with no usable cover source would otherwise be re-requested on
+        // every frame that renders its card, and each empty result schedules the
+        // next frame — a self-sustaining loop for the whole session.
+        if self
+            .mod_thumb_unavailable
+            .get(mod_id)
+            .is_some_and(|failure| failure.still_applies(&expected_meta))
+        {
+            return;
+        }
         let force_regen =
             !Self::is_mod_thumb_valid(&mod_entry, &expected_meta, ThumbnailProfile::Card);
         let payload = LocalModImagePayload::CardThumb {
@@ -669,9 +680,6 @@ impl HestiaApp {
             generation: 0,
             payload,
         });
-        if !force_regen && thumb_path.exists() {
-            return;
-        }
     }
 
     fn queue_mod_image_thumb_load(
@@ -703,6 +711,13 @@ impl HestiaApp {
 
     fn queue_mod_image_full_load(&mut self, texture_key: String, path: PathBuf, priority: u32) {
         if self.mod_full_textures.contains_key(&texture_key) {
+            return;
+        }
+        // Callers ask once per frame for as long as the texture is missing, and a
+        // full-size decode outlives many frames. `enqueue_local_mod_image_request`
+        // only dedupes against what is still queued, so a dispatched request has
+        // to be tracked here or the same image is decoded dozens of times over.
+        if self.inflight_full_image_requests.contains(&texture_key) {
             return;
         }
         if self.pending_mod_image_requests.contains(&texture_key) {
@@ -1066,12 +1081,21 @@ impl HestiaApp {
 
         let mut dispatch = eligible.into_iter();
         while let Some(req) = dispatch.next() {
-            if let Err(err) = self.mod_image_request_tx.send(req) {
-                for req in dispatch.rev() {
-                    self.pending_mod_image_queue.insert(0, req);
+            let full_key =
+                (req.mode == LocalModImageMode::FullOnly).then(|| req.texture_key.clone());
+            match self.mod_image_request_tx.send(req) {
+                Ok(()) => {
+                    if let Some(key) = full_key {
+                        self.inflight_full_image_requests.insert(key);
+                    }
                 }
-                self.pending_mod_image_queue.insert(0, err.0);
-                break;
+                Err(err) => {
+                    for req in dispatch.rev() {
+                        self.pending_mod_image_queue.insert(0, req);
+                    }
+                    self.pending_mod_image_queue.insert(0, err.0);
+                    break;
+                }
             }
         }
     }
@@ -1081,6 +1105,7 @@ impl HestiaApp {
             if result.done {
                 self.pending_mod_image_requests.remove(&result.texture_key);
                 self.pending_image_loads.remove(&result.texture_key);
+                self.inflight_full_image_requests.remove(&result.texture_key);
             }
             if result.thumb_generated {
                 if let Some(meta) = result.thumb_meta.as_ref() {
@@ -1092,6 +1117,23 @@ impl HestiaApp {
                     {
                         Self::update_mod_thumb_meta(mod_entry, meta, ThumbnailProfile::Card);
                     }
+                }
+            }
+            // Only card-thumb results carry the source identity they were built
+            // from. An empty one means that source has nothing to show, so record
+            // it and stop asking until the mod points at a different source.
+            if let Some(meta) = result.thumb_meta.as_ref() {
+                if result.image_thumb.is_none() {
+                    self.mod_thumb_unavailable.insert(
+                        result.texture_key.clone(),
+                        ModThumbFailure {
+                            kind: meta.kind.clone(),
+                            id: meta.id.clone(),
+                            at: Instant::now(),
+                        },
+                    );
+                } else {
+                    self.mod_thumb_unavailable.remove(&result.texture_key);
                 }
             }
             if let Some(image_thumb) = result.image_thumb {

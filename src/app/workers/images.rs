@@ -721,31 +721,43 @@ fn spawn_local_mod_image_worker(
                                         .iter()
                                         .flat_map(|c| [c.r(), c.g(), c.b(), c.a()])
                                         .collect();
-                                    if let Some((tw, th, trgba)) = resize_rgba_to_thumbnail_rgba(
-                                        w,
-                                        h,
-                                        rgba.clone(),
-                                        thumb_profile,
-                                    ) {
+                                    let rgba_for_thumb = rgba.clone();
+                                    let thumb_job = handle.spawn_blocking(move || {
+                                        resize_rgba_to_thumbnail_rgba(
+                                            w,
+                                            h,
+                                            rgba_for_thumb,
+                                            thumb_profile,
+                                        )
+                                    });
+                                    // PNG-encoding a full-size image is the most
+                                    // expensive step here and only feeds the disk
+                                    // cache, so it is never awaited: leaving it on
+                                    // the reply path delays every full image the UI
+                                    // is waiting on by an encode it does not need.
+                                    let portable_for_put = portable.clone();
+                                    let cache_key_for_put = full_cache_key.clone();
+                                    let limit = cache_limit_bytes.load(Ordering::Relaxed);
+                                    std::mem::drop(handle.spawn_blocking(move || {
+                                        let Ok(png_bytes) = resize_rgba_to_png(w, h, rgba) else {
+                                            return;
+                                        };
+                                        let _ = persistence::cache_put(
+                                            &portable_for_put,
+                                            &cache_key_for_put,
+                                            "local-full",
+                                            &png_bytes,
+                                            limit,
+                                        );
+                                    }));
+                                    if let Some((tw, th, trgba)) =
+                                        thumb_job.await.ok().flatten()
+                                    {
                                         image_thumb =
                                             Some(egui::ColorImage::from_rgba_unmultiplied(
                                                 [tw as usize, th as usize],
                                                 &trgba,
                                             ));
-                                    }
-                                    if let Ok(png_bytes) = resize_rgba_to_png(w, h, rgba) {
-                                        let portable_for_put = portable.clone();
-                                        let cache_key_for_put = full_cache_key.clone();
-                                        let limit = cache_limit_bytes.load(Ordering::Relaxed);
-                                        std::mem::drop(handle.spawn_blocking(move || {
-                                            persistence::cache_put(
-                                                &portable_for_put,
-                                                &cache_key_for_put,
-                                                "local-full",
-                                                &png_bytes,
-                                                limit,
-                                            )
-                                        }));
                                     }
                                 }
                                 let _ = tx.send(LocalModImageResult {
@@ -832,13 +844,16 @@ fn spawn_local_mod_image_worker(
                             }
                         }
                         let image_thumb = thumb_bytes.as_deref().and_then(load_cover_color_image);
+                        // Always reported, not just when regenerated: the UI uses
+                        // this to tell "this source has no image" apart from "this
+                        // request was cancelled" and stop re-requesting the former.
                         let _ = tx.send(LocalModImageResult {
                             texture_key,
                             image_full: None,
                             image_thumb,
                             done: true,
                             thumb_generated: generated,
-                            thumb_meta: if generated { Some(expected_meta) } else { None },
+                            thumb_meta: Some(expected_meta),
                         });
                     }
                 }

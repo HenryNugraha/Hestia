@@ -2372,6 +2372,10 @@ impl HestiaApp {
         self.mod_full_textures.retain(|key, _| key != mod_entry_id && !key.starts_with(&prefix));
         self.pending_mod_image_requests
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
+        self.pending_image_loads
+            .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
+        self.inflight_full_image_requests
+            .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
         self.rebuild_texture_tracking();
         self.log_action(self.text().synced_action(), &folder_name);
     }

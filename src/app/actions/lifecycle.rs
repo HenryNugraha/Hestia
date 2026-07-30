@@ -407,6 +407,9 @@ impl HestiaApp {
             pending_mod_image_requests: HashSet::new(),
             pending_mod_image_queue: Vec::new(),
             pending_image_loads: HashSet::new(),
+            inflight_full_image_requests: HashSet::new(),
+            mod_thumb_unavailable: HashMap::new(),
+            image_queue_len_after_logic: 0,
             pending_icon_requests: HashSet::new(),
             cover_request_tx,
             cover_result_rx,
@@ -1136,6 +1139,10 @@ impl HestiaApp {
         self.pending_texture_uploads.clear();
         self.pending_mod_image_queue.clear();
         self.pending_mod_image_requests.clear();
+        // Dropping the queue means no worker result will ever clear these, and a
+        // card whose id is still listed here refuses to re-request its thumbnail.
+        self.pending_image_loads.clear();
+        self.inflight_full_image_requests.clear();
         self.cancel_browse_full_image_requests();
         self.browse_image_queue.clear();
         self.browse_image_inflight.clear();
@@ -1160,6 +1167,13 @@ impl HestiaApp {
 
                     self.pending_mod_image_requests.remove(mod_id);
                     self.pending_mod_image_requests
+                        .retain(|k| !k.starts_with(&prefix));
+
+                    self.pending_image_loads.remove(mod_id);
+                    self.pending_image_loads.retain(|k| !k.starts_with(&prefix));
+
+                    self.inflight_full_image_requests.remove(mod_id);
+                    self.inflight_full_image_requests
                         .retain(|k| !k.starts_with(&prefix));
 
                     self.pending_mod_image_queue.retain(|req| {
@@ -2650,6 +2664,8 @@ impl HestiaApp {
             .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
         self.pending_image_loads
             .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
+        self.inflight_full_image_requests
+            .retain(|key| key != &cover_key && !key.starts_with(&shot_prefix));
         self.pending_mod_image_queue.retain(|req| {
             req.texture_key != cover_key && !req.texture_key.starts_with(&shot_prefix)
         });
@@ -2728,6 +2744,11 @@ impl HestiaApp {
         self.image_generation.fetch_add(1, Ordering::Relaxed);
         self.pending_mod_image_queue.clear();
         self.pending_mod_image_requests.clear();
+        // Same reason as in clear_dynamic_textures: requests that never reach a
+        // worker produce no result, so these have to be released by hand or the
+        // cards they belong to stay blank for the rest of the session.
+        self.pending_image_loads.clear();
+        self.inflight_full_image_requests.clear();
 
         // self.selected_mod_id = mod_id;
         self.selected_mod_id = mod_id.clone();

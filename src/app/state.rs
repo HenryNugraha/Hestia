@@ -253,6 +253,19 @@ pub struct HestiaApp {
     pending_mod_image_requests: HashSet<String>,
     pending_mod_image_queue: Vec<LocalModImageRequest>,
     pending_image_loads: HashSet<String>,
+    /// Keys with a dispatched `FullOnly` request. `pending_mod_image_queue` only
+    /// dedupes what is still queued, so without this a per-frame caller re-sends
+    /// the same full-size decode every frame until the first one returns.
+    inflight_full_image_requests: HashSet<String>,
+    /// Mods whose card-thumbnail source produced no image. A new source identity
+    /// retries immediately, so this never needs explicit invalidation; a source
+    /// that merely failed retries after a cooldown, since the cause can be
+    /// transient (an image cache entry that has not been written yet).
+    mod_thumb_unavailable: HashMap<String, ModThumbFailure>,
+    /// `pending_mod_image_queue` length at the end of `logic`, so the end of `ui`
+    /// can tell whether rendering queued image work that nothing will dispatch
+    /// until another frame runs.
+    image_queue_len_after_logic: usize,
     pending_icon_requests: HashSet<String>,
     cover_request_tx: WorkerTx<CoverRequest>,
     cover_result_rx: WorkerRx<CoverResult>,
@@ -1076,6 +1089,29 @@ struct CardThumbMeta {
     id: String,
     mtime: Option<i64>,
     size: Option<u64>,
+}
+
+/// A card-thumbnail source that came back empty, and when.
+struct ModThumbFailure {
+    kind: String,
+    id: String,
+    at: Instant,
+}
+
+impl ModThumbFailure {
+    /// Whether a fresh request for `meta` would just repeat this failure.
+    ///
+    /// `CardThumbMeta::kind` is `"none"` when the mod has no cover source at all.
+    /// Nothing about that can change while the identity stays the same, so it is
+    /// never retried; every other kind reads from disk or a cache that a later
+    /// download can still fill, so those get another attempt after a cooldown.
+    fn still_applies(&self, meta: &CardThumbMeta) -> bool {
+        if self.kind != meta.kind || self.id != meta.id {
+            return false;
+        }
+        self.kind == "none"
+            || self.at.elapsed() < Duration::from_secs(MOD_THUMB_RETRY_COOLDOWN_SECS)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

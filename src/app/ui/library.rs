@@ -117,7 +117,6 @@ struct CategoryFolderTile {
     archived_count: usize,
     has_update: bool,
     representative_mod_id: Option<String>,
-    representative_cover_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -4965,13 +4964,6 @@ impl HestiaApp {
                                         });
                                     let representative_mod_id =
                                         representative_card.map(|card| card.0.clone());
-                                    let representative_cover_path =
-                                        representative_card.and_then(|card| {
-                                            card.3
-                                                .as_deref()
-                                                .filter(|cover| !cover.trim().is_empty())
-                                                .map(|cover| card.4.join(cover))
-                                        });
 
                                     Some(CategoryFolderTile {
                                         id: category.id.clone(),
@@ -4988,7 +4980,6 @@ impl HestiaApp {
                                         archived_count,
                                         has_update,
                                         representative_mod_id,
-                                        representative_cover_path,
                                     })
                                 })
                                 .collect()
@@ -4999,45 +4990,29 @@ impl HestiaApp {
                             folder_tiles
                                 .iter()
                                 .map(|tile| {
-                                    let pointer_motion_throttle =
-                                        Self::pointer_motion_image_throttle_active(ui.ctx());
                                     let texture = tile.representative_mod_id.as_deref().and_then(
                                         |mod_id| {
+                                            // The tile paints into a 220x112 rect, so the
+                                            // card thumbnail is already the right size —
+                                            // and it is the very texture the mod's own card
+                                            // loads, so the folder fills in with it instead
+                                            // of trailing a separate full-size decode.
+                                            // A full texture is only reused when the detail
+                                            // view happened to load one already.
                                             if let Some(texture) =
                                                 self.get_mod_full_texture(mod_id, 2).cloned()
                                             {
                                                 return Some(texture);
                                             }
 
-                                            if let Some(path) =
-                                                tile.representative_cover_path.clone()
-                                            {
-                                                if pointer_motion_throttle {
-                                                    ui.ctx().request_repaint_after(
-                                                        std::time::Duration::from_millis(120),
-                                                    );
-                                                } else {
-                                                    self.queue_mod_image_full_load(
-                                                        mod_id.to_string(),
-                                                        path,
-                                                        25,
-                                                    );
-                                                }
-                                            }
-
                                             if !self.mod_cover_textures.contains_key(mod_id) {
                                                 self.queue_mod_card_thumb_load_with_priority(
-                                                    mod_id, 40,
+                                                    mod_id, 20,
                                                 );
                                             }
                                             self.get_mod_thumb_texture(mod_id, 1).cloned()
                                         },
                                     );
-                                    if texture.is_none() && tile.representative_mod_id.is_some() {
-                                        ui.ctx().request_repaint_after(
-                                            std::time::Duration::from_millis(16),
-                                        );
-                                    }
                                     (tile.id.clone(), texture)
                                 })
                                 .collect();
