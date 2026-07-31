@@ -1,6 +1,5 @@
 # Changelog
 
-<<<<<<< HEAD
 ## [1.8.0-alpha] - 2026-08-xx
 
 ### Added
@@ -10,10 +9,8 @@
 - 
 
 ### Fixed
-- 
+- Fixed the Retry button in the Task window doing nothing for a mod install that failed or was canceled at the overwrite prompt.
 
-=======
->>>>>>> 307ab0c0edc2f976b1d7dd847f3e5b8a8606785c
 ## [1.7.1] - 2026-07-26
 
 ### Added

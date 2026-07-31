@@ -254,13 +254,16 @@ impl HestiaApp {
             .is_ok_and(|metadata| metadata.len() > 0)
     }
 
+    fn task_is_retryable_browse_download(task: &TaskEntry) -> bool {
+        matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
+            && Self::browse_download_retry_payload_for_task(task).is_some()
+    }
+
     fn retry_browse_download_task(&mut self, task_id: u64) -> bool {
         let Some(task) = self.state.tasks.iter().find(|task| task.id == task_id) else {
             return false;
         };
-        if task.kind != TaskKind::Download
-            || !matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
-        {
+        if !Self::task_is_retryable_browse_download(task) {
             return false;
         }
         let Some(payload) = Self::browse_download_retry_payload_for_task(task).cloned() else {
@@ -296,6 +299,11 @@ impl HestiaApp {
                 &payload,
                 self.cache_limit_bytes.load(Ordering::Relaxed),
             ));
+        // The task graduates to Install once its download completes; a retry
+        // restarts from the download phase, so the kind must follow it back.
+        if let Some(task) = self.state.tasks.iter_mut().find(|task| task.id == task_id) {
+            task.kind = TaskKind::Download;
+        }
         self.update_task_status(task_id, TaskStatus::Queued);
         self.set_message_ok(self.text().download_queued());
         true

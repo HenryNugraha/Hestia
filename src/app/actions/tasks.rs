@@ -533,9 +533,7 @@ impl HestiaApp {
                             | TaskStatus::Downloading
                             | TaskStatus::Canceling
                     );
-                    let retryable_browse_download =
-                        matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
-                            && Self::browse_download_retry_payload_for_task(task).is_some();
+                    let retryable_browse_download = Self::task_is_retryable_browse_download(task);
                     let has_badge_action = cancellable || retryable_browse_download;
                     ui.allocate_ui_with_layout(
                         Vec2::new(92.0, 42.0),
