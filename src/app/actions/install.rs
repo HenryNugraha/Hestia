@@ -111,6 +111,12 @@ impl HestiaApp {
                 } => {
                     self.apply_mod_sync_result(&mod_entry_id, *profile, rel_paths);
                 }
+                InstallEvent::SyncImagesCover {
+                    mod_entry_id,
+                    cover_rel_path,
+                } => {
+                    self.apply_mod_sync_cover(&mod_entry_id, &cover_rel_path);
+                }
                 InstallEvent::InstallCanceled { job_id } => {
                     self.pending_browse_install_meta.remove(&job_id);
                     if self.install_batch_active {

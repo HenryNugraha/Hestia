@@ -243,19 +243,24 @@ fn persist_source_images_bg(
     mod_root_path: &Path,
     profile: &gamebanana::ProfileResponse,
     client: &reqwest::blocking::Client,
+    mut on_first_preview: impl FnMut(&str),
 ) -> Result<Vec<String>> {
     let mut rel_paths = Vec::new();
     if let Some(preview) = &profile.preview_media {
         for (idx, image) in preview.images.iter().enumerate() {
             let full_url = gamebanana::full_image_url(image);
-            rel_paths.push(save_mod_image_from_url_bg(
+            let rel_path = save_mod_image_from_url_bg(
                 portable,
                 client,
                 mod_root_path,
                 profile.id,
                 idx,
                 &full_url,
-            )?);
+            )?;
+            if idx == 0 {
+                on_first_preview(&rel_path);
+            }
+            rel_paths.push(rel_path);
         }
     }
 

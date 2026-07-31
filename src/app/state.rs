@@ -1004,6 +1004,12 @@ enum InstallEvent {
         profile: Box<gamebanana::ProfileResponse>,
         rel_paths: Vec<String>,
     },
+    /// The first preview image of a sync job is on disk while the rest of the
+    /// gallery is still downloading, so the cover can be published early.
+    SyncImagesCover {
+        mod_entry_id: String,
+        cover_rel_path: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1095,6 +1101,8 @@ struct CardThumbMeta {
 struct ModThumbFailure {
     kind: String,
     id: String,
+    mtime: Option<i64>,
+    size: Option<u64>,
     at: Instant,
 }
 
@@ -1105,13 +1113,35 @@ impl ModThumbFailure {
     /// Nothing about that can change while the identity stays the same, so it is
     /// never retried; every other kind reads from disk or a cache that a later
     /// download can still fill, so those get another attempt after a cooldown.
+    /// A source file that appeared or changed on disk since the failure cannot
+    /// repeat it, so that skips the cooldown entirely.
     fn still_applies(&self, meta: &CardThumbMeta) -> bool {
         if self.kind != meta.kind || self.id != meta.id {
+            return false;
+        }
+        if self.mtime != meta.mtime || self.size != meta.size {
             return false;
         }
         self.kind == "none"
             || self.at.elapsed() < Duration::from_secs(MOD_THUMB_RETRY_COOLDOWN_SECS)
     }
+
+    fn remaining_cooldown(&self) -> Duration {
+        Duration::from_secs(MOD_THUMB_RETRY_COOLDOWN_SECS).saturating_sub(self.at.elapsed())
+    }
+}
+
+/// What became of a card-thumbnail queue attempt, so callers can tell a real
+/// enqueue apart from a silent decline.
+enum CardThumbQueueOutcome {
+    /// A request is queued or already in flight; a worker result will arrive.
+    Requested,
+    /// The texture already exists or the mod is gone; nothing to wait for.
+    NotNeeded,
+    /// Declined by the failure cache; worth retrying once the cooldown ends.
+    CoolingDown(Duration),
+    /// Declined for good: the mod has no cover source at all.
+    NoSource,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

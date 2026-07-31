@@ -4961,7 +4961,25 @@ impl HestiaApp {
                                                         .as_deref()
                                                         .is_some_and(|cover| !cover.trim().is_empty())
                                             })
-                                        });
+                                        })
+                                        // No member has cover_image metadata yet
+                                        // (e.g. a fresh install still syncing its
+                                        // gallery). Fall back in the same status
+                                        // order: the thumb loader can still source
+                                        // from the GB snapshot URL, so the tile
+                                        // rides the member's card thumbnail
+                                        // instead of waiting for the sync to end.
+                                        .or_else(|| {
+                                            section_cards
+                                                .iter()
+                                                .find(|card| card.5 == ModStatus::Active)
+                                        })
+                                        .or_else(|| {
+                                            section_cards
+                                                .iter()
+                                                .find(|card| card.5 == ModStatus::Disabled)
+                                        })
+                                        .or_else(|| section_cards.first());
                                     let representative_mod_id =
                                         representative_card.map(|card| card.0.clone());
 
@@ -5005,10 +5023,14 @@ impl HestiaApp {
                                                 return Some(texture);
                                             }
 
-                                            if !self.mod_cover_textures.contains_key(mod_id) {
-                                                self.queue_mod_card_thumb_load_with_priority(
+                                            if !self.mod_cover_textures.contains_key(mod_id)
+                                                && let CardThumbQueueOutcome::CoolingDown(
+                                                    remaining,
+                                                ) = self.queue_mod_card_thumb_load_with_priority(
                                                     mod_id, 20,
-                                                );
+                                                )
+                                            {
+                                                ui.ctx().request_repaint_after(remaining);
                                             }
                                             self.get_mod_thumb_texture(mod_id, 1).cloned()
                                         },
@@ -5249,11 +5271,21 @@ impl HestiaApp {
                                                                     rect.center().y - clip.bottom()
                                                                 };
                                                                 let priority = if is_visible { 20 } else { 60 + (distance.max(0.0) as u32 / 100) };
-                                                                self.queue_mod_card_thumb_load_with_priority(
+                                                                match self.queue_mod_card_thumb_load_with_priority(
                                                                     mod_id,
                                                                     priority,
-                                                                );
-                                                                self.pending_image_loads.insert(mod_id.clone());
+                                                                ) {
+                                                                    CardThumbQueueOutcome::Requested
+                                                                    | CardThumbQueueOutcome::NoSource => {
+                                                                        self.pending_image_loads.insert(mod_id.clone());
+                                                                    }
+                                                                    CardThumbQueueOutcome::CoolingDown(remaining) => {
+                                                                        if is_visible {
+                                                                            ui.ctx().request_repaint_after(remaining);
+                                                                        }
+                                                                    }
+                                                                    CardThumbQueueOutcome::NotNeeded => {}
+                                                                }
                                                             }
                                                             self.get_mod_thumb_texture(mod_id, 2)
                                                         } else {
@@ -5271,11 +5303,21 @@ impl HestiaApp {
                                                                 rect.center().y - clip.bottom()
                                                             };
                                                             let priority = if is_visible { 20 } else { 60 + (distance.max(0.0) as u32 / 100) };
-                                                            self.queue_mod_card_thumb_load_with_priority(
+                                                            match self.queue_mod_card_thumb_load_with_priority(
                                                                 mod_id,
                                                                 priority,
-                                                            );
-                                                            self.pending_image_loads.insert(mod_id.clone());
+                                                            ) {
+                                                                CardThumbQueueOutcome::Requested
+                                                                | CardThumbQueueOutcome::NoSource => {
+                                                                    self.pending_image_loads.insert(mod_id.clone());
+                                                                }
+                                                                CardThumbQueueOutcome::CoolingDown(remaining) => {
+                                                                    if is_visible {
+                                                                        ui.ctx().request_repaint_after(remaining);
+                                                                    }
+                                                                }
+                                                                CardThumbQueueOutcome::NotNeeded => {}
+                                                            }
                                                         }
                                                         self.get_mod_thumb_texture(mod_id, 2)
                                                     };

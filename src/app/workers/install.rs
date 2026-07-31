@@ -218,6 +218,8 @@ fn spawn_install_workers(
                         let profile_for_work = profile.clone();
                         let portable = portable.clone();
                         let custom_proxy = runtime_services.custom_proxy();
+                        let cover_tx = tx.clone();
+                        let cover_mod_entry_id = mod_entry_id.clone();
                         let result = handle
                             .spawn_blocking(move || -> Result<Vec<String>> {
                                 std::thread::Builder::new()
@@ -264,6 +266,16 @@ fn spawn_install_workers(
                                             &mod_root_path,
                                             &profile_for_work,
                                             &blocking_http_client,
+                                            |cover_rel_path| {
+                                                let _ = cover_tx.send(
+                                                    InstallEvent::SyncImagesCover {
+                                                        mod_entry_id: cover_mod_entry_id
+                                                            .clone(),
+                                                        cover_rel_path: cover_rel_path
+                                                            .to_string(),
+                                                    },
+                                                );
+                                            },
                                         )
                                     })
                                     .map_err(|err| anyhow!("failed to start image-sync thread: {err}"))?

@@ -637,26 +637,31 @@ impl HestiaApp {
         self.pending_mod_image_queue.push(req);
     }
 
-    fn queue_mod_card_thumb_load_with_priority(&mut self, mod_id: &str, priority: u32) {
+    fn queue_mod_card_thumb_load_with_priority(
+        &mut self,
+        mod_id: &str,
+        priority: u32,
+    ) -> CardThumbQueueOutcome {
         if self.mod_cover_textures.contains_key(mod_id) {
-            return;
+            return CardThumbQueueOutcome::NotNeeded;
         }
-        let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id).cloned() else {
-            return;
+        let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id) else {
+            return CardThumbQueueOutcome::NotNeeded;
         };
-        let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(&mod_entry);
+        let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(mod_entry);
         // A mod with no usable cover source would otherwise be re-requested on
         // every frame that renders its card, and each empty result schedules the
         // next frame — a self-sustaining loop for the whole session.
-        if self
-            .mod_thumb_unavailable
-            .get(mod_id)
-            .is_some_and(|failure| failure.still_applies(&expected_meta))
+        if let Some(failure) = self.mod_thumb_unavailable.get(mod_id)
+            && failure.still_applies(&expected_meta)
         {
-            return;
+            if expected_meta.kind == "none" {
+                return CardThumbQueueOutcome::NoSource;
+            }
+            return CardThumbQueueOutcome::CoolingDown(failure.remaining_cooldown());
         }
         let force_regen =
-            !Self::is_mod_thumb_valid(&mod_entry, &expected_meta, ThumbnailProfile::Card);
+            !Self::is_mod_thumb_valid(mod_entry, &expected_meta, ThumbnailProfile::Card);
         let payload = LocalModImagePayload::CardThumb {
             mod_root: mod_entry.root_path.clone(),
             source_path,
@@ -670,7 +675,7 @@ impl HestiaApp {
                 .iter()
                 .any(|q| q.texture_key == mod_id)
         {
-            return;
+            return CardThumbQueueOutcome::Requested;
         }
         self.pending_mod_image_requests.insert(mod_id.to_string());
         self.enqueue_local_mod_image_request(LocalModImageRequest {
@@ -680,6 +685,7 @@ impl HestiaApp {
             generation: 0,
             payload,
         });
+        CardThumbQueueOutcome::Requested
     }
 
     fn queue_mod_image_thumb_load(
@@ -1129,6 +1135,8 @@ impl HestiaApp {
                         ModThumbFailure {
                             kind: meta.kind.clone(),
                             id: meta.id.clone(),
+                            mtime: meta.mtime,
+                            size: meta.size,
                             at: Instant::now(),
                         },
                     );

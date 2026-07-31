@@ -2376,8 +2376,49 @@ impl HestiaApp {
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
         self.inflight_full_image_requests
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
+        // A pre-sync failure must not delay the freshly synced cover; the next
+        // request should go straight to the worker.
+        self.mod_thumb_unavailable.remove(mod_entry_id);
         self.rebuild_texture_tracking();
         self.log_action(self.text().synced_action(), &folder_name);
+    }
+
+    /// Early cover publish from an image-sync job: the first preview is on disk
+    /// while the rest of the gallery is still downloading. Pointing cover_image
+    /// at it now lets the mod card and its category folder tile stop waiting on
+    /// the full sync. Screenshots stay untouched so an interrupted sync is still
+    /// caught by `backfill_missing_mod_images` (gated on empty screenshots); the
+    /// final SyncImagesDone applies the complete result as before.
+    fn apply_mod_sync_cover(&mut self, mod_entry_id: &str, cover_rel_path: &str) {
+        let mut changed = false;
+        for mod_entry in self
+            .state
+            .mods
+            .iter_mut()
+            .filter(|m| m.id == mod_entry_id)
+        {
+            let replaceable = mod_entry
+                .metadata
+                .user
+                .cover_image
+                .as_deref()
+                .map(|s| s.trim().is_empty() || s.contains("gb_"))
+                .unwrap_or(true);
+            if !replaceable {
+                continue;
+            }
+            mod_entry.metadata.user.cover_image = Some(cover_rel_path.to_string());
+            let _ = xxmi::save_mod_metadata(mod_entry);
+            changed = true;
+        }
+        if !changed {
+            return;
+        }
+        self.save_state();
+        // Invalidate unconditionally: on a mod update the rel path is unchanged
+        // while the bytes are new, so comparing paths would pin a stale texture.
+        self.clear_mod_card_texture(mod_entry_id);
+        self.mod_thumb_unavailable.remove(mod_entry_id);
     }
 
     fn queue_update_apply(&mut self, mod_entry_id: &str) {
