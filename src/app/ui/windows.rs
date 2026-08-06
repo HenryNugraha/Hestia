@@ -3710,7 +3710,17 @@ impl HestiaApp {
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Metal, "Metal");
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::OpenGl, "OpenGL");
                                     });
+                                // No button when the selection resolves to the renderer
+                                // already running (e.g. Auto resolved to DirectX 12 and
+                                // the user picks DirectX 12 explicitly).
+                                let predicted_label = self
+                                    .state
+                                    .static_prefs
+                                    .renderer
+                                    .api_label()
+                                    .unwrap_or(self.auto_renderer_label);
                                 if self.state.static_prefs.renderer != self.boot_renderer_pref
+                                    && predicted_label != self.active_renderer_label
                                     && ui
                                         .add(
                                             egui::Button::new(icon_text_sized(Icon::RotateCw, text.renderer_restart(), 14.5, 13.0))

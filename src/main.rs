@@ -111,7 +111,8 @@ fn main() -> anyhow::Result<()> {
             viewport = viewport.with_inner_size(vec2(w, h));
         }
     }
-    let (renderer, wgpu_backends) = select_renderer(state.static_prefs.renderer);
+    let (renderer, wgpu_backends, auto_renderer_label) =
+        select_renderer(state.static_prefs.renderer);
     // eframe injects the display handle at instance creation time.
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup.instance_descriptor.backends = wgpu_backends;
@@ -137,6 +138,7 @@ fn main() -> anyhow::Result<()> {
                 state,
                 runtime_services,
                 startup_path_scan_due,
+                auto_renderer_label,
             )))
         }),
     )
@@ -161,7 +163,7 @@ fn main() -> anyhow::Result<()> {
 /// rasterizer would be slower there than glow on real hardware GL.
 fn select_renderer(
     pref: model::RendererPreference,
-) -> (eframe::Renderer, eframe::wgpu::Backends) {
+) -> (eframe::Renderer, eframe::wgpu::Backends, &'static str) {
     use eframe::wgpu;
     use model::RendererPreference;
 
@@ -171,9 +173,29 @@ fn select_renderer(
     } else {
         wgpu::Backends::PRIMARY | wgpu::Backends::GL
     });
+
+    let instance = wgpu::Instance::default();
+    let find_hardware_adapter = |backends: wgpu::Backends| {
+        pollster::block_on(instance.enumerate_adapters(backends))
+            .into_iter()
+            .find(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
+    };
+    // What Auto would run on this machine. Probed even when the preference is
+    // explicit: settings compares it against the active renderer so the restart
+    // button only appears for a selection that would actually change something.
+    let auto_adapter = find_hardware_adapter(auto_backends);
+    let auto_label = match auto_adapter.as_ref().map(|adapter| adapter.get_info().backend) {
+        Some(wgpu::Backend::Dx12) => "DirectX 12",
+        Some(wgpu::Backend::Vulkan) => "Vulkan",
+        Some(wgpu::Backend::Metal) => "Metal",
+        Some(wgpu::Backend::Gl) => "OpenGL (wgpu)",
+        Some(_) => "wgpu",
+        None => "OpenGL",
+    };
+
     match std::env::var("HESTIA_RENDERER").as_deref() {
-        Ok("glow") => return (eframe::Renderer::Glow, auto_backends),
-        Ok("wgpu") => return (eframe::Renderer::Wgpu, auto_backends),
+        Ok("glow") => return (eframe::Renderer::Glow, auto_backends, auto_label),
+        Ok("wgpu") => return (eframe::Renderer::Wgpu, auto_backends, auto_label),
         _ => {}
     }
 
@@ -183,7 +205,7 @@ fn select_renderer(
         RendererPreference::Auto
     };
     if pref == RendererPreference::OpenGl {
-        return (eframe::Renderer::Glow, auto_backends);
+        return (eframe::Renderer::Glow, auto_backends, auto_label);
     }
     let requested_backends = if env_backends.is_some() {
         auto_backends
@@ -196,27 +218,27 @@ fn select_renderer(
         }
     };
 
-    let instance = wgpu::Instance::default();
-    let find_hardware_adapter = |backends: wgpu::Backends| {
-        pollster::block_on(instance.enumerate_adapters(backends))
-            .into_iter()
-            .find(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
-    };
+    // Try the requested backend first, then Auto's choice; reuse the Auto probe
+    // when they are the same set.
     let candidates = if requested_backends == auto_backends {
-        &[requested_backends][..]
+        vec![(auto_backends, auto_adapter)]
     } else {
-        &[requested_backends, auto_backends][..]
+        let requested_adapter = find_hardware_adapter(requested_backends);
+        vec![
+            (requested_backends, requested_adapter),
+            (auto_backends, auto_adapter),
+        ]
     };
-    for &backends in candidates {
-        if let Some(adapter) = find_hardware_adapter(backends) {
+    for (backends, adapter) in candidates {
+        if let Some(adapter) = adapter {
             let info = adapter.get_info();
             tracing::info!("using wgpu renderer: {} via {:?}", info.name, info.backend);
-            return (eframe::Renderer::Wgpu, backends);
+            return (eframe::Renderer::Wgpu, backends, auto_label);
         }
         tracing::warn!("no hardware wgpu adapter for {backends:?}");
     }
     tracing::warn!("no hardware wgpu adapter found; falling back to glow renderer");
-    (eframe::Renderer::Glow, auto_backends)
+    (eframe::Renderer::Glow, auto_backends, auto_label)
 }
 
 #[cfg(windows)]

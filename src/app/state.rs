@@ -155,6 +155,9 @@ pub struct HestiaApp {
     /// API name of the renderer actually in use this session ("DirectX 12",
     /// "Vulkan", "Metal", "OpenGL"), shown in settings next to the preference.
     active_renderer_label: &'static str,
+    /// API name Auto would resolve to on this machine, probed at startup; used
+    /// to hide the restart button when a selection changes nothing.
+    auto_renderer_label: &'static str,
     /// Renderer preference the app booted with; a differing current preference
     /// offers a restart button in settings.
     boot_renderer_pref: RendererPreference,

@@ -81,6 +81,7 @@ impl HestiaApp {
         mut state: AppState,
         runtime_services: RuntimeServices,
         startup_path_scan_due: bool,
+        auto_renderer_label: &'static str,
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
@@ -319,6 +320,7 @@ impl HestiaApp {
             current_view: ViewMode::Library,
             settings_open: false,
             active_renderer_label,
+            auto_renderer_label,
             boot_renderer_pref,
             proxy_url_draft,
             proxy_url_validation_error: None,
