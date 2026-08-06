@@ -152,6 +152,12 @@ pub struct HestiaApp {
     dragging_mod_ids: Vec<String>,
     current_view: ViewMode,
     settings_open: bool,
+    /// API name of the renderer actually in use this session ("DirectX 12",
+    /// "Vulkan", "Metal", "OpenGL"), shown in settings next to the preference.
+    active_renderer_label: &'static str,
+    /// Renderer preference the app booted with; a differing current preference
+    /// offers a restart button in settings.
+    boot_renderer_pref: RendererPreference,
     proxy_url_draft: String,
     proxy_url_validation_error: Option<String>,
     applied_custom_proxy: Option<CustomProxyConfig>,

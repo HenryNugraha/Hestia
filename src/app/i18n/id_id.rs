@@ -707,4 +707,12 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Terjemahkan ulang", // TranslationRetranslate
     "Terjemahan gagal", // TranslationFailed
     "Sedang menerjemahkan", // TranslationInProgress
+
+    // Settings: Advanced renderer
+    "Renderer", // SettingsAdvancedRendererSection
+    "API grafis:", // SettingsAdvancedRendererGraphicsApi
+    "Otomatis (disarankan)", // SettingsAdvancedRendererAuto
+    "Renderer aktif: {backend}", // SettingsAdvancedRendererActive
+    "Perubahan berlaku setelah Hestia dimulai ulang.", // SettingsAdvancedRendererRestartHint
+    "Mulai Ulang", // SettingsAdvancedRendererRestart
 ];

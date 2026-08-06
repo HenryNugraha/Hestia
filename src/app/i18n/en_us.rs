@@ -707,4 +707,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Retranslate", // TranslationRetranslate
     "Translation failed", // TranslationFailed
     "Translation in progress", // TranslationInProgress
+
+    // Settings: Advanced renderer
+    "Renderer", // SettingsAdvancedRendererSection
+    "Graphics API:", // SettingsAdvancedRendererGraphicsApi
+    "Auto (recommended)", // SettingsAdvancedRendererAuto
+    "Active renderer: {backend}", // SettingsAdvancedRendererActive
+    "Changes take effect after Hestia restarts.", // SettingsAdvancedRendererRestartHint
+    "Restart", // SettingsAdvancedRendererRestart
 ];

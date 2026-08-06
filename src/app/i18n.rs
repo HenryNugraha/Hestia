@@ -691,10 +691,18 @@ enum TextKey {
     TranslationRetranslate,
     TranslationFailed,
     TranslationInProgress,
+
+    // Appended keys only: the language arrays are positional.
+    SettingsAdvancedRendererSection,
+    SettingsAdvancedRendererGraphicsApi,
+    SettingsAdvancedRendererAuto,
+    SettingsAdvancedRendererActive,
+    SettingsAdvancedRendererRestartHint,
+    SettingsAdvancedRendererRestart,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::TranslationInProgress as usize + 1;
+    const COUNT: usize = Self::SettingsAdvancedRendererRestart as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -3270,6 +3278,31 @@ impl TextCatalog {
 
     fn cache_size(self) -> &'static str {
         self.get(TextKey::SettingsAdvancedCacheArchiveCacheSize)
+    }
+
+    fn renderer_section(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedRendererSection)
+    }
+
+    fn renderer_graphics_api(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedRendererGraphicsApi)
+    }
+
+    fn renderer_auto(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedRendererAuto)
+    }
+
+    fn renderer_active(self, backend: &str) -> String {
+        self.get(TextKey::SettingsAdvancedRendererActive)
+            .replace("{backend}", backend)
+    }
+
+    fn renderer_restart_hint(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedRendererRestartHint)
+    }
+
+    fn renderer_restart(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedRendererRestart)
     }
 
     fn current_usage(self, gb: f64) -> String {

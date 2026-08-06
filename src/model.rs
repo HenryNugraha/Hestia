@@ -51,6 +51,8 @@ pub struct StaticPreferences {
     #[serde(default)]
     pub cache_size_tier: CacheSizeTier,
     #[serde(default)]
+    pub renderer: RendererPreference,
+    #[serde(default)]
     pub import_resolution: ImportResolution,
     #[serde(default)]
     pub delete_behavior: DeleteBehavior,
@@ -122,6 +124,7 @@ impl Default for StaticPreferences {
             after_install_behavior: AfterInstallBehavior::default(),
             unsafe_content_mode: UnsafeContentMode::default(),
             cache_size_tier: CacheSizeTier::default(),
+            renderer: RendererPreference::default(),
             import_resolution: ImportResolution::default(),
             delete_behavior: DeleteBehavior::default(),
             window_pos: None,
@@ -1301,6 +1304,46 @@ impl CacheSizeTier {
 impl Default for CacheSizeTier {
     fn default() -> Self {
         Self::Gb4
+    }
+}
+
+/// Rendering backend preference. The renderer is fixed at window creation, so
+/// a change takes effect on the next launch. Picks that make no sense on the
+/// current platform (e.g. Dx12 on Linux) behave like Auto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RendererPreference {
+    Auto,
+    Dx12,
+    Vulkan,
+    Metal,
+    OpenGl,
+}
+
+impl RendererPreference {
+    /// Proper API names; not translated.
+    pub fn api_label(self) -> Option<&'static str> {
+        match self {
+            Self::Auto => None,
+            Self::Dx12 => Some("DirectX 12"),
+            Self::Vulkan => Some("Vulkan"),
+            Self::Metal => Some("Metal"),
+            Self::OpenGl => Some("OpenGL"),
+        }
+    }
+
+    pub fn valid_on_current_platform(self) -> bool {
+        match self {
+            Self::Auto | Self::OpenGl => true,
+            Self::Dx12 => cfg!(windows),
+            Self::Vulkan => cfg!(any(windows, target_os = "linux")),
+            Self::Metal => cfg!(target_os = "macos"),
+        }
+    }
+}
+
+impl Default for RendererPreference {
+    fn default() -> Self {
+        Self::Auto
     }
 }
 

@@ -279,6 +279,20 @@ impl HestiaApp {
 
         let applied_custom_proxy = runtime_services.custom_proxy();
         let proxy_url_draft = state.static_prefs.custom_proxy_url.clone();
+        // `wgpu_render_state` is None exactly when eframe runs the glow backend.
+        let active_renderer_label = match cc
+            .wgpu_render_state
+            .as_ref()
+            .map(|render_state| render_state.adapter.get_info().backend)
+        {
+            Some(eframe::wgpu::Backend::Dx12) => "DirectX 12",
+            Some(eframe::wgpu::Backend::Vulkan) => "Vulkan",
+            Some(eframe::wgpu::Backend::Metal) => "Metal",
+            Some(eframe::wgpu::Backend::Gl) => "OpenGL (wgpu)",
+            Some(_) => "wgpu",
+            None => "OpenGL",
+        };
+        let boot_renderer_pref = state.static_prefs.renderer;
         let mut app = Self {
             runtime_services,
             portable,
@@ -302,6 +316,8 @@ impl HestiaApp {
             dragging_mod_ids: Vec::new(),
             current_view: ViewMode::Library,
             settings_open: false,
+            active_renderer_label,
+            boot_renderer_pref,
             proxy_url_draft,
             proxy_url_validation_error: None,
             applied_custom_proxy,
@@ -755,6 +771,27 @@ impl HestiaApp {
                 }
             }
         }
+    }
+
+    /// Relaunches the app so a changed renderer preference takes effect: the
+    /// renderer is fixed at window creation. `--after-proxy-restart` only skips
+    /// the single-instance guard, which the new process needs while this one is
+    /// still shutting down.
+    fn restart_for_renderer_change(&mut self) {
+        if self.has_active_mod_tasks() {
+            self.report_warn(
+                "renderer restart blocked while tasks are active",
+                Some(self.text().app_update_wait_for_active_tasks()),
+            );
+            return;
+        }
+        self.save_state();
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::process::Command::new(exe)
+                .arg("--after-proxy-restart")
+                .spawn();
+        }
+        std::process::exit(0);
     }
 
     fn restart_network_work_for_proxy_change(&mut self) {

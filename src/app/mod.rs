@@ -43,7 +43,8 @@ use crate::{
         ImportResolution, ImportSource, LaunchBehavior, LibraryCategoryDisplayMode,
         LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory,
         ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
-        ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileRecord, SearchSort,
+        ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileRecord,
+        RendererPreference, SearchSort,
         StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus, TasksLayout,
         TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode, default_modded_exe_candidates,
         default_mods_path, default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
@@ -105,10 +106,12 @@ fn request_animation_repaint(ctx: &egui::Context) {
 
 impl eframe::App for HestiaApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        profiling::scope!("app::logic");
         set_current_language(self.state.static_prefs.language);
 
         // Batch worker event consumption - only poll channels when flagged
         if self.check_pending_worker_events() {
+            profiling::scope!("logic::worker_events");
             self.consume_icon_results(ctx);
             self.consume_mod_image_results();
             self.consume_manual_image_events();
@@ -132,6 +135,7 @@ impl eframe::App for HestiaApp {
         self.complete_startup_launch(ctx);
 
         // Always run these - they have internal checks or are always needed
+        profiling::scope!("logic::frame_upkeep");
         self.cancel_invisible_gif_work();
         self.update_gif_animations(ctx);
         self.last_visible_gif_texture_keys = std::mem::take(&mut self.visible_gif_texture_keys);
@@ -148,6 +152,7 @@ impl eframe::App for HestiaApp {
 
         // Process queues - only when there's work
         if self.check_pending_process_work() {
+            profiling::scope!("logic::queues");
             self.process_local_mod_image_queue(ctx);
             self.process_pending_texture_uploads(ctx);
             self.ensure_browse_bootstrap();
@@ -164,6 +169,7 @@ impl eframe::App for HestiaApp {
     }
 
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        profiling::scope!("app::ui");
         let ctx = root_ui.ctx().clone();
 
         // Sampled before any UI runs: popups close themselves on Escape *during*
@@ -198,9 +204,18 @@ impl eframe::App for HestiaApp {
         egui::CentralPanel::default().show(root_ui, |ui| {
             install_resize_handles(&ctx);
 
-            self.render_top_bar(ui);
-            self.render_settings_window(&ctx);
-            self.render_nav_rail(ui);
+            {
+                profiling::scope!("render_top_bar");
+                self.render_top_bar(ui);
+            }
+            {
+                profiling::scope!("render_settings_window");
+                self.render_settings_window(&ctx);
+            }
+            {
+                profiling::scope!("render_nav_rail");
+                self.render_nav_rail(ui);
+            }
 
             egui::CentralPanel::default()
                 .frame(
@@ -213,22 +228,31 @@ impl eframe::App for HestiaApp {
                             bottom: WINDOW_INSET,
                         }),
                 )
-                .show(ui, |ui| self.render_workspace_view(ui));
+                .show(ui, |ui| {
+                    profiling::scope!("render_workspace_view");
+                    self.render_workspace_view(ui)
+                });
 
-            self.render_tasks_window(&ctx);
-            self.render_tools_window(&ctx);
-            self.render_tool_launch_options_prompt(&ctx);
-            self.render_whats_new_window(&ctx);
-            self.render_feedback_survey_window(&ctx);
-            self.render_log_panel(&ctx);
-            self.render_startup_path_scan_overlay(&ctx);
+            {
+                profiling::scope!("floating_windows");
+                self.render_tasks_window(&ctx);
+                self.render_tools_window(&ctx);
+                self.render_tool_launch_options_prompt(&ctx);
+                self.render_whats_new_window(&ctx);
+                self.render_feedback_survey_window(&ctx);
+                self.render_log_panel(&ctx);
+                self.render_startup_path_scan_overlay(&ctx);
+            }
 
-            self.render_pending_conflict(&ctx);
-            self.render_pending_import(&ctx);
-            // Blocking profile operations are modal and must stay above every
-            // other Hestia window and overlay.
-            self.render_profile_dialogs(&ctx);
-            self.update_main_window_state(&ctx);
+            {
+                profiling::scope!("dialogs_and_window_state");
+                self.render_pending_conflict(&ctx);
+                self.render_pending_import(&ctx);
+                // Blocking profile operations are modal and must stay above every
+                // other Hestia window and overlay.
+                self.render_profile_dialogs(&ctx);
+                self.update_main_window_state(&ctx);
+            }
         });
         self.handle_window_close_shortcuts(&ctx, popup_open_at_frame_start);
         // Control repaint behavior to reduce CPU usage on idle

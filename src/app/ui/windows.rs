@@ -3684,6 +3684,70 @@ impl HestiaApp {
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
+
+                        static_label(ui, bold(text.renderer_section(), Some(16.0)).underline());
+                        ui.indent("setting_advanced_renderer", |ui| {
+                            static_label(ui, text.renderer_graphics_api());
+                            ui.add_space(-4.0);
+                            let previous_renderer = self.state.static_prefs.renderer;
+                            let selected_label = self
+                                .state
+                                .static_prefs
+                                .renderer
+                                .api_label()
+                                .unwrap_or(text.renderer_auto());
+                            let mut restart_requested = false;
+                            ui.horizontal(|ui| {
+                                egui::ComboBox::from_id_salt("renderer_preference")
+                                    .selected_text(selected_label)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Auto, text.renderer_auto());
+                                        #[cfg(windows)]
+                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Dx12, "DirectX 12");
+                                        #[cfg(any(windows, target_os = "linux"))]
+                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Vulkan, "Vulkan");
+                                        #[cfg(target_os = "macos")]
+                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Metal, "Metal");
+                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::OpenGl, "OpenGL");
+                                    });
+                                if self.state.static_prefs.renderer != self.boot_renderer_pref
+                                    && ui
+                                        .add(
+                                            egui::Button::new(icon_text_sized(Icon::RotateCw, text.renderer_restart(), 14.5, 13.0))
+                                                .fill(Color32::from_rgb(180, 78, 35))
+                                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                {
+                                    restart_requested = true;
+                                }
+                            });
+                            if self.state.static_prefs.renderer != previous_renderer {
+                                should_save = true;
+                            }
+                            ui.add_space(-4.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.renderer_active(self.active_renderer_label))
+                                    .color(Color32::from_gray(128))
+                                    .italics()
+                                    .size(12.0),
+                            );
+                            ui.add_space(-6.0);
+                            static_label(
+                                ui,
+                                RichText::new(text.renderer_restart_hint())
+                                    .color(Color32::from_gray(128))
+                                    .italics()
+                                    .size(12.0),
+                            );
+                            if restart_requested {
+                                self.restart_for_renderer_change();
+                            }
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
                     }
                     SettingsTab::About => {
                         static_label(ui, bold(APP_NAME, Some(16.0)).underline());

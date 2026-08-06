@@ -706,4 +706,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Перевести заново", // TranslationRetranslate
     "Перевод не удался", // TranslationFailed
     "Выполняется перевод", // TranslationInProgress
+
+    // Settings: Advanced renderer
+    "Рендерер", // SettingsAdvancedRendererSection
+    "Графический API:", // SettingsAdvancedRendererGraphicsApi
+    "Авто (рекомендуется)", // SettingsAdvancedRendererAuto
+    "Активный рендерер: {backend}", // SettingsAdvancedRendererActive
+    "Изменения вступят в силу после перезапуска Hestia.", // SettingsAdvancedRendererRestartHint
+    "Перезапустить", // SettingsAdvancedRendererRestart
 ];

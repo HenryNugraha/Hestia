@@ -707,4 +707,12 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "重新翻译", // TranslationRetranslate
     "翻译失败", // TranslationFailed
     "正在翻译", // TranslationInProgress
+
+    // Settings: Advanced renderer
+    "渲染器", // SettingsAdvancedRendererSection
+    "图形 API：", // SettingsAdvancedRendererGraphicsApi
+    "自动（推荐）", // SettingsAdvancedRendererAuto
+    "当前渲染器：{backend}", // SettingsAdvancedRendererActive
+    "更改将在 Hestia 重启后生效。", // SettingsAdvancedRendererRestartHint
+    "重启", // SettingsAdvancedRendererRestart
 ];
