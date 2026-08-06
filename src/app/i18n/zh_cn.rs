@@ -418,6 +418,15 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "删除文件夹及其中的 Mod", // LibraryFolderAndModsInside
     "此文件夹中有 {count} 个 Mod 未显示。清除搜索/筛选后即可删除其中所有内容。", // LibraryFolderAndModsInsideHiddenTooltip
     "已删除文件夹：{category}", // LibraryDeletedFolder
+    "新建分类", // LibraryContextCreateCategory
+    "全选", // LibraryContextSelectAll
+    "清除选择", // LibraryContextClearSelection
+    "排序方式", // LibraryContextSortBy
+    "分组方式", // LibraryContextGroupBy
+    "打开 Mod 文件夹", // LibraryContextOpenModsFolder
+    "从压缩包 .zip/.rar", // LibraryContextInstallArchive
+    "从文件夹", // LibraryContextInstallFolder
+    "已创建分类：{category}", // LibraryCreatedFolder
     "已启用", // LibraryStatusActive
     "禁用", // LibraryStatusDisabled
     "已归档", // LibraryStatusArchived

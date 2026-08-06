@@ -148,6 +148,7 @@ pub struct HestiaApp {
     show_modified_locally_mods: bool,
     show_ignoring_update_mods: bool,
     selected_category_folder_id: Option<String>,
+    library_scroll_to_category_id: Option<String>,
     library_card_cache: LibraryCardCache,
     dragging_mod_ids: Vec<String>,
     current_view: ViewMode,

@@ -724,6 +724,113 @@ impl HestiaApp {
         response.changed()
     }
 
+    fn render_library_sort_radio_rows(&mut self, ui: &mut Ui) -> bool {
+        let text = self.text();
+        let mut should_save = false;
+        let mut selected_sort = self.state.static_prefs.library_sort;
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::NameAsc,
+            text.library_sort_label(LibrarySort::NameAsc),
+            Some(text.library_sort_name_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::NameDesc,
+            text.library_sort_label(LibrarySort::NameDesc),
+            Some(text.library_sort_name_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::DateDesc,
+            text.library_sort_label(LibrarySort::DateDesc),
+            Some(text.library_sort_newest_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::DateAsc,
+            text.library_sort_label(LibrarySort::DateAsc),
+            Some(text.library_sort_oldest_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::SizeAsc,
+            text.library_sort_label(LibrarySort::SizeAsc),
+            Some(text.library_sort_size_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected_sort,
+            LibrarySort::SizeDesc,
+            text.library_sort_label(LibrarySort::SizeDesc),
+            Some(text.library_sort_size_tooltip()),
+        );
+        if selected_sort != self.state.static_prefs.library_sort {
+            self.state.static_prefs.library_sort = selected_sort;
+        }
+        should_save
+    }
+
+    fn render_library_group_radio_rows(&mut self, ui: &mut Ui) -> bool {
+        let text = self.text();
+        let mut should_save = false;
+        let mut group_mode = self.state.static_prefs.library_group_mode;
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut group_mode,
+            LibraryGroupMode::Category,
+            text.library_group_mode(LibraryGroupMode::Category),
+            Some(text.library_group_category_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut group_mode,
+            LibraryGroupMode::Status,
+            text.library_group_mode(LibraryGroupMode::Status),
+            Some(text.library_group_status_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut group_mode,
+            LibraryGroupMode::None,
+            text.library_group_mode(LibraryGroupMode::None),
+            Some(text.library_group_none_tooltip()),
+        );
+        if group_mode != self.state.static_prefs.library_group_mode {
+            self.state.static_prefs.library_group_mode = group_mode;
+        }
+        should_save
+    }
+
+    fn render_library_category_layout_radio_rows(&mut self, ui: &mut Ui) -> bool {
+        let text = self.text();
+        let mut should_save = false;
+        let mut display_mode = self.state.static_prefs.library_category_display_mode;
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut display_mode,
+            LibraryCategoryDisplayMode::Folders,
+            text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
+            Some(text.library_category_folders_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut display_mode,
+            LibraryCategoryDisplayMode::GroupedSections,
+            text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+            Some(text.library_category_list_tooltip()),
+        );
+        if display_mode != self.state.static_prefs.library_category_display_mode {
+            self.state.static_prefs.library_category_display_mode = display_mode;
+        }
+        should_save
+    }
+
     fn render_library_sort_menu_button(&mut self, ui: &mut Ui, alpha: u8, width: f32) {
         let text = self.text();
         let button_label = text.library_sort_label(self.state.static_prefs.library_sort);
@@ -850,52 +957,7 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_sort_mods_heading());
                 ui.add_space(-2.0);
-                let mut selected_sort = self.state.static_prefs.library_sort;
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::NameAsc,
-                    text.library_sort_label(LibrarySort::NameAsc),
-                    Some(text.library_sort_name_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::NameDesc,
-                    text.library_sort_label(LibrarySort::NameDesc),
-                    Some(text.library_sort_name_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::DateDesc,
-                    text.library_sort_label(LibrarySort::DateDesc),
-                    Some(text.library_sort_newest_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::DateAsc,
-                    text.library_sort_label(LibrarySort::DateAsc),
-                    Some(text.library_sort_oldest_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::SizeAsc,
-                    text.library_sort_label(LibrarySort::SizeAsc),
-                    Some(text.library_sort_size_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut selected_sort,
-                    LibrarySort::SizeDesc,
-                    text.library_sort_label(LibrarySort::SizeDesc),
-                    Some(text.library_sort_size_tooltip()),
-                );
-                if selected_sort != self.state.static_prefs.library_sort {
-                    self.state.static_prefs.library_sort = selected_sort;
-                }
+                should_save |= self.render_library_sort_radio_rows(ui);
 
                 ui.add_space(2.0);
                 ui.separator();
@@ -903,31 +965,7 @@ impl HestiaApp {
 
                 Self::sort_menu_heading(ui, text.library_group_mods_heading());
                 ui.add_space(-2.0);
-                let mut group_mode = self.state.static_prefs.library_group_mode;
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut group_mode,
-                    LibraryGroupMode::Category,
-                    text.library_group_mode(LibraryGroupMode::Category),
-                    Some(text.library_group_category_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut group_mode,
-                    LibraryGroupMode::Status,
-                    text.library_group_mode(LibraryGroupMode::Status),
-                    Some(text.library_group_status_tooltip()),
-                );
-                should_save |= Self::sort_menu_radio(
-                    ui,
-                    &mut group_mode,
-                    LibraryGroupMode::None,
-                    text.library_group_mode(LibraryGroupMode::None),
-                    Some(text.library_group_none_tooltip()),
-                );
-                if group_mode != self.state.static_prefs.library_group_mode {
-                    self.state.static_prefs.library_group_mode = group_mode;
-                }
+                should_save |= self.render_library_group_radio_rows(ui);
 
                 ui.add_space(2.0);
                 ui.separator();
@@ -954,27 +992,7 @@ impl HestiaApp {
                         LibraryGroupMode::Category
                     ),
                     |ui| {
-                        let mut display_mode =
-                            self.state.static_prefs.library_category_display_mode;
-                        should_save |= Self::sort_menu_radio(
-                            ui,
-                            &mut display_mode,
-                            LibraryCategoryDisplayMode::Folders,
-                            text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
-                            Some(text.library_category_folders_tooltip()),
-                        );
-                        should_save |= Self::sort_menu_radio(
-                            ui,
-                            &mut display_mode,
-                            LibraryCategoryDisplayMode::GroupedSections,
-                            text.library_category_display_mode(
-                                LibraryCategoryDisplayMode::GroupedSections,
-                            ),
-                            Some(text.library_category_list_tooltip()),
-                        );
-                        if display_mode != self.state.static_prefs.library_category_display_mode {
-                            self.state.static_prefs.library_category_display_mode = display_mode;
-                        }
+                        should_save |= self.render_library_category_layout_radio_rows(ui);
                     },
                 );
 
@@ -4741,13 +4759,42 @@ impl HestiaApp {
                     ui.add_space(2.0);
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            static_label(
-                                ui,
-                                RichText::new(&category.name)
-                                    .size(16.0)
-                                    .strong()
-                                    .color(Color32::from_rgb(232, 235, 238)),
-                            );
+                            if self.category_rename_matches(
+                                &category.id,
+                                CategoryRenameSurface::LibraryFolder,
+                            ) {
+                                let input = ui.add(
+                                    TextEdit::singleline(&mut self.category_rename_name)
+                                        .id_source((
+                                            "category_drill_in_rename_input",
+                                            &category.id,
+                                        ))
+                                        .desired_width(220.0)
+                                        .margin(egui::Margin::same(4)),
+                                );
+                                self.request_category_rename_focus(ui.ctx(), &input, &category.id);
+                                let save_rename = ui.input_mut(|i| {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                });
+                                let cancel_rename = ui.input_mut(|i| {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                                });
+                                if save_rename {
+                                    let draft = self.category_rename_name.clone();
+                                    self.rename_category(&category.id, &draft);
+                                }
+                                if cancel_rename {
+                                    self.clear_category_rename();
+                                }
+                            } else {
+                                static_label(
+                                    ui,
+                                    RichText::new(&category.name)
+                                        .size(16.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(232, 235, 238)),
+                                );
+                            }
                             let mod_count_label = if section_cards.len() == 1 {
                                 text.library_one_mod().to_string()
                             } else {
@@ -4817,7 +4864,8 @@ impl HestiaApp {
                             .floor()
                             .max(1.0) as usize;
 
-                        let render_section_label =
+                        let mut pointer_over_section_label = false;
+                        let mut render_section_label =
                             |ui: &mut Ui, label: &str, color: Color32, count: usize| {
                                 let section_height = 20.0;
                                 let (rect, response) = ui.allocate_exact_size(
@@ -4847,6 +4895,9 @@ impl HestiaApp {
                                     Color32::from_rgba_premultiplied(28, 30, 34, 230),
                                 );
                                 ui.painter().galley(text_rect.min, galley, Color32::WHITE);
+                                if ui.rect_contains_pointer(rect) {
+                                    pointer_over_section_label = true;
+                                }
                                 response.on_hover_cursor(egui::CursorIcon::PointingHand)
                             };
 
@@ -4878,6 +4929,7 @@ impl HestiaApp {
                         let mut category_rename_focus_consumed = false;
                         let mut category_rename_name_draft =
                             self.category_rename_name.clone();
+                        let scroll_to_category_id = self.library_scroll_to_category_id.clone();
                         let search_filter_active = !self.mods_search_query.trim().is_empty();
                         let library_filter_active = search_filter_active
                             || !self.show_enabled_mods
@@ -4914,6 +4966,8 @@ impl HestiaApp {
                                         .count();
                                     if section_cards.is_empty()
                                         && (search_filter_active || !show_empty_category_folders)
+                                        && category_rename_target_id.as_deref()
+                                            != Some(category.id.as_str())
                                     {
                                         return None;
                                     }
@@ -5135,7 +5189,8 @@ impl HestiaApp {
                         };
 
                         let titlebar_context_block_rect = self.last_titlebar_rect;
-                        
+                        let mut pointer_over_grid_card = false;
+
                         // Viewport culling: calculate row dimensions
                         let row_height = CARD_HEIGHT + card_spacing;
                         
@@ -5664,6 +5719,9 @@ impl HestiaApp {
                                             .intersect(ui.clip_rect());
                                         let pointer_on_visible_card =
                                             ui.rect_contains_pointer(visible_card_rect);
+                                        if pointer_on_visible_card {
+                                            pointer_over_grid_card = true;
+                                        }
                                         let open_context_menu = ui.ctx().input(|i| {
                                             !suppress_mod_card_context_menu
                                                 && i.pointer.secondary_clicked()
@@ -6486,6 +6544,8 @@ impl HestiaApp {
                             None;
                         let mut pending_folder_delete_with_mods: Option<String> = None;
                         let mut pending_finish_folder_drag = false;
+                        let mut pending_clear_scroll_to_category = false;
+                        let mut pointer_over_grid_widget = false;
                         match library_group_mode {
                             LibraryGroupMode::None => {
                                 render_cards(ui, cards.iter().collect());
@@ -6602,6 +6662,15 @@ impl HestiaApp {
                                                     let tile_index = row_index * columns + column_index;
                                                     let response = render_category_folder_tile(ui, tile);
                                                     folder_tile_rects.push(response.rect);
+                                                    if scroll_to_category_id.as_deref()
+                                                        == Some(tile.id.as_str())
+                                                    {
+                                                        ui.scroll_to_rect(
+                                                            response.rect,
+                                                            Some(egui::Align::Center),
+                                                        );
+                                                        pending_clear_scroll_to_category = true;
+                                                    }
                                                     if category_rename_target_id.as_deref()
                                                         == Some(tile.id.as_str())
                                                         && category_rename_surface
@@ -6683,6 +6752,9 @@ impl HestiaApp {
                                                         .intersect(ui.clip_rect());
                                                     let pointer_on_visible_folder =
                                                         ui.rect_contains_pointer(visible_folder_rect);
+                                                    if pointer_on_visible_folder {
+                                                        pointer_over_grid_widget = true;
+                                                    }
                                                     let open_folder_context_menu =
                                                         ui.ctx().input(|input| {
                                                             input.pointer.secondary_clicked()
@@ -7222,11 +7294,503 @@ impl HestiaApp {
                             ui.ctx()
                                 .output_mut(|output| output.cursor_icon = egui::CursorIcon::Grabbing);
                         }
+                        if pending_clear_scroll_to_category {
+                            self.library_scroll_to_category_id = None;
+                        }
+                        let background_hit_rect = {
+                            let scroll_style = &ui.style().spacing.scroll;
+                            let reserved = scroll_style.bar_width + desired_right_gap;
+                            egui::Rect::from_min_max(
+                                scroll_viewport_rect.min,
+                                egui::pos2(
+                                    scroll_viewport_rect.right() - reserved,
+                                    scroll_viewport_rect.bottom(),
+                                ),
+                            )
+                        };
+                        let open_background_menu = !suppress_mod_card_context_menu
+                            && !pointer_over_grid_card
+                            && !pointer_over_grid_widget
+                            && !pointer_over_section_label
+                            && self.dragging_mod_ids.is_empty()
+                            && self.dragging_category_id.is_none()
+                            && ui.rect_contains_pointer(background_hit_rect)
+                            && ui.ctx().input(|input| {
+                                input.pointer.secondary_clicked()
+                                    && input.pointer.hover_pos().is_some_and(|pos| {
+                                        background_hit_rect.contains(pos)
+                                            && !mod_card_context_block_rects
+                                                .iter()
+                                                .any(|rect| rect.contains(pos))
+                                            && !titlebar_context_block_rect
+                                                .is_some_and(|rect| rect.contains(pos))
+                                    })
+                            });
+                        let drilled_category =
+                            selected_category_folder_id.as_deref().and_then(|selected_id| {
+                                category_sections
+                                    .iter()
+                                    .find(|category| category.id == selected_id)
+                                    .map(|category| {
+                                        (category.id.clone(), category.name.clone())
+                                    })
+                            });
+                        self.render_library_background_context_menu(
+                            ui,
+                            open_background_menu,
+                            &selected_game_id,
+                            drilled_category,
+                            &visible_card_ids,
+                            &cards,
+                        );
                         apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
                 });
             },
         );
+    }
+
+    fn render_library_background_context_menu(
+        &mut self,
+        ui: &mut Ui,
+        open_menu: bool,
+        selected_game_id: &str,
+        drilled_category: Option<(String, String)>,
+        visible_card_ids: &[String],
+        cards: &[LibraryCardRow],
+    ) {
+        let text = self.text();
+        let popup_id = ui.id().with("library_background_context_menu_popup");
+        let mut should_save = false;
+        egui::Popup::new(
+            popup_id,
+            ui.ctx().clone(),
+            egui::PopupAnchor::PointerFixed,
+            ui.layer_id(),
+        )
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .width(156.0)
+        .gap(0.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .frame(
+            egui::Frame::menu(ui.style())
+                .fill({
+                    let fill = ui.style().visuals.window_fill();
+                    Color32::from_rgba_premultiplied(
+                        fill.r(),
+                        fill.g(),
+                        fill.b(),
+                        ((fill.a() as f32) * 0.9).round() as u8,
+                    )
+                })
+                .inner_margin(egui::Margin::same(12)),
+        )
+        .open_memory(open_menu.then_some(egui::SetOpenCommand::Bool(true)))
+        .show(|ui| {
+            ui.set_min_width(156.0);
+            let radius = egui::CornerRadius::same(3);
+            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+            ui.style_mut().visuals.widgets.open.corner_radius = radius;
+
+            if let Some((category_id, category_name)) = drilled_category.as_ref() {
+                ui.add_sized(
+                    [ui.available_width(), 0.0],
+                    egui::Label::new(
+                        RichText::new(category_name)
+                            .size(12.5)
+                            .strong()
+                            .color(Color32::from_rgb(228, 231, 235)),
+                    )
+                    .halign(egui::Align::Min)
+                    .wrap()
+                    .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+                ui.add_space(-2.0);
+                ui.separator();
+                ui.add_space(-2.0);
+                if ui
+                    .button(icon_text_sized(Icon::Pencil, text.rename(), 12.0, 12.0))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.start_category_rename(
+                        category_id.clone(),
+                        category_name.clone(),
+                        CategoryRenameSurface::LibraryFolder,
+                    );
+                    ui.close();
+                }
+                let visible_count = visible_card_ids.len();
+                let hidden_mod_count = self
+                    .state
+                    .mods
+                    .iter()
+                    .filter(|mod_entry| {
+                        mod_entry.metadata.user.category_id.as_deref()
+                            == Some(category_id.as_str())
+                    })
+                    .count()
+                    .saturating_sub(visible_count);
+                if visible_count == 0 && hidden_mod_count == 0 {
+                    if ui
+                        .button(icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.delete_category(category_id);
+                        self.set_message_ok(text.deleted_folder(category_name));
+                        ui.close();
+                    }
+                } else {
+                    ui.menu_button(
+                        icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0),
+                        |ui| {
+                            if ui
+                                .button(icon_text_sized(
+                                    Icon::FolderOpen,
+                                    text.folder_only_move_mods_outside(),
+                                    12.0,
+                                    12.0,
+                                ))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                self.delete_category(category_id);
+                                self.set_message_ok(text.deleted_folder(category_name));
+                                ui.close();
+                            }
+                            let delete_visible_response = ui
+                                .button(icon_text_sized(
+                                    Icon::Trash2,
+                                    text.folder_mods_inside_keep_folder(),
+                                    12.0,
+                                    12.0,
+                                ))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let delete_visible_clicked = if hidden_mod_count > 0 {
+                                delete_visible_response
+                                    .on_hover_text(
+                                        text.folder_mods_inside_keep_folder_hidden_tooltip(
+                                            hidden_mod_count,
+                                        ),
+                                    )
+                                    .clicked()
+                            } else {
+                                delete_visible_response.clicked()
+                            };
+                            if delete_visible_clicked {
+                                self.delete_category_mods_keep_folder(
+                                    category_id,
+                                    visible_card_ids,
+                                );
+                                ui.close();
+                            }
+                            let delete_all_hidden = hidden_mod_count > 0;
+                            let delete_all_response = ui
+                                .add_enabled(
+                                    !delete_all_hidden,
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::Trash2,
+                                        text.folder_and_mods_inside(),
+                                        12.0,
+                                        12.0,
+                                    )),
+                                )
+                                .on_hover_cursor(if delete_all_hidden {
+                                    egui::CursorIcon::NotAllowed
+                                } else {
+                                    egui::CursorIcon::PointingHand
+                                });
+                            let delete_all_clicked = if delete_all_hidden {
+                                delete_all_response
+                                    .on_disabled_hover_text(
+                                        text.folder_and_mods_inside_hidden_tooltip(
+                                            hidden_mod_count,
+                                        ),
+                                    )
+                                    .clicked()
+                            } else {
+                                delete_all_response.clicked()
+                            };
+                            if delete_all_clicked {
+                                self.delete_category_and_mods(category_id);
+                                ui.close();
+                            }
+                        },
+                    )
+                    .response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                }
+                if !visible_card_ids.is_empty() || !self.selected_mods.is_empty() {
+                    ui.add_space(-2.0);
+                    ui.separator();
+                    ui.add_space(-2.0);
+                }
+                self.render_library_context_select_rows(ui, visible_card_ids);
+            } else {
+                let root_ids: Vec<String> =
+                    cards.iter().map(|card| card.0.clone()).collect();
+                let has_select_rows =
+                    !root_ids.is_empty() || !self.selected_mods.is_empty();
+                self.render_library_context_select_rows(ui, &root_ids);
+                if !selected_game_id.is_empty() {
+                    if has_select_rows {
+                        ui.add_space(-2.0);
+                        ui.separator();
+                        ui.add_space(-2.0);
+                    }
+                    let can_install = self
+                        .selected_game_readiness()
+                        .as_ref()
+                        .is_some_and(|readiness| readiness.can_install_mods);
+                    let mod_setup_tooltip = self.selected_game_mod_setup_message();
+                    ui.add_enabled_ui(can_install, |ui| {
+                        let install_response = ui
+                            .menu_button(
+                                icon_text_sized(Icon::PackagePlus, text.install(), 12.0, 12.0),
+                                |ui| {
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::PackagePlus,
+                                            text.context_install_from_archive(),
+                                            12.0,
+                                            12.0,
+                                        ))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        if let Some(paths) = FileDialog::new()
+                                            .add_filter(
+                                                text.file_filter_archives(),
+                                                importing::archive_picker_extensions(),
+                                            )
+                                            .add_filter(text.file_filter_all_files(), &["*"])
+                                            .pick_files()
+                                        {
+                                            let sources = paths
+                                                .into_iter()
+                                                .map(ImportSource::Archive)
+                                                .collect::<Vec<_>>();
+                                            self.enqueue_install_sources(sources);
+                                        }
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FolderPlus,
+                                            text.context_install_from_folder(),
+                                            12.0,
+                                            12.0,
+                                        ))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        if let Some(path) = FileDialog::new().pick_folder() {
+                                            self.enqueue_install_sources(vec![
+                                                ImportSource::Folder(path),
+                                            ]);
+                                        }
+                                        ui.close();
+                                    }
+                                },
+                            )
+                            .response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if !can_install {
+                            install_response.on_disabled_hover_text(&mod_setup_tooltip);
+                        }
+                    });
+                    if ui
+                        .button(icon_text_sized(
+                            Icon::FolderPlus,
+                            text.context_create_category(),
+                            12.0,
+                            12.0,
+                        ))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        let folders_mode = matches!(
+                            self.state.static_prefs.library_group_mode,
+                            LibraryGroupMode::Category
+                        ) && matches!(
+                            self.state.static_prefs.library_category_display_mode,
+                            LibraryCategoryDisplayMode::Folders
+                        );
+                        let new_id = self.create_category_for_game(
+                            selected_game_id,
+                            CategoryRenameSurface::LibraryFolder,
+                        );
+                        if folders_mode {
+                            self.library_scroll_to_category_id = Some(new_id);
+                        } else {
+                            self.clear_category_rename();
+                            let name = self
+                                .state
+                                .categories
+                                .iter()
+                                .find(|category| category.id == new_id)
+                                .map(|category| category.name.clone())
+                                .unwrap_or_default();
+                            self.set_message_ok(text.created_folder(&name));
+                        }
+                        ui.close();
+                    }
+                }
+            }
+
+            ui.add_space(-2.0);
+            ui.separator();
+            ui.add_space(-2.0);
+            ui.menu_button(
+                icon_text_sized(
+                    Icon::ArrowDownNarrowWide,
+                    text.context_sort_by(),
+                    12.0,
+                    12.0,
+                ),
+                |ui| {
+                    ui.set_min_width(200.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    should_save |= self.render_library_sort_radio_rows(ui);
+                },
+            )
+            .response
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if drilled_category.is_none() {
+                ui.menu_button(
+                    icon_text_sized(Icon::SquareStack, text.context_group_by(), 12.0, 12.0),
+                    |ui| {
+                        ui.set_min_width(200.0);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        should_save |= self.render_library_group_radio_rows(ui);
+                        ui.add_space(2.0);
+                        ui.separator();
+                        ui.add_space(-1.0);
+                        Self::sort_menu_heading(ui, text.library_category_layout_heading());
+                        ui.add_space(-2.0);
+                        ui.add_enabled_ui(
+                            matches!(
+                                self.state.static_prefs.library_group_mode,
+                                LibraryGroupMode::Category
+                            ),
+                            |ui| {
+                                should_save |=
+                                    self.render_library_category_layout_radio_rows(ui);
+                            },
+                        );
+                    },
+                )
+                .response
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            }
+
+            ui.add_space(-2.0);
+            ui.separator();
+            ui.add_space(-2.0);
+            let readiness = self.selected_game_readiness();
+            let game_present = readiness
+                .as_ref()
+                .is_some_and(|readiness| readiness.game_present);
+            let can_open_mods_folder = readiness
+                .as_ref()
+                .is_some_and(|readiness| readiness.can_open_mods_folder);
+            let reload_busy = self.startup_scan_loading || self.refresh_inflight;
+            let reload_response = ui
+                .add_enabled(
+                    game_present && !reload_busy,
+                    egui::Button::new(icon_text_sized(
+                        Icon::RefreshCw,
+                        text.reload(),
+                        12.0,
+                        12.0,
+                    )),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let reload_response = if game_present {
+                reload_response
+            } else {
+                reload_response.on_disabled_hover_text(text.game_not_installed())
+            };
+            if reload_response.clicked() {
+                let now = ui.input(|input| input.time);
+                self.reload_spin_until = now + 0.7;
+                self.reload_was_busy = true;
+                self.refresh_with_toast();
+                ui.close();
+            }
+            let mods_path = self.selected_game().and_then(|game| {
+                game.mods_path(self.state.static_prefs.use_default_mods_path)
+            });
+            let open_mods_response = ui
+                .add_enabled(
+                    can_open_mods_folder && mods_path.is_some(),
+                    egui::Button::new(icon_text_sized(
+                        Icon::FolderOpen,
+                        text.context_open_mods_folder(),
+                        12.0,
+                        12.0,
+                    )),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if open_mods_response.clicked() {
+                if let Some(path) = mods_path.as_ref()
+                    && let Err(err) = open_in_explorer(path)
+                {
+                    self.report_error_message(
+                        format!("failed to open mods folder {}: {err:#}", path.display()),
+                        Some(text.could_not_open_location()),
+                    );
+                }
+                ui.close();
+            }
+        });
+        if should_save {
+            self.selected_mods.clear();
+            self.save_state();
+        }
+    }
+
+    fn render_library_context_select_rows(&mut self, ui: &mut Ui, all_ids: &[String]) {
+        let text = self.text();
+        if !all_ids.is_empty() {
+            let all_selected = all_ids.iter().all(|id| self.selected_mods.contains(id));
+            let select_all_response = ui
+                .add_enabled(
+                    !all_selected,
+                    egui::Button::new(icon_text_sized(
+                        Icon::ListChecks,
+                        text.context_select_all(),
+                        12.0,
+                        12.0,
+                    )),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if select_all_response.clicked() {
+                for id in all_ids {
+                    self.selected_mods.insert(id.clone());
+                }
+                ui.close();
+            }
+        }
+        if !self.selected_mods.is_empty()
+            && ui
+                .button(icon_text_sized(
+                    Icon::CircleX,
+                    text.context_clear_selection(),
+                    12.0,
+                    12.0,
+                ))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+        {
+            self.selected_mods.clear();
+            ui.close();
+        }
     }
 
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {

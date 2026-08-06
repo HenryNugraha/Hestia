@@ -418,6 +418,15 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Папка вместе с модами внутри", // LibraryFolderAndModsInside
     "{count} модов в этой папке не показано. Очистите поиск/фильтры, чтобы удалить всё внутри.", // LibraryFolderAndModsInsideHiddenTooltip
     "Папка удалена: {category}", // LibraryDeletedFolder
+    "Создать категорию", // LibraryContextCreateCategory
+    "Выбрать все", // LibraryContextSelectAll
+    "Снять выделение", // LibraryContextClearSelection
+    "Сортировка", // LibraryContextSortBy
+    "Группировка", // LibraryContextGroupBy
+    "Открыть папку модов", // LibraryContextOpenModsFolder
+    "Из архива .zip/.rar", // LibraryContextInstallArchive
+    "Из папки", // LibraryContextInstallFolder
+    "Категория создана: {category}", // LibraryCreatedFolder
     "Активен", // LibraryStatusActive
     "Отключён", // LibraryStatusDisabled
     "Архив", // LibraryStatusArchived

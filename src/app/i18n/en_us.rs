@@ -418,6 +418,15 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Folder and mods inside", // LibraryFolderAndModsInside
     "{count} mod(s) in this folder are not shown. Clear search/filters to delete everything inside.", // LibraryFolderAndModsInsideHiddenTooltip
     "Deleted folder: {category}", // LibraryDeletedFolder
+    "Create Category", // LibraryContextCreateCategory
+    "Select All", // LibraryContextSelectAll
+    "Clear Selection", // LibraryContextClearSelection
+    "Sort by", // LibraryContextSortBy
+    "Group by", // LibraryContextGroupBy
+    "Open Mods Folder", // LibraryContextOpenModsFolder
+    "From Archive .zip/.rar", // LibraryContextInstallArchive
+    "From Folder", // LibraryContextInstallFolder
+    "Created category: {category}", // LibraryCreatedFolder
     "Active", // LibraryStatusActive
     "Disabled", // LibraryStatusDisabled
     "Archived", // LibraryStatusArchived

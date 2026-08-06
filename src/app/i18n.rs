@@ -416,6 +416,15 @@ enum TextKey {
     LibraryFolderAndModsInside,
     LibraryFolderAndModsInsideHiddenTooltip,
     LibraryDeletedFolder,
+    LibraryContextCreateCategory,
+    LibraryContextSelectAll,
+    LibraryContextClearSelection,
+    LibraryContextSortBy,
+    LibraryContextGroupBy,
+    LibraryContextOpenModsFolder,
+    LibraryContextInstallArchive,
+    LibraryContextInstallFolder,
+    LibraryCreatedFolder,
     LibraryStatusActive,
     LibraryStatusDisabled,
     LibraryStatusArchived,
@@ -2347,6 +2356,43 @@ impl TextCatalog {
 
     fn deleted_folder(self, category_name: &str) -> String {
         self.get(TextKey::LibraryDeletedFolder)
+            .replace("{category}", category_name)
+    }
+
+    fn context_create_category(self) -> &'static str {
+        self.get(TextKey::LibraryContextCreateCategory)
+    }
+
+    fn context_select_all(self) -> &'static str {
+        self.get(TextKey::LibraryContextSelectAll)
+    }
+
+    fn context_clear_selection(self) -> &'static str {
+        self.get(TextKey::LibraryContextClearSelection)
+    }
+
+    fn context_sort_by(self) -> &'static str {
+        self.get(TextKey::LibraryContextSortBy)
+    }
+
+    fn context_group_by(self) -> &'static str {
+        self.get(TextKey::LibraryContextGroupBy)
+    }
+
+    fn context_open_mods_folder(self) -> &'static str {
+        self.get(TextKey::LibraryContextOpenModsFolder)
+    }
+
+    fn context_install_from_archive(self) -> &'static str {
+        self.get(TextKey::LibraryContextInstallArchive)
+    }
+
+    fn context_install_from_folder(self) -> &'static str {
+        self.get(TextKey::LibraryContextInstallFolder)
+    }
+
+    fn created_folder(self, category_name: &str) -> String {
+        self.get(TextKey::LibraryCreatedFolder)
             .replace("{category}", category_name)
     }
 

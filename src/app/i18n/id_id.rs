@@ -418,6 +418,15 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Folder dan mod di dalamnya", // LibraryFolderAndModsInside
     "{count} mod di folder ini tidak ditampilkan. Bersihkan pencarian/filter untuk menghapus semua isinya.", // LibraryFolderAndModsInsideHiddenTooltip
     "Folder dihapus: {category}", // LibraryDeletedFolder
+    "Buat Kategori", // LibraryContextCreateCategory
+    "Pilih Semua", // LibraryContextSelectAll
+    "Hapus Pilihan", // LibraryContextClearSelection
+    "Urutkan", // LibraryContextSortBy
+    "Kelompokkan", // LibraryContextGroupBy
+    "Buka Folder Mod", // LibraryContextOpenModsFolder
+    "Dari Arsip .zip/.rar", // LibraryContextInstallArchive
+    "Dari Folder", // LibraryContextInstallFolder
+    "Kategori dibuat: {category}", // LibraryCreatedFolder
     "Aktif", // LibraryStatusActive
     "Nonaktif", // LibraryStatusDisabled
     "Arsip", // LibraryStatusArchived
