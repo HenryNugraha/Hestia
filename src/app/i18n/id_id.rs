@@ -715,4 +715,11 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Renderer aktif: {backend}", // SettingsAdvancedRendererActive
     "Perubahan berlaku setelah Hestia dimulai ulang.", // SettingsAdvancedRendererRestartHint
     "Mulai Ulang", // SettingsAdvancedRendererRestart
+
+    // Fullview image overlay
+    "Salin gambar", // OverlayCopyImage
+    "Gambar sebelumnya", // OverlayPreviousImage
+    "Gambar berikutnya", // OverlayNextImage
+    "Gambar disalin ke papan klip", // OverlayImageCopied
+    "Tidak dapat menyalin gambar", // OverlayCouldNotCopyImage
 ];

@@ -95,6 +95,8 @@ impl HestiaApp {
             worker_channel::<LocalModImageResult>();
         let (manual_image_event_tx, manual_image_event_rx) =
             worker_channel::<ManualImageEvent>();
+        let (overlay_copy_event_tx, overlay_copy_event_rx) =
+            worker_channel::<OverlayImageCopyEvent>();
         let cache_limit_bytes =
             Arc::new(AtomicU64::new(state.static_prefs.cache_size_tier.bytes()));
         spawn_local_mod_image_worker(
@@ -342,6 +344,7 @@ impl HestiaApp {
             personal_note_edit_text: String::new(),
             #[cfg(windows)]
             clipboard_image_paste_held: false,
+            overlay_copy_ctrl_c_held: false,
             category_rename_target_id: None,
             category_rename_focus_target_id: None,
             category_rename_surface: None,
@@ -419,6 +422,8 @@ impl HestiaApp {
             mod_image_result_rx,
             manual_image_event_tx,
             manual_image_event_rx,
+            overlay_copy_event_tx,
+            overlay_copy_event_rx,
             manual_image_imports_pending: 0,
             pending_mod_image_requests: HashSet::new(),
             pending_mod_image_queue: Vec::new(),
@@ -2552,6 +2557,30 @@ impl HestiaApp {
         false
     }
 
+    // Fallback for the fullview overlay's copy shortcut, mirroring
+    // poll_windows_ctrl_v_edge: egui's synthesized Copy event does not arrive
+    // reliably on Windows, so poll the real key state instead.
+    #[cfg(windows)]
+    fn poll_windows_ctrl_c_edge(&mut self, ctx: &egui::Context) -> bool {
+        let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+        let c_down = unsafe { GetAsyncKeyState(i32::from(VK_C.0)) } < 0;
+        let down = ctrl_down && c_down;
+        let window_focused =
+            ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
+        if !window_focused {
+            self.overlay_copy_ctrl_c_held = down;
+            return false;
+        }
+        let pressed = down && !self.overlay_copy_ctrl_c_held;
+        self.overlay_copy_ctrl_c_held = down;
+        pressed
+    }
+
+    #[cfg(not(windows))]
+    fn poll_windows_ctrl_c_edge(&mut self, _ctx: &egui::Context) -> bool {
+        false
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let ctrl = egui::Modifiers::CTRL;
         let ctrl_shift = egui::Modifiers {
@@ -3207,6 +3236,7 @@ impl HestiaApp {
         let has_events = !self.icon_result_rx.is_empty()
             || !self.mod_image_result_rx.is_empty()
             || !self.manual_image_event_rx.is_empty()
+            || !self.overlay_copy_event_rx.is_empty()
             || !self.gif_preview_event_rx.is_empty()
             || !self.gif_animation_event_rx.is_empty()
             || !self.cover_result_rx.is_empty()

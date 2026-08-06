@@ -788,6 +788,11 @@ impl HestiaApp {
                     let response = egui::Area::new(egui::Id::new(("toast", index)))
                         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, next_y))
                         .fixed_pos(egui::pos2(center_x, panel_rect.top()))
+                        // Above Order::Foreground so toasts stay visible over
+                        // the fullview image overlay; not interactable so they
+                        // never swallow clicks meant for what is beneath them.
+                        .order(egui::Order::Tooltip)
+                        .interactable(false)
                         .show(ui.ctx(), |ui| {
                             ui.set_max_width(TOAST_MAX_WIDTH);
                             let frame = egui::Frame::new()

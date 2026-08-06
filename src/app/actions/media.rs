@@ -285,6 +285,124 @@ impl HestiaApp {
         Ok(())
     }
 
+    fn overlay_image_copy_source(&self, texture_key: &str) -> Option<OverlayImageCopySource> {
+        if let Some(mod_id) = self.selected_mod_id.clone()
+            && let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id)
+            && texture_key.starts_with(&format!("my-mod-shot-{}-", mod_entry.id))
+            && let Some(rel) = mod_entry.metadata.user.screenshots.iter().find(|rel| {
+                Self::my_mod_screenshot_texture_key(&mod_entry.id, rel) == texture_key
+            })
+        {
+            return Some(OverlayImageCopySource::File(mod_entry.root_path.join(rel)));
+        }
+
+        if let Some(mod_id) = self.browse_state.selected_mod_id
+            && let Some(detail) = self.browse_state.details.get(&mod_id)
+            && let Some(preview) = &detail.profile.preview_media
+            && let Some(url) = preview
+                .images
+                .iter()
+                .map(gamebanana::full_image_url)
+                .find(|url| hash64_hex(url.as_bytes()) == texture_key)
+        {
+            return Some(OverlayImageCopySource::Url(url));
+        }
+
+        self.my_mod_overlay_images.iter().find_map(|item| {
+            (item.texture_key == texture_key)
+                .then(|| item.url.clone())
+                .flatten()
+                .map(OverlayImageCopySource::Url)
+        })
+    }
+
+    fn copy_overlay_image_to_clipboard(&mut self, texture_key: &str) {
+        let Some(source) = self.overlay_image_copy_source(texture_key) else {
+            self.report_warn(
+                format!("no copy source found for overlay image {texture_key}"),
+                Some(self.text().could_not_copy_image()),
+            );
+            return;
+        };
+        let tx = self.overlay_copy_event_tx.clone();
+        let portable = self.portable.clone();
+        let client = self.runtime_services.http_client();
+        let handle = self.runtime_services.handle();
+        self.runtime_services.spawn(async move {
+            let result: Result<()> = async {
+                let bytes = match source {
+                    OverlayImageCopySource::File(path) => {
+                        tokio::fs::read(&path).await.map_err(|err| {
+                            anyhow!("failed to read image file {}: {err}", path.display())
+                        })?
+                    }
+                    OverlayImageCopySource::Url(url) => {
+                        let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
+                        let portable_for_get = portable.clone();
+                        let cached = handle
+                            .spawn_blocking(move || {
+                                persistence::cache_get(&portable_for_get, &cache_key)
+                            })
+                            .await
+                            .map_err(|err| anyhow!("image cache read worker failed: {err}"))?
+                            // A cache read failure is only a miss here; fall back
+                            // to downloading the image again.
+                            .unwrap_or(None);
+                        match cached {
+                            Some(bytes) => bytes,
+                            None => client
+                                .get(&url)
+                                .send()
+                                .await?
+                                .error_for_status()?
+                                .bytes()
+                                .await?
+                                .to_vec(),
+                        }
+                    }
+                };
+                handle
+                    .spawn_blocking(move || -> Result<()> {
+                        let image = decode_limited_dynamic_image(&bytes)?.into_rgba8();
+                        let width = image.width() as usize;
+                        let height = image.height() as usize;
+                        let mut clipboard = arboard::Clipboard::new()
+                            .map_err(|err| anyhow!("failed to open clipboard: {err}"))?;
+                        clipboard
+                            .set_image(arboard::ImageData {
+                                width,
+                                height,
+                                bytes: image.into_raw().into(),
+                            })
+                            .map_err(|err| {
+                                anyhow!("failed to write image to clipboard: {err}")
+                            })?;
+                        Ok(())
+                    })
+                    .await
+                    .map_err(|err| anyhow!("clipboard image worker failed: {err}"))?
+            }
+            .await;
+            let _ = tx.send(OverlayImageCopyEvent {
+                error: result.err().map(|err| format!("{err:#}")),
+            });
+        });
+    }
+
+    fn consume_overlay_copy_events(&mut self) {
+        while let Ok(event) = self.overlay_copy_event_rx.try_recv() {
+            match event.error {
+                None => {
+                    let message = self.text().image_copied().to_string();
+                    self.set_message_ok(message);
+                }
+                Some(error) => {
+                    self.report_error_message(error, Some(self.text().could_not_copy_image()));
+                }
+            }
+        }
+    }
+
     fn consume_manual_image_events(&mut self) {
         while let Ok(event) = self.manual_image_event_rx.try_recv() {
             self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_sub(1);

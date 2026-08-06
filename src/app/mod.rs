@@ -67,7 +67,7 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
 
 #[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_C, VK_CONTROL, VK_V};
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
@@ -115,6 +115,7 @@ impl eframe::App for HestiaApp {
             self.consume_icon_results(ctx);
             self.consume_mod_image_results();
             self.consume_manual_image_events();
+            self.consume_overlay_copy_events();
             self.consume_gif_preview_events(ctx);
             self.consume_gif_animation_events(ctx);
             self.consume_cover_results(ctx);

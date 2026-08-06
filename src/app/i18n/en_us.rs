@@ -715,4 +715,11 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Active renderer: {backend}", // SettingsAdvancedRendererActive
     "Changes take effect after Hestia restarts.", // SettingsAdvancedRendererRestartHint
     "Restart", // SettingsAdvancedRendererRestart
+
+    // Fullview image overlay
+    "Copy image", // OverlayCopyImage
+    "Previous image", // OverlayPreviousImage
+    "Next image", // OverlayNextImage
+    "Image copied to clipboard", // OverlayImageCopied
+    "Could not copy image", // OverlayCouldNotCopyImage
 ];

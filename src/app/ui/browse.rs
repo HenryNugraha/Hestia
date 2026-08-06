@@ -2532,8 +2532,18 @@ impl HestiaApp {
             Close,
             Next,
             Prev,
+            CopyImage,
         }
         let mut action = None;
+
+        let text = self.text();
+        // While the context menu is up, the click or Escape that dismisses it
+        // still reaches the overlay below, so suppress the overlay's own input
+        // handling for that frame to avoid also closing or navigating it.
+        let menu_open_flag_id = egui::Id::new("browse_screenshot_overlay_menu_open");
+        let menu_was_open = ctx
+            .data(|d| d.get_temp::<bool>(menu_open_flag_id))
+            .unwrap_or(false);
 
         let screen_rect = ctx.viewport_rect();
         egui::Area::new(egui::Id::new("browse_screenshot_overlay_area"))
@@ -2548,32 +2558,40 @@ impl HestiaApp {
                 ui.painter()
                     .rect_filled(rect, 0.0, Color32::from_rgba_premultiplied(0, 0, 0, 240));
 
-                if bg_response.clicked() {
+                if bg_response.clicked() && !menu_was_open {
                     action = Some(NavAction::Close);
                 }
 
-                ui.input(|i| {
-                    if i.key_pressed(egui::Key::Escape)
-                        || i.key_pressed(egui::Key::Space)
-                        || i.key_pressed(egui::Key::Enter)
-                    {
-                        action = Some(NavAction::Close);
-                    }
-                    if i.key_pressed(egui::Key::A)
-                        || i.key_pressed(egui::Key::W)
-                        || i.key_pressed(egui::Key::ArrowLeft)
-                        || i.key_pressed(egui::Key::ArrowUp)
-                    {
-                        action = Some(NavAction::Prev);
-                    }
-                    if i.key_pressed(egui::Key::S)
-                        || i.key_pressed(egui::Key::D)
-                        || i.key_pressed(egui::Key::ArrowRight)
-                        || i.key_pressed(egui::Key::ArrowDown)
-                    {
-                        action = Some(NavAction::Next);
-                    }
-                });
+                if !menu_was_open {
+                    ui.input(|i| {
+                        if i.key_pressed(egui::Key::Escape)
+                            || i.key_pressed(egui::Key::Space)
+                            || i.key_pressed(egui::Key::Enter)
+                        {
+                            action = Some(NavAction::Close);
+                        }
+                        if i.key_pressed(egui::Key::A)
+                            || i.key_pressed(egui::Key::W)
+                            || i.key_pressed(egui::Key::ArrowLeft)
+                            || i.key_pressed(egui::Key::ArrowUp)
+                        {
+                            action = Some(NavAction::Prev);
+                        }
+                        if i.key_pressed(egui::Key::S)
+                            || i.key_pressed(egui::Key::D)
+                            || i.key_pressed(egui::Key::ArrowRight)
+                            || i.key_pressed(egui::Key::ArrowDown)
+                        {
+                            action = Some(NavAction::Next);
+                        }
+                        if i.events
+                            .iter()
+                            .any(|event| matches!(event, egui::Event::Copy))
+                        {
+                            action = Some(NavAction::CopyImage);
+                        }
+                    });
+                }
 
                 // Read the raw wheel events instead of the frame scroll delta:
                 // egui smooths a single notch out over several frames, so a large
@@ -2600,7 +2618,7 @@ impl HestiaApp {
                     (lines, i.time)
                 });
 
-                if wheel_lines != 0.0 {
+                if wheel_lines != 0.0 && !menu_was_open {
                     let stale = now - self.browse_state.overlay_scroll_last_event_at
                         > OVERLAY_SCROLL_IDLE_RESET_SECS;
                     let reversed = self.browse_state.overlay_scroll_accum != 0.0
@@ -2613,6 +2631,7 @@ impl HestiaApp {
                 }
 
                 if action.is_none()
+                    && !menu_was_open
                     && self.browse_state.overlay_scroll_accum.abs() >= OVERLAY_SCROLL_LINES_PER_STEP
                 {
                     let since_step = now - self.browse_state.overlay_scroll_last_step_at;
@@ -2759,13 +2778,150 @@ impl HestiaApp {
                         }
                     }
                 }
+
+                let can_prev = current_index.is_some_and(|i| i > 0);
+                let can_next = current_index.is_some_and(|i| i + 1 < total_images);
+                let menu_id = egui::Id::new("browse_screenshot_overlay_context_menu");
+                let menu_response = egui::Popup::new(
+                    menu_id,
+                    ui.ctx().clone(),
+                    egui::PopupAnchor::PointerFixed,
+                    bg_response.layer_id,
+                )
+                .kind(egui::PopupKind::Menu)
+                .layout(egui::Layout::top_down_justified(egui::Align::Min))
+                .width(156.0)
+                .gap(0.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .frame(
+                    egui::Frame::menu(ui.style())
+                        .fill({
+                            let fill = ui.style().visuals.window_fill();
+                            Color32::from_rgba_premultiplied(
+                                fill.r(),
+                                fill.g(),
+                                fill.b(),
+                                ((fill.a() as f32) * 0.9).round() as u8,
+                            )
+                        })
+                        .inner_margin(egui::Margin::same(12)),
+                )
+                .open_memory(
+                    bg_response
+                        .secondary_clicked()
+                        .then_some(egui::SetOpenCommand::Bool(true)),
+                )
+                .show(|ui| {
+                    ui.set_min_width(156.0);
+                    let radius = egui::CornerRadius::same(3);
+                    ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                    ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                    ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                    ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                    // Pager row: the arrows navigate without closing the menu,
+                    // so the indicator refreshes in place.
+                    ui.horizontal(|ui| {
+                        let arrow_size = Vec2::new(24.0, 20.0);
+                        let icon_color = Color32::from_rgb(225, 229, 233);
+                        if ui
+                            .add_enabled(
+                                can_prev,
+                                egui::Button::new(icon_rich(
+                                    Icon::ChevronLeft,
+                                    12.0,
+                                    icon_color,
+                                ))
+                                .min_size(arrow_size),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(text.overlay_previous_image())
+                            .clicked()
+                        {
+                            action = Some(NavAction::Prev);
+                        }
+                        // Derived from the menu's fixed 156px width, not from
+                        // available_width(): sizing against the measured width
+                        // feeds the popup's auto-size back into itself and the
+                        // menu grows without bound.
+                        let label_width = (156.0
+                            - 2.0 * (arrow_size.x + ui.spacing().item_spacing.x))
+                            .max(0.0);
+                        ui.add_sized(
+                            [label_width, arrow_size.y],
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{} / {}",
+                                    current_index.map_or(0, |i| i + 1),
+                                    total_images
+                                ))
+                                .size(12.0),
+                            )
+                            .selectable(false),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::Default);
+                        if ui
+                            .add_enabled(
+                                can_next,
+                                egui::Button::new(icon_rich(
+                                    Icon::ChevronRight,
+                                    12.0,
+                                    icon_color,
+                                ))
+                                .min_size(arrow_size),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(text.overlay_next_image())
+                            .clicked()
+                        {
+                            action = Some(NavAction::Next);
+                        }
+                    });
+                    ui.add_space(-2.0);
+                    ui.separator();
+                    ui.add_space(-2.0);
+                    if ui
+                        .button(icon_text_sized(
+                            Icon::Copy,
+                            text.overlay_copy_image(),
+                            12.0,
+                            12.0,
+                        ))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(NavAction::CopyImage);
+                        ui.close();
+                    }
+                    if ui
+                        .button(icon_text_sized(Icon::X, text.close(), 12.0, 12.0))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(NavAction::Close);
+                        ui.close();
+                    }
+                });
+                let menu_open_now = menu_response.is_some();
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(menu_open_flag_id, menu_open_now));
             });
+
+        // Polled every overlay frame so the held-state edge tracking stays
+        // accurate even on frames where another action already won.
+        let ctrl_c_pressed = self.poll_windows_ctrl_c_edge(ctx);
+        if ctrl_c_pressed && !menu_was_open && action.is_none() {
+            action = Some(NavAction::CopyImage);
+        }
 
         match action {
             Some(NavAction::Close) => {
                 self.browse_state.screenshot_overlay = None;
                 self.browse_state.overlay_scroll_accum = 0.0;
                 self.my_mod_overlay_images.clear();
+                ctx.data_mut(|d| d.remove::<bool>(menu_open_flag_id));
+            }
+            Some(NavAction::CopyImage) => {
+                self.copy_overlay_image_to_clipboard(&current_key);
             }
             Some(NavAction::Next) => {
                 if let Some(i) = current_index {

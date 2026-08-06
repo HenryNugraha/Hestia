@@ -715,4 +715,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "当前渲染器：{backend}", // SettingsAdvancedRendererActive
     "更改将在 Hestia 重启后生效。", // SettingsAdvancedRendererRestartHint
     "重启", // SettingsAdvancedRendererRestart
+
+    // Fullview image overlay
+    "复制图片", // OverlayCopyImage
+    "上一张图片", // OverlayPreviousImage
+    "下一张图片", // OverlayNextImage
+    "图片已复制到剪贴板", // OverlayImageCopied
+    "无法复制图片", // OverlayCouldNotCopyImage
 ];

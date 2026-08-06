@@ -100,3 +100,20 @@ lto = true
 codegen-units = 1
 opt-level = 3
 strip = true
+
+# Image codec crates stay optimized in dev builds: unoptimized decode/encode is
+# 10-30x slower and dominates thumbnail, GIF, and clipboard-image latency while
+# testing. Scoped to these crates so incremental builds of hestia are unaffected.
+[profile.dev.package]
+image = { opt-level = 2 }
+png = { opt-level = 2 }
+fdeflate = { opt-level = 2 }
+miniz_oxide = { opt-level = 2 }
+zune-jpeg = { opt-level = 2 }
+zune-core = { opt-level = 2 }
+zune-png = { opt-level = 2 }
+gif = { opt-level = 2 }
+color_quant = { opt-level = 2 }
+image-webp = { opt-level = 2 }
+fast_image_resize = { opt-level = 2 }
+arboard = { opt-level = 2 }

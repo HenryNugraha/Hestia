@@ -182,6 +182,7 @@ pub struct HestiaApp {
     personal_note_edit_text: String,
     #[cfg(windows)]
     clipboard_image_paste_held: bool,
+    overlay_copy_ctrl_c_held: bool,
     category_rename_target_id: Option<String>,
     category_rename_focus_target_id: Option<String>,
     category_rename_surface: Option<CategoryRenameSurface>,
@@ -255,6 +256,8 @@ pub struct HestiaApp {
     mod_image_result_rx: WorkerRx<LocalModImageResult>,
     manual_image_event_tx: WorkerTx<ManualImageEvent>,
     manual_image_event_rx: WorkerRx<ManualImageEvent>,
+    overlay_copy_event_tx: WorkerTx<OverlayImageCopyEvent>,
+    overlay_copy_event_rx: WorkerRx<OverlayImageCopyEvent>,
     manual_image_imports_pending: usize,
     pending_mod_image_requests: HashSet<String>,
     pending_mod_image_queue: Vec<LocalModImageRequest>,
@@ -1071,6 +1074,15 @@ enum ManualImageEvent {
         folder_name: String,
         error: String,
     },
+}
+
+enum OverlayImageCopySource {
+    File(PathBuf),
+    Url(String),
+}
+
+struct OverlayImageCopyEvent {
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

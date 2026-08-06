@@ -714,4 +714,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Активный рендерер: {backend}", // SettingsAdvancedRendererActive
     "Изменения вступят в силу после перезапуска Hestia.", // SettingsAdvancedRendererRestartHint
     "Перезапустить", // SettingsAdvancedRendererRestart
+
+    // Fullview image overlay
+    "Копировать изображение", // OverlayCopyImage
+    "Предыдущее изображение", // OverlayPreviousImage
+    "Следующее изображение", // OverlayNextImage
+    "Изображение скопировано в буфер обмена", // OverlayImageCopied
+    "Не удалось скопировать изображение", // OverlayCouldNotCopyImage
 ];

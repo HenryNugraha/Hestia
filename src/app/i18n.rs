@@ -699,10 +699,16 @@ enum TextKey {
     SettingsAdvancedRendererActive,
     SettingsAdvancedRendererRestartHint,
     SettingsAdvancedRendererRestart,
+
+    OverlayCopyImage,
+    OverlayPreviousImage,
+    OverlayNextImage,
+    OverlayImageCopied,
+    OverlayCouldNotCopyImage,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsAdvancedRendererRestart as usize + 1;
+    const COUNT: usize = Self::OverlayCouldNotCopyImage as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -3448,6 +3454,26 @@ impl TextCatalog {
 
     fn retranslate(self) -> &'static str {
         self.get(TextKey::TranslationRetranslate)
+    }
+
+    fn overlay_copy_image(self) -> &'static str {
+        self.get(TextKey::OverlayCopyImage)
+    }
+
+    fn overlay_previous_image(self) -> &'static str {
+        self.get(TextKey::OverlayPreviousImage)
+    }
+
+    fn overlay_next_image(self) -> &'static str {
+        self.get(TextKey::OverlayNextImage)
+    }
+
+    fn image_copied(self) -> &'static str {
+        self.get(TextKey::OverlayImageCopied)
+    }
+
+    fn could_not_copy_image(self) -> &'static str {
+        self.get(TextKey::OverlayCouldNotCopyImage)
     }
 }
 
