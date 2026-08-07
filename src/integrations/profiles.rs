@@ -24,7 +24,7 @@ use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_64;
 use zstd::stream::{read::Decoder, write::Encoder};
 
-use crate::model::{GameBackend, GameInstall, MODS_PROFILES_DIR, ModCategory};
+use crate::model::{GameBackend, GameInstall, MODS_PROFILES_DIR, ModCategory, ToolEntry};
 
 pub const PROFILE_ARCHIVE_EXTENSION: &str = "tzst";
 pub const PROFILE_ARCHIVE_FORMAT_VERSION: u32 = 1;
@@ -222,6 +222,14 @@ pub struct ProfileArchiveMetadata {
     /// written before categories became profile-scoped; `Some(vec![])` is intentional empty.
     #[serde(default)]
     pub categories: Option<Vec<ModCategory>>,
+    /// Profile-owned tools with their launch options and pins. `None` preserves compatibility
+    /// with archives written before tools became profile-scoped; `Some(vec![])` is intentionally
+    /// empty.
+    #[serde(default)]
+    pub tools: Option<Vec<ToolEntry>>,
+    /// Profile-owned blacklist of auto-detected tool paths the user removed.
+    #[serde(default)]
+    pub tool_blacklist: Option<Vec<String>>,
     /// Fingerprint of the source roots used to create the archive. Older archives omit it.
     #[serde(default)]
     pub source_fingerprint: Option<String>,
@@ -1203,6 +1211,8 @@ mod tests {
                 name: "Gameplay/Illegal?.txt".to_string(),
                 order: 3,
             }]),
+            tools: None,
+            tool_blacklist: None,
             source_fingerprint: None,
         };
         let destination = roots.archive_path(metadata.profile_id);
@@ -1317,6 +1327,8 @@ mod tests {
             file_count: 0,
             portable_metadata: HashMap::new(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
             source_fingerprint: None,
         };
         let destination = roots.archive_path(metadata.profile_id);
@@ -1369,6 +1381,8 @@ mod tests {
             file_count: 0,
             portable_metadata: HashMap::new(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
             source_fingerprint: None,
         };
         let destination = roots.archive_path(metadata.profile_id);

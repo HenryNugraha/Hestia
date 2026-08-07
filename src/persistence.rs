@@ -388,6 +388,12 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     // Move static preferences (single assignment, no field-by-field copying)
     state.static_prefs = prefs.static_prefs;
 
+    let profile_tools_migrated = migrate_profile_tools(
+        &mut state.profiles_by_game,
+        &state.tools,
+        &state.static_prefs.tool_blacklist,
+    );
+
     let (create_downloaded_mod_category_by_game, preferences_need_save) =
         normalize_create_downloaded_mod_category_by_game(
             &state.games,
@@ -397,6 +403,7 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     state.create_downloaded_mod_category_by_game = create_downloaded_mod_category_by_game;
     state.preferences_need_save = preferences_need_save
         || profile_categories_migrated
+        || profile_tools_migrated
         || app_version_needs_save
         || language_needs_save
         || games_need_save;
@@ -418,6 +425,34 @@ fn migrate_profile_categories(
         for profile in &mut catalog.profiles {
             if profile.categories.is_none() {
                 profile.categories = Some(legacy_categories.clone());
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// Profiles written before tools became profile-scoped have `None` here. Seed every profile of the
+/// game from the legacy per-game list so no launch option or titlebar pin is lost on the first
+/// switch; the tool sync that follows each activation prunes whatever is not present in that
+/// profile's mods folder.
+fn migrate_profile_tools(
+    profiles_by_game: &mut HashMap<String, ProfileCatalog>,
+    tools: &[ToolEntry],
+    tool_blacklist: &HashMap<String, Vec<String>>,
+) -> bool {
+    let mut changed = false;
+    for (game_id, catalog) in profiles_by_game {
+        let legacy_tools: Vec<ToolEntry> = tools
+            .iter()
+            .filter(|tool| tool.game_id == *game_id)
+            .cloned()
+            .collect();
+        let legacy_blacklist = tool_blacklist.get(game_id).cloned().unwrap_or_default();
+        for profile in &mut catalog.profiles {
+            if profile.tools.is_none() {
+                profile.tools = Some(legacy_tools.clone());
+                profile.tool_blacklist = Some(legacy_blacklist.clone());
                 changed = true;
             }
         }
@@ -1482,6 +1517,8 @@ mod tests {
                         name: "Profile category".to_string(),
                         order: 0,
                     }]),
+                    tools: None,
+                    tool_blacklist: None,
                 }],
             },
         );
@@ -1524,6 +1561,8 @@ mod tests {
                         updated_at: None,
                         portable_metadata: HashMap::new(),
                         categories: None,
+                        tools: None,
+                        tool_blacklist: None,
                     },
                     crate::model::ProfileRecord {
                         id: empty_id,
@@ -1535,6 +1574,8 @@ mod tests {
                         updated_at: None,
                         portable_metadata: HashMap::new(),
                         categories: Some(Vec::new()),
+                        tools: None,
+                        tool_blacklist: None,
                     },
                 ],
             },
@@ -1549,6 +1590,79 @@ mod tests {
         let migrated = &profiles[&game_id].profiles;
         assert_eq!(migrated[0].categories.as_ref().unwrap().len(), 1);
         assert!(migrated[1].categories.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_tool_migration_seeds_every_profile_and_leaves_migrated_ones_alone() {
+        let game_id = "wuwa".to_string();
+        let legacy_id = uuid::Uuid::new_v4();
+        let migrated_id = uuid::Uuid::new_v4();
+        let record = |id: uuid::Uuid, tools: Option<Vec<ToolEntry>>| crate::model::ProfileRecord {
+            id,
+            display_name: "P".to_string(),
+            archive_size: None,
+            uncompressed_size: None,
+            file_count: None,
+            created_at: None,
+            updated_at: None,
+            portable_metadata: HashMap::new(),
+            categories: Some(Vec::new()),
+            tool_blacklist: tools.as_ref().map(|_| Vec::new()),
+            tools,
+        };
+        let mut profiles = HashMap::from([(
+            game_id.clone(),
+            crate::model::ProfileCatalog {
+                active_profile_id: Some(legacy_id),
+                profiles: vec![record(legacy_id, None), record(migrated_id, Some(Vec::new()))],
+            },
+        )]);
+        let legacy_tools = vec![
+            ToolEntry {
+                id: "tool-1".to_string(),
+                game_id: game_id.clone(),
+                label: "GIMI".to_string(),
+                path: PathBuf::from("C:\\Mods\\gimi.exe"),
+                launch_args: "--nogui".to_string(),
+                source_mod_id: None,
+                auto_detected: true,
+                show_in_titlebar: true,
+                window_order: 0,
+                titlebar_order: Some(0),
+                created_at: Utc::now(),
+            },
+            ToolEntry {
+                id: "tool-2".to_string(),
+                game_id: "other".to_string(),
+                label: "Elsewhere".to_string(),
+                path: PathBuf::from("C:\\Other\\tool.exe"),
+                launch_args: String::new(),
+                source_mod_id: None,
+                auto_detected: false,
+                show_in_titlebar: false,
+                window_order: 0,
+                titlebar_order: None,
+                created_at: Utc::now(),
+            },
+        ];
+        let blacklist = HashMap::from([(game_id.clone(), vec!["c:\\mods\\hidden.exe".to_string()])]);
+
+        assert!(migrate_profile_tools(&mut profiles, &legacy_tools, &blacklist));
+
+        let migrated = &profiles[&game_id].profiles;
+        let seeded = migrated[0].tools.as_ref().unwrap();
+        assert_eq!(seeded.len(), 1, "only this game's tools are seeded");
+        assert_eq!(seeded[0].launch_args, "--nogui");
+        assert!(seeded[0].show_in_titlebar);
+        assert_eq!(
+            migrated[0].tool_blacklist.as_ref().unwrap(),
+            &vec!["c:\\mods\\hidden.exe".to_string()]
+        );
+        assert!(
+            migrated[1].tools.as_ref().unwrap().is_empty(),
+            "an already-migrated profile keeps its explicit empty set"
+        );
+        assert!(!migrate_profile_tools(&mut profiles, &legacy_tools, &blacklist));
     }
 
     #[test]

@@ -4,12 +4,15 @@
 
 ### Added
 - profiles
+- Tools now belong to a profile. Each profile keeps its own tool list, launch options, titlebar pins and ordering, and its own list of removed auto-detected tools; switching profiles restores them. Existing tools are copied into every profile of that game on first launch.
 
 ### Changed
-- 
+- Blocked profile switching while a tool inside the profile folder is still running, instead of letting the switch fail partway.
 
 ### Fixed
 - Fixed the Retry button in the Task window doing nothing for a mod install that failed or was canceled at the overwrite prompt.
+- Fixed profile switching discarding tool launch options and titlebar pins, and re-adding the tools as new entries on switching back.
+- Fixed removing an auto-detected tool hiding a tool at the same path in every other profile of that game.
 
 ## [1.7.1] - 2026-07-26
 

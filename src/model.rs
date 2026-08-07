@@ -391,6 +391,16 @@ pub struct ProfileRecord {
     /// profile-scoped categories and should be migrated from the game's legacy global list.
     #[serde(default)]
     pub categories: Option<Vec<ModCategory>>,
+    /// Tools captured for this profile, including their launch options, titlebar pins, and
+    /// ordering. Every tool belongs to a profile regardless of where its executable lives, so
+    /// switching restores exactly the set that was active last time. `None` means this record
+    /// predates profile-scoped tools and should be migrated from the game's legacy global list.
+    #[serde(default)]
+    pub tools: Option<Vec<ToolEntry>>,
+    /// Auto-detected tool paths the user removed in this profile. Profile-scoped so hiding a
+    /// tool in one profile never hides a same-pathed tool in another.
+    #[serde(default)]
+    pub tool_blacklist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1170,7 +1180,7 @@ pub struct LibraryFolder {
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolEntry {
     pub id: String,
     pub game_id: String,

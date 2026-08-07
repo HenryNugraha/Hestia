@@ -50,33 +50,63 @@ impl HestiaApp {
         if self.app_update_download_inflight.is_some() {
             return Some("an app update is running");
         }
-        if self.selected_game().is_some_and(Self::game_process_running) {
-            return Some("the selected game is running");
-        }
-        None
+        self.running_process_block_reason()
     }
 
-    fn game_process_running(game: &GameInstall) -> bool {
-        let mut names = Vec::new();
-        if let Some(path) = game.vanilla_exe_path() {
+    /// Both process guards in one scan. `profile_operations_blocked` runs from the render loop, so
+    /// this must enumerate processes at most once per call.
+    fn running_process_block_reason(&self) -> Option<&'static str> {
+        let game = self.selected_game()?;
+
+        let mut game_exe_names = Vec::new();
+        for path in [game.vanilla_exe_path(), game.modded_exe_path()]
+            .into_iter()
+            .flatten()
+        {
             if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                names.push(name.to_ascii_lowercase());
+                game_exe_names.push(name.to_ascii_lowercase());
             }
         }
-        if let Some(path) = game.modded_exe_path() {
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                names.push(name.to_ascii_lowercase());
+
+        // A tool launched out of the profile folder keeps file handles open there, which makes the
+        // directory rename in `swap_roots` fail. Block up front rather than failing partway.
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let profile_roots: Vec<PathBuf> = game
+            .mods_path(use_default)
+            .into_iter()
+            .chain(game.disabled_mods_path(use_default))
+            .collect();
+
+        if game_exe_names.is_empty() && profile_roots.is_empty() {
+            return None;
+        }
+
+        // `exe` is opt-in; without it `Process::exe` is always `None` and the tool guard below
+        // would never fire. Everything else stays off so this stays cheap enough for the UI loop.
+        let system = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing().with_processes(
+                sysinfo::ProcessRefreshKind::nothing()
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+            ),
+        );
+        let mut tool_running = false;
+        for process in system.processes().values() {
+            if !game_exe_names.is_empty()
+                && game_exe_names
+                    .iter()
+                    .any(|name| process.name().to_string_lossy().eq_ignore_ascii_case(name))
+            {
+                return Some("the selected game is running");
+            }
+            if !tool_running
+                && process
+                    .exe()
+                    .is_some_and(|exe| profile_roots.iter().any(|root| exe.starts_with(root)))
+            {
+                tool_running = true;
             }
         }
-        if names.is_empty() {
-            return false;
-        }
-        let system = sysinfo::System::new_all();
-        system.processes().values().any(|process| {
-            names
-                .iter()
-                .any(|name| process.name().to_string_lossy().eq_ignore_ascii_case(name))
-        })
+        tool_running.then_some("a tool inside the profile folder is running")
     }
 
     fn profile_record_metadata(
@@ -86,6 +116,7 @@ impl HestiaApp {
         portable_metadata: HashMap<String, serde_json::Value>,
         created_at: Option<DateTime<Utc>>,
         categories: Option<Vec<ModCategory>>,
+        tools: Option<ProfileToolSnapshot>,
     ) -> profiles::ProfileArchiveMetadata {
         profiles::ProfileArchiveMetadata {
             format_version: profiles::PROFILE_ARCHIVE_FORMAT_VERSION,
@@ -98,6 +129,8 @@ impl HestiaApp {
             file_count: 0,
             portable_metadata,
             categories,
+            tools: tools.as_ref().map(|snapshot| snapshot.tools.clone()),
+            tool_blacklist: tools.map(|snapshot| snapshot.blacklist),
             source_fingerprint: None,
         }
     }
@@ -124,6 +157,123 @@ impl HestiaApp {
                 })
                 .collect()
         })
+    }
+
+    fn profile_tools_for_game(&self, game_id: &str) -> ProfileToolSnapshot {
+        ProfileToolSnapshot {
+            tools: self
+                .state
+                .tools
+                .iter()
+                .filter(|tool| tool.game_id == game_id)
+                .cloned()
+                .collect(),
+            blacklist: self
+                .state
+                .static_prefs
+                .tool_blacklist
+                .get(game_id)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn sanitize_profile_tools(game_id: &str, tools: Vec<ToolEntry>) -> Vec<ToolEntry> {
+        tools
+            .into_iter()
+            .map(|mut tool| {
+                tool.game_id = game_id.to_string();
+                tool
+            })
+            .collect()
+    }
+
+    /// Capture the live tool state into the profile that is about to be switched away from, so its
+    /// launch options and pins come back untouched the next time it is activated.
+    fn snapshot_active_profile_tools(
+        &mut self,
+        game_id: &str,
+        active_id: Option<Uuid>,
+    ) -> ProfileToolSnapshot {
+        let snapshot = self.profile_tools_for_game(game_id);
+        let mut changed = false;
+        if let Some(active_id) = active_id {
+            if let Some(catalog) = self.state.profiles_by_game.get_mut(game_id) {
+                if let Some(profile) = catalog
+                    .profiles
+                    .iter_mut()
+                    .find(|profile| profile.id == active_id)
+                {
+                    if profile.tools.as_ref() != Some(&snapshot.tools)
+                        || profile.tool_blacklist.as_ref() != Some(&snapshot.blacklist)
+                    {
+                        profile.tools = Some(snapshot.tools.clone());
+                        profile.tool_blacklist = Some(snapshot.blacklist.clone());
+                        profile.updated_at = Some(Utc::now());
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.save_state();
+        }
+        snapshot
+    }
+
+    fn profile_tool_snapshot_for(&self, game_id: &str, id: Uuid) -> Option<ProfileToolSnapshot> {
+        let profile = self
+            .state
+            .profiles_by_game
+            .get(game_id)
+            .and_then(|catalog| catalog.profiles.iter().find(|profile| profile.id == id))?;
+        profile.tools.as_ref().map(|tools| ProfileToolSnapshot {
+            tools: tools.clone(),
+            blacklist: profile.tool_blacklist.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Swap the live tool set over to the profile that just became active. Tools whose executable
+    /// is gone are pruned by the tool sync that follows the queued game refresh, so restoring the
+    /// full recorded set here is what preserves launch options for everything that survives.
+    fn restore_profile_tools(&mut self, game_id: &str, snapshot: ProfileToolSnapshot) {
+        let retired: Vec<String> = self
+            .state
+            .tools
+            .iter()
+            .filter(|tool| tool.game_id == game_id)
+            .map(|tool| tool.id.clone())
+            .collect();
+        for tool_id in retired {
+            self.tool_icon_textures.remove(&tool_id);
+            self.tool_icon_texture_failures.remove(&tool_id);
+        }
+        self.state.tools.retain(|tool| tool.game_id != game_id);
+        self.state
+            .tools
+            .extend(Self::sanitize_profile_tools(game_id, snapshot.tools));
+
+        // Two profiles can hold different executables at the same path, so never carry a cached
+        // icon across the swap even when a restored tool keeps its id.
+        for tool in self.state.tools.iter().filter(|tool| tool.game_id == game_id) {
+            self.tool_icon_textures.remove(&tool.id);
+            self.tool_icon_texture_failures.remove(&tool.id);
+        }
+
+        if snapshot.blacklist.is_empty() {
+            self.state.static_prefs.tool_blacklist.remove(game_id);
+        } else {
+            self.state
+                .static_prefs
+                .tool_blacklist
+                .insert(game_id.to_string(), snapshot.blacklist);
+        }
+
+        // Restored orders were compacted against the other profile's tool set; rebuild both so the
+        // window list and the four titlebar slots are contiguous and within their limits again.
+        self.compact_tool_window_order_for_game(game_id);
+        self.enforce_tool_titlebar_limit_for_game(game_id);
+        self.compact_tool_titlebar_order_for_game(game_id);
     }
 
     fn snapshot_active_profile_categories(
@@ -213,6 +363,7 @@ impl HestiaApp {
         source_archive: Option<PathBuf>,
         target_archive: Option<PathBuf>,
         target_categories: Option<Vec<ModCategory>>,
+        target_tools: Option<ProfileToolSnapshot>,
         metadata: Option<profiles::ProfileArchiveMetadata>,
     ) -> Result<()> {
         if let Some(reason) = self.profile_operation_block_reason(kind) {
@@ -237,6 +388,10 @@ impl HestiaApp {
             source_archive,
             target_archive,
             target_categories,
+            target_tools: target_tools
+                .as_ref()
+                .map(|snapshot| snapshot.tools.clone()),
+            target_tool_blacklist: target_tools.map(|snapshot| snapshot.blacklist),
             metadata,
             cancel,
             progress,
@@ -332,11 +487,17 @@ impl HestiaApp {
 
     pub(crate) fn ensure_default_profile(&mut self, game_id: &str) -> Result<()> {
         let current_categories = self.profile_categories_for_game(game_id);
+        let current_tools = self.profile_tools_for_game(game_id);
         let mut migrated = false;
         let existing_ready = if let Some(catalog) = self.state.profiles_by_game.get_mut(game_id) {
             for profile in &mut catalog.profiles {
                 if profile.categories.is_none() {
                     profile.categories = Some(current_categories.clone());
+                    migrated = true;
+                }
+                if profile.tools.is_none() {
+                    profile.tools = Some(current_tools.tools.clone());
+                    profile.tool_blacklist = Some(current_tools.blacklist.clone());
                     migrated = true;
                 }
             }
@@ -392,6 +553,8 @@ impl HestiaApp {
             updated_at: Some(Utc::now()),
             portable_metadata: HashMap::new(),
             categories: Some(current_categories),
+            tools: Some(current_tools.tools),
+            tool_blacklist: Some(current_tools.blacklist),
         });
         catalog.active_profile_id = Some(id);
         self.save_state();
@@ -412,6 +575,7 @@ impl HestiaApp {
         }
         let active_id = self.active_profile_id(game_id);
         let active_categories = self.snapshot_active_profile_categories(game_id, active_id);
+        let active_tools = self.snapshot_active_profile_tools(game_id, active_id);
         let metadata = active_id.and_then(|id| {
             self.state
                 .profiles_by_game
@@ -425,11 +589,15 @@ impl HestiaApp {
                         profile.portable_metadata.clone(),
                         profile.created_at,
                         Some(active_categories.clone()),
+                        Some(active_tools.clone()),
                     )
                 })
         });
         let target_id = Uuid::new_v4();
         let active_archive = active_id.and_then(|id| self.profile_archive_for(&game, id).ok());
+        // A new profile starts with no categories but inherits the current tool set: tools that
+        // lived in the outgoing profile's mods folder are pruned by the sync that follows, which
+        // leaves exactly the externally-installed tools the user expects to keep everywhere.
         self.begin_profile_operation(
             game_id.to_string(),
             game,
@@ -442,6 +610,7 @@ impl HestiaApp {
             active_archive,
             None,
             Some(Vec::new()),
+            Some(active_tools),
             metadata,
         )
     }
@@ -463,6 +632,7 @@ impl HestiaApp {
         self.ensure_default_profile(game_id)?;
         let active_id = self.active_profile_id(game_id);
         let active_categories = self.snapshot_active_profile_categories(game_id, active_id);
+        let active_tools = self.snapshot_active_profile_tools(game_id, active_id);
         let source_archive = if Some(source_id) == active_id {
             active_id.and_then(|id| self.profile_archive_for(&game, id).ok())
         } else {
@@ -493,6 +663,7 @@ impl HestiaApp {
                         active_record.portable_metadata.clone(),
                         active_record.created_at,
                         Some(active_categories.clone()),
+                        Some(active_tools.clone()),
                     )
                 })
         });
@@ -500,6 +671,11 @@ impl HestiaApp {
             .categories
             .clone()
             .or_else(|| Some(active_categories.clone()));
+        // A duplicate is a copy of the source, so it inherits the source's tools; fall back to the
+        // live set when the source predates profile-scoped tools.
+        let source_tools = self
+            .profile_tool_snapshot_for(game_id, source_id)
+            .unwrap_or_else(|| active_tools.clone());
         self.begin_profile_operation(
             game_id.to_string(),
             game,
@@ -512,6 +688,7 @@ impl HestiaApp {
             source_archive,
             None,
             source_categories,
+            Some(source_tools),
             metadata,
         )
     }
@@ -527,6 +704,7 @@ impl HestiaApp {
         self.ensure_default_profile(game_id)?;
         let active_id = self.active_profile_id(game_id);
         let active_categories = self.snapshot_active_profile_categories(game_id, active_id);
+        let active_tools = self.snapshot_active_profile_tools(game_id, active_id);
         if active_id == Some(target_id) {
             return Ok(());
         }
@@ -561,6 +739,7 @@ impl HestiaApp {
                         profile.portable_metadata.clone(),
                         profile.created_at,
                         Some(active_categories),
+                        Some(active_tools),
                     )
                 })
         });
@@ -587,6 +766,7 @@ impl HestiaApp {
                     .find(|profile| profile.id == target_id)
             })
             .and_then(|profile| profile.categories.clone());
+        let target_tools = self.profile_tool_snapshot_for(game_id, target_id);
         self.begin_profile_operation(
             game_id.to_string(),
             game,
@@ -599,6 +779,7 @@ impl HestiaApp {
             active_archive,
             Some(target_archive),
             target_categories,
+            target_tools,
             metadata,
         )
     }
@@ -692,6 +873,7 @@ impl HestiaApp {
             Some(archive),
             None,
             None,
+            None,
         )
     }
 
@@ -712,6 +894,7 @@ impl HestiaApp {
             game.definition.id.clone(),
             game,
             ProfileOperationKind::Recover,
+            None,
             None,
             None,
             None,
@@ -931,6 +1114,12 @@ impl HestiaApp {
                 let active_profile_categories = active_profile_marker
                     .as_ref()
                     .and_then(|marker| marker.categories.clone());
+                let active_profile_tools = active_profile_marker.as_ref().and_then(|marker| {
+                    marker.tools.clone().map(|tools| ProfileToolSnapshot {
+                        tools,
+                        blacklist: marker.tool_blacklist.clone().unwrap_or_default(),
+                    })
+                });
                 let catalog = self
                     .state
                     .profiles_by_game
@@ -951,6 +1140,18 @@ impl HestiaApp {
                                 portable_metadata: HashMap::new(),
                                 categories: Some(
                                     active_profile_categories.clone().unwrap_or_default(),
+                                ),
+                                tools: Some(
+                                    active_profile_tools
+                                        .as_ref()
+                                        .map(|snapshot| snapshot.tools.clone())
+                                        .unwrap_or_default(),
+                                ),
+                                tool_blacklist: Some(
+                                    active_profile_tools
+                                        .as_ref()
+                                        .map(|snapshot| snapshot.blacklist.clone())
+                                        .unwrap_or_default(),
                                 ),
                             });
                         }
@@ -988,6 +1189,18 @@ impl HestiaApp {
                                     categories: Some(
                                         active_profile_categories.clone().unwrap_or_default(),
                                     ),
+                                    tools: Some(
+                                        active_profile_tools
+                                            .as_ref()
+                                            .map(|snapshot| snapshot.tools.clone())
+                                            .unwrap_or_default(),
+                                    ),
+                                    tool_blacklist: Some(
+                                        active_profile_tools
+                                            .as_ref()
+                                            .map(|snapshot| snapshot.blacklist.clone())
+                                            .unwrap_or_default(),
+                                    ),
                                 });
                             }
                             catalog.active_profile_id = Some(id);
@@ -1001,6 +1214,11 @@ impl HestiaApp {
                         .find(|profile| profile.id == marker.profile_id)
                     {
                         profile.categories = marker.categories.clone();
+                        if marker.tools.is_some() {
+                            profile.tools = marker.tools.clone();
+                            profile.tool_blacklist =
+                                Some(marker.tool_blacklist.clone().unwrap_or_default());
+                        }
                     }
                 }
                 if kind == ProfileOperationKind::Delete {
@@ -1051,6 +1269,9 @@ impl HestiaApp {
                             self.library_card_cache.key = None;
                         }
                     }
+                    if let Some(tools) = active_profile_tools {
+                        self.restore_profile_tools(&game_id, tools);
+                    }
                 }
                 self.save_state();
                 if matches!(
@@ -1094,5 +1315,29 @@ impl HestiaApp {
             | ProfileEvent::ArchiveCompleted { .. }
             | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_process_guard_tests {
+    /// `Process::exe` is opt-in on the refresh kind. If the `with_exe` flag is ever dropped from
+    /// `running_process_block_reason`, every `exe()` silently becomes `None` and the guard that
+    /// stops a profile swap while a tool holds the folder open would never fire again.
+    #[test]
+    fn process_refresh_kind_populates_exe_paths() {
+        let system = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing().with_processes(
+                sysinfo::ProcessRefreshKind::nothing()
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+            ),
+        );
+        let own = system
+            .process(sysinfo::Pid::from_u32(std::process::id()))
+            .expect("the test process must be visible to sysinfo");
+
+        assert!(
+            own.exe().is_some_and(|exe| exe.components().count() > 1),
+            "refreshing without `with_exe` leaves exe() empty and disables the tool guard"
+        );
     }
 }

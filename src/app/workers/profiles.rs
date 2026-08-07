@@ -503,7 +503,27 @@ fn target_profile_marker(
             .or_else(|| spec.display_name.clone())
             .unwrap_or_else(|| "Profile".to_string()),
         categories: spec.target_categories.clone(),
+        tools: spec.target_tools.clone(),
+        tool_blacklist: spec.target_tool_blacklist.clone(),
     })
+}
+
+/// Adopt profile-owned data from the container/archive we are about to activate, for anything the
+/// request did not already supply. The catalog is authoritative when it has a value; this is the
+/// fallback that lets a profile recovered from disk carry its own categories and tools.
+fn backfill_target_profile_data(
+    spec: &mut ProfileOperationSpec,
+    metadata: &crate::integrations::profiles::ProfileArchiveMetadata,
+) {
+    if spec.target_categories.is_none() {
+        spec.target_categories = metadata.categories.clone();
+    }
+    if spec.target_tools.is_none() {
+        spec.target_tools = metadata.tools.clone();
+    }
+    if spec.target_tool_blacklist.is_none() {
+        spec.target_tool_blacklist = metadata.tool_blacklist.clone();
+    }
 }
 
 fn outgoing_profile(
@@ -618,9 +638,7 @@ fn prepare_switch_target(
         if let Some(metadata) = metadata.filter(|metadata| {
             validate_profile_container_metadata(metadata, spec, target_profile_id).is_ok()
         }) {
-            if spec.target_categories.is_none() {
-                spec.target_categories = metadata.categories.clone();
-            }
+            backfill_target_profile_data(spec, &metadata);
             return Ok(loose);
         }
         let conflict = next_profile_conflict_path(&loose, spec.operation_id);
@@ -661,9 +679,7 @@ fn prepare_switch_target(
     )?;
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
     validate_profile_container_metadata(&metadata, spec, target_profile_id)?;
-    if spec.target_categories.is_none() {
-        spec.target_categories = metadata.categories.clone();
-    }
+    backfill_target_profile_data(spec, &metadata);
     Ok(staging.to_path_buf())
 }
 
@@ -708,9 +724,7 @@ fn prepare_duplicate_target(
             let required = profile_tree_size(&loose_roots)?.saturating_add(64 * 1024 * 1024);
             crate::integrations::profiles::ensure_profile_space(&roots.profiles_dir, required)?;
             crate::importing::copy_dir_cancelable(&loose, staging, true, &spec.cancel)?;
-            if spec.target_categories.is_none() {
-                spec.target_categories = metadata.categories.clone();
-            }
+            backfill_target_profile_data(spec, &metadata);
             update_profile_progress(&spec.progress, &spec.stage, 60, "Selected profile prepared");
             return Ok(staging.to_path_buf());
         }
@@ -752,9 +766,7 @@ fn prepare_duplicate_target(
     )?;
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
     validate_profile_container_metadata(&metadata, spec, source_profile_id)?;
-    if spec.target_categories.is_none() {
-        spec.target_categories = metadata.categories.clone();
-    }
+    backfill_target_profile_data(spec, &metadata);
     Ok(staging.to_path_buf())
 }
 
@@ -1064,6 +1076,8 @@ fn profile_archive_can_be_reused(
         && existing.created_at == current.created_at
         && existing.portable_metadata == current.portable_metadata
         && existing.categories == current.categories
+        && existing.tools == current.tools
+        && existing.tool_blacklist == current.tool_blacklist
 }
 
 fn next_archive_conflict_path(path: &Path) -> PathBuf {
@@ -1764,6 +1778,8 @@ mod profile_worker_tests {
             file_count: 0,
             portable_metadata: HashMap::new(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
             source_fingerprint: None,
         }
     }
@@ -1793,11 +1809,102 @@ mod profile_worker_tests {
             source_archive: None,
             target_archive: None,
             target_categories: None,
+            target_tools: None,
+            target_tool_blacklist: None,
             metadata: None,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
             stage: Arc::new(RwLock::new(String::new())),
         }
+    }
+
+    fn tool(id: &str, launch_args: &str) -> ToolEntry {
+        ToolEntry {
+            id: id.to_string(),
+            game_id: "test".to_string(),
+            label: id.to_string(),
+            path: PathBuf::from(format!("C:\\Mods\\{id}.exe")),
+            launch_args: launch_args.to_string(),
+            source_mod_id: None,
+            auto_detected: true,
+            show_in_titlebar: false,
+            window_order: 0,
+            titlebar_order: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn target_marker_carries_the_profiles_tools_and_blacklist_to_the_ui() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut spec = recovery_spec(xxmi_game(&dir.path().join("Mods")));
+        spec.target_profile_id = Some(Uuid::new_v4());
+        spec.target_display_name = Some("Warm".to_string());
+        spec.target_tools = Some(vec![tool("gimi", "--nogui")]);
+        spec.target_tool_blacklist = Some(vec!["c:\\mods\\hidden.exe".to_string()]);
+
+        let marker = target_profile_marker(&spec).unwrap();
+
+        assert_eq!(marker.tools.as_ref().unwrap()[0].launch_args, "--nogui");
+        assert_eq!(
+            marker.tool_blacklist.as_deref(),
+            Some(["c:\\mods\\hidden.exe".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn backfill_prefers_the_catalog_over_the_container_and_adopts_what_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut spec = recovery_spec(xxmi_game(&dir.path().join("Mods")));
+        spec.target_tools = Some(vec![tool("gimi", "--from-catalog")]);
+
+        let mut container = metadata(Uuid::new_v4(), "Warm");
+        container.tools = Some(vec![tool("gimi", "--from-container")]);
+        container.tool_blacklist = Some(vec!["c:\\mods\\hidden.exe".to_string()]);
+
+        backfill_target_profile_data(&mut spec, &container);
+
+        assert_eq!(
+            spec.target_tools.as_ref().unwrap()[0].launch_args,
+            "--from-catalog",
+            "the catalog is authoritative when it already has tools"
+        );
+        assert_eq!(
+            spec.target_tool_blacklist.as_deref(),
+            Some(["c:\\mods\\hidden.exe".to_string()].as_slice()),
+            "a blacklist the catalog lacks is adopted from the container"
+        );
+    }
+
+    #[test]
+    fn backfill_leaves_pre_tool_archives_without_a_tool_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut spec = recovery_spec(xxmi_game(&dir.path().join("Mods")));
+        let legacy = metadata(Uuid::new_v4(), "Legacy");
+
+        backfill_target_profile_data(&mut spec, &legacy);
+
+        assert!(
+            spec.target_tools.is_none(),
+            "None must stay None so the live tool set is left untouched on activation"
+        );
+        assert!(spec.target_tool_blacklist.is_none());
+    }
+
+    #[test]
+    fn archive_reuse_is_rejected_when_only_the_tools_changed() {
+        let profile_id = Uuid::new_v4();
+        let mut existing = metadata(profile_id, "Warm");
+        existing.source_fingerprint = Some("fp".to_string());
+        existing.tools = Some(vec![tool("gimi", "")]);
+        let mut current = existing.clone();
+        current.tools = Some(vec![tool("gimi", "--nogui")]);
+
+        assert!(profile_archive_can_be_reused(&existing, &existing, "fp"));
+        assert!(
+            !profile_archive_can_be_reused(&existing, &current, "fp"),
+            "a launch-option edit must rewrite the archive metadata"
+        );
     }
 
     #[test]
@@ -1866,6 +1973,8 @@ mod profile_worker_tests {
                 profile_id: active_id,
                 display_name: "Active".to_string(),
                 categories: Some(Vec::new()),
+                tools: None,
+                tool_blacklist: None,
             },
         )
         .unwrap();
@@ -1915,6 +2024,8 @@ mod profile_worker_tests {
             profile_id: Uuid::new_v4(),
             display_name: "Active".to_string(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
         };
         write_active_profile_marker(&roots, &marker).unwrap();
         let outgoing = roots.profile_path(Uuid::new_v4());
@@ -2183,6 +2294,8 @@ mod profile_worker_tests {
             source_archive: None,
             target_archive: Some(archive.clone()),
             target_categories: None,
+            target_tools: None,
+            target_tool_blacklist: None,
             metadata: Some(metadata(current_id, "Current")),
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
@@ -2334,12 +2447,16 @@ mod profile_worker_tests {
             profile_id: outgoing_id,
             display_name: "Current".to_string(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
         };
         write_active_profile_marker(&roots, &old_marker).unwrap();
         let target_marker = ActiveProfileMarker {
             profile_id: target_id,
             display_name: "Target".to_string(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
         };
         let mut warnings = Vec::new();
 
@@ -2408,6 +2525,8 @@ mod profile_worker_tests {
                 profile_id: target_id,
                 display_name: "Target".to_string(),
                 categories: Some(Vec::new()),
+                tools: None,
+                tool_blacklist: None,
             },
             &mut warnings,
         )
@@ -2517,11 +2636,15 @@ mod profile_worker_tests {
             profile_id: Uuid::new_v4(),
             display_name: "Old".to_string(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
         };
         let new = ActiveProfileMarker {
             profile_id: Uuid::new_v4(),
             display_name: "New".to_string(),
             categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
         };
         std::fs::write(
             outgoing.join(ACTIVE_PROFILE_MARKER_FILE),

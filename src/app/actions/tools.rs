@@ -5,6 +5,39 @@ struct DiscoveredGameTool {
     source_mod_id: Option<String>,
 }
 
+/// Drop titlebar pins past the slot limit, keeping the lowest `titlebar_order` first. A profile
+/// restored on switch can exceed the limit because `selected_game_pinned_tools` only truncates for
+/// display, so the persisted flags have to be brought back into range explicitly.
+fn enforce_titlebar_pin_limit(tools: &mut [ToolEntry], game_id: &str) {
+    let mut pinned: Vec<(String, Option<i32>, i32, DateTime<Utc>)> = tools
+        .iter()
+        .filter(|tool| tool.game_id == game_id && tool.show_in_titlebar)
+        .map(|tool| {
+            (
+                tool.id.clone(),
+                tool.titlebar_order,
+                tool.window_order,
+                tool.created_at,
+            )
+        })
+        .collect();
+    if pinned.len() <= TITLEBAR_TOOL_LIMIT {
+        return;
+    }
+    pinned.sort_by(|a, b| {
+        a.1.unwrap_or(i32::MAX / 4)
+            .cmp(&b.1.unwrap_or(i32::MAX / 4))
+            .then_with(|| a.2.cmp(&b.2))
+            .then_with(|| a.3.cmp(&b.3))
+    });
+    for (tool_id, ..) in pinned.into_iter().skip(TITLEBAR_TOOL_LIMIT) {
+        if let Some(tool) = tools.iter_mut().find(|tool| tool.id == tool_id) {
+            tool.show_in_titlebar = false;
+            tool.titlebar_order = None;
+        }
+    }
+}
+
 impl HestiaApp {
     fn ensure_tool_icon_texture(&mut self, ctx: &egui::Context, tool: &ToolEntry) {
         let now = Instant::now();
@@ -81,7 +114,7 @@ impl HestiaApp {
                 .then_with(|| a.window_order.cmp(&b.window_order))
                 .then_with(|| a.created_at.cmp(&b.created_at))
         });
-        items.truncate(4);
+        items.truncate(TITLEBAR_TOOL_LIMIT);
         items
     }
 
@@ -110,6 +143,10 @@ impl HestiaApp {
                 tool.window_order = index as i32;
             }
         }
+    }
+
+    fn enforce_tool_titlebar_limit_for_game(&mut self, game_id: &str) {
+        enforce_titlebar_pin_limit(&mut self.state.tools, game_id);
     }
 
     fn compact_tool_titlebar_order_for_game(&mut self, game_id: &str) {
@@ -493,7 +530,7 @@ impl HestiaApp {
                 .iter()
                 .filter(|tool| tool.game_id == game_id && tool.show_in_titlebar)
                 .count()
-                >= 4
+                >= TITLEBAR_TOOL_LIMIT
         {
             self.report_warn(
                 self.text().titlebar_tool_limit(),
@@ -592,5 +629,86 @@ impl HestiaApp {
         tool.launch_args = prompt.launch_args;
         self.save_state();
         self.set_message_ok(self.text().tool_launch_options_saved());
+    }
+}
+
+#[cfg(test)]
+mod tool_pin_tests {
+    use super::*;
+
+    fn tool(id: &str, pinned: bool, titlebar_order: Option<i32>, window_order: i32) -> ToolEntry {
+        ToolEntry {
+            id: id.to_string(),
+            game_id: "game".to_string(),
+            label: id.to_string(),
+            path: PathBuf::from(format!("C:\\Mods\\{id}.exe")),
+            launch_args: String::new(),
+            source_mod_id: None,
+            auto_detected: true,
+            show_in_titlebar: pinned,
+            window_order,
+            titlebar_order,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn pinned_ids(tools: &[ToolEntry]) -> Vec<&str> {
+        tools
+            .iter()
+            .filter(|tool| tool.show_in_titlebar)
+            .map(|tool| tool.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn restoring_more_pins_than_slots_keeps_the_lowest_titlebar_order() {
+        let mut tools: Vec<ToolEntry> = (0..6)
+            .map(|index| tool(&format!("t{index}"), true, Some(5 - index), index))
+            .collect();
+
+        enforce_titlebar_pin_limit(&mut tools, "game");
+
+        assert_eq!(pinned_ids(&tools), vec!["t2", "t3", "t4", "t5"]);
+        assert!(
+            tools
+                .iter()
+                .filter(|tool| !tool.show_in_titlebar)
+                .all(|tool| tool.titlebar_order.is_none()),
+            "unpinned tools must not keep a stale slot index"
+        );
+    }
+
+    #[test]
+    fn pin_limit_leaves_another_games_tools_alone() {
+        let mut tools: Vec<ToolEntry> = (0..5)
+            .map(|index| tool(&format!("t{index}"), true, Some(index), index))
+            .collect();
+        for index in 0..5 {
+            let mut other = tool(&format!("o{index}"), true, Some(index), index);
+            other.game_id = "other".to_string();
+            tools.push(other);
+        }
+
+        enforce_titlebar_pin_limit(&mut tools, "game");
+
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool.game_id == "other" && tool.show_in_titlebar)
+                .count(),
+            5
+        );
+    }
+
+    #[test]
+    fn pin_limit_is_a_noop_when_already_within_range() {
+        let mut tools: Vec<ToolEntry> = (0..TITLEBAR_TOOL_LIMIT as i32)
+            .map(|index| tool(&format!("t{index}"), true, Some(index), index))
+            .collect();
+        let before = tools.clone();
+
+        enforce_titlebar_pin_limit(&mut tools, "game");
+
+        assert_eq!(tools, before);
     }
 }

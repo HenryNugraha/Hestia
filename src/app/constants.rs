@@ -23,6 +23,8 @@ const NAV_RAIL_WIDTH: f32 = 90.0;
 const GAME_ICON_TEXTURE_SIZE: u32 = 256;
 const TOOL_ICON_TEXTURE_SIZE: u32 = 96;
 const TOOL_ICON_FAILURE_RETRY_SECS: u64 = 60;
+/// Titlebar pin slots available per game.
+const TITLEBAR_TOOL_LIMIT: usize = 4;
 const TITLEBAR_GAME_ICON_SIZE: f32 = 96.0;
 const TITLEBAR_CONTROL_BUTTON_WIDTH: f32 = 32.0;
 const TITLEBAR_CONTROL_BUTTON_HEIGHT: f32 = 24.0;

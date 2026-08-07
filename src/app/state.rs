@@ -1384,10 +1384,20 @@ struct ProfileOperationSpec {
     source_archive: Option<PathBuf>,
     target_archive: Option<PathBuf>,
     target_categories: Option<Vec<ModCategory>>,
+    target_tools: Option<Vec<ToolEntry>>,
+    target_tool_blacklist: Option<Vec<String>>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
     stage: Arc<RwLock<String>>,
+}
+
+/// The tool state owned by one profile: every tool the user has for this game, with its launch
+/// options, titlebar pin and ordering, plus the auto-detected paths they removed.
+#[derive(Clone, Default)]
+struct ProfileToolSnapshot {
+    tools: Vec<ToolEntry>,
+    blacklist: Vec<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1396,6 +1406,10 @@ struct ActiveProfileMarker {
     display_name: String,
     #[serde(default)]
     categories: Option<Vec<ModCategory>>,
+    #[serde(default)]
+    tools: Option<Vec<ToolEntry>>,
+    #[serde(default)]
+    tool_blacklist: Option<Vec<String>>,
 }
 
 enum ProfileRequest {
