@@ -341,22 +341,6 @@ pub fn profile_roots(game: &GameInstall, use_default_mods_path: bool) -> Result<
     }
 }
 
-pub fn profile_archive_path(
-    game: &GameInstall,
-    use_default_mods_path: bool,
-    profile_id: ProfileId,
-) -> Result<PathBuf> {
-    Ok(profile_roots(game, use_default_mods_path)?.archive_path(profile_id))
-}
-
-pub fn profile_path(
-    game: &GameInstall,
-    use_default_mods_path: bool,
-    profile_id: ProfileId,
-) -> Result<PathBuf> {
-    Ok(profile_roots(game, use_default_mods_path)?.profile_path(profile_id))
-}
-
 /// Return free bytes on the volume hosting profile storage.  Callers should invoke this before
 /// staging a switch, reserving space for both the extracted target and the outgoing archive.
 pub fn available_profile_space(path: &Path) -> Result<u64> {
@@ -739,87 +723,6 @@ fn extract_profile_archive_impl(
 
 /// Read the embedded profile manifest without materializing payload files. Full entry validation
 /// is performed by extraction.
-/// Rewrite an archive under a new profile identity, streaming entry by entry.
-///
-/// Used to split a duplicated profile into a genuinely separate one. The identity lives in
-/// `profile.json` at the head of the tar, and the whole thing is zstd-compressed, so it cannot be
-/// patched in place — but streaming avoids ever materializing the uncompressed tree on disk, which
-/// for a large profile is the difference between needing a few megabytes and needing gigabytes.
-///
-/// `progress` receives bytes copied so far against the source's recorded uncompressed size;
-/// returning an error from it aborts and leaves the destination untouched.
-pub fn reidentify_profile_archive(
-    source: &Path,
-    destination: &Path,
-    new_profile_id: ProfileId,
-    new_display_name: &str,
-    mut progress: Option<&mut dyn FnMut(u64, u64) -> Result<()>>,
-) -> Result<ProfileArchiveMetadata> {
-    ensure_tzst_path(source)?;
-    ensure_tzst_path(destination)?;
-    let mut metadata = read_profile_archive_metadata(source)?;
-    let total = metadata.uncompressed_size;
-    metadata.profile_id = new_profile_id;
-    metadata.display_name = new_display_name.to_string();
-    // The copy is a distinct profile from this point, so it cannot claim the source's identity or
-    // pretend its bytes were produced from the live roots.
-    metadata.created_at = Utc::now();
-    metadata.source_fingerprint = None;
-
-    let parent = destination
-        .parent()
-        .context("profile archive destination has no parent")?;
-    fs::create_dir_all(parent)?;
-    let staging = archive_sidecar_path(destination, "part");
-    if staging.exists() {
-        fs::remove_file(&staging)?;
-    }
-
-    let result = (|| -> Result<()> {
-        let file = File::create(&staging)
-            .with_context(|| format!("failed to create {}", staging.display()))?;
-        let mut encoder = Encoder::new(file, -1).context("failed to initialize zstd encoder")?;
-        encoder.multithread(1)?;
-        encoder.include_checksum(true)?;
-        let mut builder = Builder::new(encoder);
-        builder.follow_symlinks(false);
-        append_json(&mut builder, PROFILE_METADATA_FILE, &metadata)?;
-
-        let mut decoder = Decoder::new(File::open(source)?)?;
-        let mut archive = Archive::new(&mut decoder);
-        let mut copied = 0u64;
-        for item in archive.entries()? {
-            let mut entry = item?;
-            let path = entry.path()?.into_owned();
-            validate_relative_path(&path)?;
-            // The replacement metadata is already written; skip the original.
-            if path == Path::new(PROFILE_METADATA_FILE) {
-                continue;
-            }
-            let mut header = entry.header().clone();
-            header.set_cksum();
-            let size = header.size().unwrap_or(0);
-            let mut bytes = Vec::with_capacity(size.min(8 * 1024 * 1024) as usize);
-            entry.read_to_end(&mut bytes)?;
-            builder.append_data(&mut header, &path, bytes.as_slice())?;
-            copied = copied.saturating_add(bytes.len() as u64);
-            if let Some(progress) = progress.as_deref_mut() {
-                progress(copied, total)?;
-            }
-        }
-        builder.into_inner()?.finish()?;
-        Ok(())
-    })();
-
-    if let Err(error) = result {
-        let _ = fs::remove_file(&staging);
-        return Err(error);
-    }
-    fs::rename(&staging, destination)
-        .with_context(|| format!("failed to finalize {}", destination.display()))?;
-    Ok(metadata)
-}
-
 pub fn read_profile_archive_metadata(archive_path: &Path) -> Result<ProfileArchiveMetadata> {
     ensure_tzst_path(archive_path)?;
     let mut decoder = Decoder::new(File::open(archive_path)?)?;
@@ -1543,89 +1446,6 @@ mod tests {
         assert_eq!(
             roots.archive_backup_path(profile_id),
             PathBuf::from(format!("{}.bak", archive.display()))
-        );
-    }
-
-    #[test]
-    fn reidentifying_an_archive_gives_it_a_new_identity_and_keeps_every_file() {
-        let temp = tempdir().unwrap();
-        let mods = temp.path().join("Mods");
-        fs::create_dir_all(mods.join("SomeMod")).unwrap();
-        fs::write(mods.join("SomeMod").join("a.bin"), vec![b'a'; 5000]).unwrap();
-        fs::write(mods.join("b.txt"), b"second file").unwrap();
-        let roots = ProfileRoots {
-            profiles_dir: temp.path().join("Mods_Profiles"),
-            mods,
-            archived: None,
-            disabled: None,
-        };
-        let original_id = ProfileId::random();
-        let source = temp.path().join("source.tzst");
-        let mut original = ProfileArchiveMetadata {
-            format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
-            profile_id: original_id,
-            game_id: "test".to_string(),
-            display_name: "Patch 1.4".to_string(),
-            backend: GameBackend::Xxmi,
-            created_at: Utc::now(),
-            uncompressed_size: 0,
-            file_count: 0,
-            portable_metadata: HashMap::new(),
-            categories: Some(Vec::new()),
-            tools: None,
-            tool_blacklist: None,
-            source_fingerprint: None,
-        };
-        original.format_version = PROFILE_ARCHIVE_FORMAT_VERSION;
-        create_profile_archive_with_progress(&roots, &original, &source, None).unwrap();
-
-        let new_id = ProfileId::random();
-        let destination = temp.path().join("copy.tzst");
-        let mut seen_progress = Vec::new();
-        let mut report = |copied: u64, total: u64| {
-            seen_progress.push((copied, total));
-            Ok(())
-        };
-        let rewritten = reidentify_profile_archive(
-            &source,
-            &destination,
-            new_id,
-            "Patch 1.4 (copy)",
-            Some(&mut report),
-        )
-        .unwrap();
-
-        assert_eq!(rewritten.profile_id, new_id);
-        assert_eq!(rewritten.display_name, "Patch 1.4 (copy)");
-        assert!(
-            rewritten.source_fingerprint.is_none(),
-            "a rewritten copy no longer matches any live roots"
-        );
-        assert!(!seen_progress.is_empty(), "progress must be reported");
-
-        // The source is untouched and the copy carries the same payload.
-        assert_eq!(
-            read_profile_archive_metadata(&source).unwrap().profile_id,
-            original_id
-        );
-        let extracted = temp.path().join("extracted");
-        extract_profile_archive(&destination, &extracted).unwrap();
-        assert_eq!(
-            fs::read(extracted.join("Mods").join("SomeMod").join("a.bin"))
-                .unwrap()
-                .len(),
-            5000
-        );
-        assert_eq!(
-            fs::read(extracted.join("Mods").join("b.txt")).unwrap(),
-            b"second file"
-        );
-        assert_eq!(
-            read_profile_archive_metadata(&destination)
-                .unwrap()
-                .profile_id,
-            new_id,
-            "only one profile.json survives, the rewritten one"
         );
     }
 

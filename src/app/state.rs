@@ -220,10 +220,6 @@ pub struct HestiaApp {
     tools_window_nonce: u64,
     tools_force_default_pos: bool,
     tool_launch_options_prompt: Option<ToolLaunchOptionsPrompt>,
-    /// Archive awaiting re-identification, handed to the next spec this frame.
-    pending_reidentify_source: Option<PathBuf>,
-    /// Duplicate copies found by the last scan, shown so the user can resolve them.
-    profile_duplicate_prompt: Vec<ProfileDuplicateEntry>,
     dragging_window_tool_id: Option<String>,
     dragging_window_tool_target_index: Option<usize>,
     dragging_titlebar_tool_id: Option<String>,
@@ -1331,9 +1327,6 @@ enum ProfileOperationKind {
     Rename,
     Delete,
     Recover,
-    /// Rewrite a duplicated profile's archive under a fresh identity, so two copies claiming the
-    /// same profile can both be kept as separate profiles.
-    Reidentify,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1388,6 +1381,8 @@ struct ProfileOperationSpec {
     target_profile_id: Option<ProfileId>,
     display_name: Option<String>,
     target_display_name: Option<String>,
+    source_profile: Option<PathBuf>,
+    target_profile: Option<PathBuf>,
     source_archive: Option<PathBuf>,
     target_archive: Option<PathBuf>,
     target_categories: Option<Vec<ModCategory>>,
@@ -1396,8 +1391,8 @@ struct ProfileOperationSpec {
     /// Profiles the catalog already knows about, so recovery can tell which stored profiles are
     /// orphaned. Only populated for `Recover`.
     known_profile_ids: Vec<ProfileId>,
-    /// Archive to rewrite under a new identity. Only set for `Reidentify`.
-    reidentify_source: Option<PathBuf>,
+    /// Exact inactive storage entries already represented in the catalog.
+    known_profile_storage_file_names: Vec<String>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
@@ -1410,17 +1405,6 @@ struct ProfileOperationSpec {
 struct ProfileToolSnapshot {
     tools: Vec<ToolEntry>,
     blacklist: Vec<String>,
-}
-
-/// A stored copy of a profile that already has another copy on disk.
-#[derive(Clone)]
-struct ProfileDuplicateEntry {
-    game_id: String,
-    display_name: String,
-    path: PathBuf,
-    bytes: u64,
-    /// Identical content to the copy in use, so deleting it loses nothing.
-    redundant: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1452,7 +1436,6 @@ struct ProfileCompleted {
     active_profile_marker: Option<ActiveProfileMarker>,
     orphaned_profiles: Vec<OrphanedProfile>,
     renamed_profiles: Vec<RecoveredProfileLabel>,
-    duplicate_profiles: Vec<ProfileDuplicateEntry>,
     warnings: Vec<String>,
 }
 

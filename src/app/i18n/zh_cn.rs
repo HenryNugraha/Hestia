@@ -526,7 +526,15 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "先前的压缩包大小", // ProfilesPreviousArchiveSize
     "尚无压缩包", // ProfilesNoArchiveYet
     "配置文件操作失败", // ProfilesOperationFailed
-    "请先完成当前的安装、更新、扫描或配置文件操作。", // ProfilesFinishCurrentOperationFirst
+    "操作已暂停：", // ProfilesActionsPausedLabel
+    "另一项任务正在运行", // ProfilesActionsPausedFallback
+    "配置文件操作正在运行", // ProfilesActionsPausedProfileOperation
+    "正在刷新库", // ProfilesActionsPausedRefreshingLibrary
+    "正在安装模组", // ProfilesActionsPausedInstallingMods
+    "正在检查更新", // ProfilesActionsPausedCheckingUpdates
+    "正在更新 Hestia", // ProfilesActionsPausedUpdatingHestia
+    "游戏正在运行", // ProfilesActionsPausedGameRunning
+    "配置文件工具正在运行", // ProfilesActionsPausedProfileToolRunning
     "请选择一个游戏来管理配置文件。", // ProfilesSelectGame
     "至少需要一个配置文件。", // ProfilesAtLeastOneRequired
     "请先切换到其他配置文件，再删除此配置文件。", // ProfilesSwitchBeforeDelete
@@ -540,13 +548,6 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "配置文件操作已取消", // ProfilesCanceled
     "配置文件已恢复", // ProfilesActionRecovered
     "已恢复 {count} 个存在于存储中但未出现在配置文件列表中的配置文件。", // ProfilesRecovered
-    "发现重复的配置文件副本", // ProfilesDuplicateTitle
-    "磁盘上存在配置文件的额外副本。Hestia 各使用其中一个；请选择如何处理其余副本。", // ProfilesDuplicateBody
-    "完全相同的副本", // ProfilesDuplicateIdentical
-    "内容不同", // ProfilesDuplicateDifferent
-    "两者都保留", // ProfilesDuplicateKeepBoth
-    "删除副本", // ProfilesDuplicateDelete
-    "正在生成新的配置文件 ID…", // ProfilesReidentifying
 
     // Window: Settings
     "设置", // SettingsWindowTitle

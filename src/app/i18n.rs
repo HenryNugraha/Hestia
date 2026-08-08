@@ -523,7 +523,15 @@ enum TextKey {
     ProfilesPreviousArchiveSize,
     ProfilesNoArchiveYet,
     ProfilesOperationFailed,
-    ProfilesFinishCurrentOperationFirst,
+    ProfilesActionsPausedLabel,
+    ProfilesActionsPausedFallback,
+    ProfilesActionsPausedProfileOperation,
+    ProfilesActionsPausedRefreshingLibrary,
+    ProfilesActionsPausedInstallingMods,
+    ProfilesActionsPausedCheckingUpdates,
+    ProfilesActionsPausedUpdatingHestia,
+    ProfilesActionsPausedGameRunning,
+    ProfilesActionsPausedProfileToolRunning,
     ProfilesSelectGame,
     ProfilesAtLeastOneRequired,
     ProfilesSwitchBeforeDelete,
@@ -537,13 +545,6 @@ enum TextKey {
     ProfilesCanceled,
     ProfilesActionRecovered,
     ProfilesRecovered,
-    ProfilesDuplicateTitle,
-    ProfilesDuplicateBody,
-    ProfilesDuplicateIdentical,
-    ProfilesDuplicateDifferent,
-    ProfilesDuplicateKeepBoth,
-    ProfilesDuplicateDelete,
-    ProfilesReidentifying,
 
     SettingsWindowTitle,
     SettingsTabGeneral,
@@ -2828,8 +2829,40 @@ impl TextCatalog {
         self.get(TextKey::ProfilesOperationFailed)
     }
 
-    fn profile_finish_current_operation_first(self) -> &'static str {
-        self.get(TextKey::ProfilesFinishCurrentOperationFirst)
+    fn profile_actions_paused_label(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedLabel)
+    }
+
+    fn profile_actions_paused_fallback(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedFallback)
+    }
+
+    fn profile_actions_paused_profile_operation(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedProfileOperation)
+    }
+
+    fn profile_actions_paused_refreshing_library(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedRefreshingLibrary)
+    }
+
+    fn profile_actions_paused_installing_mods(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedInstallingMods)
+    }
+
+    fn profile_actions_paused_checking_updates(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedCheckingUpdates)
+    }
+
+    fn profile_actions_paused_updating_hestia(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedUpdatingHestia)
+    }
+
+    fn profile_actions_paused_game_running(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedGameRunning)
+    }
+
+    fn profile_actions_paused_profile_tool_running(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedProfileToolRunning)
     }
 
     fn profile_select_game(self) -> &'static str {
@@ -2872,34 +2905,6 @@ impl TextCatalog {
 
     fn profile_action_recovered(self) -> &'static str {
         self.get(TextKey::ProfilesActionRecovered)
-    }
-
-    fn profiles_duplicate_title(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateTitle)
-    }
-
-    fn profiles_duplicate_body(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateBody)
-    }
-
-    fn profiles_duplicate_identical(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateIdentical)
-    }
-
-    fn profiles_duplicate_different(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateDifferent)
-    }
-
-    fn profiles_duplicate_keep_both(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateKeepBoth)
-    }
-
-    fn profiles_duplicate_delete(self) -> &'static str {
-        self.get(TextKey::ProfilesDuplicateDelete)
-    }
-
-    fn profiles_reidentifying(self) -> &'static str {
-        self.get(TextKey::ProfilesReidentifying)
     }
 
     fn profiles_recovered(self, count: usize) -> String {

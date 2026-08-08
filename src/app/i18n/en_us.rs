@@ -526,7 +526,15 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Previous archive size", // ProfilesPreviousArchiveSize
     "No archive yet", // ProfilesNoArchiveYet
     "Profile operation failed", // ProfilesOperationFailed
-    "Finish the current install, update, scan, or profile operation first.", // ProfilesFinishCurrentOperationFirst
+    "Actions paused:", // ProfilesActionsPausedLabel
+    "another task is running", // ProfilesActionsPausedFallback
+    "profile operation running", // ProfilesActionsPausedProfileOperation
+    "refreshing library", // ProfilesActionsPausedRefreshingLibrary
+    "installing mods", // ProfilesActionsPausedInstallingMods
+    "checking updates", // ProfilesActionsPausedCheckingUpdates
+    "updating Hestia", // ProfilesActionsPausedUpdatingHestia
+    "game is running", // ProfilesActionsPausedGameRunning
+    "profile tool is running", // ProfilesActionsPausedProfileToolRunning
     "Select a game to manage profiles.", // ProfilesSelectGame
     "At least one profile is required.", // ProfilesAtLeastOneRequired
     "Switch to another profile before deleting this one.", // ProfilesSwitchBeforeDelete
@@ -540,13 +548,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Profile operation canceled", // ProfilesCanceled
     "Profile recovered", // ProfilesActionRecovered
     "Recovered {count} profile(s) found in storage but missing from the profile list.", // ProfilesRecovered
-    "Duplicate profile copies found", // ProfilesDuplicateTitle
-    "These extra copies of your profiles are on disk. Hestia is using one of each; choose what to do with the rest.", // ProfilesDuplicateBody
-    "Identical copy", // ProfilesDuplicateIdentical
-    "Different contents", // ProfilesDuplicateDifferent
-    "Keep both", // ProfilesDuplicateKeepBoth
-    "Delete copy", // ProfilesDuplicateDelete
-    "Generating new profile ID…", // ProfilesReidentifying
 
     // Window: Settings
     "Settings", // SettingsWindowTitle

@@ -298,6 +298,36 @@ fn profile_selector_action_row(
     }
 }
 
+fn profile_selector_paused_row(ui: &mut egui::Ui, label: &str, reason: &str) {
+    const ROW_HEIGHT: f32 = 38.0;
+    let row_width = ui.available_width().max(1.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(row_width, ROW_HEIGHT), Sense::hover());
+    let top_y = rect.center().y - 8.0;
+    let bottom_y = rect.center().y + 6.0;
+
+    ui.painter().text(
+        egui::pos2(rect.left() + 15.0, rect.center().y),
+        egui::Align2::CENTER_CENTER,
+        icon_char(Icon::CirclePause),
+        egui::FontId::new(16.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+        Color32::from_rgb(132, 138, 146),
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 32.0, top_y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        Color32::from_rgb(154, 160, 168),
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 32.0, bottom_y),
+        egui::Align2::LEFT_CENTER,
+        reason,
+        egui::FontId::proportional(12.0),
+        Color32::from_rgb(184, 189, 196),
+    );
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileTimelineStage {
     Archiving,
@@ -370,8 +400,6 @@ fn profile_operation_reports_progress(kind: ProfileOperationKind) -> bool {
         ProfileOperationKind::Create
             | ProfileOperationKind::Duplicate
             | ProfileOperationKind::Switch
-            // The source archive records its uncompressed size, so the rewrite can be measured.
-            | ProfileOperationKind::Reidentify
     )
 }
 
@@ -564,6 +592,14 @@ impl HestiaApp {
 
         let profile_count = catalog.profiles.len();
         let active_profile_id = catalog.active_profile_id;
+        let paused_reason = blocked
+            .then(|| {
+                self.profile_actions_paused_reason(text)
+                    .unwrap_or_else(|| text.profile_actions_paused_fallback())
+            })
+            .unwrap_or_default();
+        let paused_tooltip = blocked
+            .then(|| format!("{} {}", text.profile_actions_paused_label(), paused_reason));
         let profile_row_gap = ui.spacing().item_spacing.y;
         let profile_list_max_height = profile_selector_list_max_height(profile_row_gap);
         ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
@@ -644,14 +680,19 @@ impl HestiaApp {
                             profile_roots
                                 .as_ref()
                                 .map_or((false, false, false, None), |roots| {
-                                    let archive_path = roots.archive_path(profile.id);
+                                    let archive_path = self
+                                        .profile_archive_for(&game_id, &game, profile.id)
+                                        .unwrap_or_else(|_| roots.archive_path(profile.id));
+                                    let loose_path = self
+                                        .profile_path_for(&game_id, &game, profile.id)
+                                        .unwrap_or_else(|_| roots.profile_path(profile.id));
                                     let archive_metadata = fs::metadata(&archive_path)
                                         .ok()
                                         .filter(|entry| entry.is_file());
                                     (
-                                        roots.profile_path(profile.id).is_dir(),
+                                        loose_path.is_dir(),
                                         archive_metadata.is_some(),
-                                        roots.archive_part_path(profile.id).is_file(),
+                                        archive_sidecar_path(&archive_path, "part").is_file(),
                                         archive_metadata.map(|entry| entry.len()),
                                     )
                                 });
@@ -671,7 +712,9 @@ impl HestiaApp {
                         };
                         if blocked && !active {
                             tooltip.push_str("\n\n");
-                            tooltip.push_str(text.profile_finish_current_operation_first());
+                            if let Some(paused_tooltip) = paused_tooltip.as_deref() {
+                                tooltip.push_str(paused_tooltip);
+                            }
                         }
                         select.clone().on_hover_text(tooltip);
                     }
@@ -718,9 +761,7 @@ impl HestiaApp {
                             egui::Popup::close_all(ui.ctx());
                         } else if blocked {
                             rename
-                                .on_disabled_hover_text(
-                                    text.profile_finish_current_operation_first(),
-                                )
+                                .on_disabled_hover_text(paused_tooltip.as_deref().unwrap_or(""))
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         }
 
@@ -748,9 +789,7 @@ impl HestiaApp {
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         } else if blocked {
                             delete
-                                .on_disabled_hover_text(
-                                    text.profile_finish_current_operation_first(),
-                                )
+                                .on_disabled_hover_text(paused_tooltip.as_deref().unwrap_or(""))
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         }
                     });
@@ -766,7 +805,7 @@ impl HestiaApp {
             self.start_profile_name_prompt(ProfileOperationKind::Create, None, name);
             ui.close();
         } else if blocked {
-            create.on_hover_text(text.profile_finish_current_operation_first());
+            create.on_hover_text(paused_tooltip.as_deref().unwrap_or(""));
         }
         let duplicate =
             profile_selector_action_row(ui, Icon::Copy, text.duplicate_current_profile(), !blocked);
@@ -775,7 +814,7 @@ impl HestiaApp {
             self.start_profile_name_prompt(ProfileOperationKind::Duplicate, None, name);
             ui.close();
         } else if blocked {
-            duplicate.on_hover_text(text.profile_finish_current_operation_first());
+            duplicate.on_hover_text(paused_tooltip.as_deref().unwrap_or(""));
         }
         // Read-only, so it stays available while an operation blocks the write actions above.
         let has_profiles_dir = self.selected_game_profiles_dir().is_some();
@@ -796,12 +835,11 @@ impl HestiaApp {
                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
         }
         if blocked {
-            static_label(
-                ui,
-                RichText::new(text.profile_finish_current_operation_first())
-                    .size(12.0)
-                    .color(Color32::from_gray(145)),
-            );
+            ui.separator();
+            let reason = self
+                .profile_actions_paused_reason(text)
+                .unwrap_or_else(|| text.profile_actions_paused_fallback());
+            profile_selector_paused_row(ui, text.profile_actions_paused_label(), reason);
         }
     }
 
@@ -810,118 +848,9 @@ impl HestiaApp {
             self.render_profile_progress_dialog(ctx);
             return;
         }
-        self.render_profile_duplicate_dialog(ctx);
         self.render_profile_name_dialog(ctx);
         self.render_profile_delete_dialog(ctx);
         self.render_profile_progress_dialog(ctx);
-    }
-
-    /// Ask what to do with extra copies of a profile found on disk.
-    ///
-    /// Never resolves anything on its own: identical copies are safe to delete but that is still
-    /// the user's call, and differing copies are two real snapshots only they can choose between.
-    fn render_profile_duplicate_dialog(&mut self, ctx: &egui::Context) {
-        if self.profile_duplicate_prompt.is_empty() || self.profile_operation_inflight.is_some() {
-            return;
-        }
-        let text = self.text();
-        let entries = self.profile_duplicate_prompt.clone();
-        let mut dismiss = false;
-        let mut keep_both: Option<ProfileDuplicateEntry> = None;
-        let mut delete: Option<ProfileDuplicateEntry> = None;
-
-        egui::Window::new(text.profiles_duplicate_title())
-            .id(egui::Id::new("profile_duplicate_dialog"))
-            .collapsible(false)
-            .resizable(false)
-            .default_width(520.0)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_width(520.0);
-                static_label(
-                    ui,
-                    RichText::new(text.profiles_duplicate_body())
-                        .size(13.0)
-                        .color(Color32::from_rgb(178, 184, 192)),
-                );
-                ui.add_space(10.0);
-                for entry in &entries {
-                    ui.group(|ui| {
-                        ui.set_width(ui.available_width());
-                        static_label(
-                            ui,
-                            RichText::new(text.profile_display_name(&entry.display_name))
-                                .size(14.0)
-                                .strong(),
-                        );
-                        static_label(
-                            ui,
-                            RichText::new(format!(
-                                "{}  ·  {}",
-                                if entry.redundant {
-                                    text.profiles_duplicate_identical()
-                                } else {
-                                    text.profiles_duplicate_different()
-                                },
-                                format_file_size(entry.bytes)
-                            ))
-                            .size(12.0)
-                            .color(Color32::from_rgb(150, 156, 165)),
-                        );
-                        static_label(
-                            ui,
-                            RichText::new(entry.path.display().to_string())
-                                .size(11.0)
-                                .color(Color32::from_rgb(130, 136, 145)),
-                        );
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            if ui.button(text.profiles_duplicate_keep_both()).clicked() {
-                                keep_both = Some(entry.clone());
-                            }
-                            if ui.button(text.profiles_duplicate_delete()).clicked() {
-                                delete = Some(entry.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(6.0);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(text.close()).clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-
-        if let Some(entry) = keep_both {
-            // The copy becomes its own profile, so it needs a name that is free in this game.
-            let name = self.next_profile_name(&entry.display_name);
-            if let Err(error) =
-                self.reidentify_duplicate_profile(&entry.game_id, entry.path.clone(), name)
-            {
-                self.report_error_message(
-                    format!("could not keep both copies: {error:#}"),
-                    Some(self.text().could_not_open_location()),
-                );
-            } else {
-                self.profile_duplicate_prompt
-                    .retain(|candidate| candidate.path != entry.path);
-            }
-        } else if let Some(entry) = delete {
-            match trash::delete(&entry.path) {
-                Ok(()) => {
-                    self.profile_duplicate_prompt
-                        .retain(|candidate| candidate.path != entry.path);
-                }
-                Err(error) => self.report_error_message(
-                    format!("could not delete {}: {error}", entry.path.display()),
-                    Some(self.text().could_not_open_location()),
-                ),
-            }
-        } else if dismiss {
-            self.profile_duplicate_prompt.clear();
-        }
     }
 
     fn render_profile_name_dialog(&mut self, ctx: &egui::Context) {
@@ -1166,7 +1095,6 @@ impl HestiaApp {
                 ProfileOperationKind::Create => text.creating_profile(),
                 ProfileOperationKind::Duplicate => text.duplicating_profile(),
                 ProfileOperationKind::Delete => text.deleting_profile(),
-                ProfileOperationKind::Reidentify => text.profiles_reidentifying(),
                 _ => text.switching_profile(),
             }
         };
@@ -1776,21 +1704,6 @@ mod profile_switcher_geometry_tests {
             ),
             1.0
         );
-    }
-
-    #[test]
-    fn keeping_both_copies_blocks_other_profile_work_without_locking_the_app() {
-        // Not in the modal set, so the app stays usable while a large archive is rewritten...
-        assert!(!matches!(
-            ProfileOperationKind::Reidentify,
-            ProfileOperationKind::Create
-                | ProfileOperationKind::Duplicate
-                | ProfileOperationKind::Switch
-        ));
-        // ...but it is measurable, so it shows a real percentage rather than the looping bar.
-        assert!(profile_operation_reports_progress(
-            ProfileOperationKind::Reidentify
-        ));
     }
 
     #[test]

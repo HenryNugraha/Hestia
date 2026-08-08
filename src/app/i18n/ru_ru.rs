@@ -526,7 +526,15 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Размер предыдущего архива", // ProfilesPreviousArchiveSize
     "Архива пока нет", // ProfilesNoArchiveYet
     "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
-    "Сначала завершите текущую установку, обновление, сканирование или операцию с профилями.", // ProfilesFinishCurrentOperationFirst
+    "Действия приостановлены:", // ProfilesActionsPausedLabel
+    "выполняется другая задача", // ProfilesActionsPausedFallback
+    "выполняется операция с профилем", // ProfilesActionsPausedProfileOperation
+    "обновляется библиотека", // ProfilesActionsPausedRefreshingLibrary
+    "устанавливаются моды", // ProfilesActionsPausedInstallingMods
+    "проверяются обновления", // ProfilesActionsPausedCheckingUpdates
+    "обновляется Hestia", // ProfilesActionsPausedUpdatingHestia
+    "игра запущена", // ProfilesActionsPausedGameRunning
+    "запущен инструмент профиля", // ProfilesActionsPausedProfileToolRunning
     "Выберите игру для управления профилями.", // ProfilesSelectGame
     "Требуется хотя бы один профиль.", // ProfilesAtLeastOneRequired
     "Переключитесь на другой профиль, прежде чем удалять этот.", // ProfilesSwitchBeforeDelete
@@ -540,13 +548,6 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Операция с профилем отменена", // ProfilesCanceled
     "Профиль восстановлен", // ProfilesActionRecovered
     "Восстановлено профилей: {count} — они были в хранилище, но отсутствовали в списке.", // ProfilesRecovered
-    "Найдены дубликаты профилей", // ProfilesDuplicateTitle
-    "На диске есть дополнительные копии профилей. Hestia использует по одной из каждой; выберите, что делать с остальными.", // ProfilesDuplicateBody
-    "Идентичная копия", // ProfilesDuplicateIdentical
-    "Другое содержимое", // ProfilesDuplicateDifferent
-    "Оставить обе", // ProfilesDuplicateKeepBoth
-    "Удалить копию", // ProfilesDuplicateDelete
-    "Создание нового ID профиля…", // ProfilesReidentifying
 
     // Window: Settings
     "Опции", // SettingsWindowTitle

@@ -210,10 +210,6 @@ impl eframe::App for HestiaApp {
                 self.render_top_bar(ui);
             }
             {
-                profiling::scope!("render_settings_window");
-                self.render_settings_window(&ctx);
-            }
-            {
                 profiling::scope!("render_nav_rail");
                 self.render_nav_rail(ui);
             }
@@ -234,8 +230,11 @@ impl eframe::App for HestiaApp {
                     self.render_workspace_view(ui)
                 });
 
+            self.render_right_pane_window_scrim(&ctx);
+
             {
                 profiling::scope!("floating_windows");
+                self.render_settings_window(&ctx);
                 self.render_tasks_window(&ctx);
                 self.render_tools_window(&ctx);
                 self.render_tool_launch_options_prompt(&ctx);

@@ -33,7 +33,6 @@ fn spawn_profile_worker(
                             active_profile_marker: output.active_profile_marker,
                             orphaned_profiles: output.orphaned_profiles,
                             renamed_profiles: output.renamed_profiles,
-                            duplicate_profiles: output.duplicate_profiles,
                             warnings: output.warnings,
                         }),
                     });
@@ -157,7 +156,6 @@ struct ProfileWorkerOutput {
     background_archives: Vec<ProfileArchiveJob>,
     orphaned_profiles: Vec<OrphanedProfile>,
     renamed_profiles: Vec<RecoveredProfileLabel>,
-    duplicate_profiles: Vec<ProfileDuplicateEntry>,
     warnings: Vec<String>,
 }
 
@@ -382,7 +380,6 @@ fn execute_profile_operation(
                 background_archives: Vec::new(),
                 orphaned_profiles: Vec::new(),
                 renamed_profiles: Vec::new(),
-                duplicate_profiles: Vec::new(),
                 warnings: Vec::new(),
             });
         }
@@ -402,7 +399,7 @@ fn execute_profile_operation(
             warnings.extend(archive_warnings);
             // After the recovery above, so legacy names and interrupted sidecars have already been
             // normalized into their canonical form and are recognizable here.
-            let (orphaned_profiles, renamed_profiles, duplicate_profiles) =
+            let (orphaned_profiles, renamed_profiles) =
                 discover_orphaned_profiles(&roots, &spec, &mut warnings)
                     .map_err(ProfileWorkerError::into_recovery_blocking)?;
             return Ok(ProfileWorkerOutput {
@@ -417,7 +414,6 @@ fn execute_profile_operation(
                 background_archives,
                 orphaned_profiles,
                 renamed_profiles,
-                duplicate_profiles,
                 warnings,
             });
         }
@@ -443,6 +439,7 @@ fn execute_profile_operation(
             swap_roots(
                 &roots,
                 &staging,
+                None,
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
@@ -473,6 +470,7 @@ fn execute_profile_operation(
             swap_roots(
                 &roots,
                 &source,
+                None,
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
@@ -498,6 +496,7 @@ fn execute_profile_operation(
             swap_roots(
                 &roots,
                 &source,
+                spec.target_archive.as_deref(),
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
@@ -507,9 +506,6 @@ fn execute_profile_operation(
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Rename => {}
-        ProfileOperationKind::Reidentify => {
-            reidentify_duplicate_profile(&spec, &roots)?;
-        }
         ProfileOperationKind::Delete => {
             delete_profile_storage(&spec, &roots)?;
         }
@@ -536,7 +532,6 @@ fn execute_profile_operation(
         background_archives,
         orphaned_profiles: Vec::new(),
         renamed_profiles: Vec::new(),
-        duplicate_profiles: Vec::new(),
         warnings,
     })
 }
@@ -650,8 +645,20 @@ fn validate_profile_container_metadata(
     spec: &ProfileOperationSpec,
     expected_profile_id: ProfileId,
 ) -> std::result::Result<(), ProfileWorkerError> {
-    if metadata.profile_id != expected_profile_id
-        || metadata.game_id != spec.game_id
+    validate_profile_game_metadata(metadata, spec)?;
+    if metadata.profile_id != expected_profile_id {
+        return Err(
+            anyhow::anyhow!("profile data does not match the requested game/profile").into(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_profile_game_metadata(
+    metadata: &crate::integrations::profiles::ProfileArchiveMetadata,
+    spec: &ProfileOperationSpec,
+) -> std::result::Result<(), ProfileWorkerError> {
+    if metadata.game_id != spec.game_id
         || metadata.backend != spec.game.definition.backend
         || metadata.format_version == 0
     {
@@ -680,15 +687,18 @@ fn prepare_switch_target(
     target_profile_id: ProfileId,
     warnings: &mut Vec<String>,
 ) -> std::result::Result<PathBuf, ProfileWorkerError> {
-    let loose = roots.profile_path(target_profile_id);
+    let loose = spec
+        .target_profile
+        .clone()
+        .unwrap_or_else(|| roots.profile_path(target_profile_id));
     if loose.exists() {
         let metadata = loose
             .is_dir()
             .then(|| read_profile_container_metadata(&loose))
             .and_then(Result::ok);
-        if let Some(metadata) = metadata.filter(|metadata| {
-            validate_profile_container_metadata(metadata, spec, target_profile_id).is_ok()
-        }) {
+        if let Some(metadata) =
+            metadata.filter(|metadata| validate_profile_game_metadata(metadata, spec).is_ok())
+        {
             backfill_target_profile_data(spec, &metadata);
             return Ok(loose);
         }
@@ -706,12 +716,7 @@ fn prepare_switch_target(
         .ok_or_else(|| anyhow::anyhow!("target profile archive is missing"))?;
     let archive_metadata =
         match crate::integrations::profiles::read_profile_archive_metadata(archive) {
-            Ok(metadata)
-                if validate_profile_container_metadata(&metadata, spec, target_profile_id)
-                    .is_ok() =>
-            {
-                metadata
-            }
+            Ok(metadata) if validate_profile_game_metadata(&metadata, spec).is_ok() => metadata,
             Ok(_) | Err(_) => {
                 let conflict = next_archive_conflict_path(archive);
                 std::fs::rename(archive, &conflict)?;
@@ -729,7 +734,7 @@ fn prepare_switch_target(
             .saturating_add(64 * 1024 * 1024),
     )?;
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
-    validate_profile_container_metadata(&metadata, spec, target_profile_id)?;
+    validate_profile_game_metadata(&metadata, spec)?;
     backfill_target_profile_data(spec, &metadata);
     Ok(staging.to_path_buf())
 }
@@ -776,15 +781,18 @@ fn prepare_duplicate_target(
         return Ok(staging.to_path_buf());
     }
 
-    let loose = roots.profile_path(source_profile_id);
+    let loose = spec
+        .source_profile
+        .clone()
+        .unwrap_or_else(|| roots.profile_path(source_profile_id));
     if loose.exists() {
         let metadata = loose
             .is_dir()
             .then(|| read_profile_container_metadata(&loose))
             .and_then(Result::ok);
-        if let Some(metadata) = metadata.filter(|metadata| {
-            validate_profile_container_metadata(metadata, spec, source_profile_id).is_ok()
-        }) {
+        if let Some(metadata) =
+            metadata.filter(|metadata| validate_profile_game_metadata(metadata, spec).is_ok())
+        {
             let loose_roots = profile_container_roots(roots, &loose);
             update_profile_progress(
                 &spec.progress,
@@ -822,12 +830,7 @@ fn prepare_duplicate_target(
         .ok_or_else(|| anyhow::anyhow!("source profile archive is missing"))?;
     let archive_metadata =
         match crate::integrations::profiles::read_profile_archive_metadata(archive) {
-            Ok(metadata)
-                if validate_profile_container_metadata(&metadata, spec, source_profile_id)
-                    .is_ok() =>
-            {
-                metadata
-            }
+            Ok(metadata) if validate_profile_game_metadata(&metadata, spec).is_ok() => metadata,
             Ok(_) | Err(_) => {
                 let conflict = next_archive_conflict_path(archive);
                 std::fs::rename(archive, &conflict)?;
@@ -845,7 +848,7 @@ fn prepare_duplicate_target(
             .saturating_add(64 * 1024 * 1024),
     )?;
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
-    validate_profile_container_metadata(&metadata, spec, source_profile_id)?;
+    validate_profile_game_metadata(&metadata, spec)?;
     backfill_target_profile_data(spec, &metadata);
     Ok(staging.to_path_buf())
 }
@@ -935,63 +938,6 @@ fn rename_profile_storage_label(
     }
 }
 
-/// Rewrite a duplicated archive under a fresh identity so both copies can be kept.
-///
-/// The source is left exactly as it is: the copy becomes the new profile, so a failure part-way
-/// costs nothing but the partial output, which the repack removes itself.
-fn reidentify_duplicate_profile(
-    spec: &ProfileOperationSpec,
-    roots: &crate::integrations::profiles::ProfileRoots,
-) -> std::result::Result<(), ProfileWorkerError> {
-    let source = spec
-        .reidentify_source
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no archive to re-identify"))?;
-    let target_id = spec
-        .target_profile_id
-        .ok_or_else(|| anyhow::anyhow!("target profile id is missing"))?;
-    let display_name = spec
-        .target_display_name
-        .clone()
-        .unwrap_or_else(|| "Profile".to_string());
-    let destination = roots.archive_path_for(target_id, &display_name);
-    crate::integrations::profiles::ensure_profile_space(
-        &roots.profiles_dir,
-        std::fs::metadata(source).map(|meta| meta.len()).unwrap_or(0),
-    )?;
-    let mut report = |copied: u64, total: u64| -> Result<()> {
-        if spec.cancel.load(Ordering::Relaxed) {
-            bail!("profile operation canceled");
-        }
-        let pct = if total == 0 {
-            PROFILE_PREPARE_PROGRESS_START
-        } else {
-            PROFILE_PREPARE_PROGRESS_START
-                + (copied.saturating_mul(90 - PROFILE_PREPARE_PROGRESS_START) / total)
-                    .min(90 - PROFILE_PREPARE_PROGRESS_START)
-        };
-        if spec.progress.load(Ordering::Relaxed) != pct {
-            update_profile_progress(&spec.progress, &spec.stage, pct, "Generating new profile ID");
-        }
-        Ok(())
-    };
-    update_profile_progress(
-        &spec.progress,
-        &spec.stage,
-        PROFILE_PREPARE_PROGRESS_START,
-        "Generating new profile ID",
-    );
-    crate::integrations::profiles::reidentify_profile_archive(
-        source,
-        &destination,
-        target_id,
-        &display_name,
-        Some(&mut report),
-    )?;
-    update_profile_progress(&spec.progress, &spec.stage, 100, "Profile ID generated");
-    Ok(())
-}
-
 fn delete_profile_storage(
     spec: &ProfileOperationSpec,
     roots: &crate::integrations::profiles::ProfileRoots,
@@ -999,7 +945,82 @@ fn delete_profile_storage(
     let profile_id = spec
         .profile_id
         .ok_or_else(|| anyhow::anyhow!("profile id is missing"))?;
-    remove_profile_storage_entries(roots, profile_id)?;
+    let mut removed_exact = false;
+    if let Some(profile) = &spec.source_profile {
+        remove_loose_storage_entry(profile)?;
+        removed_exact = true;
+    }
+    if let Some(archive) = &spec.source_archive {
+        remove_archive_storage_entry(archive)?;
+        removed_exact = true;
+    }
+    if !removed_exact {
+        remove_profile_storage_entries(roots, profile_id)?;
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
+fn remove_archive_storage_entry(archive: &Path) -> std::io::Result<()> {
+    for path in [
+        archive.to_path_buf(),
+        archive_sidecar_path(archive, "part"),
+        archive_sidecar_path(archive, "bak"),
+    ] {
+        remove_path_if_exists(&path)?;
+    }
+    remove_archive_storage_conflicts(archive)?;
+    Ok(())
+}
+
+fn remove_archive_storage_conflicts(archive: &Path) -> std::io::Result<()> {
+    let Some(parent) = archive.parent() else {
+        return Ok(());
+    };
+    let Some(file_name) = archive.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let archive_suffix = format!(
+        ".{}",
+        crate::integrations::profiles::PROFILE_ARCHIVE_EXTENSION
+    );
+    let Some(stem) = file_name.strip_suffix(&archive_suffix) else {
+        return Ok(());
+    };
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&format!("{stem}.conflict-"))
+                && name.ends_with(&archive_suffix)
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+            {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remove_loose_storage_entry(profile: &Path) -> std::io::Result<()> {
+    remove_path_if_exists(profile)?;
+    let deleting = profile
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| profile.with_file_name(format!("{name}.deleting")));
+    if let Some(deleting) = deleting {
+        remove_path_if_exists(&deleting)?;
+    }
     Ok(())
 }
 
@@ -1007,8 +1028,7 @@ fn remove_profile_storage_entries(
     roots: &crate::integrations::profiles::ProfileRoots,
     profile_id: ProfileId,
 ) -> std::io::Result<()> {
-    // Sweep every entry carrying this profile's short id rather than only the one the resolver
-    // would pick: hand-made copies should not survive explicit cleanup and get re-adopted later.
+    // Legacy fallback for records that predate exact storage filenames.
     let mut paths = vec![
         roots.archive_part_path(profile_id),
         roots.archive_backup_path(profile_id),
@@ -1421,6 +1441,7 @@ fn create_empty_roots(
 fn swap_roots(
     roots: &crate::integrations::profiles::ProfileRoots,
     target_source: &Path,
+    target_archive: Option<&Path>,
     operation_id: u64,
     outgoing_profile: Option<(ProfileId, crate::integrations::profiles::ProfileArchiveMetadata)>,
     marker: &ActiveProfileMarker,
@@ -1526,9 +1547,12 @@ fn swap_roots(
         return Err(error);
     }
 
-    if let Err(error) = remove_profile_storage_entries(roots, marker.profile_id) {
+    if let Some(target_archive) = target_archive
+        && let Err(error) = remove_archive_storage_entry(target_archive)
+    {
         warnings.push(format!(
-            "Active profile storage cleanup could not remove all stale entries: {error}"
+            "Activated profile archive cleanup could not remove {}: {error}",
+            target_archive.display()
         ));
     }
     match std::fs::remove_dir_all(target_source) {
@@ -1693,55 +1717,6 @@ enum ProfileStorageKind {
     Archive,
 }
 
-/// What two entries claiming the same profile actually disagree about.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ProfileDuplicateKind {
-    /// Byte-identical content. Redundant, so one can be dropped to reclaim the space.
-    Redundant,
-    /// Different snapshots of the same profile, or a fingerprint too old to compare. Only the user
-    /// can say which they want, so this is never resolved automatically.
-    Divergent,
-}
-
-/// Group stored entries that claim the same profile.
-///
-/// Entries only duplicate each other when they are the **same kind**. A container and an archive
-/// for one profile is the routine mid-compression state — `execute_profile_archive_job` writes the
-/// archive and removes the container only afterwards, and that window survives a close or a crash —
-/// so treating it as a duplicate would prompt about the app's own normal behaviour.
-fn duplicate_profile_storage_groups(
-    entries: &[(ProfileId, ProfileStorageKind, Option<String>)],
-) -> Vec<(Vec<usize>, ProfileDuplicateKind)> {
-    let mut groups: Vec<(ProfileId, ProfileStorageKind, Vec<usize>)> = Vec::new();
-    for (index, (profile_id, kind, _)) in entries.iter().enumerate() {
-        match groups
-            .iter_mut()
-            .find(|(id, group_kind, _)| id == profile_id && group_kind == kind)
-        {
-            Some((_, _, members)) => members.push(index),
-            None => groups.push((*profile_id, *kind, vec![index])),
-        }
-    }
-    groups
-        .into_iter()
-        .filter(|(_, _, members)| members.len() > 1)
-        .map(|(_, _, members)| {
-            let first = entries[members[0]].2.as_deref();
-            // An absent fingerprint predates content tracking, so it can never prove sameness.
-            let redundant = first.is_some()
-                && members
-                    .iter()
-                    .all(|index| entries[*index].2.as_deref() == first);
-            let kind = if redundant {
-                ProfileDuplicateKind::Redundant
-            } else {
-                ProfileDuplicateKind::Divergent
-            };
-            (members, kind)
-        })
-        .collect()
-}
-
 /// Move stored profile data to the name its own metadata says it should have, returning the new
 /// path when it moved.
 ///
@@ -1756,13 +1731,14 @@ fn rename_profile_storage_to_canonical(
     is_archive: bool,
     warnings: &mut Vec<String>,
 ) -> Option<PathBuf> {
-    // A name that already carries this profile's short id is current, because renames keep it so.
-    // Rewriting it from the embedded name would undo a rename made while the profile was inactive.
+    // Any readable storage name with a marker is current, because renames and manual copies keep
+    // their user-visible label there. Rewriting it from embedded metadata would undo an inactive
+    // rename or collapse an Explorer copy back onto the source profile.
     let stem = path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default();
-    if crate::integrations::profiles::profile_storage_stem_matches(stem, metadata.profile_id) {
+    if crate::integrations::profiles::parse_profile_storage_stem(stem).is_some() {
         return None;
     }
     let canonical = if is_archive {
@@ -1774,11 +1750,8 @@ fn rename_profile_storage_to_canonical(
         return None;
     }
     if canonical.exists() {
-        warnings.push(format!(
-            "{} was left under its current name because {} already exists",
-            path.display(),
-            canonical.display()
-        ));
+        // A user may have copied an archive and changed only the visible filename. Recovery will
+        // leave that readable storage name alone instead of warning about the mismatch.
         return None;
     }
     match std::fs::rename(path, &canonical) {
@@ -1793,60 +1766,25 @@ fn rename_profile_storage_to_canonical(
     }
 }
 
-/// Tell the user when more than one stored entry claims the same profile.
-///
-/// Reporting rather than resolving: identical copies are safe to drop but that is the user's call,
-/// and differing copies are two real snapshots only they can choose between.
-fn report_duplicate_profile_storage(
-    seen: &[(ProfileId, ProfileStorageKind, Option<String>, PathBuf)],
-    warnings: &mut Vec<String>,
-) -> Vec<ProfileDuplicateEntry> {
-    let mut entries = Vec::new();
-    let keys: Vec<(ProfileId, ProfileStorageKind, Option<String>)> = seen
-        .iter()
-        .map(|(id, kind, fingerprint, _)| (*id, *kind, fingerprint.clone()))
-        .collect();
-    for (members, duplicate_kind) in duplicate_profile_storage_groups(&keys) {
-        let paths: Vec<String> = members
-            .iter()
-            .map(|index| seen[*index].3.display().to_string())
-            .collect();
-        warnings.push(match duplicate_kind {
-            ProfileDuplicateKind::Redundant => format!(
-                "{} identical copies of one profile are stored: {}. Deleting the extras frees space without losing anything.",
-                paths.len(),
-                paths.join(", ")
-            ),
-            ProfileDuplicateKind::Divergent => format!(
-                "{} different copies of one profile are stored: {}. Only one can be used; the rest were left untouched.",
-                paths.len(),
-                paths.join(", ")
-            ),
-        });
-        // The first is the copy in use; the rest are what the user is asked about.
-        for index in members.iter().skip(1) {
-            let (_, _, _, path) = &seen[*index];
-            entries.push(ProfileDuplicateEntry {
-                game_id: String::new(),
-                display_name: String::new(),
-                path: path.clone(),
-                bytes: std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0),
-                redundant: duplicate_kind == ProfileDuplicateKind::Redundant,
-            });
-        }
-    }
-    entries
+fn storage_profile_id_from_path(path: &Path) -> Option<ProfileId> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(crate::integrations::profiles::parse_profile_storage_stem)
+        .and_then(|(_, short_id)| short_id.parse().ok())
 }
 
 /// Profile data present in storage that the catalog has no record of. Its embedded `profile.json`
-/// carries everything a record needs, so the profile can be restored exactly rather than guessed
-/// at — the only fields taken from the filesystem are the on-disk size and the modification time.
+/// carries the profile-owned data, while the exact storage filename is used to address it until it
+/// cycles through the active profile again.
 #[derive(Clone)]
 struct OrphanedProfile {
+    profile_id: ProfileId,
     metadata: crate::integrations::profiles::ProfileArchiveMetadata,
     /// Name taken from the storage name, which a rename keeps current. The embedded name is only
     /// what it was called when the archive was last written.
     label: Option<String>,
+    /// Exact storage entry name to use until the profile cycles through active storage again.
+    storage_file_name: Option<String>,
     archive_size: Option<u64>,
     updated_at: Option<DateTime<Utc>>,
 }
@@ -1857,29 +1795,29 @@ struct RecoveredProfileLabel {
     label: String,
 }
 
-/// Find profile data whose id is absent from the catalog. Without this an archive whose record is
-/// lost stays invisible forever while still occupying its full size on disk, with no way to reach
-/// or reclaim it from inside the app.
+fn storage_file_name_is_known(spec: &ProfileOperationSpec, storage_file_name: &str) -> bool {
+    spec.known_profile_storage_file_names
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(storage_file_name))
+}
+
+/// Find profile data whose storage entry is absent from the catalog. Without this an archive whose
+/// record is lost stays invisible forever while still occupying its full size on disk, with no way
+/// to reach or reclaim it from inside the app.
 fn discover_orphaned_profiles(
     roots: &crate::integrations::profiles::ProfileRoots,
     spec: &ProfileOperationSpec,
     warnings: &mut Vec<String>,
 ) -> std::result::Result<
-    (
-        Vec<OrphanedProfile>,
-        Vec<RecoveredProfileLabel>,
-        Vec<ProfileDuplicateEntry>,
-    ),
+    (Vec<OrphanedProfile>, Vec<RecoveredProfileLabel>),
     ProfileWorkerError,
 > {
     if !roots.profiles_dir.is_dir() {
-        return Ok((Vec::new(), Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new()));
     }
     let mut found: Vec<OrphanedProfile> = Vec::new();
     let mut renamed: Vec<(ProfileId, ProfileStorageKind, String)> = Vec::new();
-    // Every valid entry, known or not, so copies of a profile already in the catalog are reported
-    // too — that is the case where a user has quietly duplicated an archive.
-    let mut seen: Vec<(ProfileId, ProfileStorageKind, Option<String>, PathBuf)> = Vec::new();
+    let mut taken_profile_ids = spec.known_profile_ids.clone();
     for entry in std::fs::read_dir(&roots.profiles_dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1907,7 +1845,8 @@ fn discover_orphaned_profiles(
                 continue;
             }
         };
-        // The embedded metadata is the identity, never the file name.
+        // Embedded ids are archive metadata, not recovery ownership. The filename determines which
+        // storage entry the user is looking at.
         if metadata.game_id != spec.game_id
             || metadata.backend != spec.game.definition.backend
             || metadata.format_version == 0
@@ -1924,17 +1863,32 @@ fn discover_orphaned_profiles(
         ) {
             path = renamed_path;
         }
-        seen.push((metadata.profile_id, kind, metadata.source_fingerprint.clone(), path.clone()));
         let label = storage_label_from_path(&path).or(label_before_rename);
-        if spec.known_profile_ids.contains(&metadata.profile_id) {
+        let storage_file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned);
+        let storage_is_known = storage_file_name
+            .as_deref()
+            .is_some_and(|name| storage_file_name_is_known(spec, name));
+        let storage_profile_id = storage_profile_id_from_path(&path).unwrap_or(metadata.profile_id);
+        if storage_is_known {
             if let Some(label) = label.filter(|label| !label.trim().is_empty()) {
-                renamed.push((metadata.profile_id, kind, label));
+                renamed.push((storage_profile_id, kind, label));
             }
             continue;
         }
+        let profile_id = if taken_profile_ids.contains(&storage_profile_id) {
+            ProfileId::random_unused(&taken_profile_ids)
+        } else {
+            storage_profile_id
+        };
+        taken_profile_ids.push(profile_id);
         let file_metadata = std::fs::metadata(&path).ok();
         found.push(OrphanedProfile {
+            profile_id,
             label,
+            storage_file_name,
             archive_size: is_archive
                 .then(|| file_metadata.as_ref().map(std::fs::Metadata::len))
                 .flatten(),
@@ -1944,34 +1898,15 @@ fn discover_orphaned_profiles(
             metadata,
         });
     }
-    let duplicates = report_duplicate_profile_storage(&seen, warnings);
-    // One record per profile, however many copies of it are on disk. The extras are reported
-    // above and left alone; adopting each would put the same profile in the list several times.
-    let mut adopted_ids: HashSet<ProfileId> = HashSet::new();
-    found.retain(|orphan| adopted_ids.insert(orphan.metadata.profile_id));
     // Stable order so repeated recoveries present the list the same way.
     found.sort_by(|a, b| {
         a.metadata
             .created_at
             .cmp(&b.metadata.created_at)
-            .then_with(|| a.metadata.profile_id.cmp(&b.metadata.profile_id))
+            .then_with(|| a.profile_id.cmp(&b.profile_id))
     });
     let renamed = recovered_profile_labels_from_storage(renamed);
-    let duplicates: Vec<ProfileDuplicateEntry> = duplicates
-        .into_iter()
-        .map(|entry| ProfileDuplicateEntry {
-            game_id: spec.game_id.clone(),
-            display_name: entry
-                .path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(crate::integrations::profiles::parse_profile_storage_stem)
-                .map(|(label, _)| label.to_string())
-                .unwrap_or_else(|| entry.display_name.clone()),
-            ..entry
-        })
-        .collect();
-    Ok((found, renamed, duplicates))
+    Ok((found, renamed))
 }
 
 fn recovered_profile_labels_from_storage(
@@ -2010,9 +1945,8 @@ fn recovered_profile_labels_from_storage(
                 }
                 [] => {}
                 _ => {
-                    // Ambiguous same-kind duplicates are reported separately and left for the user
-                    // to resolve. Do not let an arbitrary directory iteration order pick the app
-                    // name.
+                    // Ambiguous same-kind storage entries keep their own names. Do not let an
+                    // arbitrary directory iteration order pick the existing app name.
                 }
             }
         }
@@ -2528,13 +2462,15 @@ mod profile_worker_tests {
             target_profile_id: None,
             display_name: None,
             target_display_name: None,
+            source_profile: None,
+            target_profile: None,
             source_archive: None,
             target_archive: None,
             target_categories: None,
             target_tools: None,
             target_tool_blacklist: None,
             known_profile_ids: Vec::new(),
-            reidentify_source: None,
+            known_profile_storage_file_names: Vec::new(),
             metadata: None,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
@@ -2722,22 +2658,22 @@ mod profile_worker_tests {
 
     fn orphan_spec(roots: &profiles::ProfileRoots, known: Vec<ProfileId>) -> ProfileOperationSpec {
         let mut spec = recovery_spec(xxmi_game(&roots.mods));
+        spec.known_profile_storage_file_names = known
+            .iter()
+            .flat_map(|profile_id| {
+                [false, true].into_iter().filter_map(|archive| {
+                    roots
+                        .find_profile_storage(*profile_id, archive)
+                        .and_then(|path| {
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .map(str::to_owned)
+                        })
+                })
+            })
+            .collect();
         spec.known_profile_ids = known;
         spec
-    }
-
-    #[test]
-    fn a_container_and_its_archive_are_not_duplicates_while_compression_is_pending() {
-        let profile_id = ProfileId::random();
-        let entries = [
-            (profile_id, ProfileStorageKind::Container, Some("fp".into())),
-            (profile_id, ProfileStorageKind::Archive, Some("fp".into())),
-        ];
-
-        assert!(
-            duplicate_profile_storage_groups(&entries).is_empty(),
-            "the archive is written before the container is removed, so this pair is routine"
-        );
     }
 
     #[test]
@@ -2778,58 +2714,6 @@ mod profile_worker_tests {
     }
 
     #[test]
-    fn same_kind_copies_are_grouped_and_classified_by_content() {
-        let profile_id = ProfileId::random();
-        let other_id = ProfileId::random();
-        let entries = [
-            (profile_id, ProfileStorageKind::Archive, Some("fp".into())),
-            (profile_id, ProfileStorageKind::Archive, Some("fp".into())),
-            (other_id, ProfileStorageKind::Archive, Some("aaa".into())),
-            (other_id, ProfileStorageKind::Archive, Some("bbb".into())),
-        ];
-
-        let groups = duplicate_profile_storage_groups(&entries);
-
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0], (vec![0, 1], ProfileDuplicateKind::Redundant));
-        assert_eq!(
-            groups[1],
-            (vec![2, 3], ProfileDuplicateKind::Divergent),
-            "different content means only the user can choose"
-        );
-    }
-
-    #[test]
-    fn an_uncomparable_fingerprint_is_never_treated_as_redundant() {
-        let profile_id = ProfileId::random();
-        let entries = [
-            (profile_id, ProfileStorageKind::Archive, None),
-            (profile_id, ProfileStorageKind::Archive, None),
-        ];
-
-        assert_eq!(
-            duplicate_profile_storage_groups(&entries),
-            vec![(vec![0, 1], ProfileDuplicateKind::Divergent)],
-            "an archive too old to fingerprint must never be deleted as redundant"
-        );
-    }
-
-    #[test]
-    fn duplicate_containers_are_grouped_and_distinct_profiles_are_left_alone() {
-        let profile_id = ProfileId::random();
-        let entries = [
-            (profile_id, ProfileStorageKind::Container, Some("fp".into())),
-            (profile_id, ProfileStorageKind::Container, Some("fp".into())),
-            (ProfileId::random(), ProfileStorageKind::Archive, Some("x".into())),
-            (ProfileId::random(), ProfileStorageKind::Container, Some("y".into())),
-        ];
-
-        let groups = duplicate_profile_storage_groups(&entries);
-
-        assert_eq!(groups, vec![(vec![0, 1], ProfileDuplicateKind::Redundant)]);
-    }
-
-    #[test]
     fn recovery_adopts_stored_profiles_the_catalog_lost_but_never_known_ones() {
         let temp = tempfile::tempdir().unwrap();
         let roots = profiles::ProfileRoots {
@@ -2857,7 +2741,7 @@ mod profile_worker_tests {
         let _ = known;
 
         let mut warnings = Vec::new();
-        let (found, _, _) = discover_orphaned_profiles(
+        let (found, _) = discover_orphaned_profiles(
             &roots,
             &orphan_spec(&roots, vec![known_id]),
             &mut warnings,
@@ -2924,35 +2808,32 @@ mod profile_worker_tests {
         foreign_metadata.game_id = "someone-else".to_string();
         write_profile_container_metadata(&foreign, &foreign_metadata).unwrap();
 
-        // Renamed by hand, so its label disagrees with its embedded identity. This one IS adopted:
-        // the metadata is the identity, and the label is corrected on the way in.
+        // Renamed by hand, so its label and marker disagree with its embedded identity. This one
+        // is adopted exactly as named on disk.
         let embedded_id = ProfileId::random();
         let renamed = roots.profiles_dir.join("Whatever I Called It [aaaaaaaa]");
         std::fs::create_dir_all(&renamed).unwrap();
         write_profile_container_metadata(&renamed, &metadata(embedded_id, "Renamed")).unwrap();
 
         let mut warnings = Vec::new();
-        let (found, _, _) =
+        let (found, _) =
             discover_orphaned_profiles(&roots, &orphan_spec(&roots, Vec::new()), &mut warnings)
                 .unwrap();
 
         let adopted: Vec<&str> = found
             .iter()
-            .map(|orphan| orphan.metadata.display_name.as_str())
+            .map(|orphan| orphan.label.as_deref().unwrap_or(""))
             .collect();
         assert_eq!(
             adopted,
-            vec!["Renamed"],
-            "sidecars, quarantines and another game's data must be left alone; only the              hand-renamed profile is adopted, under the name its metadata carries"
+            vec!["Whatever I Called It"],
+            "sidecars, quarantines and another game's data must be left alone; only the hand-renamed profile is adopted, under the name on disk"
         );
         assert!(
-            roots
-                .profiles_dir
-                .join(profiles::profile_storage_stem("Renamed", embedded_id))
-                .is_dir(),
-            "adoption must also correct the label on disk"
+            renamed.is_dir(),
+            "adoption must not rewrite a readable storage name from embedded metadata"
         );
-        assert!(!renamed.exists(), "the old label must not be left behind");
+        assert_eq!(found[0].profile_id.to_string(), "aaaaaaaa");
     }
 
     #[test]
@@ -2980,7 +2861,7 @@ mod profile_worker_tests {
         std::fs::remove_dir_all(&source).unwrap();
 
         let mut warnings = Vec::new();
-        let (found, _, _) =
+        let (found, _) =
             discover_orphaned_profiles(&roots, &orphan_spec(&roots, Vec::new()), &mut warnings)
                 .unwrap();
 
@@ -3035,7 +2916,7 @@ mod profile_worker_tests {
         );
 
         let mut warnings = Vec::new();
-        let (found, _, _) =
+        let (found, _) =
             discover_orphaned_profiles(&roots, &orphan_spec(&roots, Vec::new()), &mut warnings)
                 .unwrap();
 
@@ -3100,7 +2981,7 @@ mod profile_worker_tests {
         std::fs::rename(roots.archive_path_for(profile_id, "xDefault"), &renamed).unwrap();
 
         let mut warnings = Vec::new();
-        let (found, renamed_profiles, _) = discover_orphaned_profiles(
+        let (found, renamed_profiles) = discover_orphaned_profiles(
             &roots,
             &orphan_spec(&roots, vec![profile_id]),
             &mut warnings,
@@ -3118,7 +2999,7 @@ mod profile_worker_tests {
     }
 
     #[test]
-    fn a_copied_archive_is_reported_rather_than_silently_picked() {
+    fn a_copied_archive_is_adopted_as_its_own_storage_entry() {
         let temp = tempfile::tempdir().unwrap();
         let roots = profiles::ProfileRoots {
             profiles_dir: temp.path().join("Mods_Profiles"),
@@ -3145,19 +3026,71 @@ mod profile_worker_tests {
         .unwrap();
 
         let mut warnings = Vec::new();
-        let (found, _, _) =
+        let (found, _) =
             discover_orphaned_profiles(&roots, &orphan_spec(&roots, Vec::new()), &mut warnings)
                 .unwrap();
 
-        assert_eq!(
-            found.len(),
-            1,
-            "one profile is adopted, not one per copy of it"
+        assert_eq!(found.len(), 2, "the original and Explorer copy are both profiles");
+        assert!(
+            found.iter().any(|orphan| orphan.profile_id == profile_id),
+            "the original archive keeps its own storage handle"
         );
         assert!(
-            warnings.iter().any(|warning| warning.contains("identical copies")),
-            "the extra copy must be reported so its space can be reclaimed: {warnings:?}"
+            found
+                .iter()
+                .any(|orphan| orphan.profile_id.to_string() == "aaaaaaaa"),
+            "the copied archive uses the marker in its filename as its storage handle"
         );
+        assert!(
+            warnings.is_empty(),
+            "duplicates are preserved silently rather than shown as warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_same_marker_copy_is_adopted_with_a_fresh_app_handle() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        let profile_id = ProfileId::random();
+        let source = write_container(&roots, profile_id, "Patch 1.4");
+        let archive = roots.archive_path_for(profile_id, "Patch 1.4");
+        profiles::create_profile_archive_with_progress(
+            &profile_container_roots(&roots, &source),
+            &metadata(profile_id, "Patch 1.4"),
+            &archive,
+            None,
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&source).unwrap();
+        let copied_name = format!("zPatch 1.4 Copy [{}].tzst", profiles::profile_short_id(profile_id));
+        std::fs::copy(&archive, roots.profiles_dir.join(&copied_name)).unwrap();
+
+        let mut warnings = Vec::new();
+        let (found, _) = discover_orphaned_profiles(
+            &roots,
+            &orphan_spec(&roots, vec![profile_id]),
+            &mut warnings,
+        )
+        .unwrap();
+
+        assert_eq!(found.len(), 1);
+        assert_ne!(
+            found[0].profile_id, profile_id,
+            "the catalog row still needs a unique app handle"
+        );
+        assert_eq!(found[0].metadata.profile_id, profile_id);
+        assert_eq!(found[0].storage_file_name.as_deref(), Some(copied_name.as_str()));
+        assert!(
+            roots.profiles_dir.join(&copied_name).is_file(),
+            "the copied archive is adopted as-is, not rewritten"
+        );
+        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -3175,7 +3108,7 @@ mod profile_worker_tests {
         std::fs::write(&broken, b"not a zstd archive").unwrap();
 
         let mut warnings = Vec::new();
-        let (found, _, _) =
+        let (found, _) =
             discover_orphaned_profiles(&roots, &orphan_spec(&roots, Vec::new()), &mut warnings)
                 .unwrap();
 
@@ -3681,13 +3614,15 @@ mod profile_worker_tests {
             target_profile_id: Some(target_id),
             display_name: None,
             target_display_name: Some("Warm".to_string()),
+            source_profile: None,
+            target_profile: None,
             source_archive: None,
             target_archive: Some(archive.clone()),
             target_categories: None,
             target_tools: None,
             target_tool_blacklist: None,
             known_profile_ids: Vec::new(),
-            reidentify_source: None,
+            known_profile_storage_file_names: Vec::new(),
             metadata: Some(metadata(current_id, "Current")),
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
@@ -3865,6 +3800,7 @@ mod profile_worker_tests {
         swap_roots(
             &roots,
             &target,
+            Some(&stale_target_archive),
             1,
             Some((outgoing_id, metadata(outgoing_id, "Current"))),
             &target_marker,
@@ -3932,6 +3868,7 @@ mod profile_worker_tests {
         swap_roots(
             &roots,
             &target,
+            None,
             7,
             Some((outgoing_id, metadata(outgoing_id, "Current"))),
             &ActiveProfileMarker {

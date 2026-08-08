@@ -526,7 +526,15 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ukuran arsip sebelumnya", // ProfilesPreviousArchiveSize
     "Belum ada arsip", // ProfilesNoArchiveYet
     "Operasi profil gagal", // ProfilesOperationFailed
-    "Selesaikan pemasangan, pembaruan, pemindaian, atau operasi profil saat ini terlebih dahulu.", // ProfilesFinishCurrentOperationFirst
+    "Aksi dijeda:", // ProfilesActionsPausedLabel
+    "tugas lain sedang berjalan", // ProfilesActionsPausedFallback
+    "operasi profil sedang berjalan", // ProfilesActionsPausedProfileOperation
+    "menyegarkan pustaka", // ProfilesActionsPausedRefreshingLibrary
+    "memasang mod", // ProfilesActionsPausedInstallingMods
+    "memeriksa pembaruan", // ProfilesActionsPausedCheckingUpdates
+    "memperbarui Hestia", // ProfilesActionsPausedUpdatingHestia
+    "game sedang berjalan", // ProfilesActionsPausedGameRunning
+    "alat profil sedang berjalan", // ProfilesActionsPausedProfileToolRunning
     "Pilih game untuk mengelola profil.", // ProfilesSelectGame
     "Diperlukan setidaknya satu profil.", // ProfilesAtLeastOneRequired
     "Ganti ke profil lain sebelum menghapus profil ini.", // ProfilesSwitchBeforeDelete
@@ -540,13 +548,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Operasi profil dibatalkan", // ProfilesCanceled
     "Profil dipulihkan", // ProfilesActionRecovered
     "Memulihkan {count} profil yang ada di penyimpanan tetapi hilang dari daftar profil.", // ProfilesRecovered
-    "Ditemukan salinan profil ganda", // ProfilesDuplicateTitle
-    "Salinan tambahan dari profil Anda ada di disk. Hestia memakai salah satunya; pilih tindakan untuk sisanya.", // ProfilesDuplicateBody
-    "Salinan identik", // ProfilesDuplicateIdentical
-    "Isi berbeda", // ProfilesDuplicateDifferent
-    "Simpan keduanya", // ProfilesDuplicateKeepBoth
-    "Hapus salinan", // ProfilesDuplicateDelete
-    "Membuat ID profil baru…", // ProfilesReidentifying
 
     // Window: Settings
     "Setelan", // SettingsWindowTitle

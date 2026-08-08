@@ -381,8 +381,6 @@ impl HestiaApp {
             tools_window_nonce,
             tools_force_default_pos,
             tool_launch_options_prompt: None,
-            pending_reidentify_source: None,
-            profile_duplicate_prompt: Vec::new(),
             dragging_window_tool_id: None,
             dragging_window_tool_target_index: None,
             dragging_titlebar_tool_id: None,

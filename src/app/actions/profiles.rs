@@ -1,3 +1,5 @@
+const PROFILE_STORAGE_FILE_NAME_METADATA_KEY: &str = "profile_storage_file_name";
+
 impl HestiaApp {
     fn validate_profile_name(
         &self,
@@ -367,12 +369,145 @@ impl HestiaApp {
         categories
     }
 
-    fn profile_archive_for(&self, game: &GameInstall, id: ProfileId) -> Result<PathBuf> {
-        profiles::profile_archive_path(game, self.state.static_prefs.use_default_mods_path, id)
+    fn profile_storage_file_name(profile: &ProfileRecord) -> Option<&str> {
+        profile
+            .portable_metadata
+            .get(PROFILE_STORAGE_FILE_NAME_METADATA_KEY)
+            .and_then(|value| value.as_str())
+            .filter(|name| {
+                !name.is_empty()
+                    && Path::new(name).file_name().is_some_and(|file_name| file_name == *name)
+            })
     }
 
-    fn profile_path_for(&self, game: &GameInstall, id: ProfileId) -> Result<PathBuf> {
-        profiles::profile_path(game, self.state.static_prefs.use_default_mods_path, id)
+    fn profile_storage_name_key(file_name: &str) -> Option<(bool, ProfileId)> {
+        let archive_suffix = format!(".{}", profiles::PROFILE_ARCHIVE_EXTENSION);
+        let (stem, archive) = file_name
+            .strip_suffix(&archive_suffix)
+            .map(|stem| (stem, true))
+            .unwrap_or((file_name, false));
+        let (_, short_id) = profiles::parse_profile_storage_stem(stem)?;
+        Some((archive, short_id.parse().ok()?))
+    }
+
+    fn rename_exact_profile_storage_file(
+        roots: &profiles::ProfileRoots,
+        current_file_name: &str,
+        display_name: &str,
+    ) -> Option<String> {
+        Self::try_rename_exact_profile_storage_file(roots, current_file_name, display_name).ok()
+    }
+
+    fn try_rename_exact_profile_storage_file(
+        roots: &profiles::ProfileRoots,
+        current_file_name: &str,
+        display_name: &str,
+    ) -> Result<String> {
+        let current = roots.profiles_dir.join(current_file_name);
+        if !current.exists() {
+            bail!("profile storage is missing: {}", current.display());
+        }
+        let file_name = current
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("profile storage name is invalid"))?;
+        let archive_suffix = format!(".{}", profiles::PROFILE_ARCHIVE_EXTENSION);
+        let (stem, is_archive) = file_name
+            .strip_suffix(&archive_suffix)
+            .map(|stem| (stem, true))
+            .unwrap_or((file_name, false));
+        let (_, short_id) = profiles::parse_profile_storage_stem(stem)
+            .ok_or_else(|| anyhow!("profile storage name is invalid"))?;
+        let new_stem = format!(
+            "{} [{}]",
+            profiles::sanitize_profile_label(display_name),
+            short_id.to_ascii_lowercase()
+        );
+        let new_file_name = if is_archive {
+            format!("{new_stem}.{}", profiles::PROFILE_ARCHIVE_EXTENSION)
+        } else {
+            new_stem
+        };
+        if new_file_name == current_file_name {
+            return Ok(new_file_name);
+        }
+        let destination = roots.profiles_dir.join(&new_file_name);
+        if destination.exists() {
+            bail!("profile storage already exists: {}", destination.display());
+        }
+        std::fs::rename(&current, &destination)?;
+        Ok(new_file_name)
+    }
+
+    fn profile_bound_storage_path(
+        roots: &profiles::ProfileRoots,
+        storage_file_name: &str,
+        archive: bool,
+    ) -> PathBuf {
+        let archive_suffix = format!(".{}", profiles::PROFILE_ARCHIVE_EXTENSION);
+        let (stem, storage_is_archive) = storage_file_name
+            .strip_suffix(&archive_suffix)
+            .map(|stem| (stem, true))
+            .unwrap_or((storage_file_name, false));
+        let file_name = if archive {
+            format!("{stem}.{}", profiles::PROFILE_ARCHIVE_EXTENSION)
+        } else {
+            stem.to_string()
+        };
+        if archive == storage_is_archive {
+            roots.profiles_dir.join(storage_file_name)
+        } else {
+            roots.profiles_dir.join(file_name)
+        }
+    }
+
+    fn profile_bound_storage_exists(
+        roots: &profiles::ProfileRoots,
+        storage_file_name: &str,
+    ) -> bool {
+        Self::profile_bound_storage_path(roots, storage_file_name, true).is_file()
+            || Self::profile_bound_storage_path(roots, storage_file_name, false).is_dir()
+    }
+
+    fn profile_storage_path_for(
+        &self,
+        game_id: &str,
+        game: &GameInstall,
+        id: ProfileId,
+        archive: bool,
+    ) -> Result<PathBuf> {
+        let roots = profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path)?;
+        if let Some(storage_file_name) = self
+            .state
+            .profiles_by_game
+            .get(game_id)
+            .and_then(|catalog| catalog.profiles.iter().find(|profile| profile.id == id))
+            .and_then(Self::profile_storage_file_name)
+        {
+            return Ok(Self::profile_bound_storage_path(
+                &roots,
+                storage_file_name,
+                archive,
+            ));
+        }
+        Ok(if archive {
+            roots.archive_path(id)
+        } else {
+            roots.profile_path(id)
+        })
+    }
+
+    fn profile_archive_for(
+        &self,
+        game_id: &str,
+        game: &GameInstall,
+        id: ProfileId,
+    ) -> Result<PathBuf> {
+        self.profile_storage_path_for(game_id, game, id, true)
+    }
+
+    fn profile_path_for(&self, game_id: &str, game: &GameInstall, id: ProfileId) -> Result<PathBuf> {
+        self.profile_storage_path_for(game_id, game, id, false)
     }
 
     fn active_profile_id(&self, game_id: &str) -> Option<ProfileId> {
@@ -423,6 +558,8 @@ impl HestiaApp {
         target_profile_id: Option<ProfileId>,
         display_name: Option<String>,
         target_display_name: Option<String>,
+        source_profile: Option<PathBuf>,
+        target_profile: Option<PathBuf>,
         source_archive: Option<PathBuf>,
         target_archive: Option<PathBuf>,
         target_categories: Option<Vec<ModCategory>>,
@@ -437,12 +574,31 @@ impl HestiaApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(AtomicU64::new(0));
         let stage = Arc::new(RwLock::new("Preparing profile operation".to_string()));
-        let reidentify_source = self.pending_reidentify_source.take();
         let known_profile_ids = self
             .state
             .profiles_by_game
             .get(&game_id)
             .map(|catalog| catalog.profiles.iter().map(|profile| profile.id).collect())
+            .unwrap_or_default();
+        let known_profile_storage_file_names = self
+            .state
+            .profiles_by_game
+            .get(&game_id)
+            .map(|catalog| {
+                let mut names = Vec::new();
+                for profile in &catalog.profiles {
+                    if let Some(name) = Self::profile_storage_file_name(profile) {
+                        names.push(name.to_string());
+                    }
+                    let stem = profiles::profile_storage_stem(&profile.display_name, profile.id);
+                    names.push(stem.clone());
+                    names.push(format!(
+                        "{stem}.{}",
+                        profiles::PROFILE_ARCHIVE_EXTENSION
+                    ));
+                }
+                names
+            })
             .unwrap_or_default();
         self.dispatch_profile_spec(ProfileOperationSpec {
             operation_id,
@@ -455,6 +611,8 @@ impl HestiaApp {
             target_profile_id,
             display_name,
             target_display_name,
+            source_profile,
+            target_profile,
             source_archive,
             target_archive,
             target_categories,
@@ -463,7 +621,7 @@ impl HestiaApp {
                 .map(|snapshot| snapshot.tools.clone()),
             target_tool_blacklist: target_tools.map(|snapshot| snapshot.blacklist),
             known_profile_ids,
-            reidentify_source,
+            known_profile_storage_file_names,
             metadata,
             cancel,
             progress,
@@ -480,6 +638,26 @@ impl HestiaApp {
     pub(crate) fn profile_operations_blocked(&self) -> bool {
         self.profile_operation_block_reason(ProfileOperationKind::Switch)
             .is_some()
+    }
+
+    fn profile_actions_paused_reason(&self, text: TextCatalog) -> Option<&'static str> {
+        self.profile_operation_block_reason(ProfileOperationKind::Switch)
+            .and_then(|reason| match reason {
+                "another profile operation is already running" => {
+                    Some(text.profile_actions_paused_profile_operation())
+                }
+                "a game refresh is running" | "mod refresh is running" => {
+                    Some(text.profile_actions_paused_refreshing_library())
+                }
+                "mod installation is running" => Some(text.profile_actions_paused_installing_mods()),
+                "update checking is running" => Some(text.profile_actions_paused_checking_updates()),
+                "an app update is running" => Some(text.profile_actions_paused_updating_hestia()),
+                "the game is running" => Some(text.profile_actions_paused_game_running()),
+                "a tool inside the profile folder is running" => {
+                    Some(text.profile_actions_paused_profile_tool_running())
+                }
+                _ => None,
+            })
     }
 
     pub(crate) fn profile_operation_locks_app(&self) -> bool {
@@ -666,7 +844,8 @@ impl HestiaApp {
                 })
         });
         let target_id = self.unused_profile_id(game_id);
-        let active_archive = active_id.and_then(|id| self.profile_archive_for(&game, id).ok());
+        let active_archive =
+            active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok());
         // A new profile starts empty: no categories and no tools. Its mods folder is empty, so any
         // inherited tool would either be pruned by the sync that follows or dangle at a path this
         // profile has nothing at.
@@ -679,6 +858,8 @@ impl HestiaApp {
             Some(target_id),
             metadata.as_ref().map(|m| m.display_name.clone()),
             Some(display_name),
+            None,
+            None,
             active_archive,
             None,
             Some(Vec::new()),
@@ -706,9 +887,14 @@ impl HestiaApp {
         let active_categories = self.snapshot_active_profile_categories(game_id, active_id);
         let active_tools = self.snapshot_active_profile_tools(game_id, active_id);
         let source_archive = if Some(source_id) == active_id {
-            active_id.and_then(|id| self.profile_archive_for(&game, id).ok())
+            active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok())
         } else {
-            Some(self.profile_archive_for(&game, source_id)?)
+            Some(self.profile_archive_for(game_id, &game, source_id)?)
+        };
+        let source_profile = if Some(source_id) == active_id {
+            None
+        } else {
+            Some(self.profile_path_for(game_id, &game, source_id)?)
         };
         let target_id = self.unused_profile_id(game_id);
         let source_record = self
@@ -757,6 +943,8 @@ impl HestiaApp {
             Some(target_id),
             Some(source_record.display_name.clone()),
             Some(display_name),
+            source_profile,
+            None,
             source_archive,
             None,
             source_categories,
@@ -793,8 +981,8 @@ impl HestiaApp {
         {
             bail!("target profile does not exist");
         }
-        let target_archive = self.profile_archive_for(&game, target_id)?;
-        let target_profile = self.profile_path_for(&game, target_id)?;
+        let target_archive = self.profile_archive_for(game_id, &game, target_id)?;
+        let target_profile = self.profile_path_for(game_id, &game, target_id)?;
         if !target_archive.is_file() && !target_profile.is_dir() {
             bail!("target profile data is missing");
         }
@@ -815,7 +1003,8 @@ impl HestiaApp {
                     )
                 })
         });
-        let active_archive = active_id.and_then(|id| self.profile_archive_for(&game, id).ok());
+        let active_archive =
+            active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok());
         let target_display_name = self
             .state
             .profiles_by_game
@@ -848,6 +1037,8 @@ impl HestiaApp {
             Some(target_id),
             None,
             target_display_name,
+            None,
+            Some(target_profile),
             active_archive,
             Some(target_archive),
             target_categories,
@@ -878,11 +1069,72 @@ impl HestiaApp {
         {
             bail!("profile does not exist");
         }
+        let (active_profile, current_display_name, current_storage_file_name) = catalog
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .map(|profile| {
+                (
+                    catalog.active_profile_id == Some(profile_id),
+                    profile.display_name.clone(),
+                    Self::profile_storage_file_name(profile).map(str::to_owned),
+                )
+            })
+            .expect("profile checked above");
+        if current_display_name == normalized {
+            return Ok(());
+        }
+        if !active_profile
+            && let Some(current_storage_file_name) = current_storage_file_name.as_deref()
+        {
+            let roots = self
+                .state
+                .games
+                .iter()
+                .find(|game| game.definition.id == game_id)
+                .ok_or_else(|| anyhow!("game {game_id} is not configured"))
+                .and_then(|game| {
+                    profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path)
+                })?;
+            if !Self::profile_bound_storage_exists(&roots, current_storage_file_name) {
+                self.queue_profile_recovery_for_game(game_id);
+                bail!("could not rename profile because its storage is out of date");
+            }
+        }
         if catalog.profiles.iter().any(|other| {
             other.id != profile_id
                 && TextCatalog::profile_names_equal(&other.display_name, normalized)
         }) {
             bail!("a profile with that name already exists");
+        }
+        let mut renamed_storage_file_name = None;
+        // Inactive profile storage is labelled with the profile name. The active profile lives in
+        // the normal mods folders, so active renames do not touch any inactive same-marker copy.
+        if !active_profile
+            && let Some(current_storage_file_name) = current_storage_file_name.as_deref()
+        {
+            let roots = self
+                .state
+                .games
+                .iter()
+                .find(|game| game.definition.id == game_id)
+                .ok_or_else(|| anyhow!("game {game_id} is not configured"))
+                .and_then(|game| {
+                    profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path)
+                })?;
+            match Self::try_rename_exact_profile_storage_file(
+                &roots,
+                current_storage_file_name,
+                normalized,
+            ) {
+                Ok(new_storage_file_name) => {
+                    renamed_storage_file_name = Some(new_storage_file_name);
+                }
+                Err(error) => {
+                    self.queue_profile_recovery_for_game(game_id);
+                    bail!("could not rename profile because its storage is out of date: {error}");
+                }
+            }
         }
         let catalog = self
             .state
@@ -894,78 +1146,27 @@ impl HestiaApp {
             .iter_mut()
             .find(|profile| profile.id == profile_id)
             .expect("profile checked above");
-        if profile.display_name == normalized {
-            return Ok(());
-        }
         profile.display_name = normalized.to_string();
         profile.updated_at = Some(Utc::now());
+        if let Some(new_storage_file_name) = renamed_storage_file_name {
+            profile.portable_metadata.insert(
+                PROFILE_STORAGE_FILE_NAME_METADATA_KEY.to_string(),
+                serde_json::Value::String(new_storage_file_name),
+            );
+        }
         let renamed_stored = profile.display_name.clone();
-        let active_profile = catalog.active_profile_id == Some(profile_id);
         self.save_state();
-        // Inactive profile storage is labelled with the profile name. The active profile lives in
-        // the normal mods folders, so any same-id storage left behind is stale and should disappear
-        // rather than be relabelled.
-        if let Some(game) = self
-            .state
-            .games
-            .iter()
-            .find(|game| game.definition.id == game_id)
+        if !active_profile
+            && current_storage_file_name.is_none()
+            && let Some(game) = self.state.games.iter().find(|game| game.definition.id == game_id)
             && let Ok(roots) =
                 profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path)
         {
-            if active_profile {
-                let _ = remove_profile_storage_entries(&roots, profile_id);
-            } else {
-                rename_profile_storage_label(&roots, profile_id, &renamed_stored);
-            }
+            rename_profile_storage_label(&roots, profile_id, &renamed_stored);
         }
         let renamed = self.text().profile_display_name(&renamed_stored);
         self.set_message_ok(self.text().profile_renamed(&renamed));
         Ok(())
-    }
-
-    /// Keep a duplicated archive as a separate profile by rewriting it under a fresh identity.
-    ///
-    /// Non-modal — the app stays usable — but it occupies the operation slot, so no other profile
-    /// operation can start while a multi-gigabyte archive is being rewritten.
-    pub(crate) fn reidentify_duplicate_profile(
-        &mut self,
-        game_id: &str,
-        source: PathBuf,
-        display_name: String,
-    ) -> Result<()> {
-        let display_name = self.validate_profile_name(game_id, &display_name, None)?;
-        let game = self
-            .state
-            .games
-            .iter()
-            .find(|game| game.definition.id == game_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("game {game_id} is not configured"))?;
-        if !source.is_file() {
-            bail!("the profile copy is no longer present");
-        }
-        self.pending_reidentify_source = Some(source);
-        let target_id = self.unused_profile_id(game_id);
-        let result = self.begin_profile_operation(
-            game_id.to_string(),
-            game,
-            ProfileOperationKind::Reidentify,
-            None,
-            None,
-            Some(target_id),
-            None,
-            Some(display_name),
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
-        if result.is_err() {
-            self.pending_reidentify_source = None;
-        }
-        result
     }
 
     pub(crate) fn delete_profile(&mut self, game_id: &str, profile_id: ProfileId) -> Result<()> {
@@ -979,7 +1180,8 @@ impl HestiaApp {
             .find(|game| game.definition.id == game_id)
             .cloned()
             .ok_or_else(|| anyhow!("game {game_id} is not configured"))?;
-        let archive = self.profile_archive_for(&game, profile_id)?;
+        let archive = self.profile_archive_for(game_id, &game, profile_id)?;
+        let profile = self.profile_path_for(game_id, &game, profile_id)?;
         if !self
             .state
             .profiles_by_game
@@ -994,6 +1196,20 @@ impl HestiaApp {
         {
             bail!("profile does not exist");
         }
+        let current_storage_file_name = self
+            .state
+            .profiles_by_game
+            .get(game_id)
+            .and_then(|catalog| catalog.profiles.iter().find(|profile| profile.id == profile_id))
+            .and_then(Self::profile_storage_file_name)
+            .map(str::to_owned);
+        if let Some(current_storage_file_name) = current_storage_file_name.as_deref() {
+            let roots = profiles::profile_roots(&game, self.state.static_prefs.use_default_mods_path)?;
+            if !Self::profile_bound_storage_exists(&roots, current_storage_file_name) {
+                self.queue_profile_recovery_for_game(game_id);
+                bail!("could not delete profile because its storage is out of date");
+            }
+        }
         self.begin_profile_operation(
             game_id.to_string(),
             game,
@@ -1003,8 +1219,10 @@ impl HestiaApp {
             None,
             None,
             None,
+            Some(profile),
             None,
             Some(archive),
+            None,
             None,
             None,
             None,
@@ -1060,6 +1278,8 @@ impl HestiaApp {
             None,
             None,
             None,
+            None,
+            None,
         ) {
             self.profile_recovery_failed = true;
             self.report_error_message(
@@ -1104,14 +1324,104 @@ impl HestiaApp {
         if orphaned.is_empty() {
             return Vec::new();
         }
-        let catalog = self.state.profiles_by_game.entry(game_id.to_string()).or_default();
+        let roots = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .and_then(|game| {
+                profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path).ok()
+            });
+        let catalog = self
+            .state
+            .profiles_by_game
+            .entry(game_id.to_string())
+            .or_default();
+        let adopted =
+            Self::adopt_orphaned_profiles_into_catalog(catalog, roots.as_ref(), orphaned);
+        if !adopted.is_empty() {
+            self.save_state();
+        }
+        adopted
+    }
+
+    fn adopt_orphaned_profiles_into_catalog(
+        catalog: &mut ProfileCatalog,
+        roots: Option<&profiles::ProfileRoots>,
+        orphaned: Vec<OrphanedProfile>,
+    ) -> Vec<String> {
+        let orphan_key_counts = orphaned.iter().fold(
+            HashMap::<(bool, ProfileId), usize>::new(),
+            |mut counts, orphan| {
+                if let Some(key) = orphan
+                    .storage_file_name
+                    .as_deref()
+                    .and_then(Self::profile_storage_name_key)
+                {
+                    *counts.entry(key).or_default() += 1;
+                }
+                counts
+            },
+        );
         let mut adopted = Vec::new();
         for orphan in orphaned {
             let metadata = orphan.metadata.clone();
+            if let (Some(roots), Some(storage_file_name), Some(key)) = (
+                roots,
+                orphan.storage_file_name.as_deref(),
+                orphan
+                    .storage_file_name
+                    .as_deref()
+                    .and_then(Self::profile_storage_name_key),
+            ) && orphan_key_counts.get(&key) == Some(&1)
+            {
+                let stale_matches: Vec<ProfileId> = catalog
+                    .profiles
+                    .iter()
+                    .filter(|profile| Some(profile.id) != catalog.active_profile_id)
+                    .filter_map(|profile| {
+                        let current = Self::profile_storage_file_name(profile)?;
+                        if roots.profiles_dir.join(current).exists() {
+                            return None;
+                        }
+                        (Self::profile_storage_name_key(current) == Some(key))
+                            .then_some(profile.id)
+                    })
+                    .collect();
+                if let [profile_id] = stale_matches.as_slice() {
+                    let preferred = orphan.label.as_deref().unwrap_or(&metadata.display_name);
+                    let display_name = Self::unique_adopted_profile_name_except(
+                        catalog,
+                        preferred,
+                        Some(*profile_id),
+                    );
+                    if let Some(profile) = catalog
+                        .profiles
+                        .iter_mut()
+                        .find(|profile| profile.id == *profile_id)
+                    {
+                        profile.display_name = display_name.clone();
+                        profile.archive_size = orphan.archive_size;
+                        profile.uncompressed_size = Some(metadata.uncompressed_size);
+                        profile.file_count = Some(metadata.file_count);
+                        profile.created_at = profile.created_at.or(Some(metadata.created_at));
+                        profile.updated_at = orphan.updated_at;
+                        profile.portable_metadata.insert(
+                            PROFILE_STORAGE_FILE_NAME_METADATA_KEY.to_string(),
+                            serde_json::Value::String(storage_file_name.to_string()),
+                        );
+                        if profile.categories.is_none() {
+                            profile.categories = metadata.categories;
+                        }
+                    }
+                    adopted.push(display_name);
+                    continue;
+                }
+            }
             if catalog
                 .profiles
                 .iter()
-                .any(|profile| profile.id == metadata.profile_id)
+                .any(|profile| profile.id == orphan.profile_id)
             {
                 continue;
             }
@@ -1122,15 +1432,22 @@ impl HestiaApp {
             // whatever the profile was called the last time its archive was written.
             let preferred = orphan.label.as_deref().unwrap_or(&metadata.display_name);
             let display_name = Self::unique_adopted_profile_name(catalog, preferred);
+            let mut portable_metadata = metadata.portable_metadata;
+            if let Some(storage_file_name) = orphan.storage_file_name {
+                portable_metadata.insert(
+                    PROFILE_STORAGE_FILE_NAME_METADATA_KEY.to_string(),
+                    serde_json::Value::String(storage_file_name),
+                );
+            }
             catalog.profiles.push(ProfileRecord {
-                id: metadata.profile_id,
+                id: orphan.profile_id,
                 display_name: display_name.clone(),
                 archive_size: orphan.archive_size,
                 uncompressed_size: Some(metadata.uncompressed_size),
                 file_count: Some(metadata.file_count),
                 created_at: Some(metadata.created_at),
                 updated_at: orphan.updated_at,
-                portable_metadata: metadata.portable_metadata,
+                portable_metadata,
                 categories: metadata.categories,
                 // Deliberately not adopted from the archive. A profile archive is shareable and
                 // can be dropped into the folder by hand, and a tool entry carries an executable
@@ -1142,13 +1459,18 @@ impl HestiaApp {
             });
             adopted.push(display_name);
         }
-        if !adopted.is_empty() {
-            self.save_state();
-        }
         adopted
     }
 
     fn unique_adopted_profile_name(catalog: &ProfileCatalog, preferred: &str) -> String {
+        Self::unique_adopted_profile_name_except(catalog, preferred, None)
+    }
+
+    fn unique_adopted_profile_name_except(
+        catalog: &ProfileCatalog,
+        preferred: &str,
+        except: Option<ProfileId>,
+    ) -> String {
         let preferred = preferred.trim();
         let preferred = if preferred.is_empty() {
             "Recovered profile"
@@ -1158,7 +1480,10 @@ impl HestiaApp {
         if !catalog
             .profiles
             .iter()
-            .any(|profile| TextCatalog::profile_names_equal(&profile.display_name, preferred))
+            .any(|profile| {
+                Some(profile.id) != except
+                    && TextCatalog::profile_names_equal(&profile.display_name, preferred)
+            })
         {
             return preferred.to_string();
         }
@@ -1167,7 +1492,10 @@ impl HestiaApp {
             if !catalog
                 .profiles
                 .iter()
-                .any(|profile| TextCatalog::profile_names_equal(&profile.display_name, &candidate))
+                .any(|profile| {
+                    Some(profile.id) != except
+                        && TextCatalog::profile_names_equal(&profile.display_name, &candidate)
+                })
             {
                 return candidate;
             }
@@ -1195,7 +1523,10 @@ impl HestiaApp {
         else {
             return;
         };
-        let (active_profile_id, named): (Option<ProfileId>, Vec<(ProfileId, String)>) = self
+        let (active_profile_id, named): (
+            Option<ProfileId>,
+            Vec<(ProfileId, String, Option<String>)>,
+        ) = self
             .state
             .profiles_by_game
             .get(game_id)
@@ -1205,17 +1536,48 @@ impl HestiaApp {
                     catalog
                         .profiles
                         .iter()
-                        .map(|profile| (profile.id, profile.display_name.clone()))
+                        .map(|profile| {
+                            (
+                                profile.id,
+                                profile.display_name.clone(),
+                                Self::profile_storage_file_name(profile).map(str::to_owned),
+                            )
+                        })
                         .collect(),
                 )
             })
             .unwrap_or_default();
-        for (profile_id, display_name) in named {
+        let mut changed = false;
+        for (profile_id, display_name, storage_file_name) in named {
             if Some(profile_id) == active_profile_id {
-                let _ = remove_profile_storage_entries(&roots, profile_id);
+                continue;
+            } else if let Some(storage_file_name) = storage_file_name.as_deref() {
+                if let Some(new_storage_file_name) =
+                    Self::rename_exact_profile_storage_file(&roots, storage_file_name, &display_name)
+                    && new_storage_file_name != storage_file_name
+                    && let Some(profile) = self
+                        .state
+                        .profiles_by_game
+                        .get_mut(game_id)
+                        .and_then(|catalog| {
+                            catalog
+                                .profiles
+                                .iter_mut()
+                                .find(|profile| profile.id == profile_id)
+                        })
+                {
+                    profile.portable_metadata.insert(
+                        PROFILE_STORAGE_FILE_NAME_METADATA_KEY.to_string(),
+                        serde_json::Value::String(new_storage_file_name),
+                    );
+                    changed = true;
+                }
             } else {
                 rename_profile_storage_label(&roots, profile_id, &display_name);
             }
+        }
+        if changed {
+            self.save_state();
         }
     }
 
@@ -1366,12 +1728,8 @@ impl HestiaApp {
                     active_profile_marker,
                     orphaned_profiles,
                     renamed_profiles,
-                    duplicate_profiles,
                     warnings,
                 } = *completed;
-                // Replace rather than accumulate: the scan reports everything present each time,
-                // so anything resolved since the last run simply stops appearing.
-                self.profile_duplicate_prompt = duplicate_profiles;
                 let adopted = self.adopt_orphaned_profiles(&game_id, orphaned_profiles);
                 if let Some(archive) = &archive {
                     self.apply_profile_archive_result(&game_id, profile_id, archive);
@@ -1405,29 +1763,6 @@ impl HestiaApp {
                     .entry(game_id.clone())
                     .or_default();
                 match kind {
-                    // The rewritten copy is a genuinely new profile, and unlike Create/Duplicate it
-                    // does not become active: the original stays selected and the copy joins the
-                    // list beside it.
-                    ProfileOperationKind::Reidentify => {
-                        let id = target_profile_id.expect("target profile id");
-                        if !catalog.profiles.iter().any(|profile| profile.id == id) {
-                            catalog.profiles.push(ProfileRecord {
-                                id,
-                                display_name: display_name
-                                    .clone()
-                                    .unwrap_or_else(|| "Profile".to_string()),
-                                archive_size: None,
-                                uncompressed_size: None,
-                                file_count: None,
-                                created_at: Some(Utc::now()),
-                                updated_at: Some(Utc::now()),
-                                portable_metadata: HashMap::new(),
-                                categories: Some(Vec::new()),
-                                tools: Some(Vec::new()),
-                                tool_blacklist: Some(Vec::new()),
-                            });
-                        }
-                    }
                     ProfileOperationKind::Create | ProfileOperationKind::Duplicate => {
                         let id = target_profile_id.expect("target profile id");
                         if !catalog.profiles.iter().any(|profile| profile.id == id) {
@@ -1515,6 +1850,9 @@ impl HestiaApp {
                         .iter_mut()
                         .find(|profile| profile.id == marker.profile_id)
                     {
+                        profile
+                            .portable_metadata
+                            .remove(PROFILE_STORAGE_FILE_NAME_METADATA_KEY);
                         profile.categories = marker.categories.clone();
                         if marker.tools.is_some() {
                             profile.tools = marker.tools.clone();
@@ -1654,13 +1992,189 @@ impl HestiaApp {
                     Some("Profile operation failed"),
                 );
             }
-            ProfileEvent::Canceled { .. } => self.set_message_ok(self.text().profile_canceled()),
+            ProfileEvent::Canceled { .. } => {
+                self.set_message_ok(self.text().profile_canceled());
+            }
             ProfileEvent::ArchiveQueued { .. }
             | ProfileEvent::ArchiveStarted { .. }
             | ProfileEvent::ArchiveSkipped { .. }
             | ProfileEvent::ArchiveCompleted { .. }
             | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_storage_reconciliation_tests {
+    use super::*;
+
+    fn test_metadata(profile_id: ProfileId, display_name: &str) -> profiles::ProfileArchiveMetadata {
+        profiles::ProfileArchiveMetadata {
+            format_version: profiles::PROFILE_ARCHIVE_FORMAT_VERSION,
+            profile_id,
+            game_id: "test".to_string(),
+            display_name: display_name.to_string(),
+            backend: GameBackend::Xxmi,
+            created_at: Utc::now(),
+            uncompressed_size: 42,
+            file_count: 2,
+            portable_metadata: HashMap::new(),
+            categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
+            source_fingerprint: None,
+        }
+    }
+
+    fn profile_record(
+        id: ProfileId,
+        display_name: &str,
+        storage_file_name: Option<&str>,
+    ) -> ProfileRecord {
+        let mut portable_metadata = HashMap::new();
+        if let Some(storage_file_name) = storage_file_name {
+            portable_metadata.insert(
+                PROFILE_STORAGE_FILE_NAME_METADATA_KEY.to_string(),
+                serde_json::Value::String(storage_file_name.to_string()),
+            );
+        }
+        ProfileRecord {
+            id,
+            display_name: display_name.to_string(),
+            archive_size: None,
+            uncompressed_size: None,
+            file_count: None,
+            created_at: Some(Utc::now()),
+            updated_at: Some(Utc::now()),
+            portable_metadata,
+            categories: Some(Vec::new()),
+            tools: Some(Vec::new()),
+            tool_blacklist: Some(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn exact_bound_storage_does_not_fall_back_to_same_marker_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        std::fs::write(roots.profiles_dir.join("zzzDefault3 [7a15244b].tzst"), b"archive")
+            .unwrap();
+
+        let stale = HestiaApp::profile_bound_storage_path(
+            &roots,
+            "zDefault3 [7a15244b].tzst",
+            true,
+        );
+
+        assert_eq!(stale, roots.profiles_dir.join("zDefault3 [7a15244b].tzst"));
+        assert!(
+            !stale.exists(),
+            "a stale exact binding must stay missing instead of resolving by marker"
+        );
+        assert!(
+            !HestiaApp::profile_bound_storage_exists(&roots, "zDefault3 [7a15244b].tzst"),
+            "rename/delete preflight must also reject the stale exact binding"
+        );
+        assert!(
+            HestiaApp::profile_bound_storage_exists(&roots, "zzzDefault3 [7a15244b].tzst"),
+            "the renamed file itself is valid storage and will be picked up by recovery"
+        );
+    }
+
+    #[test]
+    fn exact_storage_rename_reports_missing_source_instead_of_succeeding_silently() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        std::fs::write(roots.profiles_dir.join("zzzDefault3 [7a15244b].tzst"), b"archive")
+            .unwrap();
+
+        let error = HestiaApp::try_rename_exact_profile_storage_file(
+            &roots,
+            "zDefault3 [7a15244b].tzst",
+            "yDefault3",
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("profile storage is missing"),
+            "stale exact-bound rows should produce an action error: {error:#}"
+        );
+        assert!(
+            roots.profiles_dir.join("zzzDefault3 [7a15244b].tzst").is_file(),
+            "the renamed-on-disk profile must be left for recovery"
+        );
+        assert!(
+            !roots.profiles_dir.join("yDefault3 [7a15244b].tzst").exists(),
+            "Hestia must not create a misleading app-side rename when the source is gone"
+        );
+    }
+
+    #[test]
+    fn reload_repairs_one_manual_rename_instead_of_adopting_a_duplicate_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        let marker_id: ProfileId = "7a15244b".parse().unwrap();
+        let mut row_id = ProfileId::random();
+        while row_id == marker_id {
+            row_id = ProfileId::random();
+        }
+        let renamed_file_name = "zzzDefault3 [7a15244b].tzst";
+        std::fs::write(roots.profiles_dir.join(renamed_file_name), b"archive").unwrap();
+        let mut catalog = ProfileCatalog {
+            active_profile_id: Some(marker_id),
+            profiles: vec![
+                profile_record(marker_id, "Default", None),
+                profile_record(row_id, "zDefault3", Some("zDefault3 [7a15244b].tzst")),
+            ],
+        };
+        let orphan_id = ProfileId::random();
+        let orphan = OrphanedProfile {
+            profile_id: orphan_id,
+            metadata: test_metadata(marker_id, "Default"),
+            label: Some("zzzDefault3".to_string()),
+            storage_file_name: Some(renamed_file_name.to_string()),
+            archive_size: Some(100),
+            updated_at: Some(Utc::now()),
+        };
+
+        let adopted =
+            HestiaApp::adopt_orphaned_profiles_into_catalog(&mut catalog, Some(&roots), vec![orphan]);
+
+        assert_eq!(adopted, vec!["zzzDefault3".to_string()]);
+        assert_eq!(
+            catalog.profiles.len(),
+            2,
+            "manual rename should update the stale row instead of adding another row"
+        );
+        assert!(!catalog.profiles.iter().any(|profile| profile.id == orphan_id));
+        let repaired = catalog
+            .profiles
+            .iter()
+            .find(|profile| profile.id == row_id)
+            .unwrap();
+        assert_eq!(repaired.display_name, "zzzDefault3");
+        assert_eq!(
+            HestiaApp::profile_storage_file_name(repaired),
+            Some(renamed_file_name)
+        );
     }
 }
 

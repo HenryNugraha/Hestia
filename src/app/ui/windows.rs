@@ -15,6 +15,7 @@ impl HestiaApp {
                     self.whats_new_window_nonce,
                 )))
                 .open(&mut whats_new_open)
+                .order(egui::Order::Foreground)
                 .title_bar(true)
                 .resizable(false)
                 .collapsible(true)
@@ -118,6 +119,7 @@ impl HestiaApp {
             self.feedback_survey_window_nonce,
         )))
         .open(&mut survey_open)
+        .order(egui::Order::Foreground)
         .title_bar(true)
         .resizable(false)
         .collapsible(true)
@@ -437,6 +439,7 @@ impl HestiaApp {
         let mut window = egui::Window::new(icon_text_sized(Icon::FileCog, text.log(), 14.0, 14.0))
             .id(egui::Id::new(("log_window", self.log_window_nonce)))
             .open(&mut log_open)
+            .order(egui::Order::Foreground)
             .title_bar(true)
             .frame(log_frame);
 
@@ -575,6 +578,7 @@ impl HestiaApp {
         ))
         .id(egui::Id::new(("tasks_window", self.tasks_window_nonce)))
         .open(&mut tasks_open)
+        .order(egui::Order::Foreground)
         .title_bar(true)
         .frame(tasks_frame);
 
@@ -891,6 +895,7 @@ impl HestiaApp {
             egui::Window::new(icon_text_sized(Icon::AppWindow, text.tools(), 14.0, 14.0))
                 .id(egui::Id::new(("tools_window", self.tools_window_nonce)))
                 .open(&mut tools_open)
+                .order(egui::Order::Foreground)
                 .title_bar(true)
                 .frame(tools_frame);
 
@@ -2272,6 +2277,7 @@ impl HestiaApp {
         ))
         .id(egui::Id::new("settings_window"))
         .open(&mut settings_open)
+        .order(egui::Order::Foreground)
         .title_bar(true)
         .frame(settings_frame);
 

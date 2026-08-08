@@ -7863,25 +7863,15 @@ impl HestiaApp {
             }
         }
 
-        // Dim the cover when overlay windows are open (blur-like effect).
-        let overlay_open = self.settings_open
-            || (show_mod_detail && self.mod_detail_open)
-            || (!show_mod_detail && self.browse_detail_open)
-            || self.state.show_log
-            || self.state.show_whats_new
-            || self.state.show_feedback_survey
-            || self.state.show_tools
-            || self.state.show_tasks
-            || self.tool_launch_options_prompt.is_some()
-            || !self.pending_imports.is_empty()
-            || !self.pending_conflicts.is_empty()
-            || self.browse_state.file_prompt.is_some()
-            || self.browse_state.screenshot_overlay.is_some();
-        if overlay_open {
+        // Detail windows belong to the pane itself, so dim the cover before drawing them.
+        // Other bound windows use the shared scrim rendered after the workspace.
+        let detail_window_open = (show_mod_detail && self.mod_detail_open)
+            || (!show_mod_detail && self.browse_detail_open);
+        if detail_window_open {
             ui.painter().rect_filled(
                 full_rect,
                 0.0,
-                Color32::from_rgba_premultiplied(14, 14, 16, 128),
+                Color32::from_black_alpha(84),
             );
         }
 
