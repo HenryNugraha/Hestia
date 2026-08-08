@@ -93,7 +93,10 @@ pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
             a(1, l10n("Great", "Bagus", "很好", "Отлично")),
             a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
             a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
-            a(4, l10n("Not using it", "Tidak pakai", "没在用", "Не использую")),
+            a(
+                4,
+                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
+            ),
         ],
     ),
 ];

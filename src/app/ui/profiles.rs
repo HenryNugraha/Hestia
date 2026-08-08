@@ -128,14 +128,19 @@ fn profile_switcher_control_rect(slot_rect: egui::Rect, pane_top: Option<f32>) -
     )
 }
 
+/// Vertical breathing room between the frame edge and the first/last row. Rows paint a rounded
+/// hover highlight edge to edge, and the bottom corners are the rounded ones, so the padding has to
+/// match top and bottom or the last row reads as clipped against the corner curve.
+const PROFILE_SELECTOR_MENU_PADDING_Y: i8 = 8;
+
 fn profile_selector_menu_frame(style: &egui::Style) -> egui::Frame {
     let menu_radius = style.visuals.menu_corner_radius;
     egui::Frame::popup(style)
         .inner_margin(egui::Margin {
             left: 10,
             right: 10,
-            top: 8,
-            bottom: 2,
+            top: PROFILE_SELECTOR_MENU_PADDING_Y,
+            bottom: PROFILE_SELECTOR_MENU_PADDING_Y,
         })
         .corner_radius(egui::CornerRadius {
             nw: 0,
@@ -296,7 +301,10 @@ fn profile_selector_action_row(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileTimelineStage {
     Archiving,
-    Extracting,
+    /// Getting the target profile's files into staging. Depending on where the source lives this
+    /// is an archive extraction or a directory copy, so the row's label follows the worker stage
+    /// rather than being fixed.
+    Preparing,
     Switching,
 }
 
@@ -338,7 +346,7 @@ fn profile_timeline_stages(
 ) -> &'static [ProfileTimelineStage] {
     const ACTIVATE_ONLY: &[ProfileTimelineStage] = &[ProfileTimelineStage::Switching];
     const PREPARE_FIRST: &[ProfileTimelineStage] = &[
-        ProfileTimelineStage::Extracting,
+        ProfileTimelineStage::Preparing,
         ProfileTimelineStage::Switching,
     ];
 
@@ -353,14 +361,36 @@ fn profile_timeline_stages(
     }
 }
 
+/// Whether this operation's worker publishes a percentage. Deleting is a single `remove_dir_all`
+/// and renaming touches no files at all, so there is nothing to sample: those show a looping bar
+/// instead of a number that would sit at 0 until the operation finishes.
+fn profile_operation_reports_progress(kind: ProfileOperationKind) -> bool {
+    matches!(
+        kind,
+        ProfileOperationKind::Create
+            | ProfileOperationKind::Duplicate
+            | ProfileOperationKind::Switch
+            // The source archive records its uncompressed size, so the rewrite can be measured.
+            | ProfileOperationKind::Reidentify
+    )
+}
+
+/// Whether the preparation row is currently copying files rather than unpacking an archive. Only
+/// meaningful once the worker has entered the copy; the neutral "Preparing" prelude reads as an
+/// extract, which is the label the archive path keeps throughout.
+fn profile_stage_is_copy(stage: &str) -> bool {
+    stage.contains("Copying")
+}
+
 fn profile_timeline_active_stage(stage: &str) -> Option<ProfileTimelineStage> {
     if stage.contains("Archiving") || stage.contains("Current profile archived") {
         Some(ProfileTimelineStage::Archiving)
     } else if stage.contains("Preparing selected")
         || stage.contains("Extracting")
+        || stage.contains("Copying")
         || stage.contains("Selected profile prepared")
     {
-        Some(ProfileTimelineStage::Extracting)
+        Some(ProfileTimelineStage::Preparing)
     } else if stage.contains("Committing")
         || stage.contains("committed")
         || stage.contains("Activating")
@@ -386,7 +416,7 @@ fn profile_timeline_stage_progress(
                 ((progress - 10.0) / 35.0).clamp(0.0, 1.0)
             }
         }
-        ProfileTimelineStage::Extracting => {
+        ProfileTimelineStage::Preparing => {
             if worker_stage.contains("Selected profile prepared") {
                 1.0
             } else {
@@ -456,7 +486,7 @@ impl HestiaApp {
     fn start_profile_name_prompt(
         &mut self,
         kind: ProfileOperationKind,
-        target_id: Option<Uuid>,
+        target_id: Option<ProfileId>,
         suggested_name: String,
     ) {
         self.profile_name_prompt = Some(kind);
@@ -747,6 +777,24 @@ impl HestiaApp {
         } else if blocked {
             duplicate.on_hover_text(text.profile_finish_current_operation_first());
         }
+        // Read-only, so it stays available while an operation blocks the write actions above.
+        let has_profiles_dir = self.selected_game_profiles_dir().is_some();
+        let open_folder = profile_selector_action_row(
+            ui,
+            Icon::FolderOpen,
+            text.open_profile_folder(),
+            has_profiles_dir,
+        );
+        if open_folder.clicked() {
+            self.open_selected_game_profiles_folder();
+            ui.close();
+        } else if has_profiles_dir {
+            open_folder.on_hover_text(text.open_profile_folder_tooltip());
+        } else {
+            open_folder
+                .on_hover_text(self.selected_game_mod_setup_message())
+                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+        }
         if blocked {
             static_label(
                 ui,
@@ -762,9 +810,118 @@ impl HestiaApp {
             self.render_profile_progress_dialog(ctx);
             return;
         }
+        self.render_profile_duplicate_dialog(ctx);
         self.render_profile_name_dialog(ctx);
         self.render_profile_delete_dialog(ctx);
         self.render_profile_progress_dialog(ctx);
+    }
+
+    /// Ask what to do with extra copies of a profile found on disk.
+    ///
+    /// Never resolves anything on its own: identical copies are safe to delete but that is still
+    /// the user's call, and differing copies are two real snapshots only they can choose between.
+    fn render_profile_duplicate_dialog(&mut self, ctx: &egui::Context) {
+        if self.profile_duplicate_prompt.is_empty() || self.profile_operation_inflight.is_some() {
+            return;
+        }
+        let text = self.text();
+        let entries = self.profile_duplicate_prompt.clone();
+        let mut dismiss = false;
+        let mut keep_both: Option<ProfileDuplicateEntry> = None;
+        let mut delete: Option<ProfileDuplicateEntry> = None;
+
+        egui::Window::new(text.profiles_duplicate_title())
+            .id(egui::Id::new("profile_duplicate_dialog"))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(520.0)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_width(520.0);
+                static_label(
+                    ui,
+                    RichText::new(text.profiles_duplicate_body())
+                        .size(13.0)
+                        .color(Color32::from_rgb(178, 184, 192)),
+                );
+                ui.add_space(10.0);
+                for entry in &entries {
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        static_label(
+                            ui,
+                            RichText::new(text.profile_display_name(&entry.display_name))
+                                .size(14.0)
+                                .strong(),
+                        );
+                        static_label(
+                            ui,
+                            RichText::new(format!(
+                                "{}  ·  {}",
+                                if entry.redundant {
+                                    text.profiles_duplicate_identical()
+                                } else {
+                                    text.profiles_duplicate_different()
+                                },
+                                format_file_size(entry.bytes)
+                            ))
+                            .size(12.0)
+                            .color(Color32::from_rgb(150, 156, 165)),
+                        );
+                        static_label(
+                            ui,
+                            RichText::new(entry.path.display().to_string())
+                                .size(11.0)
+                                .color(Color32::from_rgb(130, 136, 145)),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(text.profiles_duplicate_keep_both()).clicked() {
+                                keep_both = Some(entry.clone());
+                            }
+                            if ui.button(text.profiles_duplicate_delete()).clicked() {
+                                delete = Some(entry.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(text.close()).clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+
+        if let Some(entry) = keep_both {
+            // The copy becomes its own profile, so it needs a name that is free in this game.
+            let name = self.next_profile_name(&entry.display_name);
+            if let Err(error) =
+                self.reidentify_duplicate_profile(&entry.game_id, entry.path.clone(), name)
+            {
+                self.report_error_message(
+                    format!("could not keep both copies: {error:#}"),
+                    Some(self.text().could_not_open_location()),
+                );
+            } else {
+                self.profile_duplicate_prompt
+                    .retain(|candidate| candidate.path != entry.path);
+            }
+        } else if let Some(entry) = delete {
+            match trash::delete(&entry.path) {
+                Ok(()) => {
+                    self.profile_duplicate_prompt
+                        .retain(|candidate| candidate.path != entry.path);
+                }
+                Err(error) => self.report_error_message(
+                    format!("could not delete {}: {error}", entry.path.display()),
+                    Some(self.text().could_not_open_location()),
+                ),
+            }
+        } else if dismiss {
+            self.profile_duplicate_prompt.clear();
+        }
     }
 
     fn render_profile_name_dialog(&mut self, ctx: &egui::Context) {
@@ -1009,6 +1166,7 @@ impl HestiaApp {
                 ProfileOperationKind::Create => text.creating_profile(),
                 ProfileOperationKind::Duplicate => text.duplicating_profile(),
                 ProfileOperationKind::Delete => text.deleting_profile(),
+                ProfileOperationKind::Reidentify => text.profiles_reidentifying(),
                 _ => text.switching_profile(),
             }
         };
@@ -1146,7 +1304,13 @@ impl HestiaApp {
                             if active {
                                 let icon = match timeline_stage {
                                     ProfileTimelineStage::Archiving => Icon::Archive,
-                                    ProfileTimelineStage::Extracting => Icon::PackageOpen,
+                                    ProfileTimelineStage::Preparing => {
+                                        if profile_stage_is_copy(&stage) {
+                                            Icon::Copy
+                                        } else {
+                                            Icon::PackageOpen
+                                        }
+                                    }
                                     ProfileTimelineStage::Switching => Icon::Check,
                                 };
                                 painter.text(
@@ -1161,7 +1325,15 @@ impl HestiaApp {
 
                         let row_label = match timeline_stage {
                             ProfileTimelineStage::Archiving => text.archiving_current_profile(),
-                            ProfileTimelineStage::Extracting => text.extracting_selected_profile(),
+                            // Duplicating usually copies a directory rather than unpacking an
+                            // archive; say which one is actually happening.
+                            ProfileTimelineStage::Preparing => {
+                                if profile_stage_is_copy(&stage) {
+                                    text.copying_selected_profile()
+                                } else {
+                                    text.extracting_selected_profile()
+                                }
+                            }
                             ProfileTimelineStage::Switching => text.switching_profile(),
                         };
                         let label_color = if active {
@@ -1175,10 +1347,6 @@ impl HestiaApp {
                             egui::pos2(timeline_rect.left() + TIMELINE_LABEL_X, center.y - 1.0);
                         let label_font = egui::FontId::proportional(14.0);
                         let row_label = profile_progress_text(row_label);
-                        let label_width = painter
-                            .layout_no_wrap(row_label.to_string(), label_font.clone(), label_color)
-                            .size()
-                            .x;
                         painter.text(
                             label_pos,
                             egui::Align2::LEFT_CENTER,
@@ -1188,17 +1356,6 @@ impl HestiaApp {
                         );
 
                         if active {
-                            let spinner_rect = egui::Rect::from_center_size(
-                                egui::pos2(label_pos.x + label_width + 14.0, label_pos.y),
-                                Vec2::splat(14.0),
-                            );
-                            let mut spinner_ui =
-                                ui.new_child(egui::UiBuilder::new().max_rect(spinner_rect).layout(
-                                    egui::Layout::centered_and_justified(
-                                        egui::Direction::LeftToRight,
-                                    ),
-                                ));
-                            spinner_ui.add(egui::Spinner::new().size(13.0));
                             let stage_progress =
                                 profile_timeline_stage_progress(*timeline_stage, progress, &stage);
                             painter.text(
@@ -1289,11 +1446,15 @@ impl HestiaApp {
                 ui.set_width(420.0);
                 static_label(ui, RichText::new(label).size(15.0));
                 ui.add_space(4.0);
-                ui.add(
-                    egui::ProgressBar::new(progress as f32 / 100.0)
-                        .show_percentage()
-                        .animate(true),
-                );
+                if profile_operation_reports_progress(kind) {
+                    ui.add(
+                        egui::ProgressBar::new(progress as f32 / 100.0)
+                            .show_percentage()
+                            .animate(true),
+                    );
+                } else {
+                    indeterminate_progress_bar(ui);
+                }
                 if ui
                     .add_enabled(
                         !commit_started && !cancel_requested,
@@ -1355,9 +1516,13 @@ mod profile_switcher_geometry_tests {
             egui::Margin {
                 left: 10,
                 right: 10,
-                top: 8,
-                bottom: 2,
+                top: PROFILE_SELECTOR_MENU_PADDING_Y,
+                bottom: PROFILE_SELECTOR_MENU_PADDING_Y,
             }
+        );
+        assert_eq!(
+            frame.inner_margin.top, frame.inner_margin.bottom,
+            "the first and last row must sit the same distance from the frame edge"
         );
         assert_eq!(frame.corner_radius.nw, 0);
         assert_eq!(frame.corner_radius.ne, 0);
@@ -1383,13 +1548,21 @@ mod profile_switcher_geometry_tests {
             ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
             let create = profile_selector_action_row(ui, Icon::Plus, "New profile", true);
             let duplicate = profile_selector_action_row(ui, Icon::Copy, "Duplicate profile", true);
+            let open_folder =
+                profile_selector_action_row(ui, Icon::FolderOpen, "Open profile folder", true);
 
-            assert_eq!(create.rect.width(), 240.0);
-            assert_eq!(create.rect.height(), PROFILE_SELECTOR_ROW_HEIGHT);
-            assert_eq!(duplicate.rect.width(), 240.0);
+            for row in [&create, &duplicate, &open_folder] {
+                assert_eq!(row.rect.width(), 240.0);
+                assert_eq!(row.rect.height(), PROFILE_SELECTOR_ROW_HEIGHT);
+            }
             assert_eq!(
                 duplicate.rect.top() - create.rect.bottom(),
                 PROFILE_SELECTOR_FOOTER_GAP
+            );
+            assert_eq!(
+                open_folder.rect.top() - duplicate.rect.bottom(),
+                PROFILE_SELECTOR_FOOTER_GAP,
+                "the new row must sit directly below Duplicate on the same rhythm"
             );
         });
     }
@@ -1537,17 +1710,47 @@ mod profile_switcher_geometry_tests {
         assert_eq!(
             profile_timeline_stages(ProfileOperationKind::Switch, true),
             &[
-                ProfileTimelineStage::Extracting,
+                ProfileTimelineStage::Preparing,
                 ProfileTimelineStage::Switching,
             ]
         );
     }
 
     #[test]
+    fn copying_and_extracting_share_the_preparation_row_but_not_its_label() {
+        assert_eq!(
+            profile_timeline_active_stage("Copying selected profile"),
+            Some(ProfileTimelineStage::Preparing),
+            "a directory copy belongs to the same timeline row as an extraction"
+        );
+        assert!(profile_stage_is_copy("Copying selected profile"));
+        assert!(!profile_stage_is_copy("Extracting selected profile"));
+        assert!(
+            !profile_stage_is_copy("Preparing selected profile"),
+            "the neutral prelude must not claim a copy is underway"
+        );
+    }
+
+    #[test]
+    fn copy_progress_advances_the_preparation_row_instead_of_pinning_it() {
+        let at = |progress: u8| {
+            profile_timeline_stage_progress(
+                ProfileTimelineStage::Preparing,
+                progress,
+                "Copying selected profile",
+            )
+        };
+
+        assert_eq!(at(10), 0.0, "the band starts at its floor, not part-way in");
+        assert_eq!(at(35), 0.5);
+        assert_eq!(at(60), 1.0);
+    }
+
+    #[test]
     fn profile_worker_stages_map_to_the_expected_timeline_rows() {
         assert_eq!(
             profile_timeline_active_stage("Preparing selected profile"),
-            Some(ProfileTimelineStage::Extracting)
+            Some(ProfileTimelineStage::Preparing)
         );
         assert_eq!(
             profile_timeline_active_stage("Committing profile switch"),
@@ -1576,21 +1779,37 @@ mod profile_switcher_geometry_tests {
     }
 
     #[test]
-    fn positioned_timeline_spinner_does_not_move_the_parent_cursor() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-            let cursor_before = ui.cursor();
-            let spinner_rect = egui::Rect::from_center_size(
-                cursor_before.center() + egui::vec2(120.0, 40.0),
-                Vec2::splat(14.0),
-            );
-            let mut spinner_ui =
-                ui.new_child(egui::UiBuilder::new().max_rect(spinner_rect).layout(
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                ));
-            spinner_ui.add(egui::Spinner::new().size(13.0));
+    fn keeping_both_copies_blocks_other_profile_work_without_locking_the_app() {
+        // Not in the modal set, so the app stays usable while a large archive is rewritten...
+        assert!(!matches!(
+            ProfileOperationKind::Reidentify,
+            ProfileOperationKind::Create
+                | ProfileOperationKind::Duplicate
+                | ProfileOperationKind::Switch
+        ));
+        // ...but it is measurable, so it shows a real percentage rather than the looping bar.
+        assert!(profile_operation_reports_progress(
+            ProfileOperationKind::Reidentify
+        ));
+    }
 
-            assert_eq!(ui.cursor(), cursor_before);
-        });
+    #[test]
+    fn only_measurable_operations_show_a_percentage() {
+        assert!(profile_operation_reports_progress(
+            ProfileOperationKind::Switch
+        ));
+        assert!(profile_operation_reports_progress(
+            ProfileOperationKind::Duplicate
+        ));
+        assert!(
+            !profile_operation_reports_progress(ProfileOperationKind::Delete),
+            "deleting has nothing to sample, so it must get the looping bar"
+        );
+        assert!(!profile_operation_reports_progress(
+            ProfileOperationKind::Rename
+        ));
+        assert!(!profile_operation_reports_progress(
+            ProfileOperationKind::Recover
+        ));
     }
 }

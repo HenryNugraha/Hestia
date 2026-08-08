@@ -93,8 +93,8 @@ fn main() -> anyhow::Result<()> {
         icon_data::from_png_bytes(icon_bytes).context("failed to load app icon from icon.png")?;
     let custom_proxy = model::CustomProxyConfig::from_preferences(&state.static_prefs)
         .map_err(|err| anyhow::anyhow!("invalid custom proxy configuration: {err}"))?;
-    let runtime_services = app::RuntimeServices::new(custom_proxy)
-        .context("failed to create runtime services")?;
+    let runtime_services =
+        app::RuntimeServices::new(custom_proxy).context("failed to create runtime services")?;
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1540.0, 960.0])
         .with_min_inner_size([1180.0, 760.0])
@@ -184,7 +184,10 @@ fn select_renderer(
     // explicit: settings compares it against the active renderer so the restart
     // button only appears for a selection that would actually change something.
     let auto_adapter = find_hardware_adapter(auto_backends);
-    let auto_label = match auto_adapter.as_ref().map(|adapter| adapter.get_info().backend) {
+    let auto_label = match auto_adapter
+        .as_ref()
+        .map(|adapter| adapter.get_info().backend)
+    {
         Some(wgpu::Backend::Dx12) => "DirectX 12",
         Some(wgpu::Backend::Vulkan) => "Vulkan",
         Some(wgpu::Backend::Metal) => "Metal",

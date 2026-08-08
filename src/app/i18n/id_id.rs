@@ -499,6 +499,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Buat kumpulan mod dan kategori yang terpisah.", // ProfilesNewDescription
     "Duplikatkan profil", // ProfilesDuplicateCurrent
     "Buat salinan mod dan kategori dari profil saat ini.", // ProfilesDuplicateDescription
+    "Buka folder profil", // ProfilesOpenFolder
+    "Buka folder tempat profil gim ini disimpan.", // ProfilesOpenFolderTooltip
     "Ubah nama profil", // ProfilesRename
     "Pilih nama baru untuk profil ini.", // ProfilesRenameDescription
     "Hapus profil", // ProfilesDelete
@@ -510,6 +512,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Menghapus profil…", // ProfilesDeleting
     "Mengarsipkan profil saat ini…", // ProfilesArchivingCurrent
     "Mengekstrak profil yang dipilih…", // ProfilesExtractingSelected
+    "Menyalin profil yang dipilih…", // ProfilesCopyingSelected
     "Mengaktifkan profil yang dipilih…", // ProfilesActivatingSelected
     "Profil yang tidak aktif dikompresi untuk menghemat ruang disk.", // ProfilesInactiveCompressedNote
     "Status", // ProfilesStatusLabel
@@ -535,6 +538,15 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Profil dihapus: {name}", // ProfilesDeleted
     "Profil diaktifkan: {name}", // ProfilesActivated
     "Operasi profil dibatalkan", // ProfilesCanceled
+    "Profil dipulihkan", // ProfilesActionRecovered
+    "Memulihkan {count} profil yang ada di penyimpanan tetapi hilang dari daftar profil.", // ProfilesRecovered
+    "Ditemukan salinan profil ganda", // ProfilesDuplicateTitle
+    "Salinan tambahan dari profil Anda ada di disk. Hestia memakai salah satunya; pilih tindakan untuk sisanya.", // ProfilesDuplicateBody
+    "Salinan identik", // ProfilesDuplicateIdentical
+    "Isi berbeda", // ProfilesDuplicateDifferent
+    "Simpan keduanya", // ProfilesDuplicateKeepBoth
+    "Hapus salinan", // ProfilesDuplicateDelete
+    "Membuat ID profil baru…", // ProfilesReidentifying
 
     // Window: Settings
     "Setelan", // SettingsWindowTitle

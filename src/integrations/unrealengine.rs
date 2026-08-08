@@ -16,14 +16,14 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     model::{
-        AppState, GameInstall, ModEntry, ModMetadata, ModStatus, PortableModState, MOD_META_DIR,
+        AppState, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus, PortableModState,
     },
     persistence,
 };
@@ -199,8 +199,9 @@ fn migrate_legacy_disabled_mods(active_root: &Path, disabled_root: &Path) -> Res
         fs::create_dir_all(disabled_root)
             .with_context(|| format!("failed to create {}", disabled_root.display()))?;
         let target = next_available_mod_path(disabled_root, folder_name);
-        fs::rename(&path, &target)
-            .with_context(|| format!("failed to move legacy disabled mod to {}", target.display()))?;
+        fs::rename(&path, &target).with_context(|| {
+            format!("failed to move legacy disabled mod to {}", target.display())
+        })?;
         moved_any = true;
     }
 
@@ -309,7 +310,10 @@ fn resolve_nte_launch_command(game: &GameInstall) -> Result<UnrealLaunchCommand>
         return Ok(command);
     }
 
-    bail!("NTE launch executable not found: {}", fallback_exe.display())
+    bail!(
+        "NTE launch executable not found: {}",
+        fallback_exe.display()
+    )
 }
 
 fn read_nte_launch_command_from_config(
@@ -467,10 +471,8 @@ fn launch_unreal_command(command: &UnrealLaunchCommand) -> Result<()> {
         Ok(()) => Ok(()),
         Err(err) if err.raw_os_error() == Some(740) => {
             let Some(fallback) = command.fallback_on_elevation.as_deref() else {
-                return Err(anyhow!(err).context(format!(
-                    "failed to launch {}",
-                    command.executable.display()
-                )));
+                return Err(anyhow!(err)
+                    .context(format!("failed to launch {}", command.executable.display())));
             };
             spawn_detached(fallback).with_context(|| {
                 format!(
@@ -480,10 +482,9 @@ fn launch_unreal_command(command: &UnrealLaunchCommand) -> Result<()> {
                 )
             })
         }
-        Err(err) => Err(anyhow!(err).context(format!(
-            "failed to launch {}",
-            command.executable.display()
-        ))),
+        Err(err) => {
+            Err(anyhow!(err).context(format!("failed to launch {}", command.executable.display())))
+        }
     }
 }
 
@@ -599,11 +600,7 @@ mod tests {
                 backend: GameBackend::UnrealEngine,
                 xxmi_code: String::new(),
             },
-            mods_path_override: Some(
-                root.join("Content")
-                    .join("Paks")
-                    .join("~mods"),
-            ),
+            mods_path_override: Some(root.join("Content").join("Paks").join("~mods")),
             modded_exe_path_override: None,
             vanilla_exe_path_override: None,
             enabled: true,
@@ -643,12 +640,13 @@ mod tests {
         disable_mod(&mut entry, &game, false).unwrap();
         assert_eq!(entry.status, ModStatus::Disabled);
         assert!(!active_mod.exists());
-        assert!(game
-            .disabled_mods_path(false)
-            .unwrap()
-            .join("Spider Gwen")
-            .join("spider_P.pak")
-            .is_file());
+        assert!(
+            game.disabled_mods_path(false)
+                .unwrap()
+                .join("Spider Gwen")
+                .join("spider_P.pak")
+                .is_file()
+        );
 
         enable_mod(&mut entry, &game, false).unwrap();
         assert_eq!(entry.status, ModStatus::Active);

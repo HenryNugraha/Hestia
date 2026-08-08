@@ -937,9 +937,126 @@ fn toggle_switch_sized_with_style(
     response
 }
 
+/// Shared look of the indeterminate ("looping") bar used for work with no measurable progress.
+const INDETERMINATE_BAR_HEIGHT: f32 = 18.0;
+const INDETERMINATE_BAR_CORNER_RADIUS: u8 = 4;
+const INDETERMINATE_BAR_TRACK: Color32 = Color32::from_gray(45);
+/// Fraction of the track covered by the sliding segment.
+const INDETERMINATE_BAR_SEGMENT: f32 = 0.3;
+/// Slides per second.
+const INDETERMINATE_BAR_SPEED: f64 = 0.6;
+
+fn indeterminate_bar_fill() -> Color32 {
+    Color32::from_rgb(60, 140, 200).linear_multiply(0.6)
+}
+
+/// The lit part of an indeterminate bar at a given time: a segment that enters off the left edge,
+/// slides across, and exits off the right, clipped to the track. Split out from the painting so
+/// the motion can be tested without a rendering context.
+fn indeterminate_bar_segment(rect: egui::Rect, time: f64) -> egui::Rect {
+    let t = ((time * INDETERMINATE_BAR_SPEED) % 1.0) as f32;
+    let seg_width = rect.width() * INDETERMINATE_BAR_SEGMENT;
+    let x = -seg_width + (rect.width() + seg_width) * t;
+    egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + x.max(0.0), rect.min.y),
+        egui::pos2(rect.min.x + (x + seg_width).min(rect.width()), rect.max.y),
+    )
+    .intersect(rect)
+}
+
+/// Paint one frame of the looping bar into an already-allocated track.
+fn paint_indeterminate_bar(ui: &Ui, rect: egui::Rect) {
+    let segment = indeterminate_bar_segment(rect, ui.input(|input| input.time));
+    ui.painter().rect_filled(
+        segment,
+        egui::CornerRadius::same(INDETERMINATE_BAR_CORNER_RADIUS),
+        indeterminate_bar_fill(),
+    );
+    request_animation_repaint(ui.ctx());
+}
+
+/// A looping progress bar for work whose completion cannot be measured, so the dialog shows motion
+/// rather than a percentage frozen at zero until the operation finishes. Matches the bar the task
+/// list shows while a mod install is running.
+fn indeterminate_progress_bar(ui: &mut Ui) -> egui::Response {
+    let width = ui.available_size_before_wrap().x.max(96.0);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width, INDETERMINATE_BAR_HEIGHT), Sense::hover());
+
+    response.widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ProgressIndicator));
+
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(INDETERMINATE_BAR_CORNER_RADIUS),
+            INDETERMINATE_BAR_TRACK,
+        );
+        paint_indeterminate_bar(ui, rect);
+    }
+
+    response
+}
+
 #[cfg(test)]
 mod widget_asset_tests {
     use super::*;
+
+    fn track() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(10.0, 0.0), Vec2::new(200.0, INDETERMINATE_BAR_HEIGHT))
+    }
+
+    #[test]
+    fn indeterminate_bar_slides_across_and_stays_inside_the_track() {
+        let track = track();
+        let period = 1.0 / INDETERMINATE_BAR_SPEED;
+        let samples: Vec<egui::Rect> = (0..=64)
+            .map(|step| indeterminate_bar_segment(track, period * step as f64 / 64.0))
+            .collect();
+
+        assert!(
+            samples
+                .iter()
+                .all(|segment| track.contains_rect(*segment)),
+            "the segment must be clipped to the track, never painted past its edges"
+        );
+        assert!(
+            samples.first().unwrap().width() < 1.0,
+            "the segment starts fully off the left edge"
+        );
+        assert!(
+            samples
+                .iter()
+                .any(|segment| segment.width() > track.width() * INDETERMINATE_BAR_SEGMENT - 1.0),
+            "the segment must be fully visible somewhere mid-slide"
+        );
+        assert!(
+            samples
+                .iter()
+                .any(|segment| (segment.right() - track.right()).abs() < 1.0),
+            "the segment must reach the right edge before wrapping"
+        );
+    }
+
+    #[test]
+    fn indeterminate_bar_slides_in_one_direction_then_wraps() {
+        let track = track();
+        let period = 1.0 / INDETERMINATE_BAR_SPEED;
+        let lefts: Vec<f32> = (0..32)
+            .map(|step| {
+                indeterminate_bar_segment(track, period * step as f64 / 32.0).left()
+            })
+            .collect();
+
+        assert!(
+            lefts.windows(2).all(|pair| pair[1] >= pair[0]),
+            "a marquee only ever travels left to right; it must not reverse: {lefts:?}"
+        );
+        assert_eq!(
+            indeterminate_bar_segment(track, 0.0),
+            indeterminate_bar_segment(track, period * 4.0),
+            "every cycle is identical, so the loop never drifts"
+        );
+    }
 
     #[test]
     fn nte_game_assets_are_embedded() {

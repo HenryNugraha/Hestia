@@ -20,11 +20,12 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tar::{Archive, Builder, EntryType, Header};
-use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_64;
 use zstd::stream::{read::Decoder, write::Encoder};
 
-use crate::model::{GameBackend, GameInstall, MODS_PROFILES_DIR, ModCategory, ToolEntry};
+use crate::model::{
+    GameBackend, GameInstall, MODS_PROFILES_DIR, ModCategory, ProfileId, ToolEntry,
+};
 
 pub const PROFILE_ARCHIVE_EXTENSION: &str = "tzst";
 pub const PROFILE_ARCHIVE_FORMAT_VERSION: u32 = 1;
@@ -32,21 +33,27 @@ pub const PROFILE_METADATA_FILE: &str = "profile.json";
 pub const PROFILE_README_FILE: &str = "readme.txt";
 pub const PROFILE_STAGING_DIR: &str = ".staging";
 pub const PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT: &str = "Archived";
+// Written verbatim into the profile storage folder, so it is the only explanation a user gets
+// while browsing there. Keep it in step with the actual layout: the naming lines change when
+// storage names gain readable labels.
 pub const PROFILE_README_CONTENT: &str = "\
 Hestia Profile Storage
 
-This folder stores inactive Hestia profiles. The active profile remains in the game's normal Mods folder.
+This folder stores inactive Hestia profiles. The active profile is not kept here - it stays in the game's normal Mods folder.
 
 WHAT YOU MAY SEE
 
-<profile-id>.profile.tzst
-A compressed inactive profile. It is a TAR archive compressed with Zstandard.
+<name> [<id>].tzst
+A compressed inactive profile. It is a TAR archive compressed with Zstandard. The name is a label for you; the short id in brackets is what Hestia matches on.
 
-<profile-id>.profile
-A temporary uncompressed profile. Hestia may keep this folder while switching profiles or preparing compression.
+<name> [<id>]
+An uncompressed profile. Hestia keeps this folder while switching profiles, and until a pending compression finishes. Seeing one next to the matching .tzst is normal, and Hestia removes it once the archive is complete.
 
-.part, .bak, .conflict, and .deleting files
-Temporary recovery files created by Hestia. They are normally cleaned up automatically.
+readme.txt
+This file.
+
+.extracting, .journal, .part, .bak, .conflict-*, and .deleting entries
+Files and folders left behind by an interrupted operation. Hestia finishes or rolls back extracting folders, journals, sidecars, and deleting folders on the next launch. Redundant conflict archives are removed when Hestia can prove they match the live archive; other conflict archives are preserved for manual review.
 
 OPENING AN ARCHIVE
 
@@ -57,12 +64,133 @@ You can inspect .tzst archives with:
 
 IMPORTANT
 
-Profile names are stored by Hestia, so archive filenames use internal profile IDs instead.
+Renaming an inactive profile in Hestia renames its files here too. Renaming an inactive profile yourself changes the display name Hestia restores on the next launch. Hestia identifies it by the id in brackets, so do not change the bracketed id.
 
-Do not rename, edit, move, or delete anything in this folder while Hestia is running. Manage profiles through Hestia whenever possible.
+Dropping a .tzst profile from another install into this folder is enough for Hestia to pick it up. Its mods and categories are restored; its tools are not, and are detected fresh from its own mods folder instead.
 
-If Hestia or Windows closes during profile switching or compression, reopen Hestia and allow it to recover the profile data. Do not manually remove temporary files first.
+Do not edit, move, or delete anything in this folder while Hestia is running. Manage profiles through Hestia whenever possible.
+
+If Hestia or Windows closes during profile switching or compression, reopen Hestia and allow it to recover the profile data. Do not remove the temporary entries yourself first - Hestia needs them to finish or roll back what was interrupted.
 ";
+
+/// Length of the short profile id embedded in storage names.
+pub const PROFILE_SHORT_ID_LEN: usize = 8;
+/// Longest label allowed in a storage name, ellipsis included.
+pub const PROFILE_LABEL_MAX_LEN: usize = 24;
+/// Used when a profile name sanitizes away to nothing, so a storage name never starts with the
+/// marker's leading space.
+const PROFILE_LABEL_FALLBACK: &str = "Profile";
+/// Single character, deliberately not `...`: Windows silently strips trailing dots, so an ASCII
+/// ellipsis would be eaten by the filesystem and the label would look arbitrarily cut instead of
+/// visibly shortened.
+const PROFILE_LABEL_ELLIPSIS: char = '…';
+
+/// Invisible or direction-controlling characters. They are legal in filenames but let a stored
+/// name render as something other than what it is, so they are dropped rather than substituted —
+/// substituting would turn an invisible character into visible noise.
+fn is_invisible_or_bidi(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00AD}'                  // soft hyphen
+            | '\u{200B}'..='\u{200F}' // zero-width spaces and joiners, LRM/RLM
+            | '\u{202A}'..='\u{202E}' // bidi embedding and override
+            | '\u{2066}'..='\u{2069}' // bidi isolates
+            | '\u{FEFF}' // zero-width no-break space
+    )
+}
+
+/// The id as it appears in storage names. The id *is* the eight hex digits, so this is only a
+/// rendering, not a truncation.
+pub fn profile_short_id(profile_id: ProfileId) -> String {
+    profile_id.to_string()
+}
+
+/// Reduce a profile name to a filesystem-safe label.
+///
+/// This is the user-visible storage label for an inactive profile. It can become the recovered
+/// display name when app state is rebuilt, so lossy substitution is kept to the minimum needed for a
+/// stable filename. Names are user-supplied and localized, so only genuinely unsafe characters are
+/// touched: the set Windows rejects (a superset of what Linux and macOS reject), control
+/// characters, and invisible or bidi-control characters that would let a stored name render as
+/// something it is not.
+///
+/// Reserved device names (`CON`, `NUL`, `COM1`…) need no special handling because the ` [id]`
+/// marker is always appended, so the stem is never exactly a reserved name.
+pub fn sanitize_profile_label(name: &str) -> String {
+    let mut label = String::with_capacity(name.len());
+    for character in name.chars() {
+        match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => label.push('_'),
+            character if character.is_control() => label.push('_'),
+            character if is_invisible_or_bidi(character) => {}
+            character => label.push(character),
+        }
+    }
+    // Windows silently drops trailing dots and spaces, which would make the stored label disagree
+    // with what was written.
+    let trim = |value: &str| value.trim_start().trim_end_matches(['.', ' ']).to_string();
+    let label = trim(&label);
+    if label.is_empty() {
+        return PROFILE_LABEL_FALLBACK.to_string();
+    }
+    if label.chars().count() <= PROFILE_LABEL_MAX_LEN {
+        return label;
+    }
+    // Count the ellipsis against the budget so the label never exceeds the cap, and take whole
+    // characters so a multi-byte name is never split mid-character.
+    let mut clamped: String = label
+        .chars()
+        .take(PROFILE_LABEL_MAX_LEN.saturating_sub(1))
+        .collect();
+    clamped = trim(&clamped);
+    if clamped.is_empty() {
+        return PROFILE_LABEL_FALLBACK.to_string();
+    }
+    clamped.push(PROFILE_LABEL_ELLIPSIS);
+    clamped
+}
+
+/// Storage stem for a profile: `<label> [<short id>]`.
+pub fn profile_storage_stem(display_name: &str, profile_id: ProfileId) -> String {
+    format!(
+        "{} [{}]",
+        sanitize_profile_label(display_name),
+        profile_short_id(profile_id)
+    )
+}
+
+/// Split a storage stem into its label and short id.
+///
+/// Anchored at the right across a fixed-width marker, so a label containing brackets or spaces
+/// round-trips: `Weird [name] [1fe9ec7a]` yields `("Weird [name]", "1fe9ec7a")`. The label is
+/// returned for display and staleness checks only — it is never an identity. Short ids compare
+/// case-insensitively, since a hand-renamed file is still the same profile.
+pub fn parse_profile_storage_stem(stem: &str) -> Option<(&str, &str)> {
+    let marker_len = PROFILE_SHORT_ID_LEN + 3; // " [" + id + "]"
+    let boundary = stem.len().checked_sub(marker_len)?;
+    if !stem.is_char_boundary(boundary) {
+        return None;
+    }
+    let (label, marker) = stem.split_at(boundary);
+    let short_id = marker
+        .strip_prefix(" [")
+        .and_then(|marker| marker.strip_suffix(']'))?;
+    if short_id.len() != PROFILE_SHORT_ID_LEN
+        || !short_id
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    (!label.is_empty()).then_some((label, short_id))
+}
+
+/// Whether a stem's short id refers to this profile. Case-insensitive so a file renamed in
+/// Explorer still resolves.
+pub fn profile_storage_stem_matches(stem: &str, profile_id: ProfileId) -> bool {
+    parse_profile_storage_stem(stem)
+        .is_some_and(|(_, short_id)| short_id.eq_ignore_ascii_case(&profile_short_id(profile_id)))
+}
 
 /// The live roots captured by a profile archive.  XXMI uses `archived`; Unreal uses `disabled`
 /// and reserves `Archived` in the archive layout for future support.
@@ -79,24 +207,75 @@ impl ProfileRoots {
         self.profiles_dir.join(PROFILE_STAGING_DIR)
     }
 
-    /// Canonical loose profile container path (`<uuid>.profile`).
-    pub fn profile_path(&self, profile_id: Uuid) -> PathBuf {
-        self.profiles_dir.join(format!("{profile_id}.profile"))
+    /// Loose profile container path (`<label> [<short id>]`).
+    ///
+    /// Resolves to whatever is already on disk for this profile, whatever its label, so a folder
+    /// renamed by hand still round-trips. Falls back to the canonical name when nothing exists yet,
+    /// which is what a caller creating a container wants.
+    pub fn profile_path(&self, profile_id: ProfileId) -> PathBuf {
+        self.find_profile_storage(profile_id, false)
+            .unwrap_or_else(|| self.profile_path_for(profile_id, PROFILE_LABEL_FALLBACK))
     }
 
-    /// Canonical compressed profile archive path (`<uuid>.profile.tzst`).
-    pub fn archive_path(&self, profile_id: Uuid) -> PathBuf {
+    /// Compressed profile archive path (`<label> [<short id>].tzst`), resolved like
+    /// [`Self::profile_path`].
+    pub fn archive_path(&self, profile_id: ProfileId) -> PathBuf {
+        self.find_profile_storage(profile_id, true)
+            .unwrap_or_else(|| self.archive_path_for(profile_id, PROFILE_LABEL_FALLBACK))
+    }
+
+    /// Canonical container path for a profile carrying this display name.
+    pub fn profile_path_for(&self, profile_id: ProfileId, display_name: &str) -> PathBuf {
         self.profiles_dir
-            .join(format!("{profile_id}.profile.{PROFILE_ARCHIVE_EXTENSION}"))
+            .join(profile_storage_stem(display_name, profile_id))
+    }
+
+    /// Canonical archive path for a profile carrying this display name.
+    pub fn archive_path_for(&self, profile_id: ProfileId, display_name: &str) -> PathBuf {
+        self.profiles_dir.join(format!(
+            "{}.{PROFILE_ARCHIVE_EXTENSION}",
+            profile_storage_stem(display_name, profile_id)
+        ))
+    }
+
+    /// Existing storage for a profile, matched on the short id rather than the label.
+    ///
+    /// The label is only ever decoration, so it is never part of the match — the authoritative
+    /// identity lives in the entry's own `profile.json`.
+    pub fn find_profile_storage(&self, profile_id: ProfileId, archive: bool) -> Option<PathBuf> {
+        let entries = fs::read_dir(&self.profiles_dir).ok()?;
+        let mut best: Option<PathBuf> = None;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Some(stem) = (if archive {
+                name.strip_suffix(&format!(".{PROFILE_ARCHIVE_EXTENSION}"))
+            } else {
+                Some(name.as_ref())
+            }) else {
+                continue;
+            };
+            if !profile_storage_stem_matches(stem, profile_id) {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) == archive {
+                continue;
+            }
+            // Deterministic when a hand-made copy leaves two candidates, so repeated runs agree.
+            if best.as_ref().is_none_or(|current| entry.path() < *current) {
+                best = Some(entry.path());
+            }
+        }
+        best
     }
 
     /// Sibling path used while atomically writing a profile archive.
-    pub fn archive_part_path(&self, profile_id: Uuid) -> PathBuf {
+    pub fn archive_part_path(&self, profile_id: ProfileId) -> PathBuf {
         archive_sidecar_path(&self.archive_path(profile_id), "part")
     }
 
     /// Sibling backup path used while atomically replacing a profile archive.
-    pub fn archive_backup_path(&self, profile_id: Uuid) -> PathBuf {
+    pub fn archive_backup_path(&self, profile_id: ProfileId) -> PathBuf {
         archive_sidecar_path(&self.archive_path(profile_id), "bak")
     }
 }
@@ -165,7 +344,7 @@ pub fn profile_roots(game: &GameInstall, use_default_mods_path: bool) -> Result<
 pub fn profile_archive_path(
     game: &GameInstall,
     use_default_mods_path: bool,
-    profile_id: Uuid,
+    profile_id: ProfileId,
 ) -> Result<PathBuf> {
     Ok(profile_roots(game, use_default_mods_path)?.archive_path(profile_id))
 }
@@ -173,7 +352,7 @@ pub fn profile_archive_path(
 pub fn profile_path(
     game: &GameInstall,
     use_default_mods_path: bool,
-    profile_id: Uuid,
+    profile_id: ProfileId,
 ) -> Result<PathBuf> {
     Ok(profile_roots(game, use_default_mods_path)?.profile_path(profile_id))
 }
@@ -205,7 +384,7 @@ pub fn ensure_profile_space(path: &Path, required_bytes: u64) -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileArchiveMetadata {
     pub format_version: u32,
-    pub profile_id: Uuid,
+    pub profile_id: ProfileId,
     pub game_id: String,
     pub display_name: String,
     #[serde(default)]
@@ -560,6 +739,87 @@ fn extract_profile_archive_impl(
 
 /// Read the embedded profile manifest without materializing payload files. Full entry validation
 /// is performed by extraction.
+/// Rewrite an archive under a new profile identity, streaming entry by entry.
+///
+/// Used to split a duplicated profile into a genuinely separate one. The identity lives in
+/// `profile.json` at the head of the tar, and the whole thing is zstd-compressed, so it cannot be
+/// patched in place — but streaming avoids ever materializing the uncompressed tree on disk, which
+/// for a large profile is the difference between needing a few megabytes and needing gigabytes.
+///
+/// `progress` receives bytes copied so far against the source's recorded uncompressed size;
+/// returning an error from it aborts and leaves the destination untouched.
+pub fn reidentify_profile_archive(
+    source: &Path,
+    destination: &Path,
+    new_profile_id: ProfileId,
+    new_display_name: &str,
+    mut progress: Option<&mut dyn FnMut(u64, u64) -> Result<()>>,
+) -> Result<ProfileArchiveMetadata> {
+    ensure_tzst_path(source)?;
+    ensure_tzst_path(destination)?;
+    let mut metadata = read_profile_archive_metadata(source)?;
+    let total = metadata.uncompressed_size;
+    metadata.profile_id = new_profile_id;
+    metadata.display_name = new_display_name.to_string();
+    // The copy is a distinct profile from this point, so it cannot claim the source's identity or
+    // pretend its bytes were produced from the live roots.
+    metadata.created_at = Utc::now();
+    metadata.source_fingerprint = None;
+
+    let parent = destination
+        .parent()
+        .context("profile archive destination has no parent")?;
+    fs::create_dir_all(parent)?;
+    let staging = archive_sidecar_path(destination, "part");
+    if staging.exists() {
+        fs::remove_file(&staging)?;
+    }
+
+    let result = (|| -> Result<()> {
+        let file = File::create(&staging)
+            .with_context(|| format!("failed to create {}", staging.display()))?;
+        let mut encoder = Encoder::new(file, -1).context("failed to initialize zstd encoder")?;
+        encoder.multithread(1)?;
+        encoder.include_checksum(true)?;
+        let mut builder = Builder::new(encoder);
+        builder.follow_symlinks(false);
+        append_json(&mut builder, PROFILE_METADATA_FILE, &metadata)?;
+
+        let mut decoder = Decoder::new(File::open(source)?)?;
+        let mut archive = Archive::new(&mut decoder);
+        let mut copied = 0u64;
+        for item in archive.entries()? {
+            let mut entry = item?;
+            let path = entry.path()?.into_owned();
+            validate_relative_path(&path)?;
+            // The replacement metadata is already written; skip the original.
+            if path == Path::new(PROFILE_METADATA_FILE) {
+                continue;
+            }
+            let mut header = entry.header().clone();
+            header.set_cksum();
+            let size = header.size().unwrap_or(0);
+            let mut bytes = Vec::with_capacity(size.min(8 * 1024 * 1024) as usize);
+            entry.read_to_end(&mut bytes)?;
+            builder.append_data(&mut header, &path, bytes.as_slice())?;
+            copied = copied.saturating_add(bytes.len() as u64);
+            if let Some(progress) = progress.as_deref_mut() {
+                progress(copied, total)?;
+            }
+        }
+        builder.into_inner()?.finish()?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
+    }
+    fs::rename(&staging, destination)
+        .with_context(|| format!("failed to finalize {}", destination.display()))?;
+    Ok(metadata)
+}
+
 pub fn read_profile_archive_metadata(archive_path: &Path) -> Result<ProfileArchiveMetadata> {
     ensure_tzst_path(archive_path)?;
     let mut decoder = Decoder::new(File::open(archive_path)?)?;
@@ -1036,6 +1296,184 @@ fn ensure_tzst_path(path: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
+mod storage_name_tests {
+    use super::*;
+
+    fn id(hex: &str) -> ProfileId {
+        hex.parse().unwrap()
+    }
+
+    #[test]
+    fn stem_round_trips_names_containing_brackets_and_spaces() {
+        let profile_id = id("1fe9ec7a");
+        for name in [
+            "Patch 1.4",
+            "Weird [name]",
+            "Patch 1.4 - final",
+            "配置文件",
+            "Профиль",
+        ] {
+            let stem = profile_storage_stem(name, profile_id);
+            assert_eq!(
+                parse_profile_storage_stem(&stem),
+                Some((name, "1fe9ec7a")),
+                "{stem} must parse back to its name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_looks_like_a_marker_does_not_confuse_the_parser() {
+        // The right anchor must win, so the trailing marker is the one that counts.
+        let stem = profile_storage_stem("Backup [deadbeef]", id("1fe9ec7a"));
+        assert_eq!(stem, "Backup [deadbeef] [1fe9ec7a]");
+        assert_eq!(
+            parse_profile_storage_stem(&stem),
+            Some(("Backup [deadbeef]", "1fe9ec7a"))
+        );
+    }
+
+    #[test]
+    fn short_ids_compare_case_insensitively() {
+        let profile_id: ProfileId = "1fe9ec7a".parse().unwrap();
+
+        assert_eq!(
+            parse_profile_storage_stem("Patch 1.4 [1FE9EC7A]"),
+            Some(("Patch 1.4", "1FE9EC7A")),
+            "a file renamed in Explorer is still the same profile"
+        );
+        assert!(profile_storage_stem_matches(
+            "Patch 1.4 [1FE9EC7A]",
+            profile_id
+        ));
+        assert!(profile_storage_stem_matches(
+            "Renamed [1fe9ec7a]",
+            profile_id
+        ));
+        assert!(!profile_storage_stem_matches(
+            "Patch 1.4 [7a15244d]",
+            profile_id
+        ));
+    }
+
+    #[test]
+    fn a_long_label_is_clamped_with_an_ellipsis_within_the_cap() {
+        let label = sanitize_profile_label("Endfield Patch 1.4 Operators Everything");
+
+        assert_eq!(label.chars().count(), PROFILE_LABEL_MAX_LEN);
+        assert!(label.ends_with('…'), "truncation must be visible: {label}");
+        assert!(
+            !label.contains("..."),
+            "an ASCII ellipsis would be stripped by Windows as trailing dots"
+        );
+        let stem = profile_storage_stem("Endfield Patch 1.4 Operators Everything", id("1fe9ec7a"));
+        assert_eq!(
+            parse_profile_storage_stem(&stem).map(|(_, short)| short),
+            Some("1fe9ec7a"),
+            "a clamped label must still round-trip its id"
+        );
+    }
+
+    #[test]
+    fn invisible_and_bidi_characters_are_dropped_not_substituted() {
+        assert_eq!(sanitize_profile_label("Pa\u{200B}tch"), "Patch");
+        assert_eq!(sanitize_profile_label("\u{202E}gnp.exe"), "gnp.exe");
+        assert_eq!(sanitize_profile_label("soft\u{00AD}hyphen"), "softhyphen");
+    }
+
+    #[test]
+    fn quarantine_and_sidecar_stems_are_rejected() {
+        for stem in [
+            "Patch 1.4 [1fe9ec7a].conflict-000000000000007b",
+            "Patch 1.4 [1fe9ec7a].deleting",
+            "Patch 1.4 [1fe9ec7a] ",
+            "Patch 1.4 [1fe9ec7]",
+            "Patch 1.4 [1fe9ec7ag]",
+            "Patch 1.4[1fe9ec7a]",
+            "[1fe9ec7a]",
+            " [1fe9ec7a]",
+            ".staging",
+            "readme.txt",
+            "1fe9ec7a-6ad1-46b6-9558-e8483dc62bcf.profile",
+        ] {
+            assert_eq!(
+                parse_profile_storage_stem(stem),
+                None,
+                "{stem} must not be mistaken for live profile data"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitizing_replaces_only_what_the_filesystem_rejects() {
+        assert_eq!(sanitize_profile_label("a/b\\c:d*e?f"), "a_b_c_d_e_f");
+        assert_eq!(sanitize_profile_label("tab\there"), "tab_here");
+        assert_eq!(
+            sanitize_profile_label("配置文件 v2"),
+            "配置文件 v2",
+            "non-ASCII names are valid on NTFS and must survive untouched"
+        );
+        assert_eq!(
+            sanitize_profile_label("trailing... "),
+            "trailing",
+            "Windows silently drops trailing dots and spaces"
+        );
+        assert_eq!(
+            sanitize_profile_label("///"),
+            "___",
+            "an all-illegal name still yields a usable, distinguishable stem"
+        );
+        // The fallback is only for names that reduce to nothing at all.
+        assert_eq!(sanitize_profile_label("  "), "Profile");
+        assert_eq!(sanitize_profile_label(""), "Profile");
+        assert_eq!(sanitize_profile_label("..."), "Profile");
+    }
+
+    #[test]
+    fn long_and_multibyte_names_truncate_on_character_boundaries() {
+        let long = "配".repeat(200);
+        let label = sanitize_profile_label(&long);
+
+        assert_eq!(label.chars().count(), PROFILE_LABEL_MAX_LEN);
+        let mut characters: Vec<char> = label.chars().collect();
+        assert_eq!(characters.pop(), Some(PROFILE_LABEL_ELLIPSIS));
+        assert!(
+            characters.iter().all(|character| *character == '配'),
+            "clamping must land on character boundaries, never mid-character: {label}"
+        );
+        assert_eq!(
+            label.len(),
+            characters.len() * '配'.len_utf8() + PROFILE_LABEL_ELLIPSIS.len_utf8(),
+            "the byte length must account for whole characters only"
+        );
+        let stem = profile_storage_stem(&long, id("1fe9ec7a"));
+        assert_eq!(
+            parse_profile_storage_stem(&stem).map(|(_, short)| short),
+            Some("1fe9ec7a")
+        );
+    }
+
+    #[test]
+    fn a_reserved_device_name_is_neutralized_by_the_marker() {
+        // "CON" alone is unusable on Windows; "CON [1fe9ec7a]" is not.
+        let stem = profile_storage_stem("CON", id("1fe9ec7a"));
+        assert_eq!(stem, "CON [1fe9ec7a]");
+        assert_eq!(parse_profile_storage_stem(&stem), Some(("CON", "1fe9ec7a")));
+    }
+
+    #[test]
+    fn short_id_is_the_lowercase_hex_prefix_of_the_uuid() {
+        let profile_id: ProfileId = "1fe9ec7a".parse().unwrap();
+
+        assert_eq!(profile_short_id(profile_id), "1fe9ec7a");
+        assert_eq!(
+            profile_storage_stem("Patch 1.4", profile_id),
+            "Patch 1.4 [1fe9ec7a]"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -1071,20 +1509,33 @@ mod tests {
             archived: None,
             disabled: None,
         };
-        let profile_id = Uuid::nil();
+        let profile_id: ProfileId = "00000000".parse().unwrap();
+        // With nothing on disk, the resolver falls back to the canonical shape.
         assert_eq!(
             roots.profile_path(profile_id),
-            roots
-                .profiles_dir
-                .join("00000000-0000-0000-0000-000000000000.profile")
+            roots.profiles_dir.join("Profile [00000000]")
         );
         let archive = roots.archive_path(profile_id);
+        assert_eq!(archive, roots.profiles_dir.join("Profile [00000000].tzst"));
+        // A caller that knows the profile's name gets it in the storage name.
         assert_eq!(
-            archive,
-            roots
-                .profiles_dir
-                .join("00000000-0000-0000-0000-000000000000.profile.tzst")
+            roots.profile_path_for(profile_id, "Patch 1.4"),
+            roots.profiles_dir.join("Patch 1.4 [00000000]")
         );
+        assert_eq!(
+            roots.archive_path_for(profile_id, "Patch 1.4"),
+            roots.profiles_dir.join("Patch 1.4 [00000000].tzst")
+        );
+        // Existing data wins over the fallback, whatever it is labelled.
+        fs::create_dir_all(&roots.profiles_dir).unwrap();
+        let existing = roots.profiles_dir.join("Renamed By Hand [00000000].tzst");
+        fs::write(&existing, b"archive").unwrap();
+        assert_eq!(
+            roots.archive_path(profile_id),
+            existing,
+            "resolution matches on the short id, never the label"
+        );
+        fs::remove_file(&existing).unwrap();
         assert_eq!(
             roots.archive_part_path(profile_id),
             PathBuf::from(format!("{}.part", archive.display()))
@@ -1092,6 +1543,89 @@ mod tests {
         assert_eq!(
             roots.archive_backup_path(profile_id),
             PathBuf::from(format!("{}.bak", archive.display()))
+        );
+    }
+
+    #[test]
+    fn reidentifying_an_archive_gives_it_a_new_identity_and_keeps_every_file() {
+        let temp = tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        fs::create_dir_all(mods.join("SomeMod")).unwrap();
+        fs::write(mods.join("SomeMod").join("a.bin"), vec![b'a'; 5000]).unwrap();
+        fs::write(mods.join("b.txt"), b"second file").unwrap();
+        let roots = ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods,
+            archived: None,
+            disabled: None,
+        };
+        let original_id = ProfileId::random();
+        let source = temp.path().join("source.tzst");
+        let mut original = ProfileArchiveMetadata {
+            format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
+            profile_id: original_id,
+            game_id: "test".to_string(),
+            display_name: "Patch 1.4".to_string(),
+            backend: GameBackend::Xxmi,
+            created_at: Utc::now(),
+            uncompressed_size: 0,
+            file_count: 0,
+            portable_metadata: HashMap::new(),
+            categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
+            source_fingerprint: None,
+        };
+        original.format_version = PROFILE_ARCHIVE_FORMAT_VERSION;
+        create_profile_archive_with_progress(&roots, &original, &source, None).unwrap();
+
+        let new_id = ProfileId::random();
+        let destination = temp.path().join("copy.tzst");
+        let mut seen_progress = Vec::new();
+        let mut report = |copied: u64, total: u64| {
+            seen_progress.push((copied, total));
+            Ok(())
+        };
+        let rewritten = reidentify_profile_archive(
+            &source,
+            &destination,
+            new_id,
+            "Patch 1.4 (copy)",
+            Some(&mut report),
+        )
+        .unwrap();
+
+        assert_eq!(rewritten.profile_id, new_id);
+        assert_eq!(rewritten.display_name, "Patch 1.4 (copy)");
+        assert!(
+            rewritten.source_fingerprint.is_none(),
+            "a rewritten copy no longer matches any live roots"
+        );
+        assert!(!seen_progress.is_empty(), "progress must be reported");
+
+        // The source is untouched and the copy carries the same payload.
+        assert_eq!(
+            read_profile_archive_metadata(&source).unwrap().profile_id,
+            original_id
+        );
+        let extracted = temp.path().join("extracted");
+        extract_profile_archive(&destination, &extracted).unwrap();
+        assert_eq!(
+            fs::read(extracted.join("Mods").join("SomeMod").join("a.bin"))
+                .unwrap()
+                .len(),
+            5000
+        );
+        assert_eq!(
+            fs::read(extracted.join("Mods").join("b.txt")).unwrap(),
+            b"second file"
+        );
+        assert_eq!(
+            read_profile_archive_metadata(&destination)
+                .unwrap()
+                .profile_id,
+            new_id,
+            "only one profile.json survives, the rewritten one"
         );
     }
 
@@ -1197,7 +1731,7 @@ mod tests {
         };
         let metadata = ProfileArchiveMetadata {
             format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
-            profile_id: Uuid::new_v4(),
+            profile_id: ProfileId::random(),
             game_id: "test".to_string(),
             display_name: r#"<>:"/\|?* CON. "#.to_string(),
             backend: GameBackend::Xxmi,
@@ -1318,7 +1852,7 @@ mod tests {
         };
         let metadata = ProfileArchiveMetadata {
             format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
-            profile_id: Uuid::new_v4(),
+            profile_id: ProfileId::random(),
             game_id: "test".to_string(),
             display_name: "Canceled".to_string(),
             backend: GameBackend::Xxmi,
@@ -1372,7 +1906,7 @@ mod tests {
         };
         let metadata = ProfileArchiveMetadata {
             format_version: PROFILE_ARCHIVE_FORMAT_VERSION,
-            profile_id: Uuid::new_v4(),
+            profile_id: ProfileId::random(),
             game_id: "test".to_string(),
             display_name: "Large".to_string(),
             backend: GameBackend::Xxmi,

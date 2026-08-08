@@ -636,11 +636,16 @@ impl HestiaApp {
                     | TaskStatus::Downloading
                     | TaskStatus::Canceling
             ) {
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), INDETERMINATE_BAR_HEIGHT),
+                    Sense::hover(),
+                );
 
-                ui.painter()
-                    .rect_filled(rect, egui::CornerRadius::same(4), Color32::from_gray(45));
+                ui.painter().rect_filled(
+                    rect,
+                    egui::CornerRadius::same(INDETERMINATE_BAR_CORNER_RADIUS),
+                    INDETERMINATE_BAR_TRACK,
+                );
 
                 let text_left;
                 let mut text_right = String::new();
@@ -692,21 +697,7 @@ impl HestiaApp {
                 }
 
                 if is_indeterminate {
-                    let time = ui.input(|i| i.time);
-                    let t = (time * 0.6) % 1.0;
-                    let seg_width = rect.width() * 0.3;
-                    let x = -seg_width + (rect.width() + seg_width) * t as f32;
-                    let filled_rect = egui::Rect::from_min_max(
-                        egui::pos2(rect.min.x + x.max(0.0), rect.min.y),
-                        egui::pos2(rect.min.x + (x + seg_width).min(rect.width()), rect.max.y),
-                    )
-                    .intersect(rect);
-                    ui.painter().rect_filled(
-                        filled_rect,
-                        egui::CornerRadius::same(4),
-                        Color32::from_rgb(60, 140, 200).linear_multiply(0.6),
-                    );
-                    request_animation_repaint(ui.ctx());
+                    paint_indeterminate_bar(ui, rect);
                 } else {
                     let filled_rect = egui::Rect::from_min_size(
                         rect.min,

@@ -1093,7 +1093,8 @@ fn touch_cache_file_if_due(path: &Path) {
         }
     }
     if touches.len() >= CACHE_ACCESS_TOUCH_TRACK_LIMIT {
-        touches.retain(|_, last_touch| now.duration_since(*last_touch) < CACHE_ACCESS_TOUCH_INTERVAL);
+        touches
+            .retain(|_, last_touch| now.duration_since(*last_touch) < CACHE_ACCESS_TOUCH_INTERVAL);
         if touches.len() >= CACHE_ACCESS_TOUCH_TRACK_LIMIT {
             touches.clear();
         }
@@ -1384,6 +1385,7 @@ pub fn save_portable_mod_state(mod_root: &Path, state: &PortableModState) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ProfileId;
 
     #[test]
     fn whats_new_opens_for_missing_invalid_and_older_app_versions() {
@@ -1497,7 +1499,7 @@ mod tests {
         assert!(old_config.profiles_by_game.is_empty());
 
         let mut state = AppState::default();
-        let profile_id = uuid::Uuid::new_v4();
+        let profile_id = ProfileId::random();
         state.profiles_by_game.insert(
             "wuwa".to_string(),
             crate::model::ProfileCatalog {
@@ -1531,7 +1533,7 @@ mod tests {
         assert_eq!(catalog.profiles[0].file_count, Some(7));
         assert_eq!(catalog.profiles[0].categories.as_ref().unwrap().len(), 1);
 
-        let legacy_profile_id = uuid::Uuid::new_v4();
+        let legacy_profile_id = ProfileId::random();
         let legacy_raw = format!(
             "version = 7\ngames = []\n[profiles_by_game.wuwa]\nactive_profile_id = \"{legacy_profile_id}\"\n\n[[profiles_by_game.wuwa.profiles]]\nid = \"{legacy_profile_id}\"\ndisplay_name = \"Legacy\"\narchive_sha256 = \"abc\"\n"
         );
@@ -1544,8 +1546,8 @@ mod tests {
     #[test]
     fn profile_category_migration_preserves_missing_vs_explicit_empty() {
         let game_id = "wuwa".to_string();
-        let missing_id = uuid::Uuid::new_v4();
-        let empty_id = uuid::Uuid::new_v4();
+        let missing_id = ProfileId::random();
+        let empty_id = ProfileId::random();
         let mut profiles = HashMap::from([(
             game_id.clone(),
             crate::model::ProfileCatalog {
@@ -1595,9 +1597,9 @@ mod tests {
     #[test]
     fn profile_tool_migration_seeds_every_profile_and_leaves_migrated_ones_alone() {
         let game_id = "wuwa".to_string();
-        let legacy_id = uuid::Uuid::new_v4();
-        let migrated_id = uuid::Uuid::new_v4();
-        let record = |id: uuid::Uuid, tools: Option<Vec<ToolEntry>>| crate::model::ProfileRecord {
+        let legacy_id = ProfileId::random();
+        let migrated_id = ProfileId::random();
+        let record = |id: ProfileId, tools: Option<Vec<ToolEntry>>| crate::model::ProfileRecord {
             id,
             display_name: "P".to_string(),
             archive_size: None,
@@ -1614,7 +1616,10 @@ mod tests {
             game_id.clone(),
             crate::model::ProfileCatalog {
                 active_profile_id: Some(legacy_id),
-                profiles: vec![record(legacy_id, None), record(migrated_id, Some(Vec::new()))],
+                profiles: vec![
+                    record(legacy_id, None),
+                    record(migrated_id, Some(Vec::new())),
+                ],
             },
         )]);
         let legacy_tools = vec![
@@ -1623,6 +1628,7 @@ mod tests {
                 game_id: game_id.clone(),
                 label: "GIMI".to_string(),
                 path: PathBuf::from("C:\\Mods\\gimi.exe"),
+                relative_path: None,
                 launch_args: "--nogui".to_string(),
                 source_mod_id: None,
                 auto_detected: true,
@@ -1636,6 +1642,7 @@ mod tests {
                 game_id: "other".to_string(),
                 label: "Elsewhere".to_string(),
                 path: PathBuf::from("C:\\Other\\tool.exe"),
+                relative_path: None,
                 launch_args: String::new(),
                 source_mod_id: None,
                 auto_detected: false,
@@ -1645,9 +1652,14 @@ mod tests {
                 created_at: Utc::now(),
             },
         ];
-        let blacklist = HashMap::from([(game_id.clone(), vec!["c:\\mods\\hidden.exe".to_string()])]);
+        let blacklist =
+            HashMap::from([(game_id.clone(), vec!["c:\\mods\\hidden.exe".to_string()])]);
 
-        assert!(migrate_profile_tools(&mut profiles, &legacy_tools, &blacklist));
+        assert!(migrate_profile_tools(
+            &mut profiles,
+            &legacy_tools,
+            &blacklist
+        ));
 
         let migrated = &profiles[&game_id].profiles;
         let seeded = migrated[0].tools.as_ref().unwrap();
@@ -1662,7 +1674,11 @@ mod tests {
             migrated[1].tools.as_ref().unwrap().is_empty(),
             "an already-migrated profile keeps its explicit empty set"
         );
-        assert!(!migrate_profile_tools(&mut profiles, &legacy_tools, &blacklist));
+        assert!(!migrate_profile_tools(
+            &mut profiles,
+            &legacy_tools,
+            &blacklist
+        ));
     }
 
     #[test]

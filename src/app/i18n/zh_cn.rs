@@ -499,6 +499,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "创建一套独立的模组和分类。", // ProfilesNewDescription
     "复制配置文件", // ProfilesDuplicateCurrent
     "复制当前配置文件中的模组和分类。", // ProfilesDuplicateDescription
+    "打开配置文件夹", // ProfilesOpenFolder
+    "打开存放该游戏配置文件的文件夹。", // ProfilesOpenFolderTooltip
     "重命名配置文件", // ProfilesRename
     "为此配置文件选择一个新名称。", // ProfilesRenameDescription
     "删除配置文件", // ProfilesDelete
@@ -510,6 +512,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "正在删除配置文件…", // ProfilesDeleting
     "正在归档当前配置文件…", // ProfilesArchivingCurrent
     "正在解压所选配置文件…", // ProfilesExtractingSelected
+    "正在复制所选配置文件…", // ProfilesCopyingSelected
     "正在激活所选配置文件…", // ProfilesActivatingSelected
     "未激活的配置文件会进行压缩，以节省磁盘空间。", // ProfilesInactiveCompressedNote
     "状态", // ProfilesStatusLabel
@@ -535,6 +538,15 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "已删除配置文件：{name}", // ProfilesDeleted
     "已激活配置文件：{name}", // ProfilesActivated
     "配置文件操作已取消", // ProfilesCanceled
+    "配置文件已恢复", // ProfilesActionRecovered
+    "已恢复 {count} 个存在于存储中但未出现在配置文件列表中的配置文件。", // ProfilesRecovered
+    "发现重复的配置文件副本", // ProfilesDuplicateTitle
+    "磁盘上存在配置文件的额外副本。Hestia 各使用其中一个；请选择如何处理其余副本。", // ProfilesDuplicateBody
+    "完全相同的副本", // ProfilesDuplicateIdentical
+    "内容不同", // ProfilesDuplicateDifferent
+    "两者都保留", // ProfilesDuplicateKeepBoth
+    "删除副本", // ProfilesDuplicateDelete
+    "正在生成新的配置文件 ID…", // ProfilesReidentifying
 
     // Window: Settings
     "设置", // SettingsWindowTitle

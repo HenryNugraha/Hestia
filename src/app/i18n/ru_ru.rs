@@ -499,6 +499,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Создайте отдельный набор модов и категорий.", // ProfilesNewDescription
     "Дублировать профиль", // ProfilesDuplicateCurrent
     "Создайте копию модов и категорий текущего профиля.", // ProfilesDuplicateDescription
+    "Открыть папку профилей", // ProfilesOpenFolder
+    "Открыть папку, где хранятся профили этой игры.", // ProfilesOpenFolderTooltip
     "Переименовать профиль", // ProfilesRename
     "Выберите новое имя для этого профиля.", // ProfilesRenameDescription
     "Удалить профиль", // ProfilesDelete
@@ -510,6 +512,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Удаление профиля…", // ProfilesDeleting
     "Архивирование текущего профиля…", // ProfilesArchivingCurrent
     "Распаковка выбранного профиля…", // ProfilesExtractingSelected
+    "Копирование выбранного профиля…", // ProfilesCopyingSelected
     "Активация выбранного профиля…", // ProfilesActivatingSelected
     "Неактивные профили сжимаются для экономии места на диске.", // ProfilesInactiveCompressedNote
     "Статус", // ProfilesStatusLabel
@@ -535,6 +538,15 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Профиль удалён: {name}", // ProfilesDeleted
     "Профиль активирован: {name}", // ProfilesActivated
     "Операция с профилем отменена", // ProfilesCanceled
+    "Профиль восстановлен", // ProfilesActionRecovered
+    "Восстановлено профилей: {count} — они были в хранилище, но отсутствовали в списке.", // ProfilesRecovered
+    "Найдены дубликаты профилей", // ProfilesDuplicateTitle
+    "На диске есть дополнительные копии профилей. Hestia использует по одной из каждой; выберите, что делать с остальными.", // ProfilesDuplicateBody
+    "Идентичная копия", // ProfilesDuplicateIdentical
+    "Другое содержимое", // ProfilesDuplicateDifferent
+    "Оставить обе", // ProfilesDuplicateKeepBoth
+    "Удалить копию", // ProfilesDuplicateDelete
+    "Создание нового ID профиля…", // ProfilesReidentifying
 
     // Window: Settings
     "Опции", // SettingsWindowTitle

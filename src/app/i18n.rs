@@ -496,6 +496,8 @@ enum TextKey {
     ProfilesNewDescription,
     ProfilesDuplicateCurrent,
     ProfilesDuplicateDescription,
+    ProfilesOpenFolder,
+    ProfilesOpenFolderTooltip,
     ProfilesRename,
     ProfilesRenameDescription,
     ProfilesDelete,
@@ -507,6 +509,7 @@ enum TextKey {
     ProfilesDeleting,
     ProfilesArchivingCurrent,
     ProfilesExtractingSelected,
+    ProfilesCopyingSelected,
     ProfilesActivatingSelected,
     ProfilesInactiveCompressedNote,
     ProfilesStatusLabel,
@@ -532,6 +535,15 @@ enum TextKey {
     ProfilesDeleted,
     ProfilesActivated,
     ProfilesCanceled,
+    ProfilesActionRecovered,
+    ProfilesRecovered,
+    ProfilesDuplicateTitle,
+    ProfilesDuplicateBody,
+    ProfilesDuplicateIdentical,
+    ProfilesDuplicateDifferent,
+    ProfilesDuplicateKeepBoth,
+    ProfilesDuplicateDelete,
+    ProfilesReidentifying,
 
     SettingsWindowTitle,
     SettingsTabGeneral,
@@ -2704,6 +2716,14 @@ impl TextCatalog {
         self.get(TextKey::ProfilesDuplicateCurrent)
     }
 
+    fn open_profile_folder(self) -> &'static str {
+        self.get(TextKey::ProfilesOpenFolder)
+    }
+
+    fn open_profile_folder_tooltip(self) -> &'static str {
+        self.get(TextKey::ProfilesOpenFolderTooltip)
+    }
+
     fn profile_duplicate_description(self) -> &'static str {
         self.get(TextKey::ProfilesDuplicateDescription)
     }
@@ -2750,6 +2770,10 @@ impl TextCatalog {
 
     fn extracting_selected_profile(self) -> &'static str {
         self.get(TextKey::ProfilesExtractingSelected)
+    }
+
+    fn copying_selected_profile(self) -> &'static str {
+        self.get(TextKey::ProfilesCopyingSelected)
     }
 
     fn activating_selected_profile(self) -> &'static str {
@@ -2844,6 +2868,43 @@ impl TextCatalog {
 
     fn profile_deleted(self, name: &str) -> String {
         self.get(TextKey::ProfilesDeleted).replace("{name}", name)
+    }
+
+    fn profile_action_recovered(self) -> &'static str {
+        self.get(TextKey::ProfilesActionRecovered)
+    }
+
+    fn profiles_duplicate_title(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateTitle)
+    }
+
+    fn profiles_duplicate_body(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateBody)
+    }
+
+    fn profiles_duplicate_identical(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateIdentical)
+    }
+
+    fn profiles_duplicate_different(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateDifferent)
+    }
+
+    fn profiles_duplicate_keep_both(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateKeepBoth)
+    }
+
+    fn profiles_duplicate_delete(self) -> &'static str {
+        self.get(TextKey::ProfilesDuplicateDelete)
+    }
+
+    fn profiles_reidentifying(self) -> &'static str {
+        self.get(TextKey::ProfilesReidentifying)
+    }
+
+    fn profiles_recovered(self, count: usize) -> String {
+        self.get(TextKey::ProfilesRecovered)
+            .replace("{count}", &count.to_string())
     }
 
     fn profile_activated(self, name: &str) -> String {

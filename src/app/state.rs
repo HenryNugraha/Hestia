@@ -220,6 +220,10 @@ pub struct HestiaApp {
     tools_window_nonce: u64,
     tools_force_default_pos: bool,
     tool_launch_options_prompt: Option<ToolLaunchOptionsPrompt>,
+    /// Archive awaiting re-identification, handed to the next spec this frame.
+    pending_reidentify_source: Option<PathBuf>,
+    /// Duplicate copies found by the last scan, shown so the user can resolve them.
+    profile_duplicate_prompt: Vec<ProfileDuplicateEntry>,
     dragging_window_tool_id: Option<String>,
     dragging_window_tool_target_index: Option<usize>,
     dragging_titlebar_tool_id: Option<String>,
@@ -349,14 +353,14 @@ pub struct HestiaApp {
     profile_request_tx: WorkerTx<ProfileRequest>,
     profile_event_rx: WorkerRx<ProfileEvent>,
     profile_operation_inflight: Option<ProfileOperationInflight>,
-    profile_compression_states: HashMap<(String, Uuid), ProfileCompressionUiState>,
+    profile_compression_states: HashMap<(String, ProfileId), ProfileCompressionUiState>,
     profile_next_operation_id: u64,
     profile_recovery_queue: VecDeque<GameInstall>,
     profile_recovery_failed: bool,
     profile_name_prompt: Option<ProfileOperationKind>,
-    profile_name_target_id: Option<Uuid>,
+    profile_name_target_id: Option<ProfileId>,
     profile_name_draft: String,
-    pending_profile_delete_id: Option<Uuid>,
+    pending_profile_delete_id: Option<ProfileId>,
     pending_reload_summary: Option<(String, Vec<ReloadSnapshot>)>,
     pending_install_finalize: HashMap<u64, PendingInstallFinalize>,
     pending_known_installed_paths: HashSet<PathBuf>,
@@ -1327,6 +1331,9 @@ enum ProfileOperationKind {
     Rename,
     Delete,
     Recover,
+    /// Rewrite a duplicated profile's archive under a fresh identity, so two copies claiming the
+    /// same profile can both be kept as separate profiles.
+    Reidentify,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1366,7 +1373,7 @@ struct ProfileArchiveJob {
     game_id: String,
     game: GameInstall,
     use_default_mods_path: bool,
-    profile_id: Uuid,
+    profile_id: ProfileId,
 }
 
 #[derive(Clone)]
@@ -1376,9 +1383,9 @@ struct ProfileOperationSpec {
     game: GameInstall,
     use_default_mods_path: bool,
     kind: ProfileOperationKind,
-    profile_id: Option<Uuid>,
-    source_profile_id: Option<Uuid>,
-    target_profile_id: Option<Uuid>,
+    profile_id: Option<ProfileId>,
+    source_profile_id: Option<ProfileId>,
+    target_profile_id: Option<ProfileId>,
     display_name: Option<String>,
     target_display_name: Option<String>,
     source_archive: Option<PathBuf>,
@@ -1386,6 +1393,11 @@ struct ProfileOperationSpec {
     target_categories: Option<Vec<ModCategory>>,
     target_tools: Option<Vec<ToolEntry>>,
     target_tool_blacklist: Option<Vec<String>>,
+    /// Profiles the catalog already knows about, so recovery can tell which stored profiles are
+    /// orphaned. Only populated for `Recover`.
+    known_profile_ids: Vec<ProfileId>,
+    /// Archive to rewrite under a new identity. Only set for `Reidentify`.
+    reidentify_source: Option<PathBuf>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
@@ -1400,9 +1412,20 @@ struct ProfileToolSnapshot {
     blacklist: Vec<String>,
 }
 
+/// A stored copy of a profile that already has another copy on disk.
+#[derive(Clone)]
+struct ProfileDuplicateEntry {
+    game_id: String,
+    display_name: String,
+    path: PathBuf,
+    bytes: u64,
+    /// Identical content to the copy in use, so deleting it loses nothing.
+    redundant: bool,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct ActiveProfileMarker {
-    profile_id: Uuid,
+    profile_id: ProfileId,
     display_name: String,
     #[serde(default)]
     categories: Option<Vec<ModCategory>>,
@@ -1416,43 +1439,49 @@ enum ProfileRequest {
     Execute(ProfileOperationSpec),
 }
 
+/// Payload of [`ProfileEvent::Completed`], boxed at the variant. It dwarfs every other variant, and
+/// an enum is sized to its largest, so inlining it would make even a bare `Canceled` message carry
+/// hundreds of bytes through the channel.
+struct ProfileCompleted {
+    game_id: String,
+    kind: ProfileOperationKind,
+    profile_id: Option<ProfileId>,
+    target_profile_id: Option<ProfileId>,
+    display_name: Option<String>,
+    archive: Option<crate::integrations::profiles::ArchiveResult>,
+    active_profile_marker: Option<ActiveProfileMarker>,
+    orphaned_profiles: Vec<OrphanedProfile>,
+    renamed_profiles: Vec<RecoveredProfileLabel>,
+    duplicate_profiles: Vec<ProfileDuplicateEntry>,
+    warnings: Vec<String>,
+}
+
 enum ProfileEvent {
     Completed {
         operation_id: u64,
-        game_id: String,
-        kind: ProfileOperationKind,
-        profile_id: Option<Uuid>,
-        target_profile_id: Option<Uuid>,
-        display_name: Option<String>,
-        archive: Option<crate::integrations::profiles::ArchiveResult>,
-        active_profile_marker: Option<ActiveProfileMarker>,
-        warnings: Vec<String>,
+        completed: Box<ProfileCompleted>,
     },
     ArchiveCompleted {
         game_id: String,
-        profile_id: Uuid,
+        profile_id: ProfileId,
         archive: crate::integrations::profiles::ArchiveResult,
     },
     ArchiveQueued {
         game_id: String,
-        profile_id: Uuid,
+        profile_id: ProfileId,
         delay_seconds: u64,
     },
     ArchiveStarted {
         game_id: String,
-        profile_id: Uuid,
-    },
-    ArchiveCanceled {
-        game_id: String,
-        profile_id: Uuid,
+        profile_id: ProfileId,
     },
     ArchiveSkipped {
         game_id: String,
-        profile_id: Uuid,
+        profile_id: ProfileId,
     },
     ArchiveFailed {
         game_id: String,
-        profile_id: Uuid,
+        profile_id: ProfileId,
         error: String,
     },
     Failed {

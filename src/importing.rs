@@ -354,10 +354,9 @@ pub fn archive_source_total_size(path: &Path) -> Option<u64> {
         if let Ok(entries) = fs::read_dir(split_part_parent(path)) {
             for entry in entries.flatten() {
                 let candidate = entry.path();
-                let same_set = rar_part_number(&candidate)
-                    .is_some_and(|(candidate_prefix, _)| {
-                        candidate_prefix.eq_ignore_ascii_case(&prefix)
-                    });
+                let same_set = rar_part_number(&candidate).is_some_and(|(candidate_prefix, _)| {
+                    candidate_prefix.eq_ignore_ascii_case(&prefix)
+                });
                 if same_set && let Ok(meta) = fs::metadata(&candidate) {
                     total += meta.len();
                     found = true;
@@ -1193,12 +1192,27 @@ pub fn copy_dir_cancelable(
     replace_existing: bool,
     cancel: &CancelFlag,
 ) -> Result<()> {
+    copy_dir_cancelable_with_progress(source, destination, replace_existing, cancel, &mut |_| {
+        Ok(())
+    })
+}
+
+/// `on_bytes` receives the running total of bytes copied so far, after each file. Returning an
+/// error from it aborts the copy, so it can double as an extra cancellation point.
+pub fn copy_dir_cancelable_with_progress(
+    source: &Path,
+    destination: &Path,
+    replace_existing: bool,
+    cancel: &CancelFlag,
+    on_bytes: &mut dyn FnMut(u64) -> Result<()>,
+) -> Result<()> {
     check_cancel(cancel)?;
     if destination.exists() && replace_existing {
         fs::remove_dir_all(destination)?;
     }
     let mut created_dirs = HashSet::new();
     ensure_directory(destination, &mut created_dirs)?;
+    let mut copied_bytes = 0u64;
     for entry in WalkDir::new(source) {
         check_cancel(cancel)?;
         let entry = entry?;
@@ -1214,7 +1228,9 @@ pub fn copy_dir_cancelable(
             if let Some(parent) = target.parent() {
                 ensure_directory(parent, &mut created_dirs)?;
             }
-            copy_file_with_parent_recovery(entry.path(), &target)?;
+            let bytes = copy_file_with_parent_recovery(entry.path(), &target)?;
+            copied_bytes = copied_bytes.saturating_add(bytes);
+            on_bytes(copied_bytes)?;
         }
     }
     Ok(())
@@ -1649,8 +1665,14 @@ mod tests {
 
     #[test]
     fn import_source_label_strips_split_volume_suffixes() {
-        assert_eq!(import_source_label(Path::new("Cool Mod.rar.0001")), "Cool Mod");
-        assert_eq!(import_source_label(Path::new("Cool Mod.part1.rar")), "Cool Mod");
+        assert_eq!(
+            import_source_label(Path::new("Cool Mod.rar.0001")),
+            "Cool Mod"
+        );
+        assert_eq!(
+            import_source_label(Path::new("Cool Mod.part1.rar")),
+            "Cool Mod"
+        );
         assert_eq!(import_source_label(Path::new("Cool Mod.zip")), "Cool Mod");
     }
 

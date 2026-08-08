@@ -2,6 +2,7 @@
 struct DiscoveredGameTool {
     label: String,
     path: PathBuf,
+    relative_path: Option<PathBuf>,
     source_mod_id: Option<String>,
 }
 
@@ -68,6 +69,26 @@ impl HestiaApp {
 
     fn tool_icon_texture(&self, tool_id: &str) -> Option<&egui::TextureHandle> {
         self.tool_icon_textures.get(tool_id)
+    }
+
+    /// Path relative to the mods root, when the tool lives inside it.
+    fn tool_relative_path(mods_root: Option<&Path>, path: &Path) -> Option<PathBuf> {
+        mods_root
+            .and_then(|root| path.strip_prefix(root).ok())
+            .map(Path::to_path_buf)
+    }
+
+    /// Identity used to match a discovered tool against a stored one. Tools inside the mods folder
+    /// match on their position within it, so they survive the folder moving or the profile being
+    /// carried to another install; anything outside keeps its absolute path.
+    fn tool_match_key(mods_root: Option<&Path>, path: &Path, relative: Option<&Path>) -> String {
+        let relative = relative
+            .map(Path::to_path_buf)
+            .or_else(|| Self::tool_relative_path(mods_root, path));
+        match relative {
+            Some(relative) => format!("mods:{}", Self::normalize_tool_path_key(&relative)),
+            None => Self::normalize_tool_path_key(path),
+        }
     }
 
     fn normalize_tool_path_key(path: &Path) -> String {
@@ -324,6 +345,7 @@ impl HestiaApp {
                 DiscoveredGameTool {
                     label,
                     path: path.to_path_buf(),
+                    relative_path: Self::tool_relative_path(Some(mods_root), path),
                     source_mod_id: self.infer_tool_source_mod_id(game_id, path),
                 },
             );
@@ -345,20 +367,31 @@ impl HestiaApp {
         }
         let game_id = game.definition.id;
         let discovered = self.discover_tools_for_game(&game_id, &mods_root);
-        self.merge_discovered_tools(&game_id, discovered)
+        self.merge_discovered_tools(&game_id, &mods_root, discovered)
     }
 
-    fn merge_discovered_tools(&mut self, game_id: &str, discovered: Vec<DiscoveredGameTool>) -> bool {
+    fn merge_discovered_tools(
+        &mut self,
+        game_id: &str,
+        mods_root: &Path,
+        discovered: Vec<DiscoveredGameTool>,
+    ) -> bool {
+        let root = Some(mods_root);
         let manual_keys: HashSet<String> = self
             .state
             .tools
             .iter()
             .filter(|tool| tool.game_id == game_id && !tool.auto_detected)
-            .map(|tool| Self::normalize_tool_path_key(&tool.path))
+            .map(|tool| Self::tool_match_key(root, &tool.path, tool.relative_path.as_deref()))
             .collect();
         let discovered_by_key: HashMap<String, DiscoveredGameTool> = discovered
             .into_iter()
-            .map(|tool| (Self::normalize_tool_path_key(&tool.path), tool))
+            .map(|tool| {
+                (
+                    Self::tool_match_key(root, &tool.path, tool.relative_path.as_deref()),
+                    tool,
+                )
+            })
             .collect();
         let mut changed = false;
 
@@ -369,7 +402,7 @@ impl HestiaApp {
             if !tool.auto_detected {
                 return true;
             }
-            let key = Self::normalize_tool_path_key(&tool.path);
+            let key = Self::tool_match_key(root, &tool.path, tool.relative_path.as_deref());
             if manual_keys.contains(&key) {
                 self.tool_icon_textures.remove(&tool.id);
                 self.tool_icon_texture_failures.remove(&tool.id);
@@ -379,6 +412,7 @@ impl HestiaApp {
             if let Some(discovered) = discovered_by_key.get(&key) {
                 if tool.label != discovered.label
                     || tool.path != discovered.path
+                    || tool.relative_path != discovered.relative_path
                     || tool.source_mod_id != discovered.source_mod_id
                 {
                     if tool.path != discovered.path {
@@ -386,7 +420,10 @@ impl HestiaApp {
                         self.tool_icon_texture_failures.remove(&tool.id);
                     }
                     tool.label = discovered.label.clone();
+                    // Re-anchoring here is what carries launch options across a moved mods folder:
+                    // the stored path is stale but the position inside the folder still matches.
                     tool.path = discovered.path.clone();
+                    tool.relative_path = discovered.relative_path.clone();
                     tool.source_mod_id = discovered.source_mod_id.clone();
                     changed = true;
                 }
@@ -404,7 +441,7 @@ impl HestiaApp {
             .tools
             .iter()
             .filter(|tool| tool.game_id == game_id)
-            .map(|tool| Self::normalize_tool_path_key(&tool.path))
+            .map(|tool| Self::tool_match_key(root, &tool.path, tool.relative_path.as_deref()))
             .collect();
 
         for (key, discovered) in discovered_by_key {
@@ -412,10 +449,11 @@ impl HestiaApp {
                 continue;
             }
             self.state.tools.push(ToolEntry {
-                id: Uuid::new_v4().to_string(),
+                id: ProfileId::random().to_string(),
                 game_id: game_id.to_string(),
                 label: discovered.label,
                 path: discovered.path,
+                relative_path: discovered.relative_path,
                 launch_args: String::new(),
                 source_mod_id: discovered.source_mod_id,
                 auto_detected: true,
@@ -477,9 +515,15 @@ impl HestiaApp {
             .unwrap_or(self.text().tool_fallback_label())
             .to_string();
         self.state.tools.push(ToolEntry {
-            id: Uuid::new_v4().to_string(),
+            id: ProfileId::random().to_string(),
             game_id: game_id.clone(),
             label: label.clone(),
+            relative_path: Self::tool_relative_path(
+                self.selected_game()
+                    .and_then(|game| game.mods_path(self.state.static_prefs.use_default_mods_path))
+                    .as_deref(),
+                &path,
+            ),
             path,
             launch_args: String::new(),
             source_mod_id: None,
@@ -642,6 +686,7 @@ mod tool_pin_tests {
             game_id: "game".to_string(),
             label: id.to_string(),
             path: PathBuf::from(format!("C:\\Mods\\{id}.exe")),
+            relative_path: None,
             launch_args: String::new(),
             source_mod_id: None,
             auto_detected: true,
@@ -658,6 +703,38 @@ mod tool_pin_tests {
             .filter(|tool| tool.show_in_titlebar)
             .map(|tool| tool.id.as_str())
             .collect()
+    }
+
+    #[test]
+    fn a_tool_inside_the_mods_folder_matches_after_the_folder_moves() {
+        let old_root = PathBuf::from("C:/Games/A/Mods");
+        let new_root = PathBuf::from("D:/Elsewhere/Mods");
+        let exe = old_root.join("GIMI").join("gimi.exe");
+        let relative = HestiaApp::tool_relative_path(Some(&old_root), &exe);
+
+        assert_eq!(relative.as_deref(), Some(Path::new("GIMI/gimi.exe")));
+        assert_eq!(
+            HestiaApp::tool_match_key(Some(&old_root), &exe, relative.as_deref()),
+            HestiaApp::tool_match_key(
+                Some(&new_root),
+                &new_root.join("GIMI").join("gimi.exe"),
+                None
+            ),
+            "the same tool in a moved mods folder must keep its identity, so its launch options              and pin survive"
+        );
+    }
+
+    #[test]
+    fn a_tool_outside_the_mods_folder_keeps_its_absolute_identity() {
+        let root = PathBuf::from("C:/Games/A/Mods");
+        let outside = PathBuf::from("C:/Program Files/Blender/blender.exe");
+
+        assert_eq!(HestiaApp::tool_relative_path(Some(&root), &outside), None);
+        assert_ne!(
+            HestiaApp::tool_match_key(Some(&root), &outside, None),
+            HestiaApp::tool_match_key(Some(&root), &root.join("blender.exe"), None),
+            "an external tool must not collide with a same-named one inside the mods folder"
+        );
     }
 
     #[test]

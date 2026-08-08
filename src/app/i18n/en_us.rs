@@ -499,6 +499,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Create a separate set of mods and categories.", // ProfilesNewDescription
     "Duplicate profile", // ProfilesDuplicateCurrent
     "Create a copy of the current profile's mods and categories.", // ProfilesDuplicateDescription
+    "Open profile folder", // ProfilesOpenFolder
+    "Open the folder where this game's profiles are stored.", // ProfilesOpenFolderTooltip
     "Rename profile", // ProfilesRename
     "Choose a new name for this profile.", // ProfilesRenameDescription
     "Delete profile", // ProfilesDelete
@@ -510,6 +512,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Deleting profile…", // ProfilesDeleting
     "Archiving current profile…", // ProfilesArchivingCurrent
     "Extracting selected profile…", // ProfilesExtractingSelected
+    "Copying selected profile…", // ProfilesCopyingSelected
     "Activating selected profile…", // ProfilesActivatingSelected
     "Inactive profiles are compressed to save disk space.", // ProfilesInactiveCompressedNote
     "Status", // ProfilesStatusLabel
@@ -535,6 +538,15 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Profile deleted: {name}", // ProfilesDeleted
     "Profile activated: {name}", // ProfilesActivated
     "Profile operation canceled", // ProfilesCanceled
+    "Profile recovered", // ProfilesActionRecovered
+    "Recovered {count} profile(s) found in storage but missing from the profile list.", // ProfilesRecovered
+    "Duplicate profile copies found", // ProfilesDuplicateTitle
+    "These extra copies of your profiles are on disk. Hestia is using one of each; choose what to do with the rest.", // ProfilesDuplicateBody
+    "Identical copy", // ProfilesDuplicateIdentical
+    "Different contents", // ProfilesDuplicateDifferent
+    "Keep both", // ProfilesDuplicateKeepBoth
+    "Delete copy", // ProfilesDuplicateDelete
+    "Generating new profile ID…", // ProfilesReidentifying
 
     // Window: Settings
     "Settings", // SettingsWindowTitle

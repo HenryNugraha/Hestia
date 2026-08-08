@@ -12,9 +12,9 @@ use std::{
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x00000008;
 #[cfg(windows)]
@@ -46,8 +46,8 @@ use crate::{
     integrations::unrealengine,
     model::{
         AppState, DISABLED_CONTAINER, DiscoveredTool, ExtractedMetadata,
-        ExtractedMetadataTextSource, GameBackend, GameInstall, MOD_META_DIR, ModEntry, ModMetadata, ModStatus,
-        PERSONAL_NOTE_FILE, PortableModState,
+        ExtractedMetadataTextSource, GameBackend, GameInstall, MOD_META_DIR, ModEntry, ModMetadata,
+        ModStatus, PERSONAL_NOTE_FILE, PortableModState,
     },
     persistence,
 };
@@ -95,7 +95,8 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
                     .is_some_and(|p| p.is_file());
                 let modded_exists = match game.definition.backend {
                     GameBackend::Xxmi => state
-                        .static_prefs.modded_launcher_path_override
+                        .static_prefs
+                        .modded_launcher_path_override
                         .as_ref()
                         .or(game.modded_exe_path_override.as_ref())
                         .is_some_and(|p| p.is_file()),
@@ -178,7 +179,8 @@ fn repair_duplicate_scanned_mod_ids(
     state: &AppState,
     target_game_id: Option<&str>,
 ) {
-    let mut indices_by_id: HashMap<String, Vec<usize>> = HashMap::with_capacity(newly_scanned.len());
+    let mut indices_by_id: HashMap<String, Vec<usize>> =
+        HashMap::with_capacity(newly_scanned.len());
     for (index, mod_entry) in newly_scanned.iter().enumerate() {
         indices_by_id
             .entry(mod_entry.id.clone())

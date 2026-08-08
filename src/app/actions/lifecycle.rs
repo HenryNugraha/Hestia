@@ -381,6 +381,8 @@ impl HestiaApp {
             tools_window_nonce,
             tools_force_default_pos,
             tool_launch_options_prompt: None,
+            pending_reidentify_source: None,
+            profile_duplicate_prompt: Vec::new(),
             dragging_window_tool_id: None,
             dragging_window_tool_target_index: None,
             dragging_titlebar_tool_id: None,
@@ -2986,6 +2988,7 @@ impl HestiaApp {
         self.sync_tools_for_selected_game();
         self.save_state();
         self.pending_reload_summary = Some((game_id.clone(), before));
+        self.queue_profile_recovery_for_game(&game_id);
         self.queue_game_refresh(game_id);
     }
 

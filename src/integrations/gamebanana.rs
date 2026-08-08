@@ -331,7 +331,12 @@ mod tests {
         assert_eq!(first, second);
         assert!(first.starts_with("gb-json:v2:"));
         assert_eq!(
-            search_page_cache_key("genshin", "  Furina  ", 1, crate::model::SearchSort::BestMatch),
+            search_page_cache_key(
+                "genshin",
+                "  Furina  ",
+                1,
+                crate::model::SearchSort::BestMatch
+            ),
             search_page_cache_key("genshin", "Furina", 1, crate::model::SearchSort::BestMatch),
         );
     }
@@ -564,7 +569,10 @@ pub fn fetch_search_page(
         query_pairs.append_pair("_sOrder", order);
         query_pairs.append_pair("_idGameRow", &game_id.to_string());
         query_pairs.append_pair("_sSearchString", query);
-        query_pairs.append_pair("_csvFields", "name,description,article,attribs,studio,owner,credits");
+        query_pairs.append_pair(
+            "_csvFields",
+            "name,description,article,attribs,studio,owner,credits",
+        );
         query_pairs.append_pair("_nPerpage", &SEARCH_PAGE_SIZE.to_string());
         query_pairs.append_pair("_nPage", &page.to_string());
     }
@@ -597,7 +605,10 @@ pub async fn fetch_search_page_async(
         query_pairs.append_pair("_sOrder", order);
         query_pairs.append_pair("_idGameRow", &game_id.to_string());
         query_pairs.append_pair("_sSearchString", query);
-        query_pairs.append_pair("_csvFields", "name,description,article,attribs,studio,owner,credits");
+        query_pairs.append_pair(
+            "_csvFields",
+            "name,description,article,attribs,studio,owner,credits",
+        );
         query_pairs.append_pair("_nPerpage", &SEARCH_PAGE_SIZE.to_string());
         query_pairs.append_pair("_nPage", &page.to_string());
         if nocache {
@@ -632,11 +643,7 @@ pub fn fetch_profile(client: &Client, mod_id: u64) -> Result<ProfileResponse> {
     fetch_profile_typed(client, mod_id, false)
 }
 
-pub fn fetch_profile_typed(
-    client: &Client,
-    mod_id: u64,
-    is_tool: bool,
-) -> Result<ProfileResponse> {
+pub fn fetch_profile_typed(client: &Client, mod_id: u64, is_tool: bool) -> Result<ProfileResponse> {
     let kind = item_api_kind(is_tool);
     let url = format!("https://gamebanana.com/apiv11/{kind}/{mod_id}/ProfilePage");
     client
@@ -680,7 +687,9 @@ pub async fn fetch_updates_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
 ) -> Result<ApiEnvelope<UpdateRecord>> {
-    let mut url = Url::parse(&format!("https://gamebanana.com/apiv11/Mod/{mod_id}/Updates"))?;
+    let mut url = Url::parse(&format!(
+        "https://gamebanana.com/apiv11/Mod/{mod_id}/Updates"
+    ))?;
     {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs.append_pair("_nPage", "1");

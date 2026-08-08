@@ -164,7 +164,8 @@ impl CustomProxyConfig {
     const AUTO_DETECT_PORTS: [u16; 11] = [
         80, 8080, 8085, 7890, 7891, 3128, 999, 1080, 3129, 5678, 8089,
     ];
-    const AUTO_DETECT_SCHEMES: [&str; 6] = ["socks5h", "socks5", "socks4a", "socks4", "http", "https"];
+    const AUTO_DETECT_SCHEMES: [&str; 6] =
+        ["socks5h", "socks5", "socks4a", "socks4", "http", "https"];
     pub fn from_preferences(preferences: &StaticPreferences) -> Result<Option<Self>, String> {
         if !preferences.use_custom_proxy {
             return Ok(None);
@@ -235,7 +236,10 @@ impl CustomProxyConfig {
         };
         let url = Url::parse(&candidate).map_err(|_| "proxy address is invalid".to_string())?;
         let scheme = url.scheme();
-        if !matches!(scheme, "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h") {
+        if !matches!(
+            scheme,
+            "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
+        ) {
             return Err("proxy protocol is unsupported".to_string());
         }
         if !url.username().is_empty() || url.password().is_some() {
@@ -361,19 +365,146 @@ impl Default for AppState {
     }
 }
 
+/// A profile's identity: 32 random bits, rendered as the 8 hex digits that appear in its storage
+/// name.
+///
+/// Deliberately short rather than a UUID. The value people actually see is the one in
+/// `Patch 1.4 [1fe9ec7a]`, and it exists to keep two profiles apart — most importantly two shared
+/// profiles that are both called "Default" — so the identity and the visible token are the same
+/// thing rather than one being a truncation of the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProfileId(u32);
+
+impl ProfileId {
+    pub fn random() -> Self {
+        // Uuid v4 is already a dependency and is a cryptographically-seeded source; take 32 bits.
+        Self(uuid::Uuid::new_v4().as_u128() as u32)
+    }
+
+    /// A fresh id that no profile in `taken` is using, so ids never collide within one game even
+    /// though 32 bits alone would make it merely unlikely.
+    pub fn random_unused(taken: &[ProfileId]) -> Self {
+        loop {
+            let candidate = Self::random();
+            if !taken.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:08x}", self.0)
+    }
+}
+
+impl std::str::FromStr for ProfileId {
+    type Err = ();
+
+    /// Accepts the canonical 8 hex digits, and also a full UUID so profiles written before ids were
+    /// shortened keep the identity their storage names already show.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let head: String = value
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit())
+            .take(8)
+            .collect();
+        if head.len() != 8 {
+            return Err(());
+        }
+        u32::from_str_radix(&head, 16).map(Self).map_err(|_| ())
+    }
+}
+
+impl Serialize for ProfileId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProfileId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse()
+            .map_err(|_| serde::de::Error::custom(format!("not a profile id: {raw}")))
+    }
+}
+
+#[cfg(test)]
+mod profile_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_uuid_from_older_state_keeps_the_id_its_storage_name_already_shows() {
+        // Files were already named from the leading hex, so reading a UUID this way leaves every
+        // existing profile pointing at the archive it always pointed at.
+        let migrated: ProfileId = "1fe9ec7a-6ad1-46b6-9558-e8483dc62bcf".parse().unwrap();
+
+        assert_eq!(migrated.to_string(), "1fe9ec7a");
+        assert_eq!("1fe9ec7a".parse::<ProfileId>().unwrap(), migrated);
+        assert_eq!(
+            "7a15244d-90cc-45d9-aca0-244405f229b6"
+                .parse::<ProfileId>()
+                .unwrap()
+                .to_string(),
+            "7a15244d"
+        );
+    }
+
+    #[test]
+    fn ids_render_as_eight_hex_digits_including_leading_zeroes() {
+        assert_eq!(
+            "00000abc".parse::<ProfileId>().unwrap().to_string(),
+            "00000abc"
+        );
+        assert_eq!(
+            "1FE9EC7A".parse::<ProfileId>().unwrap().to_string(),
+            "1fe9ec7a"
+        );
+        assert!(
+            "1fe9ec".parse::<ProfileId>().is_err(),
+            "too short to be an id"
+        );
+        assert!("zzzzzzzz".parse::<ProfileId>().is_err());
+    }
+
+    #[test]
+    fn a_fresh_id_never_reuses_one_already_taken() {
+        let taken: Vec<ProfileId> = (0..64).map(|_| ProfileId::random()).collect();
+        let fresh = ProfileId::random_unused(&taken);
+
+        assert!(!taken.contains(&fresh));
+    }
+
+    #[test]
+    fn ids_round_trip_through_serde_as_their_visible_form() {
+        let id: ProfileId = "1fe9ec7a".parse().unwrap();
+        let encoded = serde_json::to_string(&id).unwrap();
+
+        assert_eq!(encoded, "\"1fe9ec7a\"");
+        assert_eq!(serde_json::from_str::<ProfileId>(&encoded).unwrap(), id);
+        // And still reads state written before ids were shortened.
+        assert_eq!(
+            serde_json::from_str::<ProfileId>("\"1fe9ec7a-6ad1-46b6-9558-e8483dc62bcf\"").unwrap(),
+            id
+        );
+    }
+}
+
 /// Persisted profile catalog for one game. UUIDs are independent from display names so a rename
 /// never changes the archive identity.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileCatalog {
     #[serde(default)]
-    pub active_profile_id: Option<Uuid>,
+    pub active_profile_id: Option<ProfileId>,
     #[serde(default)]
     pub profiles: Vec<ProfileRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileRecord {
-    pub id: Uuid,
+    pub id: ProfileId,
     pub display_name: String,
     #[serde(default)]
     pub archive_size: Option<u64>,
@@ -411,7 +542,12 @@ pub(crate) struct L10n {
     pub ru_ru: &'static str,
 }
 
-pub(crate) const fn l10n(en_us: &'static str, id_id: &'static str, zh_cn: &'static str, ru_ru: &'static str) -> L10n {
+pub(crate) const fn l10n(
+    en_us: &'static str,
+    id_id: &'static str,
+    zh_cn: &'static str,
+    ru_ru: &'static str,
+) -> L10n {
     L10n {
         en_us,
         id_id,
@@ -826,7 +962,12 @@ pub enum AppLanguage {
 }
 
 impl AppLanguage {
-    pub const ALL: [Self; 4] = [Self::English, Self::Indonesian, Self::ChineseSimplified, Self::Russian];
+    pub const ALL: [Self; 4] = [
+        Self::English,
+        Self::Indonesian,
+        Self::ChineseSimplified,
+        Self::Russian,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -871,10 +1012,7 @@ impl AppLanguage {
         {
             return Some(Self::Indonesian);
         }
-        if language == "ru"
-            || language == "ru-ru"
-            || language.starts_with("ru-")
-        {
+        if language == "ru" || language == "ru-ru" || language.starts_with("ru-") {
             return Some(Self::Russian);
         }
         None
@@ -1186,6 +1324,11 @@ pub struct ToolEntry {
     pub game_id: String,
     pub label: String,
     pub path: PathBuf,
+    /// Path relative to the game's mods root, when the tool lives inside it. `path` is absolute and
+    /// therefore only valid for one install; this is what lets a tool re-match itself after the
+    /// mods folder moves or a profile is carried to another machine.
+    #[serde(default)]
+    pub relative_path: Option<PathBuf>,
     #[serde(default)]
     pub launch_args: String,
     #[serde(default)]
@@ -2235,7 +2378,12 @@ pub fn seeded_games() -> Vec<GameInstall> {
         ("starrail", "Honkai Star Rail", GameBackend::Xxmi, "SRMI"),
         ("genshin", "Genshin Impact", GameBackend::Xxmi, "GIMI"),
         ("honkai-impact", "Honkai Impact", GameBackend::Xxmi, "HIMI"),
-        ("nte", "Neverness To Everness", GameBackend::UnrealEngine, ""),
+        (
+            "nte",
+            "Neverness To Everness",
+            GameBackend::UnrealEngine,
+            "",
+        ),
     ]
     .into_iter()
     .map(|(id, name, backend, xxmi_code)| GameInstall {
@@ -2265,14 +2413,17 @@ mod unreal_path_tests {
         let pak = default_unreal_pak_mods_path_from_exe("nte", exe).unwrap();
         assert_eq!(
             pak,
-            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods")
+            Path::new(
+                r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods"
+            )
         );
     }
 
     #[test]
     fn nte_disabled_path_derives_outside_paks_from_pak_mods_path() {
-        let pak =
-            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods");
+        let pak = Path::new(
+            r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods",
+        );
         let disabled = default_unreal_disabled_mods_path_from_mods_path(pak);
         assert_eq!(
             disabled,
@@ -2307,7 +2458,9 @@ mod unreal_path_tests {
         let pak = default_unreal_pak_mods_path_from_exe("nte", exe).unwrap();
         assert_eq!(
             pak,
-            Path::new(r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods")
+            Path::new(
+                r"D:\Games\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods"
+            )
         );
     }
 
@@ -2334,7 +2487,12 @@ mod feedback_survey_tests {
     use super::*;
 
     const SURVEY_TITLE: L10n = l10n("Survey", "Survey", "Survey", "Survey");
-    const SURVEY_MESSAGE_LABEL: L10n = l10n("Anything else?", "Anything else?", "Anything else?", "Anything else?");
+    const SURVEY_MESSAGE_LABEL: L10n = l10n(
+        "Anything else?",
+        "Anything else?",
+        "Anything else?",
+        "Anything else?",
+    );
     const ANSWERS: &[ContentSurveyAnswer] = &[
         ContentSurveyAnswer {
             id: 1,
