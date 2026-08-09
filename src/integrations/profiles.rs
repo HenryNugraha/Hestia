@@ -37,40 +37,18 @@ pub const PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT: &str = "Archived";
 // while browsing there. Keep it in step with the actual layout: the naming lines change when
 // storage names gain readable labels.
 pub const PROFILE_README_CONTENT: &str = "\
-Hestia Profile Storage
+This folder stores inactive Hestia profiles in either of these forms:
+- Folder: \"<name> [<id>]\"
+- File: \"<name> [<id>].tzst\"
 
-This folder stores inactive Hestia profiles. The active profile is not kept here - it stays in the game's normal Mods folder.
+1. FOLDER
+This is your Mods folder moved and renamed here. Your mods are inside exactly as they were. Hestia may keep this folder temporarily while switching profiles or waiting to compress it. After compression finishes, Hestia removes this folder because the profile is now stored as a .tzst file.
 
-WHAT YOU MAY SEE
-
-<name> [<id>].tzst
-A compressed inactive profile. It is a TAR archive compressed with Zstandard. The name is a label for you; the short id in brackets is what Hestia matches on.
-
-<name> [<id>]
-An uncompressed profile. Hestia keeps this folder while switching profiles, and until a pending compression finishes. Seeing one next to the matching .tzst is normal, and Hestia removes it once the archive is complete.
-
-readme.txt
-This file.
-
-.extracting, .journal, .part, .bak, .conflict-*, and .deleting entries
-Files and folders left behind by an interrupted operation. Hestia finishes or rolls back extracting folders, journals, sidecars, and deleting folders on the next launch. Redundant conflict archives are removed when Hestia can prove they match the live archive; other conflict archives are preserved for manual review.
-
-OPENING AN ARCHIVE
-
-You can inspect .tzst archives with:
-- Windows 11 File Explorer with current system updates
-- 7-Zip 24.05 or newer
-- WinRAR 6.21 or newer
-
-IMPORTANT
-
-Renaming an inactive profile in Hestia renames its files here too. Renaming an inactive profile yourself changes the display name Hestia restores on the next launch. Hestia identifies it by the id in brackets, so do not change the bracketed id.
-
-Dropping a .tzst profile from another install into this folder is enough for Hestia to pick it up. Its mods and categories are restored; its tools are not, and are detected fresh from its own mods folder instead.
-
-Do not edit, move, or delete anything in this folder while Hestia is running. Manage profiles through Hestia whenever possible.
-
-If Hestia or Windows closes during profile switching or compression, reopen Hestia and allow it to recover the profile data. Do not remove the temporary entries yourself first - Hestia needs them to finish or roll back what was interrupted.
+2. FILE
+This is your Mods folder compressed into one .tzst archive file (tar + zstd). You can open or extract it with any of these programs:
+- Windows File Explorer
+- WinRAR
+- 7-Zip
 ";
 
 /// Length of the short profile id embedded in storage names.
