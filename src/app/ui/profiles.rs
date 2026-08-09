@@ -563,8 +563,22 @@ impl HestiaApp {
             ))
             .on_hover_cursor(egui::CursorIcon::PointingHand);
 
+        let popup_id = ui.id().with("profile_selector_popup");
+        let popup_was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let popup_is_open = if response.clicked() {
+            !popup_was_open
+        } else {
+            popup_was_open
+        };
+        if self.profile_selector_popup_open_last_frame && !popup_is_open {
+            if let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) {
+                self.queue_profile_reconcile_for_game(&game_id);
+            }
+        }
+        self.profile_selector_popup_open_last_frame = popup_is_open;
+
         egui::Popup::menu(&response)
-            .id(ui.id().with("profile_selector_popup"))
+            .id(popup_id)
             .width(response.rect.width())
             .frame(profile_selector_menu_frame(ui.style()))
             .show(|ui| {
@@ -579,6 +593,7 @@ impl HestiaApp {
             return;
         };
         let game_id = game.definition.id.clone();
+        self.prune_missing_inactive_profile_records(&game_id);
         let profile_roots =
             profiles::profile_roots(&game, self.state.static_prefs.use_default_mods_path).ok();
 
@@ -963,10 +978,16 @@ impl HestiaApp {
             };
             match result {
                 Ok(()) => self.clear_profile_name_prompt(),
-                Err(error) => self.report_error_message(
-                    format!("profile operation failed: {error:#}"),
-                    Some(text.profile_operation_failed()),
-                ),
+                Err(error) => {
+                    let close_prompt = Self::profile_error_is_storage_out_of_date(&error);
+                    self.report_error_message(
+                        format!("profile operation failed: {error:#}"),
+                        Some(text.profile_operation_failed()),
+                    );
+                    if close_prompt {
+                        self.clear_profile_name_prompt();
+                    }
+                }
             }
         }
     }
@@ -1064,10 +1085,16 @@ impl HestiaApp {
         } else if delete {
             match self.request_delete_profile(profile_id) {
                 Ok(()) => self.pending_profile_delete_id = None,
-                Err(error) => self.report_error_message(
-                    format!("failed to delete profile: {error:#}"),
-                    Some(text.profile_operation_failed()),
-                ),
+                Err(error) => {
+                    let close_prompt = Self::profile_error_is_storage_out_of_date(&error);
+                    self.report_error_message(
+                        format!("failed to delete profile: {error:#}"),
+                        Some(text.profile_operation_failed()),
+                    );
+                    if close_prompt {
+                        self.pending_profile_delete_id = None;
+                    }
+                }
             }
         }
     }

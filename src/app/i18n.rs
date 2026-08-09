@@ -448,6 +448,8 @@ enum TextKey {
     LibraryActionCountMessage,
     LibraryCategoryActionCountMessage,
     LibraryQueuedUpdates,
+    LibraryModsLockedProbablyByGame,
+    LibrarySkippedLockedModsProbablyByGame,
     LibraryRenameFailed,
     LibraryActionRenamed,
     LibraryRenamedTo,
@@ -531,6 +533,7 @@ enum TextKey {
     ProfilesActionsPausedCheckingUpdates,
     ProfilesActionsPausedUpdatingHestia,
     ProfilesActionsPausedGameRunning,
+    ProfilesActionsPausedModsLocked,
     ProfilesActionsPausedProfileToolRunning,
     ProfilesSelectGame,
     ProfilesAtLeastOneRequired,
@@ -2506,6 +2509,14 @@ impl TextCatalog {
         self.count_label(TextKey::LibraryQueuedUpdates, count)
     }
 
+    fn mods_locked_probably_by_game(self) -> &'static str {
+        self.get(TextKey::LibraryModsLockedProbablyByGame)
+    }
+
+    fn skipped_locked_mods_probably_by_game(self) -> &'static str {
+        self.get(TextKey::LibrarySkippedLockedModsProbablyByGame)
+    }
+
     fn rename_failed(self) -> &'static str {
         self.get(TextKey::LibraryRenameFailed)
     }
@@ -2859,6 +2870,10 @@ impl TextCatalog {
 
     fn profile_actions_paused_game_running(self) -> &'static str {
         self.get(TextKey::ProfilesActionsPausedGameRunning)
+    }
+
+    fn profile_actions_paused_mods_locked(self) -> &'static str {
+        self.get(TextKey::ProfilesActionsPausedModsLocked)
     }
 
     fn profile_actions_paused_profile_tool_running(self) -> &'static str {

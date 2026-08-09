@@ -5956,23 +5956,35 @@ impl HestiaApp {
                                                     || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                                         && *modified_update_available))
                                             {
-                                                if ui
-                                                    .add(
-                                                        egui::Button::new(icon_text_sized(
-                                                            Icon::ClockPlus,
-                                                            text.update_button(),
-                                                            13.0,
-                                                            13.0,
-                                                        ))
-                                                        .fill(Color32::from_rgb(180, 78, 35))
-                                                        .stroke(egui::Stroke::new(
-                                                            1.0,
-                                                            Color32::from_rgb(180, 78, 35),
-                                                        ))
-                                                        .corner_radius(radius),
+                                                let locked = self
+                                                    .mod_action_lock_reason_by_id(
+                                                        mod_id,
+                                                        ModMutationKind::UpdateExisting,
                                                     )
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .clicked()
+                                                    .is_some();
+                                                let response = ui.add_enabled(
+                                                    !locked,
+                                                    egui::Button::new(icon_text_sized(
+                                                        Icon::ClockPlus,
+                                                        text.update_button(),
+                                                        13.0,
+                                                        13.0,
+                                                    ))
+                                                    .fill(Color32::from_rgb(180, 78, 35))
+                                                    .stroke(egui::Stroke::new(
+                                                        1.0,
+                                                        Color32::from_rgb(180, 78, 35),
+                                                    ))
+                                                    .corner_radius(radius),
+                                                );
+                                                let response = if locked {
+                                                    response.on_disabled_hover_text(
+                                                        text.mods_locked_probably_by_game(),
+                                                    )
+                                                } else {
+                                                    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                };
+                                                if response.clicked()
                                                 {
                                                     self.queue_update_apply(mod_id);
                                                     ui.close();
@@ -5980,10 +5992,29 @@ impl HestiaApp {
                                             }
                                             match status {
                                                 ModStatus::Active => {
-                                                    if ui
-                                                        .button(icon_text_sized(Icon::Ban, text.disable(), 12.0, 12.0))
-                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                        .clicked()
+                                                    let locked = self
+                                                        .mod_action_lock_reason_by_id(
+                                                            mod_id,
+                                                            ModMutationKind::DisableActive,
+                                                        )
+                                                        .is_some();
+                                                    let response = ui.add_enabled(
+                                                        !locked,
+                                                        egui::Button::new(icon_text_sized(
+                                                            Icon::Ban,
+                                                            text.disable(),
+                                                            12.0,
+                                                            12.0,
+                                                        )),
+                                                    );
+                                                    let response = if locked {
+                                                        response.on_disabled_hover_text(
+                                                            text.mods_locked_probably_by_game(),
+                                                        )
+                                                    } else {
+                                                        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    };
+                                                    if response.clicked()
                                                     {
                                                         self.disable_mod_by_id(mod_id);
                                                         ui.close();
@@ -6007,10 +6038,29 @@ impl HestiaApp {
                                                     }
                                                 }
                                                 ModStatus::Disabled => {
-                                                    if ui
-                                                        .button(icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0))
-                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                        .clicked()
+                                                    let locked = self
+                                                        .mod_action_lock_reason_by_id(
+                                                            mod_id,
+                                                            ModMutationKind::EnableIntoActive,
+                                                        )
+                                                        .is_some();
+                                                    let response = ui.add_enabled(
+                                                        !locked,
+                                                        egui::Button::new(icon_text_sized(
+                                                            Icon::Check,
+                                                            text.enable(),
+                                                            12.0,
+                                                            12.0,
+                                                        )),
+                                                    );
+                                                    let response = if locked {
+                                                        response.on_disabled_hover_text(
+                                                            text.mods_locked_probably_by_game(),
+                                                        )
+                                                    } else {
+                                                        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    };
+                                                    if response.clicked()
                                                     {
                                                         self.enable_or_restore_mod_by_id(mod_id);
                                                         ui.close();
@@ -6052,10 +6102,29 @@ impl HestiaApp {
                                                     }
                                                 }
                                             }
-                                            if ui
-                                                .button(icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0))
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
+                                            let locked = self
+                                                .mod_action_lock_reason_by_id(
+                                                    mod_id,
+                                                    ModMutationKind::Delete,
+                                                )
+                                                .is_some();
+                                            let response = ui.add_enabled(
+                                                !locked,
+                                                egui::Button::new(icon_text_sized(
+                                                    Icon::Trash2,
+                                                    text.delete(),
+                                                    12.0,
+                                                    12.0,
+                                                )),
+                                            );
+                                            let response = if locked {
+                                                response.on_disabled_hover_text(
+                                                    text.mods_locked_probably_by_game(),
+                                                )
+                                            } else {
+                                                response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            };
+                                            if response.clicked()
                                             {
                                                 self.delete_mod_by_id(mod_id);
                                                 ui.close();
@@ -8039,12 +8108,22 @@ impl HestiaApp {
                             || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                 && modified_update_available)
                         {
-                            let update_response = ui.add(
-                                egui::Button::new(update_button_text(text, false))
-                                    .fill(Color32::from_rgb(180, 78, 35))
-                                    .min_size(Vec2::new(78.0, 0.0))
-                                    .corner_radius(egui::CornerRadius::same(6)),
-                            ).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let locked = self
+                                .mod_action_lock_reason(&selected, ModMutationKind::UpdateExisting)
+                                .is_some();
+                            let update_response = ui
+                                .add_enabled(
+                                    !locked,
+                                    egui::Button::new(update_button_text(text, false))
+                                        .fill(Color32::from_rgb(180, 78, 35))
+                                        .min_size(Vec2::new(78.0, 0.0))
+                                        .corner_radius(egui::CornerRadius::same(6)),
+                                );
+                            let update_response = if locked {
+                                update_response.on_disabled_hover_text(text.mods_locked_probably_by_game())
+                            } else {
+                                update_response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                            };
                             if update_response.clicked() {
                                 self.queue_update_apply(&selected.id);
                             }
@@ -8054,13 +8133,20 @@ impl HestiaApp {
                         }
                         match selected.status {
                             ModStatus::Active => {
-                                if ui
-                                    .add(
-                                        egui::Button::new(icon_text_sized(Icon::Ban, text.disable(), 12.0, 12.0))
-                                            .corner_radius(egui::CornerRadius::same(6)),
-                                    )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
+                                let locked = self
+                                    .mod_action_lock_reason(&selected, ModMutationKind::DisableActive)
+                                    .is_some();
+                                let response = ui.add_enabled(
+                                    !locked,
+                                    egui::Button::new(icon_text_sized(Icon::Ban, text.disable(), 12.0, 12.0))
+                                        .corner_radius(egui::CornerRadius::same(6)),
+                                );
+                                let response = if locked {
+                                    response.on_disabled_hover_text(text.mods_locked_probably_by_game())
+                                } else {
+                                    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                };
+                                if response.clicked()
                                 {
                                     self.disable_selected_context();
                                 }
@@ -8078,13 +8164,20 @@ impl HestiaApp {
                                 }
                             }
                             ModStatus::Disabled => {
-                                if ui
-                                    .add(
-                                        egui::Button::new(icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0))
-                                            .corner_radius(egui::CornerRadius::same(6)),
-                                    )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
+                                let locked = self
+                                    .mod_action_lock_reason(&selected, ModMutationKind::EnableIntoActive)
+                                    .is_some();
+                                let response = ui.add_enabled(
+                                    !locked,
+                                    egui::Button::new(icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0))
+                                        .corner_radius(egui::CornerRadius::same(6)),
+                                );
+                                let response = if locked {
+                                    response.on_disabled_hover_text(text.mods_locked_probably_by_game())
+                                } else {
+                                    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                };
+                                if response.clicked()
                                 {
                                     self.enable_or_restore_selected_context();
                                 }
@@ -8114,27 +8207,22 @@ impl HestiaApp {
                                 }
                             }
                         }
-                        if ui
-                            .add(
-                                egui::Button::new(icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0))
-                                    .corner_radius(egui::CornerRadius::same(6)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
+                        let locked = self
+                            .mod_action_lock_reason(&selected, ModMutationKind::Delete)
+                            .is_some();
+                        let response = ui.add_enabled(
+                            !locked,
+                            egui::Button::new(icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0))
+                                .corner_radius(egui::CornerRadius::same(6)),
+                        );
+                        let response = if locked {
+                            response.on_disabled_hover_text(text.mods_locked_probably_by_game())
+                        } else {
+                            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        };
+                        if response.clicked()
                         {
-                            let result = (|| -> Result<()> {
-                                let mod_entry = self.selected_mod().cloned().ok_or_else(|| anyhow!("no mod selected"))?;
-                                let behavior = self.delete_mod_entry(&mod_entry)?;
-                                let action = text.delete_action(behavior);
-                                self.log_action(action, &mod_entry.folder_name);
-                                self.set_message_ok(text.action_message(action, &mod_entry.folder_name));
-                                self.save_state();
-                                self.refresh();
-                                Ok(())
-                            })();
-                            if let Err(err) = result {
-                                self.report_error(err, Some(text.delete_failed()));
-                            }
+                            self.delete_selected_context();
                         }
                         
                         let translation_is_linked = selected

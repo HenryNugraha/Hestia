@@ -1,4 +1,6 @@
 const PROFILE_STORAGE_FILE_NAME_METADATA_KEY: &str = "profile_storage_file_name";
+const MODS_LOCKED_BLOCK_REASON: &str = "mods are currently locked";
+const PROFILE_STORAGE_OUT_OF_DATE_ERROR: &str = "profile storage is out of date";
 
 impl HestiaApp {
     fn validate_profile_name(
@@ -83,22 +85,27 @@ impl HestiaApp {
             return None;
         }
 
-        // `exe` is opt-in; without it `Process::exe` is always `None` and the tool guard below
-        // would never fire. Everything else stays off so this stays cheap enough for the UI loop.
+        // `exe` and `cmd` are opt-in; without these flags `Process::exe` is always `None` and
+        // Proton/Wine command-line matches would never fire. Everything else stays off so this
+        // stays cheap enough for the UI loop.
         let system = sysinfo::System::new_with_specifics(
             sysinfo::RefreshKind::nothing().with_processes(
                 sysinfo::ProcessRefreshKind::nothing()
+                    .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             ),
         );
+        let mut game_running = false;
         let mut tool_running = false;
         for process in system.processes().values() {
             if !game_exe_names.is_empty()
-                && game_exe_names
-                    .iter()
-                    .any(|name| process.name().to_string_lossy().eq_ignore_ascii_case(name))
+                && Self::process_matches_game_exe_names(
+                    process.name(),
+                    process.cmd(),
+                    &game_exe_names,
+                )
             {
-                return Some("the selected game is running");
+                game_running = true;
             }
             if !tool_running
                 && process
@@ -108,7 +115,64 @@ impl HestiaApp {
                 tool_running = true;
             }
         }
-        tool_running.then_some("a tool inside the profile folder is running")
+        if game_running && game.is_unreal_engine() {
+            Some(MODS_LOCKED_BLOCK_REASON)
+        } else {
+            tool_running.then_some("a tool inside the profile folder is running")
+        }
+    }
+
+    fn game_process_running(&self, game: &GameInstall) -> bool {
+        let game_exe_names = Self::game_exe_names(game);
+        if game_exe_names.is_empty() {
+            return false;
+        }
+
+        let system = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing().with_processes(
+                sysinfo::ProcessRefreshKind::nothing()
+                    .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet),
+            ),
+        );
+        system.processes().values().any(|process| {
+            Self::process_matches_game_exe_names(process.name(), process.cmd(), &game_exe_names)
+        })
+    }
+
+    fn game_exe_names(game: &GameInstall) -> Vec<String> {
+        [game.vanilla_exe_path(), game.modded_exe_path()]
+            .into_iter()
+            .flatten()
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.to_ascii_lowercase())
+            })
+            .collect()
+    }
+
+    fn process_matches_game_exe_names(
+        process_name: &std::ffi::OsStr,
+        command_line: &[std::ffi::OsString],
+        game_exe_names: &[String],
+    ) -> bool {
+        if game_exe_names.iter().any(|name| {
+            process_name
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+        }) {
+            return true;
+        }
+
+        command_line.iter().any(|arg| {
+            let arg = arg.to_string_lossy().to_ascii_lowercase();
+            arg.split(['/', '\\'])
+                .filter_map(|part| {
+                    let trimmed = part.trim_matches(['"', '\'']);
+                    (!trimmed.is_empty()).then_some(trimmed)
+                })
+                .any(|part| game_exe_names.iter().any(|name| part == name))
+        })
     }
 
     /// Profile storage directory for the selected game, if one can be resolved. `None` disables the
@@ -469,6 +533,76 @@ impl HestiaApp {
             || Self::profile_bound_storage_path(roots, storage_file_name, false).is_dir()
     }
 
+    fn profile_record_storage_exists(
+        roots: &profiles::ProfileRoots,
+        profile: &ProfileRecord,
+    ) -> bool {
+        if let Some(storage_file_name) = Self::profile_storage_file_name(profile) {
+            Self::profile_bound_storage_exists(roots, storage_file_name)
+        } else {
+            roots.archive_path(profile.id).is_file() || roots.profile_path(profile.id).is_dir()
+        }
+    }
+
+    fn prune_missing_inactive_profile_records_from_catalog(
+        catalog: &mut ProfileCatalog,
+        roots: &profiles::ProfileRoots,
+    ) -> Vec<ProfileId> {
+        let active_profile_id = catalog.active_profile_id;
+        let mut removed = Vec::new();
+        catalog.profiles.retain(|profile| {
+            if Some(profile.id) == active_profile_id
+                || Self::profile_record_storage_exists(roots, profile)
+            {
+                true
+            } else {
+                removed.push(profile.id);
+                false
+            }
+        });
+        removed
+    }
+
+    fn prune_missing_inactive_profile_records(&mut self, game_id: &str) -> Vec<ProfileId> {
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        let Ok(roots) = profiles::profile_roots(&game, self.state.static_prefs.use_default_mods_path)
+        else {
+            return Vec::new();
+        };
+        let removed = self
+            .state
+            .profiles_by_game
+            .get_mut(game_id)
+            .map(|catalog| {
+                Self::prune_missing_inactive_profile_records_from_catalog(catalog, &roots)
+            })
+            .unwrap_or_default();
+        if !removed.is_empty() {
+            for profile_id in &removed {
+                self.profile_compression_states
+                    .remove(&(game_id.to_string(), *profile_id));
+            }
+            self.save_state();
+        }
+        removed
+    }
+
+    fn profile_error_is_storage_out_of_date(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains(PROFILE_STORAGE_OUT_OF_DATE_ERROR)
+                || message.contains("profile storage is missing")
+        })
+    }
+
     fn profile_storage_path_for(
         &self,
         game_id: &str,
@@ -515,6 +649,36 @@ impl HestiaApp {
             .profiles_by_game
             .get(game_id)
             .and_then(|catalog| catalog.active_profile_id)
+    }
+
+    fn known_profile_ids_for_game(&self, game_id: &str) -> Vec<ProfileId> {
+        self.state
+            .profiles_by_game
+            .get(game_id)
+            .map(|catalog| catalog.profiles.iter().map(|profile| profile.id).collect())
+            .unwrap_or_default()
+    }
+
+    fn known_profile_storage_file_names_for_game(&self, game_id: &str) -> Vec<String> {
+        self.state
+            .profiles_by_game
+            .get(game_id)
+            .map(|catalog| {
+                let mut names = Vec::new();
+                for profile in &catalog.profiles {
+                    if let Some(name) = Self::profile_storage_file_name(profile) {
+                        names.push(name.to_string());
+                    }
+                    let stem = profiles::profile_storage_stem(&profile.display_name, profile.id);
+                    names.push(stem.clone());
+                    names.push(format!(
+                        "{stem}.{}",
+                        profiles::PROFILE_ARCHIVE_EXTENSION
+                    ));
+                }
+                names
+            })
+            .unwrap_or_default()
     }
 
     fn dispatch_profile_spec(&mut self, spec: ProfileOperationSpec) -> Result<()> {
@@ -574,32 +738,9 @@ impl HestiaApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(AtomicU64::new(0));
         let stage = Arc::new(RwLock::new("Preparing profile operation".to_string()));
-        let known_profile_ids = self
-            .state
-            .profiles_by_game
-            .get(&game_id)
-            .map(|catalog| catalog.profiles.iter().map(|profile| profile.id).collect())
-            .unwrap_or_default();
-        let known_profile_storage_file_names = self
-            .state
-            .profiles_by_game
-            .get(&game_id)
-            .map(|catalog| {
-                let mut names = Vec::new();
-                for profile in &catalog.profiles {
-                    if let Some(name) = Self::profile_storage_file_name(profile) {
-                        names.push(name.to_string());
-                    }
-                    let stem = profiles::profile_storage_stem(&profile.display_name, profile.id);
-                    names.push(stem.clone());
-                    names.push(format!(
-                        "{stem}.{}",
-                        profiles::PROFILE_ARCHIVE_EXTENSION
-                    ));
-                }
-                names
-            })
-            .unwrap_or_default();
+        let known_profile_ids = self.known_profile_ids_for_game(&game_id);
+        let known_profile_storage_file_names =
+            self.known_profile_storage_file_names_for_game(&game_id);
         self.dispatch_profile_spec(ProfileOperationSpec {
             operation_id,
             game_id,
@@ -642,22 +783,30 @@ impl HestiaApp {
 
     fn profile_actions_paused_reason(&self, text: TextCatalog) -> Option<&'static str> {
         self.profile_operation_block_reason(ProfileOperationKind::Switch)
-            .and_then(|reason| match reason {
-                "another profile operation is already running" => {
-                    Some(text.profile_actions_paused_profile_operation())
-                }
-                "a game refresh is running" | "mod refresh is running" => {
-                    Some(text.profile_actions_paused_refreshing_library())
-                }
-                "mod installation is running" => Some(text.profile_actions_paused_installing_mods()),
-                "update checking is running" => Some(text.profile_actions_paused_checking_updates()),
-                "an app update is running" => Some(text.profile_actions_paused_updating_hestia()),
-                "the game is running" => Some(text.profile_actions_paused_game_running()),
-                "a tool inside the profile folder is running" => {
-                    Some(text.profile_actions_paused_profile_tool_running())
-                }
-                _ => None,
-            })
+            .and_then(|reason| Self::profile_actions_paused_reason_text(text, reason))
+    }
+
+    fn profile_actions_paused_reason_text(
+        text: TextCatalog,
+        reason: &str,
+    ) -> Option<&'static str> {
+        match reason {
+            "another profile operation is already running" => {
+                Some(text.profile_actions_paused_profile_operation())
+            }
+            "a game refresh is running" | "mod refresh is running" => {
+                Some(text.profile_actions_paused_refreshing_library())
+            }
+            "mod installation is running" => Some(text.profile_actions_paused_installing_mods()),
+            "update checking is running" => Some(text.profile_actions_paused_checking_updates()),
+            "an app update is running" => Some(text.profile_actions_paused_updating_hestia()),
+            MODS_LOCKED_BLOCK_REASON => Some(text.profile_actions_paused_mods_locked()),
+            "the selected game is running" => Some(text.profile_actions_paused_game_running()),
+            "a tool inside the profile folder is running" => {
+                Some(text.profile_actions_paused_profile_tool_running())
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn profile_operation_locks_app(&self) -> bool {
@@ -1098,7 +1247,7 @@ impl HestiaApp {
                 })?;
             if !Self::profile_bound_storage_exists(&roots, current_storage_file_name) {
                 self.queue_profile_recovery_for_game(game_id);
-                bail!("could not rename profile because its storage is out of date");
+                bail!("could not rename profile because {PROFILE_STORAGE_OUT_OF_DATE_ERROR}");
             }
         }
         if catalog.profiles.iter().any(|other| {
@@ -1132,7 +1281,9 @@ impl HestiaApp {
                 }
                 Err(error) => {
                     self.queue_profile_recovery_for_game(game_id);
-                    bail!("could not rename profile because its storage is out of date: {error}");
+                    bail!(
+                        "could not rename profile because {PROFILE_STORAGE_OUT_OF_DATE_ERROR}: {error}"
+                    );
                 }
             }
         }
@@ -1207,7 +1358,7 @@ impl HestiaApp {
             let roots = profiles::profile_roots(&game, self.state.static_prefs.use_default_mods_path)?;
             if !Self::profile_bound_storage_exists(&roots, current_storage_file_name) {
                 self.queue_profile_recovery_for_game(game_id);
-                bail!("could not delete profile because its storage is out of date");
+                bail!("could not delete profile because {PROFILE_STORAGE_OUT_OF_DATE_ERROR}");
             }
         }
         self.begin_profile_operation(
@@ -1255,6 +1406,46 @@ impl HestiaApp {
         }
         self.profile_recovery_queue.push_back(game);
         self.dispatch_next_profile_recovery();
+    }
+
+    fn queue_profile_reconcile_for_game(&mut self, game_id: &str) {
+        if self.profile_operation_inflight.is_some()
+            || self
+                .profile_recovery_queue
+                .iter()
+                .any(|game| game.definition.id == game_id)
+            || self.profile_reconcile_inflight.contains(game_id)
+        {
+            return;
+        }
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .cloned()
+        else {
+            return;
+        };
+        let spec = ProfileReconcileSpec {
+            game_id: game_id.to_string(),
+            game,
+            use_default_mods_path: self.state.static_prefs.use_default_mods_path,
+            known_profile_ids: self.known_profile_ids_for_game(game_id),
+            known_profile_storage_file_names: self.known_profile_storage_file_names_for_game(game_id),
+        };
+        if self
+            .profile_reconcile_request_tx
+            .send(spec)
+            .is_ok()
+        {
+            self.profile_reconcile_inflight.insert(game_id.to_string());
+        } else {
+            self.report_error_message(
+                format!("profile reconcile could not start for {game_id}"),
+                None,
+            );
+        }
     }
 
     fn dispatch_next_profile_recovery(&mut self) {
@@ -1462,6 +1653,70 @@ impl HestiaApp {
         adopted
     }
 
+    fn apply_recovered_profile_labels_to_catalog(
+        catalog: &mut ProfileCatalog,
+        renamed_profiles: Vec<RecoveredProfileLabel>,
+    ) {
+        for recovered in renamed_profiles {
+            if catalog.active_profile_id == Some(recovered.profile_id) {
+                continue;
+            }
+            if catalog.profiles.iter().any(|profile| {
+                profile.id != recovered.profile_id
+                    && TextCatalog::profile_names_equal(&profile.display_name, &recovered.label)
+            }) {
+                continue;
+            }
+            if let Some(profile) = catalog
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.id == recovered.profile_id)
+            {
+                if profile.display_name == recovered.label
+                    || profiles::sanitize_profile_label(&profile.display_name) == recovered.label
+                {
+                    continue;
+                }
+                profile.display_name = recovered.label;
+                profile.updated_at = Some(Utc::now());
+            }
+        }
+    }
+
+    fn apply_profile_reconcile_result(
+        &mut self,
+        game_id: &str,
+        orphaned_profiles: Vec<OrphanedProfile>,
+        renamed_profiles: Vec<RecoveredProfileLabel>,
+        warnings: Vec<String>,
+    ) {
+        let adopted = self.adopt_orphaned_profiles(game_id, orphaned_profiles);
+        if let Some(catalog) = self.state.profiles_by_game.get_mut(game_id) {
+            Self::apply_recovered_profile_labels_to_catalog(catalog, renamed_profiles);
+        }
+        let pruned_profiles = self.prune_missing_inactive_profile_records(game_id);
+        self.sync_profile_storage_labels(game_id);
+        self.save_state();
+
+        for profile_id in pruned_profiles {
+            self.push_log(format!(
+                "Profile removed from catalog because its storage is missing: {game_id}/{profile_id}"
+            ));
+        }
+        for warning in warnings {
+            self.report_error_message(warning, None);
+        }
+        if !adopted.is_empty() {
+            let text = self.text();
+            for name in &adopted {
+                self.log_action(
+                    text.profile_action_recovered(),
+                    &text.profile_display_name(name),
+                );
+            }
+        }
+    }
+
     fn unique_adopted_profile_name(catalog: &ProfileCatalog, preferred: &str) -> String {
         Self::unique_adopted_profile_name_except(catalog, preferred, None)
     }
@@ -1667,6 +1922,29 @@ impl HestiaApp {
                     );
                     continue;
                 }
+                ProfileEvent::ReconcileCompleted {
+                    game_id,
+                    orphaned_profiles,
+                    renamed_profiles,
+                    warnings,
+                } => {
+                    self.profile_reconcile_inflight.remove(&game_id);
+                    self.apply_profile_reconcile_result(
+                        &game_id,
+                        orphaned_profiles,
+                        renamed_profiles,
+                        warnings,
+                    );
+                    continue;
+                }
+                ProfileEvent::ReconcileFailed { game_id, error } => {
+                    self.profile_reconcile_inflight.remove(&game_id);
+                    self.report_error_message(
+                        format!("profile reconcile failed for {game_id}: {error}"),
+                        None,
+                    );
+                    continue;
+                }
                 event => {
                     let event_id = match &event {
                         ProfileEvent::Completed { operation_id, .. }
@@ -1676,7 +1954,9 @@ impl HestiaApp {
                         | ProfileEvent::ArchiveStarted { .. }
                         | ProfileEvent::ArchiveSkipped { .. }
                         | ProfileEvent::ArchiveCompleted { .. }
-                        | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
+                        | ProfileEvent::ArchiveFailed { .. }
+                        | ProfileEvent::ReconcileCompleted { .. }
+                        | ProfileEvent::ReconcileFailed { .. } => unreachable!(),
                     };
                     if self
                         .profile_operation_inflight
@@ -1862,35 +2142,13 @@ impl HestiaApp {
                     }
                 }
                 if kind == ProfileOperationKind::Recover {
-                    for recovered in renamed_profiles {
-                        if catalog.active_profile_id == Some(recovered.profile_id) {
-                            continue;
-                        }
-                        if catalog.profiles.iter().any(|profile| {
-                            profile.id != recovered.profile_id
-                                && TextCatalog::profile_names_equal(
-                                    &profile.display_name,
-                                    &recovered.label,
-                                )
-                        }) {
-                            continue;
-                        }
-                        if let Some(profile) = catalog
-                            .profiles
-                            .iter_mut()
-                            .find(|profile| profile.id == recovered.profile_id)
-                        {
-                            if profile.display_name == recovered.label
-                                || profiles::sanitize_profile_label(&profile.display_name)
-                                    == recovered.label
-                            {
-                                continue;
-                            }
-                            profile.display_name = recovered.label;
-                            profile.updated_at = Some(Utc::now());
-                        }
-                    }
+                    Self::apply_recovered_profile_labels_to_catalog(catalog, renamed_profiles);
                 }
+                let pruned_profiles = if kind == ProfileOperationKind::Recover {
+                    self.prune_missing_inactive_profile_records(&game_id)
+                } else {
+                    Vec::new()
+                };
                 if kind == ProfileOperationKind::Delete {
                     if let Some(profile_id) = profile_id {
                         self.profile_compression_states
@@ -1947,6 +2205,11 @@ impl HestiaApp {
                     self.sync_profile_storage_labels(&game_id);
                 }
                 self.save_state();
+                for profile_id in pruned_profiles {
+                    self.push_log(format!(
+                        "Profile removed from catalog because its storage is missing: {game_id}/{profile_id}"
+                    ));
+                }
                 if matches!(
                     kind,
                     ProfileOperationKind::Create
@@ -1999,7 +2262,9 @@ impl HestiaApp {
             | ProfileEvent::ArchiveStarted { .. }
             | ProfileEvent::ArchiveSkipped { .. }
             | ProfileEvent::ArchiveCompleted { .. }
-            | ProfileEvent::ArchiveFailed { .. } => unreachable!(),
+            | ProfileEvent::ArchiveFailed { .. }
+            | ProfileEvent::ReconcileCompleted { .. }
+            | ProfileEvent::ReconcileFailed { .. } => unreachable!(),
         }
     }
 }
@@ -2176,10 +2441,107 @@ mod profile_storage_reconciliation_tests {
             Some(renamed_file_name)
         );
     }
+
+    #[test]
+    fn missing_exact_bound_inactive_profile_is_pruned_from_catalog() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        let active_id: ProfileId = "7a15244a".parse().unwrap();
+        let stale_id: ProfileId = "7a15244b".parse().unwrap();
+        let mut catalog = ProfileCatalog {
+            active_profile_id: Some(active_id),
+            profiles: vec![
+                profile_record(active_id, "Default", None),
+                profile_record(stale_id, "Deleted", Some("Deleted [7a15244b].tzst")),
+            ],
+        };
+
+        let removed =
+            HestiaApp::prune_missing_inactive_profile_records_from_catalog(&mut catalog, &roots);
+
+        assert_eq!(removed, vec![stale_id]);
+        assert_eq!(catalog.profiles.len(), 1);
+        assert_eq!(catalog.profiles[0].id, active_id);
+    }
+
+    #[test]
+    fn active_profile_is_not_pruned_when_no_inactive_storage_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.profiles_dir).unwrap();
+        let active_id: ProfileId = "7a15244a".parse().unwrap();
+        let mut catalog = ProfileCatalog {
+            active_profile_id: Some(active_id),
+            profiles: vec![profile_record(active_id, "Default", None)],
+        };
+
+        let removed =
+            HestiaApp::prune_missing_inactive_profile_records_from_catalog(&mut catalog, &roots);
+
+        assert!(removed.is_empty());
+        assert_eq!(catalog.profiles.len(), 1);
+        assert_eq!(catalog.profiles[0].id, active_id);
+    }
 }
 
 #[cfg(test)]
 mod profile_process_guard_tests {
+    use super::*;
+
+    #[test]
+    fn selected_game_running_reason_gets_a_specific_paused_label() {
+        let text = TextCatalog::new(AppLanguage::English);
+
+        assert_eq!(
+            HestiaApp::profile_actions_paused_reason_text(text, "the selected game is running"),
+            Some("game is running")
+        );
+    }
+
+    #[test]
+    fn locked_mods_reason_gets_a_specific_paused_label() {
+        let text = TextCatalog::new(AppLanguage::English);
+
+        assert_eq!(
+            HestiaApp::profile_actions_paused_reason_text(text, MODS_LOCKED_BLOCK_REASON),
+            Some("mods are locked")
+        );
+    }
+
+    #[test]
+    fn game_process_match_checks_command_line_for_wine_and_proton() {
+        let names = vec!["htgame.exe".to_string()];
+
+        assert!(HestiaApp::process_matches_game_exe_names(
+            std::ffi::OsStr::new("wine64-preloader"),
+            &[std::ffi::OsString::from(
+                "/mnt/games/NTE/HT/Binaries/Win64/HTGame.exe"
+            )],
+            &names,
+        ));
+        assert!(HestiaApp::process_matches_game_exe_names(
+            std::ffi::OsStr::new("HTGame.exe"),
+            &[],
+            &names,
+        ));
+        assert!(!HestiaApp::process_matches_game_exe_names(
+            std::ffi::OsStr::new("wine64-preloader"),
+            &[std::ffi::OsString::from("wineserver")],
+            &names,
+        ));
+    }
+
     /// `Process::exe` is opt-in on the refresh kind. If the `with_exe` flag is ever dropped from
     /// `running_process_block_reason`, every `exe()` silently becomes `None` and the guard that
     /// stops a profile swap while a tool holds the folder open would never fire again.

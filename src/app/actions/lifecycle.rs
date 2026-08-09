@@ -187,6 +187,8 @@ impl HestiaApp {
             refresh_result_tx,
         );
         let (profile_request_tx, profile_request_rx) = worker_channel::<ProfileRequest>();
+        let (profile_reconcile_request_tx, profile_reconcile_request_rx) =
+            worker_channel::<ProfileReconcileSpec>();
         let (profile_archive_tx, profile_archive_rx) = worker_channel::<ProfileArchiveJob>();
         let (profile_event_tx, profile_event_rx) = worker_channel::<ProfileEvent>();
         let profile_archive_coordinator = Arc::new(ProfileArchiveCoordinator::default());
@@ -199,9 +201,14 @@ impl HestiaApp {
         spawn_profile_worker(
             &runtime_services,
             profile_request_rx,
-            profile_event_tx,
+            profile_event_tx.clone(),
             profile_archive_tx,
             profile_archive_coordinator,
+        );
+        spawn_profile_reconcile_worker(
+            &runtime_services,
+            profile_reconcile_request_rx,
+            profile_event_tx,
         );
         let app_icon_texture = load_title_icon_texture(&cc.egui_ctx, app_icon_bytes(), "app-icon");
         let selected_game = resolve_last_selected_game(&state).unwrap_or(0);
@@ -501,12 +508,15 @@ impl HestiaApp {
             refresh_inflight: false,
             refresh_pending_selected_game: None,
             profile_request_tx,
+            profile_reconcile_request_tx,
             profile_event_rx,
             profile_operation_inflight: None,
             profile_compression_states: HashMap::new(),
             profile_next_operation_id: 1,
             profile_recovery_queue: VecDeque::new(),
             profile_recovery_failed: false,
+            profile_reconcile_inflight: HashSet::new(),
+            profile_selector_popup_open_last_frame: false,
             profile_name_prompt: None,
             profile_name_target_id: None,
             profile_name_draft: String::new(),

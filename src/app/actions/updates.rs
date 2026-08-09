@@ -1891,25 +1891,52 @@ impl HestiaApp {
                 let (result, name) = if let Some(mod_entry) = self
                     .state
                     .mods
-                    .iter_mut()
+                    .iter()
                     .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
                 {
                     let name = mod_entry.folder_name.clone();
-                    let result = match game.as_ref().map(|game| game.definition.backend) {
-                        Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
-                        Some(GameBackend::UnrealEngine) => {
-                            unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
-                        }
-                        None => Err(anyhow!("game not found")),
-                    };
-                    (Some(result), Some(name))
+                    if self
+                        .mod_action_lock_reason(mod_entry, ModMutationKind::DisableActive)
+                        .is_some()
+                    {
+                        (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
+                    } else {
+                        let result = match game.as_ref().map(|game| game.definition.backend) {
+                            Some(GameBackend::Xxmi) => self
+                                .state
+                                .mods
+                                .iter_mut()
+                                .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
+                                .map(xxmi::disable_mod)
+                                .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                            Some(GameBackend::UnrealEngine) => self
+                                .state
+                                .mods
+                                .iter_mut()
+                                .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
+                                .map(|mod_entry| {
+                                    unrealengine::disable_mod(
+                                        mod_entry,
+                                        game.as_ref().expect("game checked"),
+                                        use_default,
+                                    )
+                                })
+                                .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                            None => Err(anyhow!("game not found")),
+                        };
+                        (Some(result), Some(name))
+                    }
                 } else {
                     (None, None)
                 };
                 if let (Some(Err(err)), Some(name)) = (result, name) {
+                    let toast = self.mod_action_error_toast(
+                        &err,
+                        self.text().could_not_disable_installed_mod(),
+                    );
                     self.report_error_message(
                         format!("installed mod could not be disabled for {name}: {err:#}"),
-                        Some(self.text().could_not_disable_installed_mod()),
+                        Some(toast),
                     );
                 }
             }
@@ -1938,18 +1965,41 @@ impl HestiaApp {
                     if let Some(mod_entry) = self
                         .state
                         .mods
-                        .iter_mut()
+                        .iter()
                         .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
                     {
                         let name = mod_entry.folder_name.clone();
-                        let result = match game.as_ref().map(|game| game.definition.backend) {
-                            Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
-                            Some(GameBackend::UnrealEngine) => {
-                                unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
-                            }
-                            None => Err(anyhow!("game not found")),
-                        };
-                        (Some(result), Some(name))
+                        if self
+                            .mod_action_lock_reason(mod_entry, ModMutationKind::DisableActive)
+                            .is_some()
+                        {
+                            (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
+                        } else {
+                            let result = match game.as_ref().map(|game| game.definition.backend) {
+                                Some(GameBackend::Xxmi) => self
+                                    .state
+                                    .mods
+                                    .iter_mut()
+                                    .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
+                                    .map(xxmi::disable_mod)
+                                    .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                                Some(GameBackend::UnrealEngine) => self
+                                    .state
+                                    .mods
+                                    .iter_mut()
+                                    .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
+                                    .map(|mod_entry| {
+                                        unrealengine::disable_mod(
+                                            mod_entry,
+                                            game.as_ref().expect("game checked"),
+                                            use_default,
+                                        )
+                                    })
+                                    .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                                None => Err(anyhow!("game not found")),
+                            };
+                            (Some(result), Some(name))
+                        }
                     } else {
                         (None, None)
                     }
@@ -1957,9 +2007,13 @@ impl HestiaApp {
                     (None, None)
                 };
                 if let (Some(Err(err)), Some(name)) = (result, name) {
+                    let toast = self.mod_action_error_toast(
+                        &err,
+                        self.text().could_not_keep_mod_disabled(),
+                    );
                     self.report_error_message(
                         format!("updated mod could not be kept disabled for {name}: {err:#}"),
-                        Some(self.text().could_not_keep_mod_disabled()),
+                        Some(toast),
                     );
                 }
             }
@@ -2421,10 +2475,17 @@ impl HestiaApp {
         self.mod_thumb_unavailable.remove(mod_entry_id);
     }
 
-    fn queue_update_apply(&mut self, mod_entry_id: &str) {
-        let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_entry_id).cloned() else { return; };
-        let Some(source) = &mod_entry.source else { return; };
-        let Some(link) = &source.gamebanana else { return; };
+    fn queue_update_apply(&mut self, mod_entry_id: &str) -> bool {
+        let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_entry_id).cloned() else { return false; };
+        if self
+            .mod_action_lock_reason(&mod_entry, ModMutationKind::UpdateExisting)
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().update_unavailable()));
+            return false;
+        }
+        let Some(source) = &mod_entry.source else { return false; };
+        let Some(link) = &source.gamebanana else { return false; };
 
         let mod_id = link.mod_id;
         let game_id = mod_entry.game_id.clone();
@@ -2433,7 +2494,7 @@ impl HestiaApp {
                 self.game_mod_setup_message(&game_id),
                 Some(self.text().update_unavailable()),
             );
-            return;
+            return false;
         }
         let title = mod_entry.metadata.user.title.as_ref().unwrap_or(&mod_entry.folder_name).clone();
 
@@ -2456,6 +2517,7 @@ impl HestiaApp {
             update_target_id: Some(mod_entry_id.to_string()),
             install_disabled: false,
         });
+        true
     }
 
     fn cancel_update_process_for_mod(&mut self, mod_entry: &ModEntry) {

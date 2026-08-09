@@ -450,6 +450,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "{action} {count} mod", // LibraryActionCountMessage
     "{action} {category} dan {count} mod", // LibraryCategoryActionCountMessage
     "Pembaruan diantrekan untuk {count} mod", // LibraryQueuedUpdates
+    "Mod saat ini terkunci, kemungkinan oleh game.", // LibraryModsLockedProbablyByGame
+    "Melewati mod yang sedang terkunci, kemungkinan oleh game.", // LibrarySkippedLockedModsProbablyByGame
     "Gagal mengubah nama", // LibraryRenameFailed
     "Ubah nama", // LibraryActionRenamed
     "Ubah nama menjadi: {name}", // LibraryRenamedTo
@@ -534,6 +536,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "memeriksa pembaruan", // ProfilesActionsPausedCheckingUpdates
     "memperbarui Hestia", // ProfilesActionsPausedUpdatingHestia
     "game sedang berjalan", // ProfilesActionsPausedGameRunning
+    "mod terkunci", // ProfilesActionsPausedModsLocked
     "alat profil sedang berjalan", // ProfilesActionsPausedProfileToolRunning
     "Pilih game untuk mengelola profil.", // ProfilesSelectGame
     "Diperlukan setidaknya satu profil.", // ProfilesAtLeastOneRequired

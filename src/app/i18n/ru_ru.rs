@@ -450,6 +450,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "{action}: {count} модов", // LibraryActionCountMessage
     "{action}: {category} и {count} модов", // LibraryCategoryActionCountMessage
     "В очередь добавлены обновления для {count} модов", // LibraryQueuedUpdates
+    "Моды сейчас заблокированы, вероятно, игрой.", // LibraryModsLockedProbablyByGame
+    "Пропущены моды, которые сейчас заблокированы, вероятно, игрой.", // LibrarySkippedLockedModsProbablyByGame
     "Ошибка переименования", // LibraryRenameFailed
     "Переименовано", // LibraryActionRenamed
     "Переименовано в: {name}", // LibraryRenamedTo
@@ -534,6 +536,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "проверяются обновления", // ProfilesActionsPausedCheckingUpdates
     "обновляется Hestia", // ProfilesActionsPausedUpdatingHestia
     "игра запущена", // ProfilesActionsPausedGameRunning
+    "моды заблокированы", // ProfilesActionsPausedModsLocked
     "запущен инструмент профиля", // ProfilesActionsPausedProfileToolRunning
     "Выберите игру для управления профилями.", // ProfilesSelectGame
     "Требуется хотя бы один профиль.", // ProfilesAtLeastOneRequired

@@ -450,6 +450,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "{action} {count} 个 Mod", // LibraryActionCountMessage
     "{action} {category} 及其中 {count} 个 Mod", // LibraryCategoryActionCountMessage
     "已为 {count} 个 Mod 排队更新", // LibraryQueuedUpdates
+    "模组当前被锁定，可能是游戏占用。", // LibraryModsLockedProbablyByGame
+    "已跳过当前被锁定的模组，可能是游戏占用。", // LibrarySkippedLockedModsProbablyByGame
     "重命名失败", // LibraryRenameFailed
     "重命名", // LibraryActionRenamed
     "已重命名为：{name}", // LibraryRenamedTo
@@ -534,6 +536,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "正在检查更新", // ProfilesActionsPausedCheckingUpdates
     "正在更新 Hestia", // ProfilesActionsPausedUpdatingHestia
     "游戏正在运行", // ProfilesActionsPausedGameRunning
+    "模组被锁定", // ProfilesActionsPausedModsLocked
     "配置文件工具正在运行", // ProfilesActionsPausedProfileToolRunning
     "请选择一个游戏来管理配置文件。", // ProfilesSelectGame
     "至少需要一个配置文件。", // ProfilesAtLeastOneRequired

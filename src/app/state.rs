@@ -347,12 +347,15 @@ pub struct HestiaApp {
     refresh_inflight: bool,
     refresh_pending_selected_game: Option<String>,
     profile_request_tx: WorkerTx<ProfileRequest>,
+    profile_reconcile_request_tx: WorkerTx<ProfileReconcileSpec>,
     profile_event_rx: WorkerRx<ProfileEvent>,
     profile_operation_inflight: Option<ProfileOperationInflight>,
     profile_compression_states: HashMap<(String, ProfileId), ProfileCompressionUiState>,
     profile_next_operation_id: u64,
     profile_recovery_queue: VecDeque<GameInstall>,
     profile_recovery_failed: bool,
+    profile_reconcile_inflight: HashSet<String>,
+    profile_selector_popup_open_last_frame: bool,
     profile_name_prompt: Option<ProfileOperationKind>,
     profile_name_target_id: Option<ProfileId>,
     profile_name_draft: String,
@@ -1423,6 +1426,15 @@ enum ProfileRequest {
     Execute(ProfileOperationSpec),
 }
 
+#[derive(Clone)]
+struct ProfileReconcileSpec {
+    game_id: String,
+    game: GameInstall,
+    use_default_mods_path: bool,
+    known_profile_ids: Vec<ProfileId>,
+    known_profile_storage_file_names: Vec<String>,
+}
+
 /// Payload of [`ProfileEvent::Completed`], boxed at the variant. It dwarfs every other variant, and
 /// an enum is sized to its largest, so inlining it would make even a bare `Canceled` message carry
 /// hundreds of bytes through the channel.
@@ -1475,6 +1487,16 @@ enum ProfileEvent {
     },
     Canceled {
         operation_id: u64,
+    },
+    ReconcileCompleted {
+        game_id: String,
+        orphaned_profiles: Vec<OrphanedProfile>,
+        renamed_profiles: Vec<RecoveredProfileLabel>,
+        warnings: Vec<String>,
+    },
+    ReconcileFailed {
+        game_id: String,
+        error: String,
     },
 }
 

@@ -450,6 +450,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "{action} {count} mod(s)", // LibraryActionCountMessage
     "{action} {category} and {count} mod(s)", // LibraryCategoryActionCountMessage
     "Queued updates for {count} mod(s)", // LibraryQueuedUpdates
+    "Mods are currently locked, probably by the game.", // LibraryModsLockedProbablyByGame
+    "Skipped mods that are currently locked, probably by the game.", // LibrarySkippedLockedModsProbablyByGame
     "Rename failed", // LibraryRenameFailed
     "Renamed", // LibraryActionRenamed
     "Renamed to: {name}", // LibraryRenamedTo
@@ -534,6 +536,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "checking updates", // ProfilesActionsPausedCheckingUpdates
     "updating Hestia", // ProfilesActionsPausedUpdatingHestia
     "game is running", // ProfilesActionsPausedGameRunning
+    "mods are locked", // ProfilesActionsPausedModsLocked
     "profile tool is running", // ProfilesActionsPausedProfileToolRunning
     "Select a game to manage profiles.", // ProfilesSelectGame
     "At least one profile is required.", // ProfilesAtLeastOneRequired

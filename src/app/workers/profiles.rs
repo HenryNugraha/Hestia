@@ -7,70 +7,153 @@ fn spawn_profile_worker(
 ) {
     let handle = runtime_services.handle();
     runtime_services.spawn(async move {
-        while let Some(ProfileRequest::Execute(spec)) = rx.recv().await {
-            let tx = tx.clone();
-            let archive_tx = archive_tx.clone();
-            let operation_id = spec.operation_id;
-            let game_id = spec.game_id.clone();
-            let kind = spec.kind;
-            let cancel = Arc::clone(&spec.cancel);
-            let coordinator = Arc::clone(&archive_coordinator);
-            let result = handle
-                .spawn_blocking(move || execute_profile_operation(spec, coordinator))
-                .await;
-            match result {
-                Ok(Ok(output)) => {
-                    let background_archives = output.background_archives.clone();
-                    let _ = tx.send(ProfileEvent::Completed {
-                        operation_id,
-                        completed: Box::new(ProfileCompleted {
-                            game_id,
-                            kind: output.kind,
-                            profile_id: output.profile_id,
-                            target_profile_id: output.target_profile_id,
-                            display_name: output.display_name,
-                            archive: output.archive,
-                            active_profile_marker: output.active_profile_marker,
-                            orphaned_profiles: output.orphaned_profiles,
-                            renamed_profiles: output.renamed_profiles,
-                            warnings: output.warnings,
-                        }),
-                    });
-                    for job in background_archives {
-                        let _ = tx.send(ProfileEvent::ArchiveQueued {
-                            game_id: job.game_id.clone(),
-                            profile_id: job.profile_id,
-                            delay_seconds: PROFILE_ARCHIVE_GRACE_PERIOD.as_secs(),
-                        });
-                        let _ = archive_tx.send(job);
+        while let Some(request) = rx.recv().await {
+            match request {
+                ProfileRequest::Execute(spec) => {
+                    let tx = tx.clone();
+                    let archive_tx = archive_tx.clone();
+                    let operation_id = spec.operation_id;
+                    let game_id = spec.game_id.clone();
+                    let kind = spec.kind;
+                    let cancel = Arc::clone(&spec.cancel);
+                    let coordinator = Arc::clone(&archive_coordinator);
+                    let result = handle
+                        .spawn_blocking(move || execute_profile_operation(spec, coordinator))
+                        .await;
+                    match result {
+                        Ok(Ok(output)) => {
+                            let background_archives = output.background_archives.clone();
+                            let _ = tx.send(ProfileEvent::Completed {
+                                operation_id,
+                                completed: Box::new(ProfileCompleted {
+                                    game_id,
+                                    kind: output.kind,
+                                    profile_id: output.profile_id,
+                                    target_profile_id: output.target_profile_id,
+                                    display_name: output.display_name,
+                                    archive: output.archive,
+                                    active_profile_marker: output.active_profile_marker,
+                                    orphaned_profiles: output.orphaned_profiles,
+                                    renamed_profiles: output.renamed_profiles,
+                                    warnings: output.warnings,
+                                }),
+                            });
+                            for job in background_archives {
+                                let _ = tx.send(ProfileEvent::ArchiveQueued {
+                                    game_id: job.game_id.clone(),
+                                    profile_id: job.profile_id,
+                                    delay_seconds: PROFILE_ARCHIVE_GRACE_PERIOD.as_secs(),
+                                });
+                                let _ = archive_tx.send(job);
+                            }
+                        }
+                        Ok(Err(ProfileWorkerError::Canceled)) if cancel.load(Ordering::Relaxed) => {
+                            let _ = tx.send(ProfileEvent::Canceled { operation_id });
+                        }
+                        Ok(Err(err)) if cancel.load(Ordering::Relaxed) => {
+                            let _ = tx.send(ProfileEvent::Canceled { operation_id });
+                            let _ = err;
+                        }
+                        Ok(Err(err)) => {
+                            let _ = tx.send(ProfileEvent::Failed {
+                                operation_id,
+                                game_id,
+                                error: err.to_string(),
+                                recovery_blocking: err.recovery_blocking(),
+                            });
+                        }
+                        Err(err) => {
+                            let _ = tx.send(ProfileEvent::Failed {
+                                operation_id,
+                                game_id,
+                                error: format!("profile worker join failed: {err}"),
+                                recovery_blocking: kind == ProfileOperationKind::Recover,
+                            });
+                        }
                     }
                 }
-                Ok(Err(ProfileWorkerError::Canceled)) if cancel.load(Ordering::Relaxed) => {
-                    let _ = tx.send(ProfileEvent::Canceled { operation_id });
-                }
-                Ok(Err(err)) if cancel.load(Ordering::Relaxed) => {
-                    let _ = tx.send(ProfileEvent::Canceled { operation_id });
-                    let _ = err;
-                }
-                Ok(Err(err)) => {
-                    let _ = tx.send(ProfileEvent::Failed {
-                        operation_id,
+            }
+        }
+    });
+}
+
+fn spawn_profile_reconcile_worker(
+    runtime_services: &RuntimeServices,
+    mut rx: WorkerRx<ProfileReconcileSpec>,
+    tx: WorkerTx<ProfileEvent>,
+) {
+    let handle = runtime_services.handle();
+    runtime_services.spawn(async move {
+        while let Some(spec) = rx.recv().await {
+            let tx = tx.clone();
+            let game_id = spec.game_id.clone();
+            let result = handle
+                .spawn_blocking(move || execute_profile_reconcile(spec))
+                .await;
+            match result {
+                Ok(Ok((orphaned_profiles, renamed_profiles, warnings))) => {
+                    let _ = tx.send(ProfileEvent::ReconcileCompleted {
                         game_id,
-                        error: err.to_string(),
-                        recovery_blocking: err.recovery_blocking(),
+                        orphaned_profiles,
+                        renamed_profiles,
+                        warnings,
                     });
                 }
-                Err(err) => {
-                    let _ = tx.send(ProfileEvent::Failed {
-                        operation_id,
+                Ok(Err(error)) => {
+                    let _ = tx.send(ProfileEvent::ReconcileFailed {
                         game_id,
-                        error: format!("profile worker join failed: {err}"),
-                        recovery_blocking: kind == ProfileOperationKind::Recover,
+                        error: error.to_string(),
+                    });
+                }
+                Err(error) => {
+                    let _ = tx.send(ProfileEvent::ReconcileFailed {
+                        game_id,
+                        error: format!("profile reconcile worker join failed: {error}"),
                     });
                 }
             }
         }
     });
+}
+
+fn execute_profile_reconcile(
+    spec: ProfileReconcileSpec,
+) -> std::result::Result<
+    (Vec<OrphanedProfile>, Vec<RecoveredProfileLabel>, Vec<String>),
+    ProfileWorkerError,
+> {
+    let roots = profiles::profile_roots(&spec.game, spec.use_default_mods_path)
+        .map_err(ProfileWorkerError::Other)?;
+    profiles::ensure_profile_storage_layout(&roots).map_err(ProfileWorkerError::RecoveryBlocked)?;
+    let operation_spec = ProfileOperationSpec {
+        operation_id: 0,
+        game_id: spec.game_id,
+        game: spec.game,
+        use_default_mods_path: spec.use_default_mods_path,
+        kind: ProfileOperationKind::Recover,
+        profile_id: None,
+        source_profile_id: None,
+        target_profile_id: None,
+        display_name: None,
+        target_display_name: None,
+        source_profile: None,
+        target_profile: None,
+        source_archive: None,
+        target_archive: None,
+        target_categories: None,
+        target_tools: None,
+        target_tool_blacklist: None,
+        known_profile_ids: spec.known_profile_ids,
+        known_profile_storage_file_names: spec.known_profile_storage_file_names,
+        metadata: None,
+        cancel: Arc::new(AtomicBool::new(false)),
+        progress: Arc::new(AtomicU64::new(0)),
+        stage: Arc::new(RwLock::new("Reconciling profile storage".to_string())),
+    };
+    let mut warnings = Vec::new();
+    let (orphaned, renamed) = discover_orphaned_profiles(&roots, &operation_spec, &mut warnings)
+        .map_err(ProfileWorkerError::into_recovery_blocking)?;
+    Ok((orphaned, renamed, warnings))
 }
 
 fn spawn_profile_archive_worker(

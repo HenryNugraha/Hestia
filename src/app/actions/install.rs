@@ -160,6 +160,10 @@ impl HestiaApp {
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
         preferred_names: Vec<String>,
     ) {
+        if self.install_commit_touches_locked_active_mod(job_id, choice, &target_root, &preferred_names) {
+            self.cancel_install_job_as_locked(job_id);
+            return;
+        }
         if self
             .install_request_tx
             .send(InstallRequest::Install {
@@ -185,6 +189,57 @@ impl HestiaApp {
                 Self::cleanup_runtime_temp_for_source(&current.source);
             }
         }
+    }
+
+    fn install_commit_touches_locked_active_mod(
+        &self,
+        job_id: u64,
+        choice: ConflictChoice,
+        target_root: &Path,
+        preferred_names: &[String],
+    ) -> bool {
+        if !matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge) {
+            return false;
+        }
+        let Some(job) = self.install_inflight.get(&job_id) else {
+            return false;
+        };
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == job.game_id)
+        else {
+            return false;
+        };
+        if !game.is_unreal_engine() || !self.game_process_running(game) {
+            return false;
+        }
+
+        preferred_names.iter().any(|preferred_name| {
+            let target_path = target_root.join(preferred_name);
+            self.state.mods.iter().any(|mod_entry| {
+                mod_entry.game_id == job.game_id
+                    && mod_entry.status == ModStatus::Active
+                    && Self::install_path_matches_mod_root(&target_path, &mod_entry.root_path)
+            })
+        })
+    }
+
+    fn cancel_install_job_as_locked(&mut self, job_id: u64) {
+        let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+        self.pending_imports.retain(|pending| pending.job_id != job_id);
+        self.pending_conflicts
+            .retain(|conflict| conflict.job_id != job_id);
+        if let Some(current) = self.install_inflight.remove(&job_id) {
+            Self::cleanup_runtime_temp_for_source(&current.source);
+            self.mark_usage_counters_dirty();
+        }
+        if self.install_batch_active {
+            self.install_batch_stats.skipped += 1;
+        }
+        self.update_task_status(job_id, TaskStatus::Canceled);
+        self.report_skipped_locked_mods();
     }
 
     fn enqueue_install_sources(&mut self, sources: Vec<ImportSource>) {
@@ -219,6 +274,14 @@ impl HestiaApp {
                 self.report_warn(self.text().select_game_first(), None);
                 return;
             };
+            if install_disabled
+                && self.selected_game().is_some_and(|game| {
+                    game.is_unreal_engine() && self.game_process_running(game)
+                })
+            {
+                self.report_locked_mods(Some(self.text().install_unavailable()));
+                return;
+            }
             if !self.selected_game_can_install_mods() {
                 self.report_warn(
                     self.selected_game_mod_setup_message(),

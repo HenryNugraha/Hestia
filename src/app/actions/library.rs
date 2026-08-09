@@ -1,4 +1,75 @@
+#[derive(Clone, Copy)]
+enum ModMutationKind {
+    DisableActive,
+    EnableIntoActive,
+    Delete,
+    Rename,
+    UpdateExisting,
+}
+
 impl HestiaApp {
+    fn mod_action_lock_reason_by_id(
+        &self,
+        mod_id: &str,
+        kind: ModMutationKind,
+    ) -> Option<&'static str> {
+        let mod_entry = self.state.mods.iter().find(|mod_entry| mod_entry.id == mod_id)?;
+        self.mod_action_lock_reason(mod_entry, kind)
+    }
+
+    fn mod_action_lock_reason(
+        &self,
+        mod_entry: &ModEntry,
+        kind: ModMutationKind,
+    ) -> Option<&'static str> {
+        let touches_active_unreal_root = match kind {
+            ModMutationKind::DisableActive
+            | ModMutationKind::Delete
+            | ModMutationKind::Rename
+            | ModMutationKind::UpdateExisting => mod_entry.status == ModStatus::Active,
+            ModMutationKind::EnableIntoActive => mod_entry.status == ModStatus::Disabled,
+        };
+        if !touches_active_unreal_root {
+            return None;
+        }
+        let game = self.game_for_mod(mod_entry)?;
+        (game.is_unreal_engine() && self.game_process_running(&game))
+            .then_some(MODS_LOCKED_BLOCK_REASON)
+    }
+
+    fn report_locked_mods(&mut self, toast_summary: Option<&str>) {
+        let text = self.text();
+        self.report_warn(text.mods_locked_probably_by_game(), toast_summary);
+    }
+
+    fn report_skipped_locked_mods(&mut self) {
+        let text = self.text();
+        self.report_warn(
+            text.skipped_locked_mods_probably_by_game(),
+            Some(text.mods_locked_probably_by_game()),
+        );
+    }
+
+    fn mod_action_error_toast<'a>(
+        &self,
+        err: &anyhow::Error,
+        fallback: &'a str,
+    ) -> &'a str {
+        if Self::looks_like_locked_file_error(err) {
+            self.text().mods_locked_probably_by_game()
+        } else {
+            fallback
+        }
+    }
+
+    fn looks_like_locked_file_error(err: &anyhow::Error) -> bool {
+        err.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+        })
+    }
+
     fn finish_single_mod_action(&mut self, result: Result<()>, name: &str, action: &str, error_toast: &str) {
         match result {
             Ok(()) => {
@@ -7,7 +78,10 @@ impl HestiaApp {
                 self.save_state();
                 self.refresh();
             }
-            Err(err) => self.report_error(err, Some(error_toast)),
+            Err(err) => {
+                let toast = self.mod_action_error_toast(&err, error_toast);
+                self.report_error(err, Some(toast));
+            }
         }
     }
 
@@ -31,6 +105,13 @@ impl HestiaApp {
     }
 
     fn disable_mod_by_id(&mut self, mod_id: &str) {
+        if self
+            .mod_action_lock_reason_by_id(mod_id, ModMutationKind::DisableActive)
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().disable_failed()));
+            return;
+        }
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default = self.state.static_prefs.use_default_mods_path;
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
@@ -58,6 +139,13 @@ impl HestiaApp {
     }
 
     fn enable_or_restore_mod_by_id(&mut self, mod_id: &str) {
+        if self
+            .mod_action_lock_reason_by_id(mod_id, ModMutationKind::EnableIntoActive)
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().enable_failed()));
+            return;
+        }
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
@@ -141,6 +229,13 @@ impl HestiaApp {
     }
 
     fn delete_mod_by_id(&mut self, mod_id: &str) {
+        if self
+            .mod_action_lock_reason_by_id(mod_id, ModMutationKind::Delete)
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().delete_failed()));
+            return;
+        }
         let result = (|| -> Result<()> {
             let mod_entry = self
                 .state
@@ -186,6 +281,14 @@ impl HestiaApp {
             self.batch_delete_selected();
             return;
         }
+        if self
+            .selected_mod()
+            .and_then(|mod_entry| self.mod_action_lock_reason(mod_entry, ModMutationKind::Delete))
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().delete_failed()));
+            return;
+        }
 
         let result = (|| -> Result<()> {
             let mod_entry = self.selected_mod().cloned().ok_or_else(|| anyhow!("no mod selected"))?;
@@ -206,6 +309,14 @@ impl HestiaApp {
     fn disable_selected_context(&mut self) {
         if !self.selected_mods.is_empty() {
             self.batch_disable_selected();
+            return;
+        }
+        if self
+            .selected_mod()
+            .and_then(|mod_entry| self.mod_action_lock_reason(mod_entry, ModMutationKind::DisableActive))
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().disable_failed()));
             return;
         }
 
@@ -238,6 +349,14 @@ impl HestiaApp {
     fn enable_or_restore_selected_context(&mut self) {
         if !self.selected_mods.is_empty() {
             self.batch_enable_selected();
+            return;
+        }
+        if self
+            .selected_mod()
+            .and_then(|mod_entry| self.mod_action_lock_reason(mod_entry, ModMutationKind::EnableIntoActive))
+            .is_some()
+        {
+            self.report_locked_mods(Some(self.text().enable_failed()));
             return;
         }
 
@@ -340,27 +459,48 @@ impl HestiaApp {
             .map(|m| m.id.clone())
             .collect();
 
-        let count = update_ids.len();
+        let mut count = 0;
+        let mut skipped_locked = 0;
         for id in &update_ids {
-            self.queue_update_apply(id);
+            if self
+                .mod_action_lock_reason_by_id(id, ModMutationKind::UpdateExisting)
+                .is_some()
+            {
+                skipped_locked += 1;
+            } else if self.queue_update_apply(id) {
+                count += 1;
+            }
         }
 
         if count > 0 {
             self.set_message_ok(self.text().queued_updates(count));
             self.selected_mods.clear();
         }
+        if skipped_locked > 0 {
+            self.report_skipped_locked_mods();
+        }
     }
 
     fn batch_disable_selected(&mut self) {
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
+        let locked_unreal_game_ids: HashSet<String> = games
+            .iter()
+            .filter(|game| game.is_unreal_engine() && self.game_process_running(game))
+            .map(|game| game.definition.id.clone())
+            .collect();
         let mut disabled_count = 0;
+        let mut skipped_locked = 0;
         // Single iteration: filter selected mods and disable in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
                 let game = games
                     .iter()
                     .find(|game| game.definition.id == mod_entry.game_id);
+                if locked_unreal_game_ids.contains(&mod_entry.game_id) {
+                    skipped_locked += 1;
+                    continue;
+                }
                 let result = match game.map(|game| game.definition.backend) {
                     Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
                     Some(GameBackend::UnrealEngine) => {
@@ -375,13 +515,22 @@ impl HestiaApp {
         }
         let action = self.text().action_disabled();
         self.finish_batch_mod_action(disabled_count, action);
+        if skipped_locked > 0 {
+            self.report_skipped_locked_mods();
+        }
     }
 
     fn batch_enable_selected(&mut self) {
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
+        let locked_unreal_game_ids: HashSet<String> = games
+            .iter()
+            .filter(|game| game.is_unreal_engine() && self.game_process_running(game))
+            .map(|game| game.definition.id.clone())
+            .collect();
         let mut enabled_count = 0;
         let mut unarchived_count = 0;
+        let mut skipped_locked = 0;
         // Single iteration: process all selected mods in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) {
@@ -389,6 +538,10 @@ impl HestiaApp {
                     .iter()
                     .find(|game| game.definition.id == mod_entry.game_id);
                 if mod_entry.status == ModStatus::Disabled {
+                    if locked_unreal_game_ids.contains(&mod_entry.game_id) {
+                        skipped_locked += 1;
+                        continue;
+                    }
                     let result = match game.map(|game| game.definition.backend) {
                         Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
                         Some(GameBackend::UnrealEngine) => {
@@ -427,10 +580,19 @@ impl HestiaApp {
             self.refresh();
             self.selected_mods.clear();
         }
+        if skipped_locked > 0 {
+            self.report_skipped_locked_mods();
+        }
     }
 
     fn rename_mod_folder(&mut self, mod_id: &str, new_name: &str) -> Result<()> {
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
+        if self
+            .mod_action_lock_reason_by_id(mod_id, ModMutationKind::Rename)
+            .is_some()
+        {
+            bail!("{}", self.text().mods_locked_probably_by_game());
+        }
         let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
             bail!("mod not found");
         };
@@ -522,8 +684,16 @@ impl HestiaApp {
             .cloned()
             .collect();
         let mut deleted_count = 0;
+        let mut skipped_locked = 0;
         let mut last_err: Option<anyhow::Error> = None;
         for mod_entry in mods_to_delete {
+            if self
+                .mod_action_lock_reason(&mod_entry, ModMutationKind::Delete)
+                .is_some()
+            {
+                skipped_locked += 1;
+                continue;
+            }
             match self.delete_mod_entry(&mod_entry) {
                 Ok(_) => deleted_count += 1,
                 Err(err) => last_err = Some(err),
@@ -539,7 +709,11 @@ impl HestiaApp {
             self.selected_mods.clear();
         }
         if let Some(err) = last_err {
-            self.report_error(err, Some(self.text().delete_failed()));
+            let toast = self.mod_action_error_toast(&err, self.text().delete_failed());
+            self.report_error(err, Some(toast));
+        }
+        if skipped_locked > 0 {
+            self.report_skipped_locked_mods();
         }
     }
 
