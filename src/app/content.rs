@@ -11,23 +11,23 @@ pub(crate) const WHATS_NEW_DATE: L10n = l10n(
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
     concat!(
-        "Added mod profiles feature",
-        "▸ Categories and tools are included in the profile",
+        "Added mod profiles feature\n",
+        "▸ Categories and tools are included in the profile\n",
         "▸ Inactive profiles will be compressed to save storage space",
     ),
     concat!(
-        "Menambahkan fitur profil mod",
-        "▸ Kategori dan alat termasuk dalam profil",
-        "▸ Profil yang tidak aktif akan dikompres untuk menghemat penyimpanan",
+        "Menambahkan fitur profil mod\n",
+        "▸ Kategori dan alat termasuk dalam profil\n",
+        "▸ Profil yang tidak aktif akan dikompres untuk menghemat penyimpanan\n",
     ),
     concat!(
-        "新增配置文件功能",
-        "▸ 分类和工具已包含在配置文件中",
-        "▸ 不活动的配置文件将被压缩以节省空间",
+        "新增配置文件功能\n",
+        "▸ 分类和工具已包含在配置文件中\n",
+        "▸ 不活动的配置文件将被压缩以节省空间\n",
     ),
     concat!(
-        "Добавлена функция профилей",
-        "▸ Категории и инструменты включены в профиль",
+        "Добавлена функция профилей\n",
+        "▸ Категории и инструменты включены в профиль\n",
         "▸ Неактивные профили будут сжаты для экономии места",
     ),
 )];

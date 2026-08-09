@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.8.1] - 2026-08-09
+
+### Fixed
+- Fixed formatting in What's New section.
+
 ## [1.8.0] - 2026-08-09
 
 ### Added
