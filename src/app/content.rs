@@ -4,20 +4,36 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "xx August 2026",
-    "xx Agustus 2026",
-    "2026年 8月 xx日",
-    "xx августа 2026",
+    "9 August 2026",
+    "9 Agustus 2026",
+    "2026年 8月 9日",
+    "9 августа 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
-    "Added profiles feature",
-    "Menambahkan fitur profil",
-    "新增配置文件功能",
-    "Добавлена функция профилей",
+    concat!(
+        "Added mod profiles feature",
+        "▸ Categories and tools are included in the profile",
+        "▸ Inactive profiles will be compressed to save storage space",
+    ),
+    concat!(
+        "Menambahkan fitur profil mod",
+        "▸ Kategori dan alat termasuk dalam profil",
+        "▸ Profil yang tidak aktif akan dikompres untuk menghemat penyimpanan",
+    ),
+    concat!(
+        "新增配置文件功能",
+        "▸ 分类和工具已包含在配置文件中",
+        "▸ 不活动的配置文件将被压缩以节省空间",
+    ),
+    concat!(
+        "Добавлена функция профилей",
+        "▸ Категории и инструменты включены в профиль",
+        "▸ Неактивные профили будут сжаты для экономии места",
+    ),
 )];
 
-pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = false;
-pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 15;
+pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
+pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 32;
 pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
     "Quick Feedback",
     "Survey Singkat",
@@ -26,76 +42,40 @@ pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
 );
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
-        "translate_tool",
+        "profile_feature",
         l10n(
-            "Have you used the translate button on mods?",
-            "Apakah kamu pernah menggunakan tombol terjemahkan pada mod?",
-            "你使用过模组上的翻译按钮吗？",
-            "Вы использовали кнопку перевода для модов?",
+            "Do you find the mod profiles feature useful?",
+            "Apakah fitur profil mod berguna bagi Anda?",
+            "你觉得 mod 配置文件功能有用吗？",
+            "Вы находите функцию профилей полезной?",
         ),
         &[
             a(
                 1,
                 l10n(
-                    "Good and fast",
-                    "Bagus dan cepat",
-                    "效果好且速度快",
-                    "Хорошо и быстро",
+                    "Yes",
+                    "Iya",
+                    "是的",
+                    "Да",
                 ),
             ),
             a(
                 2,
                 l10n(
-                    "Good but slow",
-                    "Bagus, tapi lambat",
-                    "效果好，但速度慢",
-                    "Хорошо, но медленно",
+                    "No",
+                    "Tidak",
+                    "不",
+                    "Нет",
                 ),
             ),
             a(
                 3,
                 l10n(
-                    "Poor but fast",
-                    "Buruk, tapi cepat",
-                    "效果差，但速度快",
-                    "Плохо, но быстро",
+                    "Never used it",
+                    "Tidak pernah pakai",
+                    "从未使用过",
+                    "Не использовал",
                 ),
-            ),
-            a(
-                4,
-                l10n(
-                    "Poor and slow",
-                    "Buruk dan lambat",
-                    "效果差且速度慢",
-                    "Плохо и медленно",
-                ),
-            ),
-            a(
-                5,
-                l10n(
-                    "Don't use it / didn't know about it",
-                    "Tidak pakai / tidak tahu fitur ini",
-                    "不用 / 不知道有这个功能",
-                    "Не пользуюсь / не знаю про эту функцию",
-                ),
-            ),
-        ],
-    ),
-    q(
-        "language_russian_quality",
-        l10n(
-            "If using RUSSIAN localization: How do you like it?",
-            "Jika pakai BAHASA RUSIA: Bagaimana menurutmu?",
-            "如果你用俄语：你觉得怎么样？",
-            "Если используете РУССКУЮ локализацию: как она вам?",
-        ),
-        &[
-            a(1, l10n("Great", "Bagus", "很好", "Отлично")),
-            a(2, l10n("Okay", "Biasa", "还行", "Нормально")),
-            a(3, l10n("Poor", "Buruk", "不好", "Плохо")),
-            a(
-                4,
-                l10n("Not using it", "Tidak pakai", "没在用", "Не использую"),
             ),
         ],
     ),

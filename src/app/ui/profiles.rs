@@ -220,12 +220,12 @@ fn profile_storage_tooltip_text(
     archive_size: Option<u64>,
 ) -> String {
     let state_label = match state {
-        ProfileStorageTooltipState::Active => text.profile_compression_active(),
-        ProfileStorageTooltipState::Queued => text.profile_compression_queued(),
-        ProfileStorageTooltipState::Running => text.profile_compression_running(),
-        ProfileStorageTooltipState::Compressed => text.profile_compression_complete(),
-        ProfileStorageTooltipState::Failed => text.profile_compression_failed(),
-        ProfileStorageTooltipState::Unavailable => text.profile_compression_unavailable(),
+        ProfileStorageTooltipState::Active => text.profile_status_active(),
+        ProfileStorageTooltipState::Queued => text.profile_status_queued(),
+        ProfileStorageTooltipState::Running => text.profile_status_running(),
+        ProfileStorageTooltipState::Compressed => text.profile_status_complete(),
+        ProfileStorageTooltipState::Failed => text.profile_status_failed(),
+        ProfileStorageTooltipState::Unavailable => text.profile_status_unavailable(),
     };
     let size_label = if archive_size.is_some()
         && !matches!(

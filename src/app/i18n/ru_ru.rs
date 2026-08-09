@@ -1,7 +1,7 @@
 const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Window: What's New
     "Что нового", // WhatsNewWindowTitle
-    "Нажмите, чтобы открыть опрос обратной связи.", // WhatsNewFeedbackSurveyTooltip
+    "Нажмите, чтобы открыть опрос обратной связи", // WhatsNewFeedbackSurveyTooltip
 
     // Window: Feedback Survey
     "Необязательно", // FeedbackSurveyOptional
@@ -104,7 +104,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Выбрать…", // DialogChoose
     "Найдено несколько", // DialogMultipleFound
     "Импортированный мод", // DialogImportedMod
-    "Отсутствует .ini", // DialogMissingIniTitle
+    "Отсутствует файл .ini", // DialogMissingIniTitle
     "В родительской папке архива не найден распознаваемый .ini-файл; возможно, архив содержит несколько модов.\nВыберите папки для установки:", // DialogMissingIniPrompt
     "Установить", // DialogInstall
     "Установить вместе", // DialogInstallMerged
@@ -330,31 +330,31 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Наибольший → Наименьший размер", // LibrarySortSizeDesc
     "Сортировка, группировка и вид установленных модов", // LibrarySortMenuTooltip
     "Сортировка модов", // LibrarySortModsHeading
-    "Сортировка по названию мода, при отсутствии — по имени папки.", // LibrarySortNameTooltip
-    "Используется самая новая известная дата установки, изменения содержимого или обновления.", // LibrarySortNewestTooltip
-    "Сначала используется самая старая известная дата установки, изменения содержимого или обновления.", // LibrarySortOldestTooltip
-    "Сортирует по общему размеру содержимого мода.", // LibrarySortSizeTooltip
+    "Сортировка по названию мода, при отсутствии — по имени папки", // LibrarySortNameTooltip
+    "Используется самая новая известная дата установки, изменения содержимого или обновления", // LibrarySortNewestTooltip
+    "Сначала используется самая старая известная дата установки, изменения содержимого или обновления", // LibrarySortOldestTooltip
+    "Сортирует по общему размеру содержимого мода", // LibrarySortSizeTooltip
     "Группировка модов", // LibraryGroupModsHeading
-    "Группирует моды по категориям для каждой игры.", // LibraryGroupCategoryTooltip
-    "Группирует моды по разделам «Активные», «Отключённые» и «В архиве».", // LibraryGroupStatusTooltip
-    "Показывает один непрерывный отсортированный список модов.", // LibraryGroupNoneTooltip
+    "Группирует моды по категориям для каждой игры", // LibraryGroupCategoryTooltip
+    "Группирует моды по разделам «Активные», «Отключённые» и «В архиве»", // LibraryGroupStatusTooltip
+    "Показывает один непрерывный отсортированный список модов", // LibraryGroupNoneTooltip
     "Макет категорий", // LibraryCategoryLayoutHeading
     "Доступно при группировке по категориям.", // LibraryAvailableWhenGroupedByCategory
-    "Сначала показывает плитки категорий, затем открывает по одной категории за раз.", // LibraryCategoryFoldersTooltip
-    "Показывает каждую категорию отдельным разделом в списке модов.", // LibraryCategoryListTooltip
+    "Сначала показывает плитки категорий, затем открывает по одной категории за раз", // LibraryCategoryFoldersTooltip
+    "Показывает каждую категорию отдельным разделом в списке модов", // LibraryCategoryListTooltip
     "Сортировка категорий", // LibrarySortCategoriesHeading
     "Вручную", // LibraryCategorySortManual
     "По названию (А-Я)", // LibraryCategorySortByNameAsc
     "Меньше всего модов", // LibraryCategorySortByLeastMods
     "Больше всего модов", // LibraryCategorySortByMostMods
-    "Используется ваш ручной порядок категорий.", // LibraryCategorySortManualTooltip
-    "Сортирует папки и разделы категорий по названию категории.", // LibraryCategorySortByNameTooltip
-    "Сначала показываются категории с наибольшим количеством модов.", // LibraryCategorySortByMostModsTooltip
-    "Сначала показываются категории с наименьшим количеством модов.", // LibraryCategorySortByLeastModsTooltip
+    "Используется ваш ручной порядок категорий", // LibraryCategorySortManualTooltip
+    "Сортирует папки и разделы категорий по названию категории", // LibraryCategorySortByNameTooltip
+    "Сначала показываются категории с наибольшим количеством модов", // LibraryCategorySortByMostModsTooltip
+    "Сначала показываются категории с наименьшим количеством модов", // LibraryCategorySortByLeastModsTooltip
     "Разное", // LibraryMiscellaneousHeading
-    "Внутри статусных групп сначала учитывается порядок категорий, затем выбранная сортировка.", // LibrarySortCategoryFirstTooltip
-    "Сначала размещает активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка.", // LibrarySortStatusFirstTooltip
-    "Доступно при группировке по категориям в виде списка.", // LibraryUncategorizedFirstListOnlyTooltip
+    "Внутри статусных групп сначала учитывается порядок категорий, затем выбранная сортировка", // LibrarySortCategoryFirstTooltip
+    "Сначала размещает активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка", // LibrarySortStatusFirstTooltip
+    "Доступно при группировке по категориям в виде списка", // LibraryUncategorizedFirstListOnlyTooltip
     "Показать/скрыть", // LibraryToggleVisibility
     "Состояние мода", // LibraryModStateHeading
     "Показать все состояния модов", // LibraryShowAllModStates
@@ -372,7 +372,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Источник отсутствует", // LibraryMissingSource
     "Изменён локально", // LibraryModifiedLocally
     "Обновление игнорируется", // LibraryIgnoringUpdate
-    "Показывает моды, которые игнорируют текущее обновление или игнорируют обновления до отключения этой опции.", // LibraryIgnoringUpdateTooltip
+    "Показывает моды, которые игнорируют текущее обновление или игнорируют обновления до отключения этой опции", // LibraryIgnoringUpdateTooltip
     "Апдейт", // LibraryUpdate
     "Включить", // LibraryEnable
     "Отключить", // LibraryDisable
@@ -387,10 +387,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "К этому моду не привязан источник GameBanana.", // LibraryNoGameBananaSource
     "Пропустить обновление один раз", // LibraryIgnoreUpdateOnce
     "Игнорирует текущее обновление, если оно доступно. Если обновления пока нет, запоминает текущую удалённую версию и игнорирует следующее обнаруженное обновление.", // LibraryIgnoreUpdateOnceTooltip
-    "Синхронизируйте этот мод с GameBanana перед разовым игнорированием обновления.", // LibraryIgnoreUpdateOnceDisabledTooltip
-    "Синхронизируйте хотя бы один выбранный мод с GameBanana перед разовым игнорированием обновления.", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
+    "Синхронизируйте этот мод с GameBanana перед разовым игнорированием обновления", // LibraryIgnoreUpdateOnceDisabledTooltip
+    "Синхронизируйте хотя бы один выбранный мод с GameBanana перед разовым игнорированием обновления", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Игнорировать обновление всегда", // LibraryIgnoreUpdateAlways
-    "Бессрочно задаёт для мода статус «Игнорировать обновления всегда», пока опция не будет снята.", // LibraryIgnoreUpdateAlwaysTooltip
+    "Бессрочно задаёт для мода статус «Игнорировать обновления всегда», пока опция не будет снята", // LibraryIgnoreUpdateAlwaysTooltip
     "Изменён", // LibraryModified
     "\n(Изменён)", // LibraryModifiedSuffix
     "…и ещё {count}", // LibraryAndMore
@@ -495,14 +495,14 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Window: Profiles
     "Профили", // ProfilesTitle
     "Профиль", // ProfilesLabel
-    "Стандартный", // ProfilesDefault
+    "По умолчанию", // ProfilesDefault
     "Новый профиль", // ProfilesNew
     "Новый профиль", // ProfilesCreateEmpty
-    "Создайте отдельный набор модов и категорий.", // ProfilesNewDescription
+    "Создать отдельный набор модов и категорий", // ProfilesNewDescription
     "Дублировать профиль", // ProfilesDuplicateCurrent
-    "Создайте копию модов и категорий текущего профиля.", // ProfilesDuplicateDescription
+    "Создать копию модов и категорий текущего профиля", // ProfilesDuplicateDescription
     "Открыть папку профилей", // ProfilesOpenFolder
-    "Открыть папку, где хранятся профили этой игры.", // ProfilesOpenFolderTooltip
+    "Открыть папку с профилями этой игры", // ProfilesOpenFolderTooltip
     "Переименовать профиль", // ProfilesRename
     "Выберите новое имя для этого профиля.", // ProfilesRenameDescription
     "Удалить профиль", // ProfilesDelete
@@ -512,21 +512,21 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Создание профиля…", // ProfilesCreating
     "Дублирование профиля…", // ProfilesDuplicating
     "Удаление профиля…", // ProfilesDeleting
-    "Архивирование текущего профиля…", // ProfilesArchivingCurrent
+    "Архивация текущего профиля…", // ProfilesArchivingCurrent
     "Распаковка выбранного профиля…", // ProfilesExtractingSelected
     "Копирование выбранного профиля…", // ProfilesCopyingSelected
     "Активация выбранного профиля…", // ProfilesActivatingSelected
     "Неактивные профили сжимаются для экономии места на диске.", // ProfilesInactiveCompressedNote
     "Статус", // ProfilesStatusLabel
-    "Активный профиль", // ProfilesCompressionActive
-    "Ожидает сжатия", // ProfilesCompressionQueued
-    "Сжимается", // ProfilesCompressionRunning
-    "Сжат", // ProfilesCompressionComplete
-    "Ошибка сжатия", // ProfilesCompressionFailed
-    "Не сжат", // ProfilesCompressionUnavailable
+    "Активный профиль", // ProfilesStatusActive
+    "Ожидает сжатия", // ProfilesStatusQueued
+    "Сжимается", // ProfilesStatusRunning
+    "Сжат", // ProfilesStatusComplete
+    "Ошибка сжатия", // ProfilesStatusFailed
+    "Не сжат", // ProfilesStatusUnavailable
     "Размер архива", // ProfilesArchiveSize
     "Размер предыдущего архива", // ProfilesPreviousArchiveSize
-    "Архива пока нет", // ProfilesNoArchiveYet
+    "Архив ещё не создан", // ProfilesNoArchiveYet
     "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
     "Действия приостановлены:", // ProfilesActionsPausedLabel
     "выполняется другая задача", // ProfilesActionsPausedFallback
@@ -537,20 +537,20 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "обновляется Hestia", // ProfilesActionsPausedUpdatingHestia
     "игра запущена", // ProfilesActionsPausedGameRunning
     "моды заблокированы", // ProfilesActionsPausedModsLocked
-    "запущен инструмент профиля", // ProfilesActionsPausedProfileToolRunning
+    "инструмент профилей выполняется", // ProfilesActionsPausedProfileToolRunning
     "Выберите игру для управления профилями.", // ProfilesSelectGame
     "Требуется хотя бы один профиль.", // ProfilesAtLeastOneRequired
     "Переключитесь на другой профиль, прежде чем удалять этот.", // ProfilesSwitchBeforeDelete
     "Удалить профиль «{name}»?", // ProfilesDeleteConfirmation
     "Моды этого профиля будут удалены НАВСЕГДА. Восстановить удалённые данные невозможно.", // ProfilesDeleteConfirmationDetails
     "Профиль создан: {name}", // ProfilesCreated
-    "Профиль дублирован: {name}", // ProfilesDuplicated
+    "Создана копия профиля: {name}", // ProfilesDuplicated
     "Профиль переименован: {name}", // ProfilesRenamed
     "Профиль удалён: {name}", // ProfilesDeleted
     "Профиль активирован: {name}", // ProfilesActivated
     "Операция с профилем отменена", // ProfilesCanceled
     "Профиль восстановлен", // ProfilesActionRecovered
-    "Восстановлено профилей: {count} — они были в хранилище, но отсутствовали в списке.", // ProfilesRecovered
+    "Восстановлено профилей: {count}. Они были найдены в хранилище, но отсутствовали в списке.", // ProfilesRecovered
 
     // Window: Settings
     "Опции", // SettingsWindowTitle
@@ -585,12 +585,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Список", // SettingsGeneralInstalledModsLayoutList
     "Папки", // SettingsGeneralInstalledModsLayoutFolders
     "Сначала сортировать по категории", // SettingsGeneralInstalledModsSortByCategoryFirst
-    "Сортировка по порядку категорий (не обязательно по алфавиту).", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
+    "Сортировка по порядку категорий (не обязательно по алфавиту)", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
     "Сначала сортировать по статусу", // SettingsGeneralInstalledModsSortByStatusFirst
-    "Сначала активные моды, затем отключённые и архивные.", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
+    "Сначала активные моды, затем отключённые и архивные", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
     "Показывать статус мода на карточке", // SettingsGeneralInstalledModsShowModStatusOnCard
     "Показывать категорию на карточке", // SettingsGeneralInstalledModsShowCategoryOnCard
-    "Состояние мода всё равно отображается цветной точкой статуса.", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
+    "Состояние мода всё равно отображается цветной точкой статуса", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
     "Показывать отключённые моды", // SettingsGeneralInstalledModsShowDisabledMods
     "Показывать архивные моды", // SettingsGeneralInstalledModsShowArchivedMods
     "Показывать моды без категории первыми", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
@@ -669,7 +669,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Использует Diphylleia, для жирного текста — Gabriela", // SettingsAdvancedAppearanceFontElegantTooltip
     "Использует New Tegomin, для жирного текста — Coustard", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Всегда переводить сведения о моде", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "При включении описания и метаданные модов автоматически переводятся на выбранный язык при просмотре сведений.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "При включении описания и метаданные модов автоматически переводятся на выбранный язык при просмотре сведений", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
     // Window: Settings > Advanced > Content Restriction
     "Ограничения содержимого", // SettingsAdvancedContentRestrictionSection
     "NSFW-контент:", // SettingsAdvancedContentRestrictionHideUnsafeContents
@@ -708,7 +708,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > About
     "от {authors}", // SettingsAboutBy
     "Версия:", // SettingsAboutVersion
-    "Нажмите, чтобы показать «Что нового».", // SettingsAboutVersionTooltip
+    "Нажмите, чтобы показать «Что нового»", // SettingsAboutVersionTooltip
     "Автоматически проверять наличие обновлений", // SettingsAboutAutomaticallyCheckForUpdate
     "Проверка…", // SettingsAboutUpdateChecking
     "Перезапустить для обновления", // SettingsAboutUpdateRestartToUpdate
@@ -730,7 +730,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Перевести (F7)", // TranslationToggleShortcut
     "Перевести заново", // TranslationRetranslate
     "Перевод не удался", // TranslationFailed
-    "Выполняется перевод", // TranslationInProgress
+    "Перевод выполняется", // TranslationInProgress
 
     // Settings: Advanced renderer
     "Рендерер", // SettingsAdvancedRendererSection

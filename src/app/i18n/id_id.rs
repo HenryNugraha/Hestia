@@ -1,7 +1,7 @@
 const ID_ID: [&str; TEXT_KEY_COUNT] = [
     // Window: What's New
     "Yang Baru", // WhatsNewWindowTitle
-    "Klik untuk menampilkan survei masukan.", // WhatsNewFeedbackSurveyTooltip
+    "Klik untuk menampilkan survei masukan", // WhatsNewFeedbackSurveyTooltip
 
     // Window: Feedback Survey
     "Opsional", // FeedbackSurveyOptional
@@ -104,7 +104,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Pilih...", // DialogChoose
     "Beberapa ditemukan", // DialogMultipleFound
     "Mod Impor", // DialogImportedMod
-    ".ini Hilang", // DialogMissingIniTitle
+    "Tidak Ada .ini", // DialogMissingIniTitle
     "Tidak ada file .ini yang dikenali di path induk arsip; arsip mungkin berisi beberapa mod.\nPilih folder yang ingin dipasang:", // DialogMissingIniPrompt
     "Pasang", // DialogInstall
     "Pasang Gabungan", // DialogInstallMerged
@@ -330,31 +330,31 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ukuran Terbesar → Terkecil", // LibrarySortSizeDesc
     "Urutkan, kelompokkan, dan atur tampilan mod terpasang", // LibrarySortMenuTooltip
     "Urutkan Mod", // LibrarySortModsHeading
-    "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada.", // LibrarySortNameTooltip
-    "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui.", // LibrarySortNewestTooltip
-    "Menggunakan timestamp pemasangan, konten, atau refresh terlama yang diketahui terlebih dahulu.", // LibrarySortOldestTooltip
-    "Mengurutkan berdasarkan total ukuran konten mod.", // LibrarySortSizeTooltip
+    "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada", // LibrarySortNameTooltip
+    "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui", // LibrarySortNewestTooltip
+    "Menggunakan timestamp pemasangan, konten, atau refresh terlama yang diketahui terlebih dahulu", // LibrarySortOldestTooltip
+    "Mengurutkan berdasarkan total ukuran konten mod", // LibrarySortSizeTooltip
     "Kelompokkan Mod", // LibraryGroupModsHeading
-    "Mengelompokkan mod berdasarkan kategori per game.", // LibraryGroupCategoryTooltip
-    "Mengelompokkan mod ke bagian Aktif, Dinonaktifkan, dan Diarsipkan.", // LibraryGroupStatusTooltip
-    "Menampilkan satu daftar mod berurutan tanpa grup.", // LibraryGroupNoneTooltip
+    "Mengelompokkan mod berdasarkan kategori per game", // LibraryGroupCategoryTooltip
+    "Mengelompokkan mod ke bagian Aktif, Dinonaktifkan, dan Diarsipkan", // LibraryGroupStatusTooltip
+    "Menampilkan satu daftar mod berurutan tanpa grup", // LibraryGroupNoneTooltip
     "Tampilan Kategori", // LibraryCategoryLayoutHeading
     "Tersedia saat dikelompokkan berdasarkan kategori.", // LibraryAvailableWhenGroupedByCategory
-    "Menampilkan tile kategori lebih dulu, lalu membuka satu kategori pada satu waktu.", // LibraryCategoryFoldersTooltip
-    "Menampilkan setiap kategori sebagai bagian dalam daftar mod.", // LibraryCategoryListTooltip
+    "Menampilkan tile kategori lebih dulu, lalu membuka satu kategori pada satu waktu", // LibraryCategoryFoldersTooltip
+    "Menampilkan setiap kategori sebagai bagian dalam daftar mod", // LibraryCategoryListTooltip
     "Urutkan Kategori", // LibrarySortCategoriesHeading
     "Manual", // LibraryCategorySortManual
     "Menurut Nama (A-Z)", // LibraryCategorySortByNameAsc
     "Mod Paling Sedikit", // LibraryCategorySortByLeastMods
     "Mod Paling Banyak", // LibraryCategorySortByMostMods
-    "Menggunakan urutan kategori manual Anda.", // LibraryCategorySortManualTooltip
-    "Mengurutkan folder dan bagian kategori berdasarkan nama kategori.", // LibraryCategorySortByNameTooltip
-    "Menampilkan kategori dengan mod terbanyak lebih dulu.", // LibraryCategorySortByMostModsTooltip
-    "Menampilkan kategori dengan mod tersedikit lebih dulu.", // LibraryCategorySortByLeastModsTooltip
+    "Menggunakan urutan kategori manual Anda", // LibraryCategorySortManualTooltip
+    "Mengurutkan folder dan bagian kategori berdasarkan nama kategori", // LibraryCategorySortByNameTooltip
+    "Menampilkan kategori dengan mod terbanyak lebih dulu", // LibraryCategorySortByMostModsTooltip
+    "Menampilkan kategori dengan mod tersedikit lebih dulu", // LibraryCategorySortByLeastModsTooltip
     "Lain-lain", // LibraryMiscellaneousHeading
-    "Di dalam grup status, mengikuti urutan kategori sebelum urutan terpilih.", // LibrarySortCategoryFirstTooltip
-    "Menempatkan mod Aktif lebih dulu, lalu Dinonaktifkan, lalu Diarsipkan sebelum urutan terpilih.", // LibrarySortStatusFirstTooltip
-    "Tersedia saat dikelompokkan berdasarkan kategori dalam tampilan daftar.", // LibraryUncategorizedFirstListOnlyTooltip
+    "Di dalam grup status, mengikuti urutan kategori sebelum urutan terpilih", // LibrarySortCategoryFirstTooltip
+    "Menempatkan mod Aktif lebih dulu, lalu Dinonaktifkan, lalu Diarsipkan sebelum urutan terpilih", // LibrarySortStatusFirstTooltip
+    "Tersedia saat dikelompokkan berdasarkan kategori dalam tampilan daftar", // LibraryUncategorizedFirstListOnlyTooltip
     "Alihkan Visibilitas", // LibraryToggleVisibility
     "Status Mod", // LibraryModStateHeading
     "Tampilkan semua status mod", // LibraryShowAllModStates
@@ -372,7 +372,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Sumber hilang", // LibraryMissingSource
     "Dimodifikasi lokal", // LibraryModifiedLocally
     "Mengabaikan pembaruan", // LibraryIgnoringUpdate
-    "Menampilkan mod yang mengabaikan pembaruan saat ini atau mengabaikan pembaruan sampai dimatikan.", // LibraryIgnoringUpdateTooltip
+    "Menampilkan mod yang mengabaikan pembaruan saat ini atau mengabaikan pembaruan sampai dimatikan", // LibraryIgnoringUpdateTooltip
     "Perbarui", // LibraryUpdate
     "Aktifkan", // LibraryEnable
     "Nonaktifkan", // LibraryDisable
@@ -387,10 +387,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tidak ada sumber GameBanana yang tertaut untuk mod ini.", // LibraryNoGameBananaSource
     "Abaikan sekali saja", // LibraryIgnoreUpdateOnce
     "Mengabaikan pembaruan yang tersedia saat ini. Jika belum ada pembaruan, versi saat ini akan diingat dan pembaruan berikutnya yang terdeteksi akan diabaikan.", // LibraryIgnoreUpdateOnceTooltip
-    "Sinkronkan mod ini dengan GameBanana sebelum memakai abaikan sekali.", // LibraryIgnoreUpdateOnceDisabledTooltip
-    "Sinkronkan setidaknya satu mod terpilih dengan GameBanana sebelum memakai abaikan sekali.", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
+    "Sinkronkan mod ini dengan GameBanana sebelum memakai abaikan sekali", // LibraryIgnoreUpdateOnceDisabledTooltip
+    "Sinkronkan setidaknya satu mod terpilih dengan GameBanana sebelum memakai abaikan sekali", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Selalu abaikan", // LibraryIgnoreUpdateAlways
-    "Mengatur status pembaruan mod ini menjadi \"Selalu Mengabaikan Pembaruan\" sampai dinonaktifkan.", // LibraryIgnoreUpdateAlwaysTooltip
+    "Mengatur status pembaruan mod ini menjadi \"Selalu Mengabaikan Pembaruan\" sampai dinonaktifkan", // LibraryIgnoreUpdateAlwaysTooltip
     "Dimodifikasi", // LibraryModified
     "\n(Dimodifikasi)", // LibraryModifiedSuffix
     "…dan {count} lainnya", // LibraryAndMore
@@ -499,10 +499,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Profil baru", // ProfilesNew
     "Profil baru", // ProfilesCreateEmpty
     "Buat kumpulan mod dan kategori yang terpisah.", // ProfilesNewDescription
-    "Duplikatkan profil", // ProfilesDuplicateCurrent
+    "Duplikat profil", // ProfilesDuplicateCurrent
     "Buat salinan mod dan kategori dari profil saat ini.", // ProfilesDuplicateDescription
     "Buka folder profil", // ProfilesOpenFolder
-    "Buka folder tempat profil gim ini disimpan.", // ProfilesOpenFolderTooltip
+    "Buka folder tempat profil gim ini disimpan", // ProfilesOpenFolderTooltip
     "Ubah nama profil", // ProfilesRename
     "Pilih nama baru untuk profil ini.", // ProfilesRenameDescription
     "Hapus profil", // ProfilesDelete
@@ -518,12 +518,12 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mengaktifkan profil yang dipilih…", // ProfilesActivatingSelected
     "Profil yang tidak aktif dikompresi untuk menghemat ruang disk.", // ProfilesInactiveCompressedNote
     "Status", // ProfilesStatusLabel
-    "Profil aktif", // ProfilesCompressionActive
-    "Menunggu untuk dikompresi", // ProfilesCompressionQueued
-    "Sedang dikompresi", // ProfilesCompressionRunning
-    "Sudah dikompresi", // ProfilesCompressionComplete
-    "Kompresi gagal", // ProfilesCompressionFailed
-    "Belum dikompresi", // ProfilesCompressionUnavailable
+    "Profil aktif", // ProfilesStatusActive
+    "Menunggu untuk dikompresi", // ProfilesStatusQueued
+    "Sedang dikompresi", // ProfilesStatusRunning
+    "Sudah dikompresi", // ProfilesStatusComplete
+    "Kompresi gagal", // ProfilesStatusFailed
+    "Belum dikompresi", // ProfilesStatusUnavailable
     "Ukuran arsip", // ProfilesArchiveSize
     "Ukuran arsip sebelumnya", // ProfilesPreviousArchiveSize
     "Belum ada arsip", // ProfilesNoArchiveYet
@@ -531,7 +531,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Aksi dijeda:", // ProfilesActionsPausedLabel
     "tugas lain sedang berjalan", // ProfilesActionsPausedFallback
     "operasi profil sedang berjalan", // ProfilesActionsPausedProfileOperation
-    "menyegarkan pustaka", // ProfilesActionsPausedRefreshingLibrary
+    "memperbarui daftar mod", // ProfilesActionsPausedRefreshingLibrary
     "memasang mod", // ProfilesActionsPausedInstallingMods
     "memeriksa pembaruan", // ProfilesActionsPausedCheckingUpdates
     "memperbarui Hestia", // ProfilesActionsPausedUpdatingHestia
@@ -585,12 +585,12 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Daftar", // SettingsGeneralInstalledModsLayoutList
     "Folder", // SettingsGeneralInstalledModsLayoutFolders
     "Urutkan kategori lebih dulu", // SettingsGeneralInstalledModsSortByCategoryFirst
-    "Mengurutkan berdasarkan urutan kategori, tidak selalu alfabetis.", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
+    "Mengurutkan berdasarkan urutan kategori, tidak selalu alfabetis", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
     "Urutkan status lebih dulu", // SettingsGeneralInstalledModsSortByStatusFirst
-    "Mengurutkan mod Aktif terlebih dahulu, lalu Dinonaktifkan, lalu Diarsipkan.", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
+    "Mengurutkan mod Aktif terlebih dahulu, lalu Dinonaktifkan, lalu Diarsipkan", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
     "Tampilkan status mod di kartu", // SettingsGeneralInstalledModsShowModStatusOnCard
     "Tampilkan kategori di kartu", // SettingsGeneralInstalledModsShowCategoryOnCard
-    "Status mod tetap ditampilkan lewat titik status berwarna.", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
+    "Status mod tetap ditampilkan lewat titik status berwarna", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
     "Tampilkan mod yang dinonaktifkan", // SettingsGeneralInstalledModsShowDisabledMods
     "Tampilkan mod yang diarsipkan", // SettingsGeneralInstalledModsShowArchivedMods
     "Tampilkan mod tanpa kategori lebih dulu", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
@@ -669,7 +669,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Menggunakan Diphylleia dengan Gabriela untuk teks tebal", // SettingsAdvancedAppearanceFontElegantTooltip
     "Menggunakan New Tegomin dengan Coustard untuk teks tebal", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Selalu terjemahkan detail mod", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "Jika diaktifkan, deskripsi dan metadata mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "Jika diaktifkan, deskripsi dan metadata mod akan diterjemahkan secara otomatis ke bahasa yang dipilih saat melihat detail", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Pembatasan Konten", // SettingsAdvancedContentRestrictionSection
@@ -709,7 +709,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > About
     "oleh {authors}", // SettingsAboutBy
     "Versi:", // SettingsAboutVersion
-    "Klik untuk menampilkan What's New.", // SettingsAboutVersionTooltip
+    "Klik untuk menampilkan What's New", // SettingsAboutVersionTooltip
     "Periksa pembaruan secara otomatis", // SettingsAboutAutomaticallyCheckForUpdate
     "Memeriksa...", // SettingsAboutUpdateChecking
     "Mulai ulang untuk memperbarui", // SettingsAboutUpdateRestartToUpdate

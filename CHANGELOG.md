@@ -1,25 +1,19 @@
 # Changelog
 
-## [1.8.0-alpha] - 2026-08-xx
+## [1.8.0] - 2026-08-09
 
 ### Added
-- profiles
-- Added "Open profile folder" to the profile menu, opening the folder where the selected game's profiles are stored.
-- Profiles are now stored under readable names like `Patch 1.4 [1fe9ec7a].tzst` instead of a bare ID, and renaming a profile renames its files. The bracketed code is the profile's ID, so two shared profiles that share a name stay distinct. Existing profiles are renamed on first launch, and a profile archive copied in from another install is picked up automatically.
-- Tools now belong to a profile. Each profile keeps its own tool list, launch options, titlebar pins and ordering, and its own list of removed auto-detected tools; switching profiles restores them. Existing tools are copied into every profile of that game on first launch.
+- Added profile menu to switch mods and tools setup, with unused profiles are compressed to save disk space.
+- Added hotkey CTRL+C to copy image in full image viewer mode.
+- Added context menu to the full image viewer mode.
+- Added context menu to the library background.
+- Added support to switch Hestia's interface renderer.
 
 ### Changed
-- Blocked profile switching while a tool inside the profile folder is still running, instead of letting the switch fail partway.
-- Deleting a profile now shows the same looping progress bar used while installing mods, rather than a percentage that sat at 0% until the delete finished.
-- Removed the spinner beside the active row in the profile switching dialog; the row's own progress bar already shows the work is running.
+- Optimized image rendering to reduce the time it takes for a thumbnail to appear after installing a mod.
 
 ### Fixed
 - Fixed the Retry button in the Task window doing nothing for a mod install that failed or was canceled at the overwrite prompt.
-- Fixed profiles stored on disk but missing from the profile list being invisible and unreachable forever, with no way to switch to them or reclaim their disk space. Startup recovery now restores them from the metadata embedded in the profile itself.
-- Fixed deleting a profile leaving copies of it behind, which reappeared as profiles on the next launch. Duplicate copies of a profile are now reported, and identical ones can be deleted to reclaim their space.
-- Fixed profile switching discarding tool launch options and titlebar pins, and re-adding the tools as new entries on switching back.
-- Fixed duplicating a profile reporting "Extracting selected profile" while it was actually copying files, sitting frozen at 20% for the whole copy, and briefly running the progress bar backwards when the source was a compressed profile.
-- Fixed removing an auto-detected tool hiding a tool at the same path in every other profile of that game.
 
 ## [1.7.1] - 2026-07-26
 

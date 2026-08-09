@@ -515,12 +515,12 @@ enum TextKey {
     ProfilesActivatingSelected,
     ProfilesInactiveCompressedNote,
     ProfilesStatusLabel,
-    ProfilesCompressionActive,
-    ProfilesCompressionQueued,
-    ProfilesCompressionRunning,
-    ProfilesCompressionComplete,
-    ProfilesCompressionFailed,
-    ProfilesCompressionUnavailable,
+    ProfilesStatusActive,
+    ProfilesStatusQueued,
+    ProfilesStatusRunning,
+    ProfilesStatusComplete,
+    ProfilesStatusFailed,
+    ProfilesStatusUnavailable,
     ProfilesArchiveSize,
     ProfilesPreviousArchiveSize,
     ProfilesNoArchiveYet,
@@ -2800,28 +2800,28 @@ impl TextCatalog {
         self.get(TextKey::ProfilesStatusLabel)
     }
 
-    fn profile_compression_active(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionActive)
+    fn profile_status_active(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusActive)
     }
 
-    fn profile_compression_queued(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionQueued)
+    fn profile_status_queued(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusQueued)
     }
 
-    fn profile_compression_running(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionRunning)
+    fn profile_status_running(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusRunning)
     }
 
-    fn profile_compression_complete(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionComplete)
+    fn profile_status_complete(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusComplete)
     }
 
-    fn profile_compression_failed(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionFailed)
+    fn profile_status_failed(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusFailed)
     }
 
-    fn profile_compression_unavailable(self) -> &'static str {
-        self.get(TextKey::ProfilesCompressionUnavailable)
+    fn profile_status_unavailable(self) -> &'static str {
+        self.get(TextKey::ProfilesStatusUnavailable)
     }
 
     fn profile_archive_size(self) -> &'static str {

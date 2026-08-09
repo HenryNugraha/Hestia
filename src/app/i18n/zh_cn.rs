@@ -1,7 +1,7 @@
 const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     // Window: What's New
     "新功能", // WhatsNewWindowTitle
-    "点击显示反馈调查。", // WhatsNewFeedbackSurveyTooltip
+    "点击显示反馈调查", // WhatsNewFeedbackSurveyTooltip
 
     // Window: Feedback Survey
     "可选", // FeedbackSurveyOptional
@@ -330,31 +330,31 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "大小：最大 → 最小", // LibrarySortSizeDesc
     "排序、分组并设置已安装 Mod 的布局", // LibrarySortMenuTooltip
     "排序 Mod", // LibrarySortModsHeading
-    "按 Mod 标题排序，没有标题时使用文件夹名。", // LibrarySortNameTooltip
-    "使用已知最新的安装、内容或刷新时间。", // LibrarySortNewestTooltip
-    "优先使用已知最旧的安装、内容或刷新时间。", // LibrarySortOldestTooltip
-    "按 Mod 内容总大小排序。", // LibrarySortSizeTooltip
+    "按 Mod 标题排序，没有标题时使用文件夹名", // LibrarySortNameTooltip
+    "使用已知最新的安装、内容或刷新时间", // LibrarySortNewestTooltip
+    "优先使用已知最旧的安装、内容或刷新时间", // LibrarySortOldestTooltip
+    "按 Mod 内容总大小排序", // LibrarySortSizeTooltip
     "分组 Mod", // LibraryGroupModsHeading
-    "按每个游戏的分类对 Mod 分组。", // LibraryGroupCategoryTooltip
-    "将 Mod 分组到启用、禁用和已归档分区。", // LibraryGroupStatusTooltip
-    "显示一个连续排序的 Mod 列表。", // LibraryGroupNoneTooltip
+    "按每个游戏的分类对 Mod 分组", // LibraryGroupCategoryTooltip
+    "将 Mod 分组到启用、禁用和已归档分区", // LibraryGroupStatusTooltip
+    "显示一个连续排序的 Mod 列表", // LibraryGroupNoneTooltip
     "分类布局", // LibraryCategoryLayoutHeading
     "按分类分组时可用。", // LibraryAvailableWhenGroupedByCategory
-    "先显示分类磁贴，然后一次打开一个分类。", // LibraryCategoryFoldersTooltip
-    "将每个分类作为 Mod 列表中的一个分区显示。", // LibraryCategoryListTooltip
+    "先显示分类磁贴，然后一次打开一个分类", // LibraryCategoryFoldersTooltip
+    "将每个分类作为 Mod 列表中的一个分区显示", // LibraryCategoryListTooltip
     "排序分类", // LibrarySortCategoriesHeading
     "手动", // LibraryCategorySortManual
     "按名称 (A-Z)", // LibraryCategorySortByNameAsc
     "Mod 最少", // LibraryCategorySortByLeastMods
     "Mod 最多", // LibraryCategorySortByMostMods
-    "使用你的手动分类顺序。", // LibraryCategorySortManualTooltip
-    "按分类名称排序分类文件夹和分区。", // LibraryCategorySortByNameTooltip
-    "优先显示 Mod 数量最多的分类。", // LibraryCategorySortByMostModsTooltip
-    "优先显示 Mod 数量最少的分类。", // LibraryCategorySortByLeastModsTooltip
+    "使用你的手动分类顺序", // LibraryCategorySortManualTooltip
+    "按分类名称排序分类文件夹和分区", // LibraryCategorySortByNameTooltip
+    "优先显示 Mod 数量最多的分类", // LibraryCategorySortByMostModsTooltip
+    "优先显示 Mod 数量最少的分类", // LibraryCategorySortByLeastModsTooltip
     "其他", // LibraryMiscellaneousHeading
-    "在状态分组内，先按分类顺序排列，再使用所选排序。", // LibrarySortCategoryFirstTooltip
-    "在所选排序之前，先显示启用的 Mod，然后是禁用和已归档的 Mod。", // LibrarySortStatusFirstTooltip
-    "在分类分组的列表布局中可用。", // LibraryUncategorizedFirstListOnlyTooltip
+    "在状态分组内，先按分类顺序排列，再使用所选排序", // LibrarySortCategoryFirstTooltip
+    "在所选排序之前，先显示启用的 Mod，然后是禁用和已归档的 Mod", // LibrarySortStatusFirstTooltip
+    "在分类分组的列表布局中可用", // LibraryUncategorizedFirstListOnlyTooltip
     "切换可见性", // LibraryToggleVisibility
     "Mod 状态", // LibraryModStateHeading
     "显示所有 Mod 状态", // LibraryShowAllModStates
@@ -372,7 +372,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "来源缺失", // LibraryMissingSource
     "本地已修改", // LibraryModifiedLocally
     "正在忽略更新", // LibraryIgnoringUpdate
-    "显示正在忽略当前更新或在关闭前一直忽略更新的 Mod。", // LibraryIgnoringUpdateTooltip
+    "显示正在忽略当前更新或在关闭前一直忽略更新的 Mod", // LibraryIgnoringUpdateTooltip
     "更新", // LibraryUpdate
     "启用", // LibraryEnable
     "禁用", // LibraryDisable
@@ -387,10 +387,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "此 Mod 未链接 GameBanana 来源。", // LibraryNoGameBananaSource
     "忽略一次更新", // LibraryIgnoreUpdateOnce
     "如果当前有可用更新，则忽略当前更新。如果尚无可用更新，则记住当前远程版本并忽略下一次检测到的更新。", // LibraryIgnoreUpdateOnceTooltip
-    "使用忽略一次之前，请先将此 Mod 与 GameBanana 同步。", // LibraryIgnoreUpdateOnceDisabledTooltip
-    "使用忽略一次之前，请先将至少一个已选择 Mod 与 GameBanana 同步。", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
+    "使用忽略一次之前，请先将此 Mod 与 GameBanana 同步", // LibraryIgnoreUpdateOnceDisabledTooltip
+    "使用忽略一次之前，请先将至少一个已选择 Mod 与 GameBanana 同步", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "始终忽略更新", // LibraryIgnoreUpdateAlways
-    "将此 Mod 的更新状态无限期设为“始终忽略更新”，直到取消勾选。", // LibraryIgnoreUpdateAlwaysTooltip
+    "将此 Mod 的更新状态无限期设为“始终忽略更新”，直到取消勾选", // LibraryIgnoreUpdateAlwaysTooltip
     "已修改", // LibraryModified
     "\n(已修改)", // LibraryModifiedSuffix
     "…以及另外 {count} 个", // LibraryAndMore
@@ -455,10 +455,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "重命名失败", // LibraryRenameFailed
     "重命名", // LibraryActionRenamed
     "已重命名为：{name}", // LibraryRenamedTo
-    "个人备注", // LibraryPersonalNote
-    "个人备注已保存", // LibrarySavedPersonalNote
-    "个人备注已移除", // LibraryPersonalNoteRemoved
-    "无法保存个人备注", // LibraryCouldNotSavePersonalNote
+    "个人便签", // LibraryPersonalNote
+    "个人便签已保存", // LibrarySavedPersonalNote
+    "个人便签已移除", // LibraryPersonalNoteRemoved
+    "无法保存个人便签", // LibraryCouldNotSavePersonalNote
     "移除图片", // LibraryRemoveImage
     "点击这里", // LibraryClickHereTo
     "手动添加图片。", // LibraryManuallyAddImages
@@ -474,11 +474,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "描述", // LibraryDescription
     "元数据", // LibraryMetadata
     "需要 RabbitFX", // LibraryRequiresRabbitFx
-    "添加个人备注", // LibraryAddPersonalNote
-    "保存个人备注", // LibrarySavePersonalNote
-    "可编辑的用户备注", // LibraryEditableUserNote
-    "编辑个人备注", // LibraryEditPersonalNote
-    "+ 添加备注", // LibraryAddNote
+    "添加个人便签", // LibraryAddPersonalNote
+    "保存个人便签", // LibrarySavePersonalNote
+    "可编辑的用户便签", // LibraryEditableUserNote
+    "编辑个人便签", // LibraryEditPersonalNote
+    "+ 添加便签", // LibraryAddNote
     "本地", // LibraryLocal
     "在文件资源管理器中打开", // LibraryOpenInFileExplorer
     "来源", // LibrarySource
@@ -502,7 +502,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "复制配置文件", // ProfilesDuplicateCurrent
     "复制当前配置文件中的模组和分类。", // ProfilesDuplicateDescription
     "打开配置文件夹", // ProfilesOpenFolder
-    "打开存放该游戏配置文件的文件夹。", // ProfilesOpenFolderTooltip
+    "打开存放该游戏配置文件的文件夹", // ProfilesOpenFolderTooltip
     "重命名配置文件", // ProfilesRename
     "为此配置文件选择一个新名称。", // ProfilesRenameDescription
     "删除配置文件", // ProfilesDelete
@@ -513,22 +513,22 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "正在复制配置文件…", // ProfilesDuplicating
     "正在删除配置文件…", // ProfilesDeleting
     "正在归档当前配置文件…", // ProfilesArchivingCurrent
-    "正在解压所选配置文件…", // ProfilesExtractingSelected
+    "正在解包所选配置文件…", // ProfilesExtractingSelected
     "正在复制所选配置文件…", // ProfilesCopyingSelected
     "正在激活所选配置文件…", // ProfilesActivatingSelected
     "未激活的配置文件会进行压缩，以节省磁盘空间。", // ProfilesInactiveCompressedNote
     "状态", // ProfilesStatusLabel
-    "当前配置文件", // ProfilesCompressionActive
-    "等待压缩", // ProfilesCompressionQueued
-    "正在压缩", // ProfilesCompressionRunning
-    "已压缩", // ProfilesCompressionComplete
-    "压缩失败", // ProfilesCompressionFailed
-    "未压缩", // ProfilesCompressionUnavailable
-    "压缩包大小", // ProfilesArchiveSize
-    "先前的压缩包大小", // ProfilesPreviousArchiveSize
-    "尚无压缩包", // ProfilesNoArchiveYet
+    "当前配置文件", // ProfilesStatusActive
+    "等待压缩", // ProfilesStatusQueued
+    "正在压缩", // ProfilesStatusRunning
+    "已压缩", // ProfilesStatusComplete
+    "压缩失败", // ProfilesStatusFailed
+    "未压缩", // ProfilesStatusUnavailable
+    "归档大小", // ProfilesArchiveSize
+    "上次归档大小", // ProfilesPreviousArchiveSize
+    "尚无归档", // ProfilesNoArchiveYet
     "配置文件操作失败", // ProfilesOperationFailed
-    "操作已暂停：", // ProfilesActionsPausedLabel
+    "配置文件操作已暂停：", // ProfilesActionsPausedLabel
     "另一项任务正在运行", // ProfilesActionsPausedFallback
     "配置文件操作正在运行", // ProfilesActionsPausedProfileOperation
     "正在刷新库", // ProfilesActionsPausedRefreshingLibrary
@@ -539,18 +539,18 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "模组被锁定", // ProfilesActionsPausedModsLocked
     "配置文件工具正在运行", // ProfilesActionsPausedProfileToolRunning
     "请选择一个游戏来管理配置文件。", // ProfilesSelectGame
-    "至少需要一个配置文件。", // ProfilesAtLeastOneRequired
+    "至少需要保留一个配置文件。", // ProfilesAtLeastOneRequired
     "请先切换到其他配置文件，再删除此配置文件。", // ProfilesSwitchBeforeDelete
     "删除配置文件“{name}”？", // ProfilesDeleteConfirmation
     "此配置文件中的模组将被永久删除。已删除的数据无法恢复。", // ProfilesDeleteConfirmationDetails
     "已创建配置文件：{name}", // ProfilesCreated
     "已复制配置文件：{name}", // ProfilesDuplicated
-    "已重命名配置文件：{name}", // ProfilesRenamed
+    "配置文件已重命名：{name}", // ProfilesRenamed
     "已删除配置文件：{name}", // ProfilesDeleted
     "已激活配置文件：{name}", // ProfilesActivated
     "配置文件操作已取消", // ProfilesCanceled
     "配置文件已恢复", // ProfilesActionRecovered
-    "已恢复 {count} 个存在于存储中但未出现在配置文件列表中的配置文件。", // ProfilesRecovered
+    "已恢复 {count} 个存储中存在但未出现在配置文件列表中的配置文件。", // ProfilesRecovered
 
     // Window: Settings
     "设置", // SettingsWindowTitle
@@ -585,12 +585,12 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "列表", // SettingsGeneralInstalledModsLayoutList
     "文件夹", // SettingsGeneralInstalledModsLayoutFolders
     "优先按分类排序", // SettingsGeneralInstalledModsSortByCategoryFirst
-    "按分类的预设顺序排序（不一定是字母顺序）。", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
+    "按分类的预设顺序排序（不一定是字母顺序）", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
     "优先按状态排序", // SettingsGeneralInstalledModsSortByStatusFirst
-    "先显示启用的 Mod，然后是禁用和已归档的 Mod。", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
+    "先显示启用的 Mod，然后是禁用和已归档的 Mod", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
     "在卡片上显示 Mod 状态", // SettingsGeneralInstalledModsShowModStatusOnCard
     "在卡片上显示分类", // SettingsGeneralInstalledModsShowCategoryOnCard
-    "Mod 状态仍会通过彩色状态点显示。", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
+    "Mod 状态仍会通过彩色状态点显示", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
     "显示禁用的 Mod", // SettingsGeneralInstalledModsShowDisabledMods
     "显示已归档的 Mod", // SettingsGeneralInstalledModsShowArchivedMods
     "优先显示未分类的 Mod", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
@@ -669,7 +669,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "使用 Diphylleia 字体，粗体使用 Gabriela", // SettingsAdvancedAppearanceFontElegantTooltip
     "使用 New Tegomin 字体，粗体使用 Coustard", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "始终翻译 Mod 详情", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "启用后，查看 Mod 详情时会自动将描述和元数据翻译为所选语言。", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "启用后，查看 Mod 详情时会自动将描述和元数据翻译为所选语言", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "内容限制", // SettingsAdvancedContentRestrictionSection
@@ -709,7 +709,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > About
     "作者：{authors}", // SettingsAboutBy
     "版本：", // SettingsAboutVersion
-    "点击显示新功能。", // SettingsAboutVersionTooltip
+    "点击显示新功能", // SettingsAboutVersionTooltip
     "自动检查更新", // SettingsAboutAutomaticallyCheckForUpdate
     "正在检查…", // SettingsAboutUpdateChecking
     "重启以更新", // SettingsAboutUpdateRestartToUpdate

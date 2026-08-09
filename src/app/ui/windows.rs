@@ -3727,16 +3727,54 @@ impl HestiaApp {
                                     .unwrap_or(self.auto_renderer_label);
                                 if self.state.static_prefs.renderer != self.boot_renderer_pref
                                     && predicted_label != self.active_renderer_label
-                                    && ui
-                                        .add(
-                                            egui::Button::new(icon_text_sized(Icon::RotateCw, text.renderer_restart(), 14.5, 13.0))
-                                                .fill(Color32::from_rgb(180, 78, 35))
-                                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
-                                        )
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked()
                                 {
-                                    restart_requested = true;
+                                    let restart_galley = ui.painter().layout_job(icon_text_sized(
+                                        Icon::RotateCw,
+                                        text.renderer_restart(),
+                                        14.5,
+                                        13.0,
+                                    ));
+                                    let restart_size = egui::vec2(
+                                        (restart_galley.size().x
+                                            + ui.spacing().button_padding.x * 2.0)
+                                            .max(96.0),
+                                        30.0,
+                                    );
+                                    let (restart_rect, restart_response) =
+                                        ui.allocate_exact_size(restart_size, Sense::click());
+                                    let restart_response = restart_response
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if ui.is_rect_visible(restart_rect) {
+                                        let fill = if restart_response.is_pointer_button_down_on() {
+                                            Color32::from_rgb(150, 61, 28)
+                                        } else if restart_response.hovered() {
+                                            Color32::from_rgb(198, 88, 41)
+                                        } else {
+                                            Color32::from_rgb(180, 78, 35)
+                                        };
+                                        ui.painter().rect(
+                                            restart_rect,
+                                            3.0,
+                                            fill,
+                                            egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59)),
+                                            egui::StrokeKind::Inside,
+                                        );
+
+                                        let text_pos = egui::Align2::CENTER_CENTER
+                                            .align_size_within_rect(
+                                                restart_galley.size(),
+                                                restart_rect,
+                                            )
+                                            .min;
+                                        ui.painter().galley(
+                                            text_pos,
+                                            restart_galley,
+                                            Color32::WHITE,
+                                        );
+                                    }
+                                    if restart_response.clicked() {
+                                        restart_requested = true;
+                                    }
                                 }
                             });
                             if self.state.static_prefs.renderer != previous_renderer {

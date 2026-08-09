@@ -1,7 +1,7 @@
 const EN_US: [&str; TEXT_KEY_COUNT] = [
     // Window: What's New
     "What's New", // WhatsNewWindowTitle
-    "Click to show feedback survey.", // WhatsNewFeedbackSurveyTooltip
+    "Click to show feedback survey", // WhatsNewFeedbackSurveyTooltip
 
     // Window: Feedback Survey
     "Optional", // FeedbackSurveyOptional
@@ -330,31 +330,31 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Largest → Smallest Size", // LibrarySortSizeDesc
     "Sort, group, and layout installed mods", // LibrarySortMenuTooltip
     "Sort Mods", // LibrarySortModsHeading
-    "Sorts by mod title, falling back to folder name.", // LibrarySortNameTooltip
-    "Uses the newest known install, content, or refresh timestamp.", // LibrarySortNewestTooltip
-    "Uses the oldest known install, content, or refresh timestamp first.", // LibrarySortOldestTooltip
-    "Sorts by total mod content size.", // LibrarySortSizeTooltip
+    "Sorts by mod title, falling back to folder name", // LibrarySortNameTooltip
+    "Uses the newest known install, content, or refresh timestamp", // LibrarySortNewestTooltip
+    "Uses the oldest known install, content, or refresh timestamp first", // LibrarySortOldestTooltip
+    "Sorts by total mod content size", // LibrarySortSizeTooltip
     "Group Mods", // LibraryGroupModsHeading
-    "Groups mods by your per-game categories.", // LibraryGroupCategoryTooltip
-    "Groups mods into Active, Disabled, and Archived sections.", // LibraryGroupStatusTooltip
-    "Shows one continuous sorted mod list.", // LibraryGroupNoneTooltip
+    "Groups mods by your per-game categories", // LibraryGroupCategoryTooltip
+    "Groups mods into Active, Disabled, and Archived sections", // LibraryGroupStatusTooltip
+    "Shows one continuous sorted mod list", // LibraryGroupNoneTooltip
     "Category Layout", // LibraryCategoryLayoutHeading
     "Available when grouped by category.", // LibraryAvailableWhenGroupedByCategory
-    "Shows category tiles first, then opens one category at a time.", // LibraryCategoryFoldersTooltip
-    "Shows every category as a section in the mod list.", // LibraryCategoryListTooltip
+    "Shows category tiles first, then opens one category at a time", // LibraryCategoryFoldersTooltip
+    "Shows every category as a section in the mod list", // LibraryCategoryListTooltip
     "Sort Categories", // LibrarySortCategoriesHeading
     "Manual", // LibraryCategorySortManual
     "By Name (A-Z)", // LibraryCategorySortByNameAsc
     "By Least Mods", // LibraryCategorySortByLeastMods
     "By Most Mods", // LibraryCategorySortByMostMods
-    "Uses your manual category order.", // LibraryCategorySortManualTooltip
-    "Sorts category folders and sections by category name.", // LibraryCategorySortByNameTooltip
-    "Shows categories with the most mods first.", // LibraryCategorySortByMostModsTooltip
-    "Shows categories with the fewest mods first.", // LibraryCategorySortByLeastModsTooltip
+    "Uses your manual category order", // LibraryCategorySortManualTooltip
+    "Sorts category folders and sections by category name", // LibraryCategorySortByNameTooltip
+    "Shows categories with the most mods first", // LibraryCategorySortByMostModsTooltip
+    "Shows categories with the fewest mods first", // LibraryCategorySortByLeastModsTooltip
     "Miscellaneous", // LibraryMiscellaneousHeading
-    "Within status groups, follows category order before the selected sort.", // LibrarySortCategoryFirstTooltip
-    "Places Active mods first, then Disabled, then Archived before the selected sort.", // LibrarySortStatusFirstTooltip
-    "Available when grouped by category in list layout.", // LibraryUncategorizedFirstListOnlyTooltip
+    "Within status groups, follows category order before the selected sort", // LibrarySortCategoryFirstTooltip
+    "Places Active mods first, then Disabled, then Archived before the selected sort", // LibrarySortStatusFirstTooltip
+    "Available when grouped by category in list layout", // LibraryUncategorizedFirstListOnlyTooltip
     "Toggle Visibility", // LibraryToggleVisibility
     "Mod State", // LibraryModStateHeading
     "Show all mod states", // LibraryShowAllModStates
@@ -372,7 +372,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Missing Source", // LibraryMissingSource
     "Modified Locally", // LibraryModifiedLocally
     "Ignoring Update", // LibraryIgnoringUpdate
-    "Shows mods that are ignoring the current update or ignoring updates until turned off.", // LibraryIgnoringUpdateTooltip
+    "Shows mods that are ignoring the current update or ignoring updates until turned off", // LibraryIgnoringUpdateTooltip
     "Update", // LibraryUpdate
     "Enable", // LibraryEnable
     "Disable", // LibraryDisable
@@ -387,10 +387,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "No GameBanana source is linked for this mod.", // LibraryNoGameBananaSource
     "Ignore update once", // LibraryIgnoreUpdateOnce
     "Ignores the current update if one is available. If no update is available yet, remembers the current remote version and ignores the next update detected.", // LibraryIgnoreUpdateOnceTooltip
-    "Sync this mod with GameBanana before using ignore once.", // LibraryIgnoreUpdateOnceDisabledTooltip
-    "Sync at least one selected mod with GameBanana before using ignore once.", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
+    "Sync this mod with GameBanana before using ignore once", // LibraryIgnoreUpdateOnceDisabledTooltip
+    "Sync at least one selected mod with GameBanana before using ignore once", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Ignore update always", // LibraryIgnoreUpdateAlways
-    "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked.", // LibraryIgnoreUpdateAlwaysTooltip
+    "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked", // LibraryIgnoreUpdateAlwaysTooltip
     "Modified", // LibraryModified
     "\n(Modified)", // LibraryModifiedSuffix
     "…and {count} more", // LibraryAndMore
@@ -502,7 +502,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Duplicate profile", // ProfilesDuplicateCurrent
     "Create a copy of the current profile's mods and categories.", // ProfilesDuplicateDescription
     "Open profile folder", // ProfilesOpenFolder
-    "Open the folder where this game's profiles are stored.", // ProfilesOpenFolderTooltip
+    "Open the folder where this game's profiles are stored", // ProfilesOpenFolderTooltip
     "Rename profile", // ProfilesRename
     "Choose a new name for this profile.", // ProfilesRenameDescription
     "Delete profile", // ProfilesDelete
@@ -518,12 +518,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Activating selected profile…", // ProfilesActivatingSelected
     "Inactive profiles are compressed to save disk space.", // ProfilesInactiveCompressedNote
     "Status", // ProfilesStatusLabel
-    "Active profile", // ProfilesCompressionActive
-    "Waiting to compress", // ProfilesCompressionQueued
-    "Compressing", // ProfilesCompressionRunning
-    "Compressed", // ProfilesCompressionComplete
-    "Compression failed", // ProfilesCompressionFailed
-    "Not compressed", // ProfilesCompressionUnavailable
+    "Active profile", // ProfilesStatusActive
+    "Waiting to compress", // ProfilesStatusQueued
+    "Compressing", // ProfilesStatusRunning
+    "Compressed", // ProfilesStatusComplete
+    "Compression failed", // ProfilesStatusFailed
+    "Not compressed", // ProfilesStatusUnavailable
     "Archive size", // ProfilesArchiveSize
     "Previous archive size", // ProfilesPreviousArchiveSize
     "No archive yet", // ProfilesNoArchiveYet
@@ -585,12 +585,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "List", // SettingsGeneralInstalledModsLayoutList
     "Folders", // SettingsGeneralInstalledModsLayoutFolders
     "Sort by category first", // SettingsGeneralInstalledModsSortByCategoryFirst
-    "Sorts by category order (not necessarily alphabetical).", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
+    "Sorts by category order (not necessarily alphabetical)", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
     "Sort by status first", // SettingsGeneralInstalledModsSortByStatusFirst
-    "Sorts Active mods first, then Disabled, then Archived.", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
+    "Sorts Active mods first, then Disabled, then Archived", // SettingsGeneralInstalledModsSortByStatusFirstTooltip
     "Show mod status on card", // SettingsGeneralInstalledModsShowModStatusOnCard
     "Show category on card", // SettingsGeneralInstalledModsShowCategoryOnCard
-    "Mod state is still shown by the colored status dot.", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
+    "Mod state is still shown by the colored status dot", // SettingsGeneralInstalledModsShowCategoryOnCardTooltip
     "Show disabled mods", // SettingsGeneralInstalledModsShowDisabledMods
     "Show archived mods", // SettingsGeneralInstalledModsShowArchivedMods
     "Show uncategorized mods first", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
@@ -669,7 +669,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Uses Diphylleia with Gabriela for bold text", // SettingsAdvancedAppearanceFontElegantTooltip
     "Uses New Tegomin with Coustard for bold text", // SettingsAdvancedAppearanceFontTraditionalTooltip
     "Always translate mod details", // SettingsAdvancedAppearanceAlwaysTranslateModDetails
-    "When enabled, mod descriptions and metadata are automatically translated to the selected language when viewing details.", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
+    "When enabled, mod descriptions and metadata are automatically translated to the selected language when viewing details", // SettingsAdvancedAppearanceAlwaysTranslateModDetailsTooltip
 
     // Window: Settings > Advanced > Content Restriction
     "Content Restriction", // SettingsAdvancedContentRestrictionSection
@@ -709,7 +709,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     // Window: Settings > About
     "by {authors}", // SettingsAboutBy
     "Version:", // SettingsAboutVersion
-    "Click to show What's New.", // SettingsAboutVersionTooltip
+    "Click to show What's New", // SettingsAboutVersionTooltip
     "Automatically check for update", // SettingsAboutAutomaticallyCheckForUpdate
     "Checking...", // SettingsAboutUpdateChecking
     "Restart to Update", // SettingsAboutUpdateRestartToUpdate
