@@ -30,6 +30,38 @@ fn spawn_update_check_worker(
                         let _permit = json_limiter.acquire().await.ok();
                         match gamebanana::fetch_profile_async_typed(&client, gb_id, gb_is_tool).await
                         {
+                            // A profile that parses but offers no downloadable files while
+                            // claiming to be available is a degraded/throttled response, not
+                            // evidence the tracked files are gone. Reporting it as a fetch
+                            // failure keeps the previous state and leaves the caches alone.
+                            Ok(profile)
+                                if !gamebanana::is_unavailable(&profile)
+                                    && downloadable_all_files(&profile).is_empty()
+                                    && local_items.iter().any(|(_, _, _, file_set)| {
+                                        file_set_tracks_remote_files(file_set)
+                                    }) =>
+                            {
+                                let error = Some(format!(
+                                    "GameBanana returned a profile with no downloadable files \
+                                     for {gb_id}; treating it as a failed check"
+                                ));
+                                local_items
+                                    .into_iter()
+                                    .map(|(idx, local_mod_id, _, _)| {
+                                        (
+                                            idx,
+                                            (
+                                                local_mod_id,
+                                                ModUpdateState::MissingSource,
+                                                None,
+                                                error.clone(),
+                                                None,
+                                                None,
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            }
                             Ok(profile) => {
                                 let snapshot = profile_to_snapshot(&profile);
                                 let is_unavailable = gamebanana::is_unavailable(&profile);

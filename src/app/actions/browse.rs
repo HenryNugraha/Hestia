@@ -1079,11 +1079,12 @@ impl HestiaApp {
                         {
                             continue;
                         }
-                        let thumbnail_url = record
-                            .preview_media
-                            .as_ref()
-                            .and_then(|media| media.images.first())
-                            .and_then(gamebanana::thumbnail_url);
+                        let thumbnail_url = gamebanana::record_thumbnail_image(&record).map(
+                            |image| {
+                                gamebanana::thumbnail_url(image)
+                                    .unwrap_or_else(|| gamebanana::full_image_url(image))
+                            },
+                        );
                         if let Some(url) = thumbnail_url.clone() {
                             self.queue_browse_image_with_profile(
                                 url,

@@ -79,6 +79,26 @@ pub struct PreviewImage {
     pub height_220: Option<u32>,
 }
 
+/// The current preview property (`_aPreviewContent`, apiv13+): a single
+/// screenshot per record. `_aPreviewMedia` with its image list is the legacy
+/// property that older API versions still serve.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PreviewContent {
+    #[serde(default)]
+    pub screenshot: Option<PreviewImage>,
+}
+
+/// GameBanana renders empty PHP maps as `[]`, and preview shapes vary between
+/// API versions; any mismatch here must degrade to "no preview", never fail
+/// the whole page parse.
+fn lenient_preview_content<'de, D>(deserializer: D) -> Result<Option<PreviewContent>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BrowseRecord {
     #[serde(rename = "_idRow")]
@@ -99,6 +119,12 @@ pub struct BrowseRecord {
     pub submitter: SubmissionAuthor,
     #[serde(rename = "_aPreviewMedia")]
     pub preview_media: Option<PreviewMedia>,
+    #[serde(
+        rename = "_aPreviewContent",
+        default,
+        deserialize_with = "lenient_preview_content"
+    )]
+    pub preview_content: Option<PreviewContent>,
     #[serde(rename = "_bHasFiles", default)]
     pub has_files: bool,
     #[serde(rename = "_bHasContentRatings", default)]
@@ -285,6 +311,78 @@ pub fn profile_category_name(profile: &ProfileResponse) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_thumbnail_prefers_current_preview_content_over_legacy_media() {
+        let record: BrowseRecord = serde_json::from_str(
+            r#"{
+                "_idRow": 1,
+                "_sName": "x",
+                "_sProfileUrl": "https://gamebanana.com/mods/1",
+                "_tsDateAdded": 1,
+                "_tsDateModified": 2,
+                "_aSubmitter": { "_idRow": 7, "_sName": "author", "_sProfileUrl": "https://gamebanana.com/members/7" },
+                "_aPreviewMedia": {
+                    "_aImages": [{ "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods", "_sFile": "legacy.jpg", "_sFile220": "legacy_220.webp" }]
+                },
+                "_aPreviewContent": {
+                    "screenshot": { "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods", "_sFile": "current.jpg", "_sFile220": "current_220.webp" }
+                }
+            }"#,
+        )
+        .unwrap();
+        let image = record_thumbnail_image(&record).expect("some preview");
+        assert_eq!(image.file, "current.jpg");
+    }
+
+    #[test]
+    fn category_index_record_thumbnail_reads_preview_content() {
+        // Shape captured from a live apiv13/Mod/Index response: no
+        // _aPreviewMedia, single screenshot under _aPreviewContent.
+        let record: BrowseRecord = serde_json::from_str(
+            r#"{
+                "_idRow": 431561,
+                "_sName": "Some Mod",
+                "_sProfileUrl": "https://gamebanana.com/mods/431561",
+                "_tsDateAdded": 1,
+                "_tsDateModified": 2,
+                "_aSubmitter": { "_idRow": 7, "_sName": "author", "_sProfileUrl": "https://gamebanana.com/members/7" },
+                "_aPreviewContent": {
+                    "screenshot": {
+                        "_sFile220": "sgi_common_thumbs_66bddc0c8d974_220.webp",
+                        "_hFile220": 124,
+                        "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+                        "_sFile": "66bddc0c8d974.jpg"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let image = record_thumbnail_image(&record).expect("preview content screenshot");
+        assert_eq!(
+            thumbnail_url(image).as_deref(),
+            Some("https://images.gamebanana.com/img/ss/mods/sgi_common_thumbs_66bddc0c8d974_220.webp"),
+        );
+    }
+
+    #[test]
+    fn unexpected_preview_content_shapes_degrade_to_no_thumbnail() {
+        // GameBanana renders empty PHP maps as [] — must not fail the page parse.
+        let record: BrowseRecord = serde_json::from_str(
+            r#"{
+                "_idRow": 1,
+                "_sName": "x",
+                "_sProfileUrl": "https://gamebanana.com/mods/1",
+                "_tsDateAdded": 1,
+                "_tsDateModified": 2,
+                "_aSubmitter": { "_idRow": 7, "_sName": "author", "_sProfileUrl": "https://gamebanana.com/members/7" },
+                "_aPreviewContent": []
+            }"#,
+        )
+        .unwrap();
+        assert!(record_thumbnail_image(&record).is_none());
+    }
 
     #[test]
     fn profile_category_name_joins_super_and_leaf_categories() {
@@ -520,6 +618,9 @@ pub async fn fetch_character_browse_page_async(
     sort: crate::model::BrowseSort,
     nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
+    // apiv13 per GameBanana's guidance: `_aPreviewContent` is the current
+    // preview property; `_aPreviewMedia` only exists on legacy API versions.
+    // Record parsing accepts both shapes (content first, media as fallback).
     let mut url = Url::parse("https://gamebanana.com/apiv13/Mod/Index")?;
     let sort = match sort {
         crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
@@ -708,6 +809,23 @@ pub async fn fetch_updates_async(
         .context("failed to parse GameBanana mod updates")
 }
 
+/// Per GameBanana's dev guidance, `_aPreviewContent` is the current preview
+/// property (apiv13+) and `_aPreviewMedia` is the legacy one still served by
+/// the older endpoints Hestia uses for browse/search; a card thumbnail must
+/// consider both, preferring the current shape.
+pub fn record_thumbnail_image(record: &BrowseRecord) -> Option<&PreviewImage> {
+    record
+        .preview_content
+        .as_ref()
+        .and_then(|content| content.screenshot.as_ref())
+        .or_else(|| {
+            record
+                .preview_media
+                .as_ref()
+                .and_then(|media| media.images.first())
+        })
+}
+
 pub fn thumbnail_url(image: &PreviewImage) -> Option<String> {
     Some(format!(
         "{}/{}",
@@ -783,7 +901,10 @@ pub fn character_browse_page_cache_key(
     sort: crate::model::BrowseSort,
 ) -> String {
     json_cache_key_v2(&[
-        ("kind", "character-browse".to_string()),
+        // Versioned suffix: cached pages are re-serialized BrowseRecords, so
+        // entries written before `_aPreviewContent` was parsed have no preview
+        // data and must not be reused after the schema/endpoint change.
+        ("kind", "character-browse-v13pc".to_string()),
         ("game", game_id.to_string()),
         ("category", category_id.to_string()),
         ("query", query.unwrap_or_default().trim().to_string()),

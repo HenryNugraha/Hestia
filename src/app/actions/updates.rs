@@ -171,6 +171,15 @@ fn resolve_tracked_files(
     ResolvedTrackedFiles::Untracked
 }
 
+/// True when the file set names specific remote files, i.e. the update check
+/// would compare them against the profile's downloadable files and could flip
+/// the mod to `MissingSource` if none of them are found.
+fn file_set_tracks_remote_files(file_set: &FileSetRecipe) -> bool {
+    !file_set.selected_files_meta.is_empty()
+        || !file_set.selected_file_ids.is_empty()
+        || !file_set.selected_file_names.is_empty()
+}
+
 fn normalized_file_label(label: &str) -> String {
     label
         .chars()
@@ -997,7 +1006,10 @@ impl HestiaApp {
             let Some(link) = &source.gamebanana else {
                 continue;
             };
-            if !should_check_update_state(mod_entry.update_state) {
+            // Automatic checks leave MissingSource mods alone (a genuinely deleted
+            // mod would fail the same way forever), but an explicit Reload must be
+            // able to recover mods that were marked Missing by a bad API response.
+            if !force && !should_check_update_state(mod_entry.update_state) {
                 continue;
             }
             if !force && source.update_check_retry_after.is_some_and(|retry_after| retry_after > now) {
@@ -2703,6 +2715,47 @@ mod update_signature_tests {
             files,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn file_set_tracks_remote_files_detects_every_tracking_shape() {
+        assert!(!file_set_tracks_remote_files(&FileSetRecipe::default()));
+        assert!(file_set_tracks_remote_files(&FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&mod_file(
+                10, "a.zip", 100
+            ))],
+            ..Default::default()
+        }));
+        assert!(file_set_tracks_remote_files(&FileSetRecipe {
+            selected_file_ids: vec![10],
+            ..Default::default()
+        }));
+        assert!(file_set_tracks_remote_files(&FileSetRecipe {
+            selected_file_names: vec!["a.zip".to_string()],
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn profile_without_download_urls_would_otherwise_flip_tracked_mods_to_missing() {
+        // The scenario the worker guard protects against: the profile parses and
+        // looks available, but every file lost its download URL, which silently
+        // evaluated to MissingSource before the guard existed.
+        let mut degraded = mod_file(10, "current.zip", 100);
+        degraded.download_url = None;
+        let profile = profile(vec![degraded.clone()], 100);
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&degraded)],
+            ..Default::default()
+        };
+
+        assert!(!gamebanana::is_unavailable(&profile));
+        assert!(downloadable_all_files(&profile).is_empty());
+        assert!(file_set_tracks_remote_files(&file_set));
+        assert_eq!(
+            determine_file_set_update_state(&file_set, Some(100), &profile),
+            ModUpdateState::MissingSource
+        );
     }
 
     #[test]

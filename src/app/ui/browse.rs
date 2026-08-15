@@ -644,6 +644,22 @@ impl HestiaApp {
                                         let is_visible = rect.intersects(clip);
                                         let priority = if is_visible { 2 } else { 1 };
 
+                                        // PageLoaded queues card thumbs once at background
+                                        // priority (50), which the pointer-motion throttle
+                                        // defers; at low frame rates the pointer never
+                                        // reads as idle, so visible cards would starve
+                                        // forever. Re-request at interactive priority every
+                                        // frame while missing (dedupe makes this cheap).
+                                        if is_visible {
+                                            self.queue_browse_image_with_profile(
+                                                url.clone(),
+                                                None,
+                                                false,
+                                                ThumbnailProfile::Card,
+                                                5,
+                                            );
+                                        }
+
                                         if let Some(texture) = self.get_browse_thumb_texture(&key, priority) {
                                             paint_thumbnail_image(
                                                 ui,
