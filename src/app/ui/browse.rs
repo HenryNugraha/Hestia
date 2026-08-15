@@ -1383,8 +1383,10 @@ impl HestiaApp {
         let mut browse_detail_open = self.browse_detail_open;
         let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, text.browse_mod_detail(), 14.0, 14.0)) // BROWSE view's mod detail GUI
             .id(egui::Id::new(BROWSE_DETAIL_WINDOW_ID))
+            .order(egui::Order::Foreground)
             .default_pos(details_pos)
             .default_size(BROWSE_DETAIL_SIZE)
+            .max_width(BROWSE_DETAIL_SIZE.x)
             .open(&mut browse_detail_open)
             .title_bar(true)
             .resizable(false)

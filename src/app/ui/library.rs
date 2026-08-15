@@ -7966,8 +7966,10 @@ impl HestiaApp {
             14.0,
         )) // MY MOD view's mod detail GUI
             .id(egui::Id::new("mod_detail_window"))
+            .order(egui::Order::Foreground)
             .default_pos(details_pos)
             .default_size(details_size)
+            .max_width(details_size.x)
             .open(&mut mod_detail_open)
             .title_bar(true)
             .resizable(false)
@@ -8603,7 +8605,7 @@ impl HestiaApp {
                                         egui::CornerRadius::same(4),
                                         fill,
                                         stroke,
-                                        egui::StrokeKind::Outside,
+                                        egui::StrokeKind::Inside,
                                     );
                                     if import_pending {
                                         let spinner_rect = egui::Rect::from_center_size(
