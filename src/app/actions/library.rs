@@ -7,6 +7,15 @@ enum ModMutationKind {
     UpdateExisting,
 }
 
+fn push_unique_prefix(prefixes: &mut Vec<String>, prefix: String) {
+    if !prefixes
+        .iter()
+        .any(|existing| xxmi_persist::namespace_prefixes_equal(existing, &prefix))
+    {
+        prefixes.push(prefix);
+    }
+}
+
 impl HestiaApp {
     fn xxmi_reload_enabled_for_game(&self, game: &GameInstall, trigger: ReloadHotkeyTrigger) -> bool {
         game.is_xxmi()
@@ -229,7 +238,36 @@ impl HestiaApp {
         if !self.state.static_prefs.preserve_mod_settings || !game.is_xxmi() {
             return None;
         }
-        xxmi_persist::begin(game, self.state.static_prefs.use_default_mods_path)
+        let mut tx = xxmi_persist::begin(game, self.state.static_prefs.use_default_mods_path)?;
+        tx.set_shared_explicit_prefixes(self.shared_explicit_prefixes_for_game(&game.definition.id));
+        Some(tx)
+    }
+
+    fn shared_explicit_prefixes_for_game(&self, game_id: &str) -> Vec<String> {
+        let mut owners: Vec<(&str, String)> = Vec::new();
+        for mod_entry in self.state.mods.iter().filter(|mod_entry| {
+            mod_entry.game_id == game_id && !matches!(mod_entry.status, ModStatus::Archived)
+        }) {
+            for prefix in xxmi_persist::explicit_namespace_prefixes_for_mod_root(
+                &mod_entry.root_path,
+            ) {
+                owners.push((mod_entry.id.as_str(), prefix));
+            }
+        }
+
+        let mut shared = Vec::new();
+        for i in 0..owners.len() {
+            for j in (i + 1)..owners.len() {
+                if owners[i].0 == owners[j].0 {
+                    continue;
+                }
+                if xxmi_persist::namespace_prefixes_overlap(&owners[i].1, &owners[j].1) {
+                    push_unique_prefix(&mut shared, owners[i].1.clone());
+                    push_unique_prefix(&mut shared, owners[j].1.clone());
+                }
+            }
+        }
+        shared
     }
 
     /// Commit the settings transaction and send the importer reload hotkey when either
@@ -280,18 +318,47 @@ impl HestiaApp {
         if !(game.apply_mod_changes_in_game && self.game_process_running(game)) {
             return;
         }
-        match xxmi_persist::send_reload_hotkey_foreground_aware(
-            game,
-            self.state.static_prefs.use_default_mods_path,
-        ) {
-            Ok(report) => {
-                self.push_log(format!(
-                    "XXMI reload ({}): {}",
-                    game.definition.id, report.message
-                ));
-            }
-            Err(err) => {
-                self.report_warn(format!("XXMI reload hotkey failed: {err:#}"), None);
+        let game_id = game.definition.id.clone();
+        let log_game_id = game_id.clone();
+        let game = game.clone();
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let event_tx = self.xxmi_reload_event_tx.clone();
+        if let Err(err) = std::thread::Builder::new()
+            .name(format!("hestia-xxmi-reload-{game_id}"))
+            .spawn(move || {
+                let event = if !xxmi_persist::game_process_running_for_reload(&game) {
+                    XxmiReloadEvent::Finished {
+                        game_id,
+                        message: "skipped: game process is not running".to_string(),
+                    }
+                } else {
+                    match xxmi_persist::send_reload_hotkey_foreground_aware(&game, use_default) {
+                        Ok(report) => XxmiReloadEvent::Finished {
+                            game_id,
+                            message: report.message,
+                        },
+                        Err(error) => XxmiReloadEvent::Failed {
+                            game_id,
+                            message: format!("{error:#}"),
+                        },
+                    }
+                };
+                let _ = event_tx.send(event);
+            })
+        {
+            self.push_log(format!("XXMI reload ({log_game_id}): failed: {err}"));
+        }
+    }
+
+    fn consume_xxmi_reload_events(&mut self) {
+        while let Ok(event) = self.xxmi_reload_event_rx.try_recv() {
+            match event {
+                XxmiReloadEvent::Finished { game_id, message } => {
+                    self.push_log(format!("XXMI reload ({game_id}): {message}"));
+                }
+                XxmiReloadEvent::Failed { game_id, message } => {
+                    self.push_log(format!("XXMI reload ({game_id}): failed: {message}"));
+                }
             }
         }
     }

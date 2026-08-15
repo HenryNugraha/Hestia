@@ -670,12 +670,16 @@ fn notify_profile_ready_for_reload(spec: &ProfileOperationSpec, tx: &WorkerTx<Pr
         return;
     }
     let message = if spec.send_reload_hotkey {
-        match crate::integrations::xxmi_persist::send_reload_hotkey_foreground_aware(
-            &spec.game,
-            spec.use_default_mods_path,
-        ) {
-            Ok(report) => report.message,
-            Err(error) => format!("failed: {error:#}"),
+        if !crate::integrations::xxmi_persist::game_process_running_for_reload(&spec.game) {
+            "skipped: game process is not running".to_string()
+        } else {
+            match crate::integrations::xxmi_persist::send_reload_hotkey_foreground_aware(
+                &spec.game,
+                spec.use_default_mods_path,
+            ) {
+                Ok(report) => report.message,
+                Err(error) => format!("failed: {error:#}"),
+            }
         }
     } else {
         "skipped: reload hotkey setting is disabled".to_string()

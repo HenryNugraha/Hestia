@@ -80,6 +80,18 @@ fn keys_ci_equal(a: &str, b: &str) -> bool {
     }
 }
 
+fn prefixes_overlap_ci(a: &str, b: &str) -> bool {
+    ci_prefix_len(a, b).is_some() || ci_prefix_len(b, a).is_some()
+}
+
+pub fn namespace_prefixes_overlap(a: &str, b: &str) -> bool {
+    prefixes_overlap_ci(a, b)
+}
+
+pub fn namespace_prefixes_equal(a: &str, b: &str) -> bool {
+    keys_ci_equal(a, b)
+}
+
 fn ascii_lowercase(text: &str) -> String {
     text.chars().map(|c| c.to_ascii_lowercase()).collect()
 }
@@ -551,6 +563,10 @@ fn explicit_namespace_prefixes_for_root(mod_root: &Path) -> Vec<String> {
     prefixes
 }
 
+pub fn explicit_namespace_prefixes_for_mod_root(mod_root: &Path) -> Vec<String> {
+    explicit_namespace_prefixes_for_root(mod_root)
+}
+
 fn collect_explicit_namespace_prefixes(path: &Path, prefixes: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
@@ -632,6 +648,7 @@ pub struct PersistTx {
     doc: UserIniDoc,
     doc_unreadable: bool,
     warnings: Vec<String>,
+    shared_explicit_prefixes: Vec<String>,
 }
 
 pub struct CommitOutcome {
@@ -660,6 +677,7 @@ pub fn begin(game: &GameInstall, use_default: bool) -> Option<PersistTx> {
         doc,
         doc_unreadable,
         warnings,
+        shared_explicit_prefixes: Vec::new(),
     })
 }
 
@@ -687,6 +705,10 @@ impl PersistTx {
         self.warnings.push(message.into());
     }
 
+    pub fn set_shared_explicit_prefixes(&mut self, prefixes: Vec<String>) {
+        self.shared_explicit_prefixes = prefixes;
+    }
+
     fn prefix_for(&self, view: &ModPersistView<'_>) -> Option<String> {
         let root = live_mod_root(view, self.mods_root.as_deref())?;
         namespace_prefix_for_root(&root, &self.importer_root)
@@ -698,6 +720,9 @@ impl PersistTx {
             prefixes.push(prefix);
         }
         for prefix in explicit_namespace_prefixes_for_root(view.root_path) {
+            if self.is_shared_explicit_prefix(&prefix) {
+                continue;
+            }
             if !prefixes
                 .iter()
                 .any(|existing| keys_ci_equal(existing, &prefix))
@@ -706,6 +731,18 @@ impl PersistTx {
             }
         }
         prefixes
+    }
+
+    fn is_shared_explicit_prefix(&self, prefix: &str) -> bool {
+        self.shared_explicit_prefixes
+            .iter()
+            .any(|shared| prefixes_overlap_ci(shared, prefix))
+    }
+
+    fn is_shared_explicit_key(&self, key: &str) -> bool {
+        self.shared_explicit_prefixes
+            .iter()
+            .any(|prefix| ci_prefix_len(key, prefix).is_some())
     }
 
     pub fn capture(&mut self, entry: &ModEntry, mode: CaptureMode) -> Result<bool> {
@@ -799,8 +836,12 @@ impl PersistTx {
         let entries: Vec<(String, String)> = stash
             .full_entries
             .iter()
+            .filter(|entry| !self.is_shared_explicit_key(&entry.key))
             .map(|entry| (entry.key.clone(), entry.value.clone()))
             .collect();
+        if entries.is_empty() {
+            return Ok(false);
+        }
         self.doc.merge_full_entries(&entries);
         Ok(true)
     }
@@ -1639,6 +1680,37 @@ fn process_matches_game_candidates(
     })
 }
 
+pub fn game_process_running_for_reload(game: &GameInstall) -> bool {
+    let candidates = game_exe_candidates(game);
+    if candidates.is_empty() {
+        return false;
+    }
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(
+            sysinfo::ProcessRefreshKind::nothing()
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_exe(UpdateKind::OnlyIfNotSet),
+        ),
+    );
+    system.processes().values().any(|process| {
+        process_matches_game_candidates(process.name(), process.cmd(), &candidates)
+            || process
+                .exe()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    let lower = name.to_ascii_lowercase();
+                    let stem = Path::new(name)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .map(str::to_ascii_lowercase);
+                    candidates
+                        .iter()
+                        .any(|candidate| candidate == &lower || stem.as_ref() == Some(candidate))
+                })
+    })
+}
+
 #[cfg(windows)]
 fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     let Some((hwnd, title, pid)) = foreground_window_title_and_pid() else {
@@ -2334,6 +2406,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             doc,
             doc_unreadable: false,
             warnings: Vec::new(),
+            shared_explicit_prefixes: Vec::new(),
         };
         (root, mods, tx)
     }
@@ -2403,6 +2476,47 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
                 .full_entries
                 .iter()
                 .any(|entry| entry.key == "$\\mods\\liino personal knit\\k\\1.ini\\z")
+        );
+    }
+
+    #[test]
+    fn capture_live_skips_shared_explicit_namespace_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_root, mods, mut tx) = tx_for(&temp);
+        tx.set_shared_explicit_prefixes(vec!["$\\rabbitfx\\".to_string()]);
+        let mod_root = mods.join("Rabbit Addon");
+        std::fs::create_dir_all(&mod_root).unwrap();
+        std::fs::write(
+            mod_root.join("mod.ini"),
+            "namespace = rabbitfx\r\n[Constants]\r\n",
+        )
+        .unwrap();
+        tx.doc.merge_full_entries(&[
+            ("$\\rabbitfx\\quality".to_string(), "3".to_string()),
+            (
+                "$\\mods\\rabbit addon\\mod.ini\\enabled".to_string(),
+                "1".to_string(),
+            ),
+        ]);
+        tx.doc.dirty = false;
+
+        let view = view(&mod_root, "Rabbit Addon", ModStatus::Active, None);
+        assert!(tx.capture_view(&view, CaptureMode::Stash).unwrap());
+        let text = tx.doc.to_text();
+        assert!(text.contains("$\\rabbitfx\\quality = 3"));
+        assert!(!text.contains("$\\mods\\rabbit addon\\mod.ini\\enabled"));
+        let stash = read_stash(&mod_root).unwrap();
+        assert!(
+            !stash
+                .full_entries
+                .iter()
+                .any(|entry| entry.key == "$\\rabbitfx\\quality")
+        );
+        assert!(
+            stash
+                .full_entries
+                .iter()
+                .any(|entry| entry.key == "$\\mods\\rabbit addon\\mod.ini\\enabled")
         );
     }
 
@@ -2578,6 +2692,49 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let text = tx.doc.to_text();
         assert!(text.contains("$\\liino\\swapkey7 = 1"));
         assert!(text.contains("$\\mods\\liino personal knit\\k\\1.ini\\z = 2"));
+    }
+
+    #[test]
+    fn restore_skips_shared_explicit_namespace_entries_from_old_stash() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_root, mods, mut tx) = tx_for(&temp);
+        tx.set_shared_explicit_prefixes(vec!["$\\rabbitfx\\".to_string()]);
+        let mod_root = mods.join("Rabbit Addon");
+        std::fs::create_dir_all(&mod_root).unwrap();
+        std::fs::write(
+            mod_root.join("mod.ini"),
+            "namespace = rabbitfx\r\n[Constants]\r\n",
+        )
+        .unwrap();
+        tx.doc
+            .merge_full_entries(&[("$\\rabbitfx\\quality".to_string(), "9".to_string())]);
+        tx.doc.dirty = false;
+        write_stash(
+            &mod_root,
+            &ModStash {
+                version: STASH_FORMAT_VERSION,
+                source_prefix: "$\\mods\\rabbit addon\\".to_string(),
+                captured_at: Utc::now(),
+                entries: Vec::new(),
+                full_entries: vec![
+                    StashEntry {
+                        key: "$\\rabbitfx\\quality".to_string(),
+                        value: "3".to_string(),
+                    },
+                    StashEntry {
+                        key: "$\\mods\\rabbit addon\\mod.ini\\enabled".to_string(),
+                        value: "1".to_string(),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        let view = view(&mod_root, "Rabbit Addon", ModStatus::Active, None);
+        assert!(tx.restore_view(&view).unwrap());
+        let text = tx.doc.to_text();
+        assert!(text.contains("$\\rabbitfx\\quality = 9"));
+        assert!(text.contains("$\\mods\\rabbit addon\\mod.ini\\enabled = 1"));
     }
 
     #[test]
@@ -2826,6 +2983,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             doc: UserIniDoc::new_empty(),
             doc_unreadable: true,
             warnings: vec!["skipped".to_string()],
+            shared_explicit_prefixes: Vec::new(),
         };
         let mod_root = mods.join("Any");
         std::fs::create_dir_all(&mod_root).unwrap();

@@ -186,6 +186,7 @@ impl HestiaApp {
             refresh_request_rx,
             refresh_result_tx,
         );
+        let (xxmi_reload_event_tx, xxmi_reload_event_rx) = worker_channel::<XxmiReloadEvent>();
         let (profile_request_tx, profile_request_rx) = worker_channel::<ProfileRequest>();
         let (profile_reconcile_request_tx, profile_reconcile_request_rx) =
             worker_channel::<ProfileReconcileSpec>();
@@ -507,6 +508,8 @@ impl HestiaApp {
             refresh_result_rx,
             refresh_inflight: false,
             refresh_pending_selected_game: None,
+            xxmi_reload_event_tx,
+            xxmi_reload_event_rx,
             profile_request_tx,
             profile_reconcile_request_tx,
             profile_event_rx,
@@ -3292,6 +3295,7 @@ impl HestiaApp {
             || !self.translation_event_rx.is_empty()
             || !self.install_event_rx.is_empty()
             || !self.refresh_result_rx.is_empty()
+            || !self.xxmi_reload_event_rx.is_empty()
             || !self.profile_event_rx.is_empty();
 
         self.pending_events.has_worker_events = has_events;

@@ -35,6 +35,11 @@ struct ToolLaunchOptionsPrompt {
     launch_args: String,
 }
 
+enum XxmiReloadEvent {
+    Finished { game_id: String, message: String },
+    Failed { game_id: String, message: String },
+}
+
 enum InlineMarkdownEmbed {
     Image { texture_key: String },
     Youtube { url: String },
@@ -346,6 +351,8 @@ pub struct HestiaApp {
     refresh_result_rx: WorkerRx<RefreshEvent>,
     refresh_inflight: bool,
     refresh_pending_selected_game: Option<String>,
+    xxmi_reload_event_tx: WorkerTx<XxmiReloadEvent>,
+    xxmi_reload_event_rx: WorkerRx<XxmiReloadEvent>,
     profile_request_tx: WorkerTx<ProfileRequest>,
     profile_reconcile_request_tx: WorkerTx<ProfileReconcileSpec>,
     profile_event_rx: WorkerRx<ProfileEvent>,
