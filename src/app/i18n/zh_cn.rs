@@ -616,6 +616,26 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "删除 Mod 时：", // SettingsGeneralOperationalWhenDeletingMod
     "移至回收站", // SettingsGeneralOperationalMoveToRecycleBin
     "永久删除", // SettingsGeneralOperationalDeletePermanently
+    "── 实验性 / 仅 XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "保存 Mod 自定义设置", // SettingsGeneralOperationalPreserveModSettings
+    "在重命名、禁用、归档、更新或删除 Mod 以及切换配置文件时，保留已保存的游戏内 Mod 自定义设置（XXMI 持久化设置）", // SettingsGeneralOperationalPreserveModSettingsTooltip
+    "在游戏内应用 Mod 更改", // SettingsGeneralOperationalSendReloadHotkey
+    "当游戏运行时，Hestia 更改已启用的 XXMI Mod 后会发送 XXMI 重新加载热键，让游戏立即读取", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "触发：", // SettingsGeneralOperationalReloadHotkeyTrigger
+    "启用 Mod", // SettingsGeneralOperationalReloadTriggerEnablingMods
+    "禁用 Mod", // SettingsGeneralOperationalReloadTriggerDisablingMods
+    "安装 Mod", // SettingsGeneralOperationalReloadTriggerInstallingMods
+    "删除 Mod", // SettingsGeneralOperationalReloadTriggerDeletingMods
+    "更新 Mod", // SettingsGeneralOperationalReloadTriggerUpdatingMods
+    "重命名 Mod", // SettingsGeneralOperationalReloadTriggerRenamingMods
+    "归档 Mod", // SettingsGeneralOperationalReloadTriggerArchivingMods
+    "恢复 Mod", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "切换配置文件", // SettingsGeneralOperationalReloadTriggerProfileSwitch
+    "修改 d3dx.ini？", // SettingsGeneralOperationalD3dxConflictTitle
+    "Hestia 需要添加以下行才能访问 XXMI：\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
+    "此 d3dx.ini 已有：\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
+    "要替换为 Hestia 的值吗？Hestia 会安全地注释掉现有行，使其仍保留在文件中但不再生效，然后在 [System] 下方添加 Hestia 自己的配置块。", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "不会触碰 d3dx.ini 文件中的其他配置。", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "任务", // SettingsGeneralTasksSection

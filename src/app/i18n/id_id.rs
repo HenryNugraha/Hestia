@@ -616,6 +616,26 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Saat menghapus mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Pindahkan ke Tempat Sampah", // SettingsGeneralOperationalMoveToRecycleBin
     "Hapus permanen", // SettingsGeneralOperationalDeletePermanently
+    "── EKSPERIMENTAL / Hanya XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "Simpan pengaturan kustomisasi mod", // SettingsGeneralOperationalPreserveModSettings
+    "Menjaga kustomisasi mod dalam game yang tersimpan (pengaturan persisten XXMI) saat mengganti nama, menonaktifkan, mengarsipkan, memperbarui, atau menghapus mod, serta saat berganti profil", // SettingsGeneralOperationalPreserveModSettingsTooltip
+    "Terapkan perubahan mod dalam game", // SettingsGeneralOperationalSendReloadHotkey
+    "Setelah Hestia mengubah mod XXMI yang aktif saat game berjalan, kirim hotkey muat ulang XXMI agar game langsung memuatnya", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "Pemicu:", // SettingsGeneralOperationalReloadHotkeyTrigger
+    "Mengaktifkan mod", // SettingsGeneralOperationalReloadTriggerEnablingMods
+    "Menonaktifkan mod", // SettingsGeneralOperationalReloadTriggerDisablingMods
+    "Memasang mod", // SettingsGeneralOperationalReloadTriggerInstallingMods
+    "Menghapus mod", // SettingsGeneralOperationalReloadTriggerDeletingMods
+    "Memperbarui mod", // SettingsGeneralOperationalReloadTriggerUpdatingMods
+    "Mengganti nama mod", // SettingsGeneralOperationalReloadTriggerRenamingMods
+    "Mengarsipkan mod", // SettingsGeneralOperationalReloadTriggerArchivingMods
+    "Memulihkan mod", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Beralih profil", // SettingsGeneralOperationalReloadTriggerProfileSwitch
+    "Ubah d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
+    "Hestia perlu menambahkan baris berikut untuk mengakses XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
+    "d3dx.ini ini sudah memiliki:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
+    "Ganti dengan nilai Hestia? Hestia akan mengomentari baris yang ada dengan aman agar tetap ada, hanya tidak lagi berpengaruh, lalu menambahkan blok konfigurasi milik Hestia tepat di bawah [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Tidak ada konfigurasi lain di file d3dx.ini yang akan disentuh.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Unduhan", // SettingsGeneralTasksSection

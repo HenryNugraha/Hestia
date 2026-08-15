@@ -34,7 +34,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     importing::{self, PreparedImport},
-    integrations::{gamebanana, profiles, unrealengine, xxmi},
+    integrations::{gamebanana, profiles, unrealengine, xxmi, xxmi_persist},
     model::{
         AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseDownloadTaskFile,
         BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier, ConflictChoice, CustomProxyConfig,
@@ -44,13 +44,13 @@ use crate::{
         LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory,
         ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
         ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileId, ProfileRecord,
-        RendererPreference, SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload,
-        TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode,
-        default_modded_exe_candidates, default_mods_path, default_mods_path_from_launcher,
-        default_unreal_bypasser_paths_from_exe, default_unreal_pak_mods_path_from_exe,
-        default_vanilla_exe_candidates, feedback_survey, registry_modded_exe_candidates,
-        registry_vanilla_exe_candidates, shortcut_modded_exe_candidates, vanilla_exe_file_names,
-        xxmi_launcher_file_names,
+        ReloadHotkeyTrigger, RendererPreference, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
+        TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta,
+        UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
+        default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
+        default_unreal_pak_mods_path_from_exe, default_vanilla_exe_candidates, feedback_survey,
+        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
     },
     persistence::{self, PortablePaths},
 };
@@ -235,6 +235,7 @@ impl eframe::App for HestiaApp {
             {
                 profiling::scope!("floating_windows");
                 self.render_settings_window(&ctx);
+                self.render_d3dx_foreground_conflict_prompt(&ctx);
                 self.render_tasks_window(&ctx);
                 self.render_tools_window(&ctx);
                 self.render_tool_launch_options_prompt(&ctx);

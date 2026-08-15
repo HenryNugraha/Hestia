@@ -4,10 +4,10 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "9 August 2026",
-    "9 Agustus 2026",
-    "2026年 8月 9日",
-    "9 августа 2026",
+    "xx August 2026",
+    "xx Agustus 2026",
+    "2026年 8月 xx日",
+    "xx августа 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
     concat!(
@@ -40,49 +40,31 @@ pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
     "小调查",
     "Быстрый отзыв",
 );
-pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
-    q(
-        "profile_feature",
-        l10n(
-            "Do you find the mod profiles feature useful?",
-            "Apakah fitur profil mod berguna bagi Anda?",
-            "你觉得 mod 配置文件功能有用吗？",
-            "Вы находите функцию профилей полезной?",
-        ),
-        &[
-            a(
-                1,
-                l10n(
-                    "Yes",
-                    "Iya",
-                    "是的",
-                    "Да",
-                ),
-            ),
-            a(
-                2,
-                l10n(
-                    "No",
-                    "Tidak",
-                    "不",
-                    "Нет",
-                ),
-            ),
-            a(
-                3,
-                l10n(
-                    "Never used it",
-                    "Tidak pernah pakai",
-                    "从未使用过",
-                    "Не использовал",
-                ),
-            ),
-        ],
+pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[q(
+    "profile_feature",
+    l10n(
+        "Do you find the mod profiles feature useful?",
+        "Apakah fitur profil mod berguna bagi Anda?",
+        "你觉得 mod 配置文件功能有用吗？",
+        "Вы находите функцию профилей полезной?",
     ),
-];
+    &[
+        a(1, l10n("Yes", "Iya", "是的", "Да")),
+        a(2, l10n("No", "Tidak", "不", "Нет")),
+        a(
+            3,
+            l10n(
+                "Never used it",
+                "Tidak pernah pakai",
+                "从未使用过",
+                "Не использовал",
+            ),
+        ),
+    ],
+)];
 pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: L10n = l10n(
-    "Anything else? Feature requests, issues, or suggestions are welcome!",
-    "Ada lagi? Permintaan fitur, masalah, atau saran boleh ditulis di sini!",
-    "还有其他想说的吗？欢迎提出功能需求、问题或建议！",
-    "Есть что добавить? Пишите о пожеланиях, проблемах или предложениях!",
+    "Anything else?\nFeature requests, issues, or suggestions are welcome!",
+    "Ada lagi?\nPermintaan fitur, masalah, atau saran boleh ditulis di sini!",
+    "还有其他想说的吗？\n欢迎提出功能需求、问题或建议！",
+    "Есть что добавить?\nПишите о пожеланиях, проблемах или предложениях!",
 );

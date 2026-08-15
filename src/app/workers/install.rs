@@ -151,10 +151,22 @@ fn spawn_install_workers(
                                             bail!(importing::CANCELLED_ERROR);
                                         }
                                         let live_target = target_root.join(preferred_name);
+                                        // Replace destroys the whole folder, including the
+                                        // ⬢HESTIA settings stash — for a disabled/archived
+                                        // mod that stash is the only copy of its saved
+                                        // in-game settings, so carry it across.
+                                        let preserved_stash =
+                                            crate::integrations::xxmi_persist::read_stash_bytes(
+                                                &live_target,
+                                            );
                                         if live_target.exists() {
                                             trash::delete(&live_target)?;
                                         }
                                         fs::rename(&temp_target, &live_target)?;
+                                        crate::integrations::xxmi_persist::restore_stash_bytes(
+                                            &live_target,
+                                            &preserved_stash,
+                                        );
                                         live_target
                                     } else {
                                         importing::install_candidate_cancelable(

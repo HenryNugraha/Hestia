@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.9.0-alpha] - 2026-08-xx
+
+### Added
+- (mod config operations)
+
 ## [1.8.1] - 2026-08-09
 
 ### Fixed

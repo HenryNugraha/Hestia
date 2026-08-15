@@ -21,6 +21,7 @@ impl HestiaApp {
             || self.state.show_feedback_survey
             || self.tool_launch_options_prompt.is_some()
             || self.browse_state.file_prompt.is_some()
+            || self.pending_d3dx_foreground_conflict.is_some()
             || !self.pending_conflicts.is_empty()
             || import_review_open
             || self.profile_name_prompt.is_some()

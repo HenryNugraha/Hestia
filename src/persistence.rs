@@ -91,7 +91,7 @@ struct AppPreferences {
 impl From<&AppState> for AppPreferences {
     fn from(state: &AppState) -> Self {
         Self {
-            version: 7,
+            version: 8,
             app_version: Some(state.app_version.clone()),
             games: state.games.clone(),
             library_folders: state.library_folders.clone(),
@@ -357,11 +357,17 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let language_needs_save =
         prefs.static_prefs.language == AppLanguage::default() && previous_app_version.is_some();
 
-    state.version = prefs.version.max(7);
+    state.version = prefs.version.max(8);
     state.show_whats_new =
         should_show_whats_new(previous_app_version.as_deref(), env!("CARGO_PKG_VERSION"));
     state.app_version = env!("CARGO_PKG_VERSION").to_string();
-    let (games, games_need_save) = merge_seeded_games(prefs.games);
+    let (mut games, mut games_need_save) = merge_seeded_games(prefs.games);
+    if loaded_version < 8 && !prefs.static_prefs.send_reload_hotkey {
+        for game in &mut games {
+            game.apply_mod_changes_in_game = false;
+        }
+        games_need_save = true;
+    }
     state.games = games;
     state.library_folders = prefs.library_folders;
     state.show_log = prefs.show_log;
@@ -1406,6 +1412,34 @@ mod tests {
     fn newer_app_version_stays_closed_but_normalizes_preferences() {
         assert!(!should_show_whats_new(Some("9.0.0"), "1.2.3"));
         assert!(app_version_needs_normalization(Some("9.0.0"), "1.2.3"));
+    }
+
+    #[test]
+    fn legacy_global_reload_off_migrates_to_per_game_reload_off() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("state.toml");
+        let mut state = AppState::default();
+        state.static_prefs.send_reload_hotkey = false;
+        let raw = toml::to_string(&AppPreferences::from(&state))
+            .unwrap()
+            .replace("version = 8", "version = 7")
+            .replace("apply_mod_changes_in_game = true\n", "");
+        fs::write(&state_path, raw).unwrap();
+
+        let loaded = load_app_state(&PortablePaths {
+            state_archive: state_path,
+            state_source: None,
+            history_db: temp.path().join("history.sqlite"),
+        })
+        .unwrap();
+
+        assert!(loaded.preferences_need_save);
+        assert!(
+            loaded
+                .games
+                .iter()
+                .all(|game| !game.apply_mod_changes_in_game)
+        );
     }
 
     #[test]

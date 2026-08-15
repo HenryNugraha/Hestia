@@ -1278,6 +1278,22 @@ impl HestiaApp {
                 StartupScanEvent::Ready(mods) => {
                     self.state.mods = mods;
                     self.restore_imported_mod_categories(None);
+                    // Startup uses its own scan worker instead of the normal refresh paths,
+                    // so run the XXMI persistence pass here too. This installs or cleans the
+                    // d3dx.ini reload helper before the user launches the selected game.
+                    let scan_game_ids: Vec<String> = match self.selected_game() {
+                        Some(game) => vec![game.definition.id.clone()],
+                        None => self
+                            .state
+                            .games
+                            .iter()
+                            .filter(|game| game.is_xxmi())
+                            .map(|game| game.definition.id.clone())
+                            .collect(),
+                    };
+                    for game_id in scan_game_ids {
+                        self.run_xxmi_persist_scan_pass(&game_id);
+                    }
                     self.sync_selection_after_refresh();
                     self.backfill_missing_mod_images(None);
                     self.sync_tools_for_selected_game();
@@ -1707,6 +1723,7 @@ impl HestiaApp {
                         })
                     });
                     self.restore_imported_mod_categories(Some(&game_id));
+                    self.run_xxmi_persist_scan_pass(&game_id);
                     if is_current {
                         self.invalidate_stale_mod_textures(&old_ts);
                         self.sync_selection_after_refresh();
@@ -1902,13 +1919,26 @@ impl HestiaApp {
                         (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
                     } else {
                         let result = match game.as_ref().map(|game| game.definition.backend) {
-                            Some(GameBackend::Xxmi) => self
-                                .state
-                                .mods
-                                .iter_mut()
-                                .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
-                                .map(xxmi::disable_mod)
-                                .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                            Some(GameBackend::Xxmi) => {
+                                let mut ptx = game
+                                    .as_ref()
+                                    .and_then(|game| self.begin_xxmi_persist_tx(game));
+                                let result = self
+                                    .state
+                                    .mods
+                                    .iter_mut()
+                                    .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
+                                    .map(|mod_entry| {
+                                        Self::persisted_xxmi_disable(&mut ptx, mod_entry)
+                                    })
+                                    .unwrap_or_else(|| Err(anyhow!("mod not found")));
+                                if let Some(game) = game.clone() {
+                                    let request_reload =
+                                        result.is_ok().then_some(ReloadHotkeyTrigger::UpdatingMods);
+                                    self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+                                }
+                                result
+                            }
                             Some(GameBackend::UnrealEngine) => self
                                 .state
                                 .mods
@@ -1976,13 +2006,29 @@ impl HestiaApp {
                             (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
                         } else {
                             let result = match game.as_ref().map(|game| game.definition.backend) {
-                                Some(GameBackend::Xxmi) => self
-                                    .state
-                                    .mods
-                                    .iter_mut()
-                                    .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
-                                    .map(xxmi::disable_mod)
-                                    .unwrap_or_else(|| Err(anyhow!("mod not found"))),
+                                Some(GameBackend::Xxmi) => {
+                                    let mut ptx = game
+                                        .as_ref()
+                                        .and_then(|game| self.begin_xxmi_persist_tx(game));
+                                    let result = self
+                                        .state
+                                        .mods
+                                        .iter_mut()
+                                        .find(|m| {
+                                            m.id == target_mod_id && m.status == ModStatus::Active
+                                        })
+                                        .map(|mod_entry| {
+                                            Self::persisted_xxmi_disable(&mut ptx, mod_entry)
+                                        })
+                                        .unwrap_or_else(|| Err(anyhow!("mod not found")));
+                                    if let Some(game) = game.clone() {
+                                        let request_reload = result
+                                            .is_ok()
+                                            .then_some(ReloadHotkeyTrigger::UpdatingMods);
+                                        self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+                                    }
+                                    result
+                                }
                                 Some(GameBackend::UnrealEngine) => self
                                     .state
                                     .mods
@@ -2065,6 +2111,17 @@ impl HestiaApp {
                 }
             }
         }
+        self.run_xxmi_persist_import_restore(&newly_installed_ids);
+        let install_reload_trigger = if pending_meta
+            .as_ref()
+            .and_then(|meta| meta.update_target_mod_id.as_ref())
+            .is_some()
+        {
+            ReloadHotkeyTrigger::UpdatingMods
+        } else {
+            ReloadHotkeyTrigger::InstallingMods
+        };
+        self.request_xxmi_reload_for_live_mod_ids(&newly_installed_ids, install_reload_trigger);
 
         if let (Some(profile), Some(first_path)) = (gb_profile.clone(), installed_paths.first()) {
             let mod_id = pending_meta
@@ -2568,6 +2625,7 @@ mod startup_path_candidate_tests {
             mods_path_override: None,
             modded_exe_path_override: None,
             vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: true,
             enabled: true,
         }
     }

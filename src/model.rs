@@ -20,6 +20,74 @@ fn serde_default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadHotkeyTrigger {
+    EnablingMods,
+    DisablingMods,
+    InstallingMods,
+    DeletingMods,
+    UpdatingMods,
+    RenamingMods,
+    ArchivingMods,
+    RestoringMods,
+    ProfileSwitch,
+}
+
+/// Operations that should ask XXMI to reload while the game is already running.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReloadHotkeyTriggers {
+    #[serde(default = "serde_default_true")]
+    pub enabling_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub disabling_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub installing_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub deleting_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub updating_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub renaming_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub archiving_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub restoring_mods: bool,
+    #[serde(default = "serde_default_true")]
+    pub profile_switch: bool,
+}
+
+impl Default for ReloadHotkeyTriggers {
+    fn default() -> Self {
+        Self {
+            enabling_mods: true,
+            disabling_mods: true,
+            installing_mods: true,
+            deleting_mods: true,
+            updating_mods: true,
+            renaming_mods: true,
+            archiving_mods: true,
+            restoring_mods: true,
+            profile_switch: true,
+        }
+    }
+}
+
+impl ReloadHotkeyTriggers {
+    pub fn enabled(&self, trigger: ReloadHotkeyTrigger) -> bool {
+        match trigger {
+            ReloadHotkeyTrigger::EnablingMods => self.enabling_mods,
+            ReloadHotkeyTrigger::DisablingMods => self.disabling_mods,
+            ReloadHotkeyTrigger::InstallingMods => self.installing_mods,
+            ReloadHotkeyTrigger::DeletingMods => self.deleting_mods,
+            ReloadHotkeyTrigger::UpdatingMods => self.updating_mods,
+            ReloadHotkeyTrigger::RenamingMods => self.renaming_mods,
+            ReloadHotkeyTrigger::ArchivingMods => self.archiving_mods,
+            ReloadHotkeyTrigger::RestoringMods => self.restoring_mods,
+            ReloadHotkeyTrigger::ProfileSwitch => self.profile_switch,
+        }
+    }
+}
+
 /// Static preferences that rarely change during runtime.
 /// Deserializing these separately reduces overhead when loading AppState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +124,16 @@ pub struct StaticPreferences {
     pub import_resolution: ImportResolution,
     #[serde(default)]
     pub delete_behavior: DeleteBehavior,
+    /// Preserve in-game XXMI mod settings (3DMigoto persistent variables) across rename,
+    /// disable/enable, archive/restore, delete, import-replace, and profile switches.
+    #[serde(default = "serde_default_true")]
+    pub preserve_mod_settings: bool,
+    /// Legacy global default for per-game XXMI reload settings. Kept for migration and
+    /// backward-compatible config parsing; live reload enablement is stored on `GameInstall`.
+    #[serde(default = "serde_default_true")]
+    pub send_reload_hotkey: bool,
+    #[serde(default)]
+    pub reload_hotkey_triggers: ReloadHotkeyTriggers,
     #[serde(default)]
     pub window_pos: Option<[f32; 2]>,
     #[serde(default)]
@@ -127,6 +205,9 @@ impl Default for StaticPreferences {
             renderer: RendererPreference::default(),
             import_resolution: ImportResolution::default(),
             delete_behavior: DeleteBehavior::default(),
+            preserve_mod_settings: true,
+            send_reload_hotkey: true,
+            reload_hotkey_triggers: ReloadHotkeyTriggers::default(),
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -860,6 +941,8 @@ pub struct GameInstall {
     pub modded_exe_path_override: Option<PathBuf>,
     #[serde(default)]
     pub vanilla_exe_path_override: Option<PathBuf>,
+    #[serde(default = "serde_default_true")]
+    pub apply_mod_changes_in_game: bool,
     pub enabled: bool,
 }
 
@@ -2396,6 +2479,7 @@ pub fn seeded_games() -> Vec<GameInstall> {
         mods_path_override: None,
         modded_exe_path_override: None,
         vanilla_exe_path_override: None,
+        apply_mod_changes_in_game: true,
         enabled: true,
     })
     .collect()

@@ -2247,6 +2247,108 @@ impl HestiaApp {
         ui.add_space(24.0);
     }
 
+    fn render_d3dx_foreground_conflict_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = self.pending_d3dx_foreground_conflict.clone() else {
+            return;
+        };
+        let text = self.text();
+        let mut replace = false;
+        let mut cancel = false;
+        let mut open = true;
+        let constrain_rect = self
+            .last_right_pane_rect
+            .unwrap_or_else(|| ctx.viewport_rect());
+        let warn_color = Color32::from_rgb(214, 96, 34);
+        egui::Window::new(icon_text_sized(
+            Icon::AlertTriangle,
+            text.d3dx_conflict_title(),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new("d3dx_foreground_conflict_dialog"))
+        .open(&mut open)
+        .default_pos(constrain_rect.min + egui::vec2(16.0, 16.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .default_width(520.0)
+        .constrain_to(constrain_rect)
+        .frame(
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, warn_color)),
+        )
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(icon_rich(Icon::AlertTriangle, 64.0, warn_color))
+                        .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.set_width(420.0);
+                    static_label(
+                        ui,
+                        RichText::new(format!("{} - {}", prompt.game_name, prompt.path.display()))
+                            .size(13.0)
+                            .color(Color32::from_rgb(170, 175, 183)),
+                    );
+                    ui.add_space(8.0);
+                    static_label(ui, RichText::new(text.d3dx_conflict_intro()).size(14.0));
+                    ui.add_space(6.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.d3dx_conflict_existing(&prompt.current_value))
+                            .size(13.0)
+                            .color(Color32::from_rgb(224, 185, 122)),
+                    );
+                    ui.add_space(6.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.d3dx_conflict_replace_details()).size(13.0),
+                    );
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.d3dx_conflict_no_other_config())
+                            .size(13.0)
+                            .color(Color32::from_rgb(170, 175, 183)),
+                    );
+                    ui.add_space(14.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(text.cancel()).clicked() {
+                            cancel = true;
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(icon_text_sized(
+                                    Icon::FileCog,
+                                    text.replace(),
+                                    14.0,
+                                    13.0,
+                                ))
+                                .fill(Color32::from_rgb(180, 78, 35)),
+                            )
+                            .clicked()
+                        {
+                            replace = true;
+                        }
+                    });
+                });
+            });
+        });
+
+        if replace {
+            self.resolve_d3dx_foreground_conflict(true);
+            self.save_state();
+        } else if cancel || !open {
+            self.resolve_d3dx_foreground_conflict(false);
+            self.save_state();
+        }
+    }
+
     fn render_settings_window(&mut self, ctx: &egui::Context) {
         if !self.settings_open {
             return;
@@ -2296,6 +2398,7 @@ impl HestiaApp {
         }
 
         let _ = window.show(ctx, |ui| {
+            ui.set_max_width(ui.available_width().min(480.0));
             ui.horizontal(|ui| {
                 let radius = egui::CornerRadius::same(3);
                 ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
@@ -2705,6 +2808,122 @@ impl HestiaApp {
                                     ui.selectable_value(&mut self.state.static_prefs.delete_behavior, DeleteBehavior::Permanent, text.delete_behavior(DeleteBehavior::Permanent));
                                 });
                             if self.state.static_prefs.delete_behavior != delete_behavior { should_save = true; }
+                            ui.add_space(8.0);
+                            static_label(
+                                ui,
+                                bold(text.xxmi_experimental_section(), Some(13.0)),
+                            );
+                            ui.add_space(-2.0);
+                            let selected_game = self.selected_game().cloned();
+                            let selected_game_id =
+                                selected_game.as_ref().map(|game| game.definition.id.clone());
+                            let xxmi_settings_enabled =
+                                selected_game.as_ref().is_some_and(|game| game.is_xxmi());
+                            let preserve_mod_settings = self.state.static_prefs.preserve_mod_settings;
+                            ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
+                                ui.checkbox(
+                                    &mut self.state.static_prefs.preserve_mod_settings,
+                                    text.preserve_mod_settings(),
+                                )
+                                .on_hover_text(text.preserve_mod_settings_tooltip());
+                            });
+                            if self.state.static_prefs.preserve_mod_settings != preserve_mod_settings {
+                                should_save = true;
+                            }
+                            let send_reload_hotkey = selected_game.as_ref().is_some_and(|game| {
+                                game.is_xxmi() && game.apply_mod_changes_in_game
+                            });
+                            let mut desired_send_reload_hotkey = send_reload_hotkey;
+                            ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
+                                ui.checkbox(
+                                    &mut desired_send_reload_hotkey,
+                                    text.send_reload_hotkey(),
+                                )
+                                .on_hover_text(text.send_reload_hotkey_tooltip());
+                            });
+                            if desired_send_reload_hotkey != send_reload_hotkey {
+                                if let Some(game_id) = selected_game_id.as_deref() {
+                                    self.request_xxmi_reload_setting_change(
+                                        game_id,
+                                        desired_send_reload_hotkey,
+                                    );
+                                }
+                                should_save = true;
+                            }
+                            let trigger_controls_enabled = selected_game_id
+                                .as_deref()
+                                .and_then(|game_id| {
+                                    self.state
+                                        .games
+                                        .iter()
+                                        .find(|game| game.definition.id == game_id)
+                                })
+                                .is_some_and(|game| {
+                                    game.is_xxmi() && game.apply_mod_changes_in_game
+                                });
+                            let reload_triggers = self.state.static_prefs.reload_hotkey_triggers.clone();
+                            ui.add_enabled_ui(trigger_controls_enabled, |ui| {
+                                static_label(ui, text.reload_hotkey_trigger());
+                                ui.add_space(-4.0);
+                                let left_column_width =
+                                    (ui.available_width().min(520.0).max(320.0) * 0.32)
+                                        .max(140.0);
+                                ui.horizontal_top(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.set_width(left_column_width);
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.enabling_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::EnablingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.installing_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::InstallingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.updating_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::UpdatingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.archiving_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::ArchivingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.profile_switch,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::ProfileSwitch),
+                                        );
+                                    });
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.disabling_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::DisablingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.deleting_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::DeletingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.renaming_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::RenamingMods),
+                                        );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.restoring_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::RestoringMods),
+                                        );
+                                    });
+                                });
+                            });
+                            if self.state.static_prefs.reload_hotkey_triggers.enabling_mods != reload_triggers.enabling_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.disabling_mods != reload_triggers.disabling_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.installing_mods != reload_triggers.installing_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.deleting_mods != reload_triggers.deleting_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.updating_mods != reload_triggers.updating_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.renaming_mods != reload_triggers.renaming_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.archiving_mods != reload_triggers.archiving_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.restoring_mods != reload_triggers.restoring_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.profile_switch != reload_triggers.profile_switch
+                            {
+                                should_save = true;
+                            }
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
@@ -3065,6 +3284,7 @@ impl HestiaApp {
                     .on_hover_cursor(egui::CursorIcon::Default);
                     let mut selected_game_was_disabled = false;
                     let mut enabled_game_ids = Vec::new();
+                    let mut reload_setting_changes = Vec::new();
                     for (index, game) in self.state.games.iter_mut().enumerate() {
                         ui.group(|ui| {
                                 ui.set_min_width(360.0);
@@ -3123,6 +3343,20 @@ impl HestiaApp {
                                                 }
                                             }
                                         });
+                                        let mut desired_reload = game.apply_mod_changes_in_game;
+                                        ui.add_enabled_ui(game.is_xxmi(), |ui| {
+                                            ui.checkbox(
+                                                &mut desired_reload,
+                                                text.send_reload_hotkey(),
+                                            )
+                                            .on_hover_text(text.send_reload_hotkey_tooltip());
+                                        });
+                                        if desired_reload != game.apply_mod_changes_in_game {
+                                            reload_setting_changes.push((
+                                                game.definition.id.clone(),
+                                                desired_reload,
+                                            ));
+                                        }
                                         let browse_width = 28.0;
                                         let input_width = 200.0;
                                         let warn_color = Color32::from_rgb(124, 45, 58);
@@ -3389,6 +3623,10 @@ impl HestiaApp {
                             });
                         }
                         self.queue_game_refresh(game_id);
+                    }
+                    for (game_id, enabled) in reload_setting_changes {
+                        self.request_xxmi_reload_setting_change(&game_id, enabled);
+                        should_save = true;
                     }
                     }
                     SettingsTab::Advanced => {

@@ -360,6 +360,7 @@ pub struct HestiaApp {
     profile_name_target_id: Option<ProfileId>,
     profile_name_draft: String,
     pending_profile_delete_id: Option<ProfileId>,
+    pending_d3dx_foreground_conflict: Option<D3dxForegroundConflictPrompt>,
     pending_reload_summary: Option<(String, Vec<ReloadSnapshot>)>,
     pending_install_finalize: HashMap<u64, PendingInstallFinalize>,
     pending_known_installed_paths: HashSet<PathBuf>,
@@ -373,6 +374,10 @@ pub struct HestiaApp {
     window_state_cache: Option<WindowStateSnapshot>,
     window_state_last_save: f64,
     window_was_maximized: bool,
+    /// Set right after Hestia sends a synthetic XXMI reload hotkey. F10 is also Hestia's
+    /// own settings shortcut, and the synthetic press lands in Hestia's queue while it is
+    /// the foreground window — consume that one press instead of toggling settings.
+    suppress_synthetic_reload_key_until: Option<Instant>,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
     startup_launch_pending: bool,
@@ -413,6 +418,14 @@ struct PendingConflict {
     target_root: PathBuf,
     existing_target: PathBuf,
     gb_profile: Option<Box<gamebanana::ProfileResponse>>,
+}
+
+#[derive(Clone)]
+struct D3dxForegroundConflictPrompt {
+    game_id: String,
+    game_name: String,
+    path: PathBuf,
+    current_value: String,
 }
 
 #[derive(Clone)]
@@ -1397,6 +1410,10 @@ struct ProfileOperationSpec {
     /// Exact inactive storage entries already represented in the catalog.
     known_profile_storage_file_names: Vec<String>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
+    /// Snapshot/restore `d3dx_user.ini` across the profile swap (XXMI games with the
+    /// preserve-mod-settings preference enabled).
+    preserve_mod_settings: bool,
+    send_reload_hotkey: bool,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
     stage: Arc<RwLock<String>>,
@@ -1452,6 +1469,11 @@ struct ProfileCompleted {
 }
 
 enum ProfileEvent {
+    ReadyForReload {
+        operation_id: u64,
+        game_id: String,
+        message: String,
+    },
     Completed {
         operation_id: u64,
         completed: Box<ProfileCompleted>,

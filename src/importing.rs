@@ -1292,7 +1292,15 @@ pub fn install_candidate_cancelable(
         return match choice {
             ConflictChoice::Cancel => Ok(None),
             ConflictChoice::Replace => {
+                // Replace removes the destination outright; carry the ⬢HESTIA settings
+                // stash across so a hidden mod's saved in-game settings survive.
+                let preserved_stash =
+                    crate::integrations::xxmi_persist::read_stash_bytes(&initial_target);
                 copy_dir_cancelable(candidate_path, &initial_target, true, cancel)?;
+                crate::integrations::xxmi_persist::restore_stash_bytes(
+                    &initial_target,
+                    &preserved_stash,
+                );
                 Ok(Some(initial_target))
             }
             ConflictChoice::Merge => {

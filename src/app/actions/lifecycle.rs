@@ -521,6 +521,7 @@ impl HestiaApp {
             profile_name_target_id: None,
             profile_name_draft: String::new(),
             pending_profile_delete_id: None,
+            pending_d3dx_foreground_conflict: None,
             pending_reload_summary: None,
             pending_install_finalize: HashMap::new(),
             pending_known_installed_paths: HashSet::new(),
@@ -535,6 +536,7 @@ impl HestiaApp {
             window_state_cache,
             window_state_last_save: 0.0,
             window_was_maximized,
+            suppress_synthetic_reload_key_until: None,
             selection_empty_at: None,
             startup_scan_loading: true,
             startup_launch_pending: true,
@@ -2612,7 +2614,16 @@ impl HestiaApp {
             self.toggle_primary_view();
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F10)) {
-            self.settings_open = !self.settings_open;
+            // A synthetic XXMI reload F10 sent by Hestia itself arrives here too while
+            // Hestia is foreground; swallow that one press instead of toggling settings.
+            let suppressed = self
+                .suppress_synthetic_reload_key_until
+                .take()
+                .is_some_and(|until| Instant::now() < until)
+                || xxmi_persist::take_synthetic_reload_key_suppression();
+            if !suppressed {
+                self.settings_open = !self.settings_open;
+            }
         }
         if ctx.input_mut(|input| {
             input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::L))
@@ -2913,6 +2924,21 @@ impl HestiaApp {
         match xxmi::refresh_state(&mut self.state, game_id.as_deref()) {
             Ok(()) => {
                 self.restore_imported_mod_categories(game_id.as_deref());
+                // Settings baseline/reroute must cover this synchronous path too — the
+                // first scan after an upgrade often runs here, not in the async worker.
+                let scan_game_ids: Vec<String> = match game_id.as_deref() {
+                    Some(id) => vec![id.to_string()],
+                    None => self
+                        .state
+                        .games
+                        .iter()
+                        .filter(|game| game.is_xxmi())
+                        .map(|game| game.definition.id.clone())
+                        .collect(),
+                };
+                for scan_game_id in scan_game_ids {
+                    self.run_xxmi_persist_scan_pass(&scan_game_id);
+                }
                 self.invalidate_stale_mod_textures(&old_ts);
                 self.backfill_missing_mod_images(game_id.as_deref());
                 self.sync_tools_for_selected_game();
@@ -3311,6 +3337,7 @@ mod readiness_tests {
             mods_path_override: None,
             modded_exe_path_override: None,
             vanilla_exe_path_override: Some(exe),
+            apply_mod_changes_in_game: true,
             enabled: true,
         }
     }

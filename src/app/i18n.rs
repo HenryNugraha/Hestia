@@ -609,6 +609,26 @@ enum TextKey {
     SettingsGeneralOperationalWhenDeletingMod,
     SettingsGeneralOperationalMoveToRecycleBin,
     SettingsGeneralOperationalDeletePermanently,
+    SettingsGeneralOperationalXxmiExperimentalSection,
+    SettingsGeneralOperationalPreserveModSettings,
+    SettingsGeneralOperationalPreserveModSettingsTooltip,
+    SettingsGeneralOperationalSendReloadHotkey,
+    SettingsGeneralOperationalSendReloadHotkeyTooltip,
+    SettingsGeneralOperationalReloadHotkeyTrigger,
+    SettingsGeneralOperationalReloadTriggerEnablingMods,
+    SettingsGeneralOperationalReloadTriggerDisablingMods,
+    SettingsGeneralOperationalReloadTriggerInstallingMods,
+    SettingsGeneralOperationalReloadTriggerDeletingMods,
+    SettingsGeneralOperationalReloadTriggerUpdatingMods,
+    SettingsGeneralOperationalReloadTriggerRenamingMods,
+    SettingsGeneralOperationalReloadTriggerArchivingMods,
+    SettingsGeneralOperationalReloadTriggerRestoringMods,
+    SettingsGeneralOperationalReloadTriggerProfileSwitch,
+    SettingsGeneralOperationalD3dxConflictTitle,
+    SettingsGeneralOperationalD3dxConflictIntro,
+    SettingsGeneralOperationalD3dxConflictExisting,
+    SettingsGeneralOperationalD3dxConflictReplaceDetails,
+    SettingsGeneralOperationalD3dxConflictNoOtherConfig,
 
     SettingsGeneralTasksSection,
     SettingsGeneralTasksLayout,
@@ -3112,6 +3132,83 @@ impl TextCatalog {
 
     fn when_deleting_mod(self) -> &'static str {
         self.get(TextKey::SettingsGeneralOperationalWhenDeletingMod)
+    }
+
+    fn xxmi_experimental_section(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalXxmiExperimentalSection)
+    }
+
+    fn preserve_mod_settings(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalPreserveModSettings)
+    }
+
+    fn preserve_mod_settings_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalPreserveModSettingsTooltip)
+    }
+
+    fn send_reload_hotkey(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalSendReloadHotkey)
+    }
+
+    fn send_reload_hotkey_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalSendReloadHotkeyTooltip)
+    }
+
+    fn reload_hotkey_trigger(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalReloadHotkeyTrigger)
+    }
+
+    fn reload_trigger_label(self, trigger: ReloadHotkeyTrigger) -> &'static str {
+        match trigger {
+            ReloadHotkeyTrigger::EnablingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerEnablingMods)
+            }
+            ReloadHotkeyTrigger::DisablingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerDisablingMods)
+            }
+            ReloadHotkeyTrigger::InstallingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerInstallingMods)
+            }
+            ReloadHotkeyTrigger::DeletingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerDeletingMods)
+            }
+            ReloadHotkeyTrigger::UpdatingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerUpdatingMods)
+            }
+            ReloadHotkeyTrigger::RenamingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerRenamingMods)
+            }
+            ReloadHotkeyTrigger::ArchivingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerArchivingMods)
+            }
+            ReloadHotkeyTrigger::RestoringMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerRestoringMods)
+            }
+            ReloadHotkeyTrigger::ProfileSwitch => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerProfileSwitch)
+            }
+        }
+    }
+
+    fn d3dx_conflict_title(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictTitle)
+    }
+
+    fn d3dx_conflict_intro(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictIntro)
+    }
+
+    fn d3dx_conflict_existing(self, value: &str) -> String {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictExisting)
+            .replace("{value}", value)
+    }
+
+    fn d3dx_conflict_replace_details(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictReplaceDetails)
+    }
+
+    fn d3dx_conflict_no_other_config(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictNoOtherConfig)
     }
 
     fn delete_behavior(self, behavior: DeleteBehavior) -> &'static str {

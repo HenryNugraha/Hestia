@@ -741,6 +741,8 @@ impl HestiaApp {
         let known_profile_ids = self.known_profile_ids_for_game(&game_id);
         let known_profile_storage_file_names =
             self.known_profile_storage_file_names_for_game(&game_id);
+        let send_reload_hotkey =
+            self.xxmi_reload_enabled_for_game(&game, ReloadHotkeyTrigger::ProfileSwitch);
         self.dispatch_profile_spec(ProfileOperationSpec {
             operation_id,
             game_id,
@@ -764,6 +766,8 @@ impl HestiaApp {
             known_profile_ids,
             known_profile_storage_file_names,
             metadata,
+            preserve_mod_settings: self.state.static_prefs.preserve_mod_settings,
+            send_reload_hotkey,
             cancel,
             progress,
             stage,
@@ -1945,6 +1949,21 @@ impl HestiaApp {
                     );
                     continue;
                 }
+                ProfileEvent::ReadyForReload {
+                    operation_id,
+                    game_id,
+                    message,
+                } => {
+                    if self
+                        .profile_operation_inflight
+                        .as_ref()
+                        .is_none_or(|operation| operation.operation_id != operation_id)
+                    {
+                        continue;
+                    }
+                    self.push_log(format!("XXMI profile reload ({game_id}): {message}"));
+                    continue;
+                }
                 event => {
                     let event_id = match &event {
                         ProfileEvent::Completed { operation_id, .. }
@@ -1956,7 +1975,8 @@ impl HestiaApp {
                         | ProfileEvent::ArchiveCompleted { .. }
                         | ProfileEvent::ArchiveFailed { .. }
                         | ProfileEvent::ReconcileCompleted { .. }
-                        | ProfileEvent::ReconcileFailed { .. } => unreachable!(),
+                        | ProfileEvent::ReconcileFailed { .. }
+                        | ProfileEvent::ReadyForReload { .. } => unreachable!(),
                     };
                     if self
                         .profile_operation_inflight
@@ -2037,6 +2057,16 @@ impl HestiaApp {
                         blacklist: marker.tool_blacklist.clone().unwrap_or_default(),
                     })
                 });
+                // A newly-created XXMI profile starts with a clean generated d3dx_user.ini
+                // (written by the worker after the swap committed); its record must carry
+                // the same snapshot so it never inherits another profile's file by omission.
+                let create_clean_snapshot = kind == ProfileOperationKind::Create
+                    && self.state.static_prefs.preserve_mod_settings
+                    && self
+                        .state
+                        .games
+                        .iter()
+                        .any(|game| game.definition.id == game_id && game.is_xxmi());
                 let catalog = self
                     .state
                     .profiles_by_game
@@ -2046,6 +2076,15 @@ impl HestiaApp {
                     ProfileOperationKind::Create | ProfileOperationKind::Duplicate => {
                         let id = target_profile_id.expect("target profile id");
                         if !catalog.profiles.iter().any(|profile| profile.id == id) {
+                            let mut portable_metadata = HashMap::new();
+                            if create_clean_snapshot {
+                                portable_metadata.insert(
+                                    xxmi_persist::USER_INI_SNAPSHOT_METADATA_KEY.to_string(),
+                                    serde_json::Value::String(
+                                        xxmi_persist::clean_user_ini_snapshot(),
+                                    ),
+                                );
+                            }
                             catalog.profiles.push(ProfileRecord {
                                 id,
                                 display_name: display_name.unwrap_or_else(|| "Profile".to_string()),
@@ -2054,7 +2093,7 @@ impl HestiaApp {
                                 file_count: None,
                                 created_at: Some(Utc::now()),
                                 updated_at: Some(Utc::now()),
-                                portable_metadata: HashMap::new(),
+                                portable_metadata,
                                 categories: Some(
                                     active_profile_categories.clone().unwrap_or_default(),
                                 ),
@@ -2264,7 +2303,8 @@ impl HestiaApp {
             | ProfileEvent::ArchiveCompleted { .. }
             | ProfileEvent::ArchiveFailed { .. }
             | ProfileEvent::ReconcileCompleted { .. }
-            | ProfileEvent::ReconcileFailed { .. } => unreachable!(),
+            | ProfileEvent::ReconcileFailed { .. }
+            | ProfileEvent::ReadyForReload { .. } => unreachable!(),
         }
     }
 }

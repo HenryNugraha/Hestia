@@ -17,8 +17,11 @@ fn spawn_profile_worker(
                     let kind = spec.kind;
                     let cancel = Arc::clone(&spec.cancel);
                     let coordinator = Arc::clone(&archive_coordinator);
+                    let ready_tx = tx.clone();
                     let result = handle
-                        .spawn_blocking(move || execute_profile_operation(spec, coordinator))
+                        .spawn_blocking(move || {
+                            execute_profile_operation(spec, coordinator, ready_tx)
+                        })
                         .await;
                     match result {
                         Ok(Ok(output)) => {
@@ -146,6 +149,8 @@ fn execute_profile_reconcile(
         known_profile_ids: spec.known_profile_ids,
         known_profile_storage_file_names: spec.known_profile_storage_file_names,
         metadata: None,
+        preserve_mod_settings: false,
+        send_reload_hotkey: false,
         cancel: Arc::new(AtomicBool::new(false)),
         progress: Arc::new(AtomicU64::new(0)),
         stage: Arc::new(RwLock::new("Reconciling profile storage".to_string())),
@@ -250,9 +255,11 @@ enum ProfileArchiveJobOutcome {
 
 const LEGACY_ACTIVE_PROFILE_MARKER_FILE: &str = "active_profile.json";
 const PROFILE_ARCHIVE_GRACE_PERIOD: Duration = Duration::from_secs(3);
-const PROFILE_SWITCH_FINISH_DELAY: Duration = Duration::from_millis(1_300);
 const PROFILE_SWITCH_FINISH_PROGRESS_START: u64 = 70;
 const PROFILE_SWITCH_FINISH_PROGRESS_STEPS: u32 = 25;
+const PROFILE_SWITCH_DELAY_BYTES_PER_UNIT: u64 = 1024 * 1024 * 1024;
+const PROFILE_SWITCH_DELAY_MS_PER_UNIT: u64 = 200;
+const PROFILE_SWITCH_MAX_DELAY: Duration = Duration::from_millis(1_500);
 /// Preparing the target profile owns the 10..60 band, whether that means extracting an archive or
 /// copying a directory tree. The UI maps the same band onto one timeline row.
 const PROFILE_PREPARE_PROGRESS_START: u64 = 10;
@@ -447,6 +454,7 @@ impl Drop for ProfileArchiveRunningGuard {
 fn execute_profile_operation(
     mut spec: ProfileOperationSpec,
     archive_coordinator: Arc<ProfileArchiveCoordinator>,
+    event_tx: WorkerTx<ProfileEvent>,
 ) -> std::result::Result<ProfileWorkerOutput, ProfileWorkerError> {
     use crate::integrations::profiles;
     let _archive_pause = archive_coordinator.pause_for_foreground();
@@ -508,6 +516,7 @@ fn execute_profile_operation(
     let staging = profile_extracting_path(&roots, &spec);
     let mut background_archives = Vec::new();
     let mut warnings = Vec::new();
+    let snapshot_enabled = spec.preserve_mod_settings && spec.game.is_xxmi();
     match spec.kind {
         ProfileOperationKind::Create => {
             prepare_empty_profile_target(&roots, &staging, &spec.cancel)?;
@@ -526,22 +535,42 @@ fn execute_profile_operation(
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
+                snapshot_enabled,
                 &mut warnings,
             )?;
-            finish_profile_switch(&spec);
+            // A brand-new empty profile must not inherit the previous profile's
+            // d3dx_user.ini: without this, switching away from it later would snapshot
+            // someone else's settings as its own.
+            apply_incoming_user_ini_snapshot(
+                &roots,
+                snapshot_enabled
+                    .then(crate::integrations::xxmi_persist::clean_user_ini_snapshot),
+                &mut warnings,
+            );
+            notify_profile_ready_for_reload(&spec, &event_tx);
+            finish_profile_switch(&spec, 0);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Duplicate => {
             let expected_source = spec
                 .source_profile_id
                 .ok_or_else(|| anyhow::anyhow!("source profile id is missing"))?;
-            let source = prepare_duplicate_target(
+            let (source, target_metadata) = prepare_duplicate_target(
                 &mut spec,
                 &roots,
                 &staging,
                 expected_source,
                 &mut warnings,
             )?;
+            let incoming_user_ini = if snapshot_enabled {
+                target_metadata.as_ref().and_then(|metadata| {
+                    crate::integrations::xxmi_persist::user_ini_snapshot_from_metadata(
+                        &metadata.portable_metadata,
+                    )
+                })
+            } else {
+                None
+            };
             let marker = target_profile_marker(&spec)?;
             check_profile_cancel(&spec.cancel)?;
             update_profile_progress(
@@ -557,17 +586,30 @@ fn execute_profile_operation(
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
+                snapshot_enabled,
                 &mut warnings,
             )?;
-            finish_profile_switch(&spec);
+            apply_incoming_user_ini_snapshot(&roots, incoming_user_ini, &mut warnings);
+            notify_profile_ready_for_reload(&spec, &event_tx);
+            let switch_size = profile_switch_delay_size(target_metadata.as_ref(), &roots);
+            finish_profile_switch(&spec, switch_size);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Switch => {
             let expected_target = spec
                 .target_profile_id
                 .ok_or_else(|| anyhow::anyhow!("target profile id is missing"))?;
-            let source =
+            let (source, target_metadata) =
                 prepare_switch_target(&mut spec, &roots, &staging, expected_target, &mut warnings)?;
+            let incoming_user_ini = if snapshot_enabled {
+                target_metadata.as_ref().and_then(|metadata| {
+                    crate::integrations::xxmi_persist::user_ini_snapshot_from_metadata(
+                        &metadata.portable_metadata,
+                    )
+                })
+            } else {
+                None
+            };
             let marker = target_profile_marker(&spec)?;
             check_profile_cancel(&spec.cancel)?;
             update_profile_progress(
@@ -583,9 +625,13 @@ fn execute_profile_operation(
                 operation_id,
                 outgoing_profile(&spec)?,
                 &marker,
+                snapshot_enabled,
                 &mut warnings,
             )?;
-            finish_profile_switch(&spec);
+            apply_incoming_user_ini_snapshot(&roots, incoming_user_ini, &mut warnings);
+            notify_profile_ready_for_reload(&spec, &event_tx);
+            let switch_size = profile_switch_delay_size(target_metadata.as_ref(), &roots);
+            finish_profile_switch(&spec, switch_size);
             queue_outgoing_archive(&spec, &mut background_archives);
         }
         ProfileOperationKind::Rename => {}
@@ -617,6 +663,28 @@ fn execute_profile_operation(
         renamed_profiles: Vec::new(),
         warnings,
     })
+}
+
+fn notify_profile_ready_for_reload(spec: &ProfileOperationSpec, tx: &WorkerTx<ProfileEvent>) {
+    if !spec.game.is_xxmi() {
+        return;
+    }
+    let message = if spec.send_reload_hotkey {
+        match crate::integrations::xxmi_persist::send_reload_hotkey_foreground_aware(
+            &spec.game,
+            spec.use_default_mods_path,
+        ) {
+            Ok(report) => report.message,
+            Err(error) => format!("failed: {error:#}"),
+        }
+    } else {
+        "skipped: reload hotkey setting is disabled".to_string()
+    };
+    let _ = tx.send(ProfileEvent::ReadyForReload {
+        operation_id: spec.operation_id,
+        game_id: spec.game_id.clone(),
+        message,
+    });
 }
 
 fn target_profile_marker(
@@ -769,7 +837,13 @@ fn prepare_switch_target(
     staging: &Path,
     target_profile_id: ProfileId,
     warnings: &mut Vec<String>,
-) -> std::result::Result<PathBuf, ProfileWorkerError> {
+) -> std::result::Result<
+    (
+        PathBuf,
+        Option<crate::integrations::profiles::ProfileArchiveMetadata>,
+    ),
+    ProfileWorkerError,
+> {
     let loose = spec
         .target_profile
         .clone()
@@ -783,7 +857,7 @@ fn prepare_switch_target(
             metadata.filter(|metadata| validate_profile_game_metadata(metadata, spec).is_ok())
         {
             backfill_target_profile_data(spec, &metadata);
-            return Ok(loose);
+            return Ok((loose, Some(metadata)));
         }
         let conflict = next_profile_conflict_path(&loose, spec.operation_id);
         std::fs::rename(&loose, &conflict)?;
@@ -819,7 +893,7 @@ fn prepare_switch_target(
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
     validate_profile_game_metadata(&metadata, spec)?;
     backfill_target_profile_data(spec, &metadata);
-    Ok(staging.to_path_buf())
+    Ok((staging.to_path_buf(), Some(metadata)))
 }
 
 fn prepare_duplicate_target(
@@ -828,7 +902,13 @@ fn prepare_duplicate_target(
     staging: &Path,
     source_profile_id: ProfileId,
     warnings: &mut Vec<String>,
-) -> std::result::Result<PathBuf, ProfileWorkerError> {
+) -> std::result::Result<
+    (
+        PathBuf,
+        Option<crate::integrations::profiles::ProfileArchiveMetadata>,
+    ),
+    ProfileWorkerError,
+> {
     let _ = std::fs::remove_dir_all(staging);
     std::fs::create_dir_all(staging)?;
     // Start at the floor of the preparation band, not above it: `extract_to_staging` sets the same
@@ -861,7 +941,9 @@ fn prepare_duplicate_target(
             &mut copy_progress_reporter(spec, total_bytes),
         )?;
         update_profile_progress(&spec.progress, &spec.stage, 60, "Selected profile prepared");
-        return Ok(staging.to_path_buf());
+        // A copy of the active profile carries no container metadata; d3dx_user.ini on
+        // disk already belongs to it, so there is nothing to apply after the swap either.
+        return Ok((staging.to_path_buf(), None));
     }
 
     let loose = spec
@@ -897,7 +979,7 @@ fn prepare_duplicate_target(
             )?;
             backfill_target_profile_data(spec, &metadata);
             update_profile_progress(&spec.progress, &spec.stage, 60, "Selected profile prepared");
-            return Ok(staging.to_path_buf());
+            return Ok((staging.to_path_buf(), Some(metadata)));
         }
         let conflict = next_profile_conflict_path(&loose, spec.operation_id);
         std::fs::rename(&loose, &conflict)?;
@@ -933,7 +1015,33 @@ fn prepare_duplicate_target(
     let metadata = extract_to_staging(archive, staging, &spec.cancel, &spec.progress, &spec.stage)?;
     validate_profile_game_metadata(&metadata, spec)?;
     backfill_target_profile_data(spec, &metadata);
-    Ok(staging.to_path_buf())
+    Ok((staging.to_path_buf(), Some(metadata)))
+}
+
+/// Write an incoming profile's `d3dx_user.ini` snapshot over the live file. Runs only
+/// after the swap has committed — never on a path that can still roll back, or a failed
+/// swap would leave the previous profile's mods with the incoming profile's settings.
+/// `None` (profile predates the feature, or feature off) leaves the current file alone.
+fn apply_incoming_user_ini_snapshot(
+    roots: &crate::integrations::profiles::ProfileRoots,
+    snapshot: Option<String>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(text) = snapshot else {
+        return;
+    };
+    let Some(importer_root) =
+        crate::integrations::xxmi_persist::importer_root_from_mods_path(&roots.mods)
+    else {
+        return;
+    };
+    if let Err(error) =
+        crate::integrations::xxmi_persist::apply_user_ini_snapshot(&importer_root, &text)
+    {
+        warnings.push(format!(
+            "Activated profile settings could not be applied to d3dx_user.ini: {error:#}"
+        ));
+    }
 }
 
 fn copy_profile_roots(
@@ -1246,16 +1354,37 @@ fn update_profile_progress(
     }
 }
 
-fn finish_profile_switch(spec: &ProfileOperationSpec) {
+fn profile_switch_finish_delay(size_bytes: u64) -> Duration {
+    if size_bytes == 0 {
+        return Duration::ZERO;
+    }
+    let units = size_bytes.div_ceil(PROFILE_SWITCH_DELAY_BYTES_PER_UNIT);
+    Duration::from_millis(units.saturating_mul(PROFILE_SWITCH_DELAY_MS_PER_UNIT))
+        .min(PROFILE_SWITCH_MAX_DELAY)
+}
+
+fn profile_switch_delay_size(
+    target_metadata: Option<&crate::integrations::profiles::ProfileArchiveMetadata>,
+    roots: &crate::integrations::profiles::ProfileRoots,
+) -> u64 {
+    target_metadata
+        .map(|metadata| metadata.uncompressed_size)
+        .filter(|size| *size > 0)
+        .unwrap_or_else(|| profile_tree_size(roots).unwrap_or(0))
+}
+
+fn finish_profile_switch(spec: &ProfileOperationSpec, size_bytes: u64) {
     update_profile_progress(
         &spec.progress,
         &spec.stage,
         PROFILE_SWITCH_FINISH_PROGRESS_START,
         "Switching profile",
     );
-    let step_delay = PROFILE_SWITCH_FINISH_DELAY / PROFILE_SWITCH_FINISH_PROGRESS_STEPS;
+    let step_delay = profile_switch_finish_delay(size_bytes) / PROFILE_SWITCH_FINISH_PROGRESS_STEPS;
     for step in 1..=PROFILE_SWITCH_FINISH_PROGRESS_STEPS {
-        std::thread::sleep(step_delay);
+        if !step_delay.is_zero() {
+            std::thread::sleep(step_delay);
+        }
         update_profile_progress(
             &spec.progress,
             &spec.stage,
@@ -1528,10 +1657,26 @@ fn swap_roots(
     operation_id: u64,
     outgoing_profile: Option<(ProfileId, crate::integrations::profiles::ProfileArchiveMetadata)>,
     marker: &ActiveProfileMarker,
+    user_ini_snapshot: bool,
     warnings: &mut Vec<String>,
 ) -> std::result::Result<(), ProfileWorkerError> {
-    let (outgoing_id, outgoing_metadata) = outgoing_profile
+    let (outgoing_id, mut outgoing_metadata) = outgoing_profile
         .ok_or_else(|| anyhow::anyhow!("active profile is missing during profile switch"))?;
+    // Snapshot d3dx_user.ini off disk at this moment, not from the in-memory record clone
+    // the action layer sent: that clone is whatever was last persisted, and for a Default
+    // profile it is an empty map. This is the single point Create/Duplicate/Switch all
+    // funnel through, and it feeds both the loose container and the later compression.
+    if user_ini_snapshot
+        && outgoing_metadata.backend == crate::model::GameBackend::Xxmi
+        && let Some(importer_root) =
+            crate::integrations::xxmi_persist::importer_root_from_mods_path(&roots.mods)
+        && let Some(text) = crate::integrations::xxmi_persist::snapshot_user_ini(&importer_root)
+    {
+        outgoing_metadata.portable_metadata.insert(
+            crate::integrations::xxmi_persist::USER_INI_SNAPSHOT_METADATA_KEY.to_string(),
+            serde_json::Value::String(text),
+        );
+    }
     let journal = profile_journal_path(roots, marker);
     std::fs::create_dir_all(&roots.profiles_dir)?;
     // Name the outgoing container from the profile being archived, not the resolver fallback:
@@ -2533,6 +2678,10 @@ mod profile_worker_tests {
         game
     }
 
+    fn profile_event_sink() -> WorkerTx<ProfileEvent> {
+        worker_channel::<ProfileEvent>().0
+    }
+
     fn recovery_spec(game: GameInstall) -> ProfileOperationSpec {
         ProfileOperationSpec {
             operation_id: 99,
@@ -2555,10 +2704,54 @@ mod profile_worker_tests {
             known_profile_ids: Vec::new(),
             known_profile_storage_file_names: Vec::new(),
             metadata: None,
+            preserve_mod_settings: false,
+            send_reload_hotkey: false,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
             stage: Arc::new(RwLock::new(String::new())),
         }
+    }
+
+    #[test]
+    fn profile_switch_finish_delay_scales_by_rounded_gib_and_caps() {
+        let gib = PROFILE_SWITCH_DELAY_BYTES_PER_UNIT;
+
+        assert_eq!(profile_switch_finish_delay(0), Duration::ZERO);
+        assert_eq!(
+            profile_switch_finish_delay(gib.saturating_mul(6).saturating_add(1)),
+            Duration::from_millis(1_400)
+        );
+        assert_eq!(
+            profile_switch_finish_delay(gib.saturating_mul(100)),
+            PROFILE_SWITCH_MAX_DELAY
+        );
+    }
+
+    #[test]
+    fn profile_switch_delay_size_falls_back_when_metadata_size_is_zero() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = profiles::ProfileRoots {
+            profiles_dir: temp.path().join("Mods_Profiles"),
+            mods: temp.path().join("Mods"),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&roots.mods).unwrap();
+        std::fs::write(roots.mods.join("payload.bin"), [0u8; 11]).unwrap();
+
+        let mut zero_metadata = metadata(ProfileId::random(), "Zero");
+        zero_metadata.uncompressed_size = 0;
+        assert_eq!(
+            profile_switch_delay_size(Some(&zero_metadata), &roots),
+            11
+        );
+
+        let mut real_metadata = metadata(ProfileId::random(), "Real");
+        real_metadata.uncompressed_size = 123;
+        assert_eq!(
+            profile_switch_delay_size(Some(&real_metadata), &roots),
+            123
+        );
     }
 
     fn tool(id: &str, launch_args: &str) -> ToolEntry {
@@ -3410,6 +3603,7 @@ mod profile_worker_tests {
         let error = execute_profile_operation(
             recovery_spec(game),
             Arc::new(ProfileArchiveCoordinator::default()),
+            profile_event_sink(),
         )
         .err()
         .expect("malformed journal should fail recovery");
@@ -3473,6 +3667,7 @@ mod profile_worker_tests {
         let output = execute_profile_operation(
             recovery_spec(game),
             Arc::new(ProfileArchiveCoordinator::default()),
+            profile_event_sink(),
         )
         .unwrap();
 
@@ -3707,6 +3902,8 @@ mod profile_worker_tests {
             known_profile_ids: Vec::new(),
             known_profile_storage_file_names: Vec::new(),
             metadata: Some(metadata(current_id, "Current")),
+            preserve_mod_settings: false,
+            send_reload_hotkey: false,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(AtomicU64::new(0)),
             stage: Arc::new(RwLock::new(String::new())),
@@ -3714,7 +3911,7 @@ mod profile_worker_tests {
         let staging = roots.staging_dir().join("switch.extracting");
         let mut warnings = Vec::new();
 
-        let source =
+        let (source, _target_metadata) =
             prepare_switch_target(&mut spec, &roots, &staging, target_id, &mut warnings).unwrap();
 
         assert_eq!(source, loose);
@@ -3887,6 +4084,7 @@ mod profile_worker_tests {
             1,
             Some((outgoing_id, metadata(outgoing_id, "Current"))),
             &target_marker,
+            false,
             &mut warnings,
         )
         .unwrap();
@@ -3927,6 +4125,69 @@ mod profile_worker_tests {
     }
 
     #[test]
+    fn profile_swap_snapshots_user_ini_from_disk_not_the_stale_record() {
+        let temp = tempfile::tempdir().unwrap();
+        let importer_root = temp.path();
+        let profiles_dir = importer_root.join("Mods_Profiles");
+        let mods = importer_root.join("Mods");
+        let roots = profiles::ProfileRoots {
+            profiles_dir: profiles_dir.clone(),
+            mods: mods.clone(),
+            archived: None,
+            disabled: None,
+        };
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        // Importer layout beside Mods: d3dx.ini anchors root discovery, d3dx_user.ini
+        // holds the live settings the outgoing profile must capture.
+        std::fs::write(importer_root.join("d3dx.ini"), b"ini").unwrap();
+        let live_settings =
+            "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT\r\n[Constants]\r\n$\\mods\\a\\a.ini\\k = 1\r\n";
+        std::fs::write(
+            importer_root.join(crate::integrations::xxmi_persist::USER_INI_FILE),
+            live_settings.as_bytes(),
+        )
+        .unwrap();
+
+        let outgoing_id = ProfileId::random();
+        let target_id = ProfileId::random();
+        let target = profiles_dir.join("target");
+        std::fs::create_dir_all(target.join("Mods")).unwrap();
+        let mut warnings = Vec::new();
+
+        // The outgoing metadata deliberately has an empty portable_metadata map — the
+        // stale-record shape a Default profile carries.
+        swap_roots(
+            &roots,
+            &target,
+            None,
+            3,
+            Some((outgoing_id, metadata(outgoing_id, "Current"))),
+            &ActiveProfileMarker {
+                profile_id: target_id,
+                display_name: "Target".to_string(),
+                categories: Some(Vec::new()),
+                tools: None,
+                tool_blacklist: None,
+            },
+            true,
+            &mut warnings,
+        )
+        .unwrap();
+
+        let outgoing = roots.profile_path(outgoing_id);
+        let written = read_profile_container_metadata(&outgoing).unwrap();
+        assert_eq!(
+            crate::integrations::xxmi_persist::user_ini_snapshot_from_metadata(
+                &written.portable_metadata
+            )
+            .as_deref(),
+            Some(live_settings),
+            "the outgoing container must carry the on-disk d3dx_user.ini text"
+        );
+    }
+
+    #[test]
     fn profile_swap_quarantines_an_existing_outgoing_container() {
         let temp = tempfile::tempdir().unwrap();
         let profiles_dir = temp.path().join("Mods_Profiles");
@@ -3961,6 +4222,7 @@ mod profile_worker_tests {
                 tools: None,
                 tool_blacklist: None,
             },
+            false,
             &mut warnings,
         )
         .unwrap();

@@ -616,6 +616,26 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При удалении мода:", // SettingsGeneralOperationalWhenDeletingMod
     "Переместить в корзину", // SettingsGeneralOperationalMoveToRecycleBin
     "Удалить навсегда", // SettingsGeneralOperationalDeletePermanently
+    "── ЭКСПЕРИМЕНТАЛЬНО / только XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "Сохранять настройки кастомизации модов", // SettingsGeneralOperationalPreserveModSettings
+    "Сохраняет внутриигровую настройку модов (персистентные параметры XXMI) при переименовании, отключении, архивировании, обновлении и удалении модов, а также при переключении профилей", // SettingsGeneralOperationalPreserveModSettingsTooltip
+    "Применять изменения модов в игре", // SettingsGeneralOperationalSendReloadHotkey
+    "После изменения активных XXMI-модов при запущенной игре Hestia отправит клавишу перезагрузки XXMI, чтобы игра сразу их подхватила", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "Триггер:", // SettingsGeneralOperationalReloadHotkeyTrigger
+    "Включение модов", // SettingsGeneralOperationalReloadTriggerEnablingMods
+    "Отключение модов", // SettingsGeneralOperationalReloadTriggerDisablingMods
+    "Установка модов", // SettingsGeneralOperationalReloadTriggerInstallingMods
+    "Удаление модов", // SettingsGeneralOperationalReloadTriggerDeletingMods
+    "Обновление модов", // SettingsGeneralOperationalReloadTriggerUpdatingMods
+    "Переименование модов", // SettingsGeneralOperationalReloadTriggerRenamingMods
+    "Архивация модов", // SettingsGeneralOperationalReloadTriggerArchivingMods
+    "Восстановление модов", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Переключение профиля", // SettingsGeneralOperationalReloadTriggerProfileSwitch
+    "Изменить d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
+    "Hestia нужно добавить следующую строку для доступа к XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
+    "В этом d3dx.ini уже есть:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
+    "Заменить его значением Hestia? Hestia безопасно закомментирует существующую строку, чтобы она осталась на месте, но больше не действовала, а затем добавит собственный блок конфигурации под [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Другие настройки в файле d3dx.ini затронуты не будут.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Задачи", // SettingsGeneralTasksSection

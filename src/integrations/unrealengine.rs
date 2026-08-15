@@ -603,6 +603,7 @@ mod tests {
             mods_path_override: Some(root.join("Content").join("Paks").join("~mods")),
             modded_exe_path_override: None,
             vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: true,
             enabled: true,
         }
     }

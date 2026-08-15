@@ -8,6 +8,124 @@ enum ModMutationKind {
 }
 
 impl HestiaApp {
+    fn xxmi_reload_enabled_for_game(&self, game: &GameInstall, trigger: ReloadHotkeyTrigger) -> bool {
+        game.is_xxmi()
+            && game.apply_mod_changes_in_game
+            && self.state.static_prefs.reload_hotkey_triggers.enabled(trigger)
+    }
+
+    fn refresh_xxmi_reload_config_for_game(&mut self, game: &GameInstall) {
+        if !game.is_xxmi() {
+            return;
+        }
+        if let Err(err) = xxmi_persist::ensure_reload_config(
+            game,
+            self.state.static_prefs.use_default_mods_path,
+            game.apply_mod_changes_in_game,
+        ) {
+            self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+        }
+    }
+
+    fn set_game_reload_preference(&mut self, game_id: &str, enabled: bool) {
+        if let Some(game) = self
+            .state
+            .games
+            .iter_mut()
+            .find(|game| game.definition.id == game_id)
+        {
+            game.apply_mod_changes_in_game = enabled;
+        }
+    }
+
+    fn request_xxmi_reload_setting_change(&mut self, game_id: &str, enable: bool) {
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .cloned()
+        else {
+            return;
+        };
+        if !game.is_xxmi() {
+            self.set_game_reload_preference(game_id, false);
+            return;
+        }
+        if !enable {
+            if self
+                .pending_d3dx_foreground_conflict
+                .as_ref()
+                .is_some_and(|prompt| prompt.game_id == game_id)
+            {
+                self.pending_d3dx_foreground_conflict = None;
+            }
+            self.set_game_reload_preference(game_id, false);
+            let mut updated = game;
+            updated.apply_mod_changes_in_game = false;
+            self.refresh_xxmi_reload_config_for_game(&updated);
+            return;
+        }
+
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        match xxmi_persist::reload_config_conflict(&game, use_default) {
+            Ok(Some(conflict)) => {
+                self.set_game_reload_preference(game_id, false);
+                self.pending_d3dx_foreground_conflict = Some(D3dxForegroundConflictPrompt {
+                    game_id: game.definition.id.clone(),
+                    game_name: game.definition.name.clone(),
+                    path: conflict.path,
+                    current_value: conflict.current_value,
+                });
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                self.set_game_reload_preference(game_id, false);
+                self.report_warn(format!("XXMI reload config check failed: {err:#}"), None);
+                return;
+            }
+        }
+
+        self.set_game_reload_preference(game_id, true);
+        let mut updated = game;
+        updated.apply_mod_changes_in_game = true;
+        self.refresh_xxmi_reload_config_for_game(&updated);
+    }
+
+    fn resolve_d3dx_foreground_conflict(&mut self, replace: bool) {
+        let Some(prompt) = self.pending_d3dx_foreground_conflict.take() else {
+            return;
+        };
+        if !replace {
+            self.set_game_reload_preference(&prompt.game_id, false);
+            return;
+        }
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == prompt.game_id)
+            .cloned()
+        else {
+            self.set_game_reload_preference(&prompt.game_id, false);
+            return;
+        };
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        match xxmi_persist::replace_reload_config_conflict(&game, use_default) {
+            Ok(()) => {
+                self.set_game_reload_preference(&prompt.game_id, true);
+                let mut updated = game;
+                updated.apply_mod_changes_in_game = true;
+                self.refresh_xxmi_reload_config_for_game(&updated);
+            }
+            Err(err) => {
+                self.set_game_reload_preference(&prompt.game_id, false);
+                self.report_warn(format!("XXMI reload config replacement failed: {err:#}"), None);
+            }
+        }
+    }
+
     fn mod_action_lock_reason_by_id(
         &self,
         mod_id: &str,
@@ -104,6 +222,407 @@ impl HestiaApp {
             .cloned()
     }
 
+    /// One settings-preservation transaction per game/importer. `None` when the feature is
+    /// off, the game is not XXMI-backed, or no importer root is discoverable — callers then
+    /// run the plain filesystem operation unchanged.
+    fn begin_xxmi_persist_tx(&self, game: &GameInstall) -> Option<xxmi_persist::PersistTx> {
+        if !self.state.static_prefs.preserve_mod_settings || !game.is_xxmi() {
+            return None;
+        }
+        xxmi_persist::begin(game, self.state.static_prefs.use_default_mods_path)
+    }
+
+    /// Commit the settings transaction and send the importer reload hotkey when either
+    /// `d3dx_user.ini` changed or the caller changed the live mod set/path.
+    fn finish_xxmi_persist_tx(
+        &mut self,
+        game: &GameInstall,
+        tx: Option<xxmi_persist::PersistTx>,
+        reload_trigger: Option<ReloadHotkeyTrigger>,
+    ) {
+        let mut should_reload = reload_trigger.is_some();
+        let mut importer_root = None;
+        if let Some(tx) = tx {
+            importer_root = Some(tx.importer_root().to_path_buf());
+            match tx.commit() {
+                Ok(outcome) => {
+                    for warning in outcome.warnings {
+                        self.report_warn(warning, None);
+                    }
+                    should_reload |= outcome.wrote;
+                }
+                Err(err) => {
+                    self.report_warn(
+                        format!("in-game mod settings could not be written: {err:#}"),
+                        None,
+                    );
+                }
+            }
+        }
+        if !should_reload {
+            return;
+        }
+        let Some(reload_trigger) = reload_trigger else {
+            return;
+        };
+        if !self.xxmi_reload_enabled_for_game(game, reload_trigger) {
+            return;
+        }
+        let Some(importer_root) = importer_root.or_else(|| {
+            xxmi_persist::importer_root_for(game, self.state.static_prefs.use_default_mods_path)
+        }) else {
+            return;
+        };
+        self.send_xxmi_reload_hotkey_if_supported(game, &importer_root);
+    }
+
+    fn send_xxmi_reload_hotkey_if_supported(&mut self, game: &GameInstall, _importer_root: &Path) {
+        if !(game.apply_mod_changes_in_game && self.game_process_running(game)) {
+            return;
+        }
+        match xxmi_persist::send_reload_hotkey_foreground_aware(
+            game,
+            self.state.static_prefs.use_default_mods_path,
+        ) {
+            Ok(report) => {
+                self.push_log(format!(
+                    "XXMI reload ({}): {}",
+                    game.definition.id, report.message
+                ));
+            }
+            Err(err) => {
+                self.report_warn(format!("XXMI reload hotkey failed: {err:#}"), None);
+            }
+        }
+    }
+
+    /// Capture before a filesystem mutation. Returns the rollback point for the caller to
+    /// use if the mutation fails. A capture error rolls back immediately and aborts the
+    /// host operation: proceeding would perform the exact lossy move this feature prevents.
+    fn xxmi_capture_step(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &ModEntry,
+        mode: xxmi_persist::CaptureMode,
+    ) -> Result<Option<xxmi_persist::PersistCheckpoint>> {
+        let Some(tx) = tx.as_mut() else {
+            return Ok(None);
+        };
+        let checkpoint = tx.checkpoint();
+        match tx.capture(mod_entry, mode) {
+            Ok(_) => Ok(Some(checkpoint)),
+            Err(err) => {
+                tx.rollback(checkpoint);
+                Err(err.context("in-game settings could not be captured; mod left untouched"))
+            }
+        }
+    }
+
+    /// Discard the in-memory settings mutation after a failed filesystem step, so the
+    /// entries are still present when the transaction commits.
+    fn xxmi_rollback_step(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        checkpoint: Option<xxmi_persist::PersistCheckpoint>,
+    ) {
+        if let (Some(tx), Some(checkpoint)) = (tx.as_mut(), checkpoint) {
+            tx.rollback(checkpoint);
+        }
+    }
+
+    /// Mark the provisional settings mutation as final after its filesystem step succeeded.
+    fn xxmi_keep_step(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        checkpoint: Option<xxmi_persist::PersistCheckpoint>,
+    ) {
+        if let (Some(tx), Some(checkpoint)) = (tx.as_mut(), checkpoint) {
+            tx.keep(checkpoint);
+        }
+    }
+
+    /// Restore after a successful mutation that made the mod live. Failure never fails the
+    /// host operation — the stash on disk is the recovery path.
+    fn xxmi_restore_step(tx: &mut Option<xxmi_persist::PersistTx>, mod_entry: &ModEntry) {
+        if let Some(tx) = tx.as_mut() {
+            let checkpoint = tx.checkpoint();
+            if let Err(err) = tx.restore(mod_entry) {
+                tx.rollback(checkpoint);
+                tx.warn(format!(
+                    "in-game settings restore failed for {}: {err:#}",
+                    mod_entry.folder_name
+                ));
+            }
+        }
+    }
+
+    /// Point the stash at a hidden mod's new prospective prefix after a rename; never
+    /// writes live entries for it.
+    fn xxmi_rebase_step(tx: &mut Option<xxmi_persist::PersistTx>, mod_entry: &ModEntry) {
+        if let Some(tx) = tx.as_mut()
+            && let Err(err) = tx.rebase(mod_entry)
+        {
+            tx.warn(format!(
+                "in-game settings rebase failed for {}: {err:#}",
+                mod_entry.folder_name
+            ));
+        }
+    }
+
+    fn persisted_xxmi_disable(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &mut ModEntry,
+    ) -> Result<()> {
+        let checkpoint = Self::xxmi_capture_step(tx, mod_entry, xxmi_persist::CaptureMode::Stash)?;
+        match xxmi::disable_mod(mod_entry) {
+            Ok(()) => {
+                Self::xxmi_keep_step(tx, checkpoint);
+                Ok(())
+            }
+            Err(err) => {
+                Self::xxmi_rollback_step(tx, checkpoint);
+                Err(err)
+            }
+        }
+    }
+
+    fn persisted_xxmi_enable(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &mut ModEntry,
+    ) -> Result<()> {
+        xxmi::enable_mod(mod_entry)?;
+        Self::xxmi_restore_step(tx, mod_entry);
+        Ok(())
+    }
+
+    fn persisted_xxmi_archive(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &mut ModEntry,
+        game: &GameInstall,
+        use_default_path: bool,
+    ) -> Result<()> {
+        let checkpoint = Self::xxmi_capture_step(tx, mod_entry, xxmi_persist::CaptureMode::Stash)?;
+        match xxmi::archive_mod(mod_entry, game, use_default_path) {
+            Ok(_) => {
+                Self::xxmi_keep_step(tx, checkpoint);
+                Ok(())
+            }
+            Err(err) => {
+                Self::xxmi_rollback_step(tx, checkpoint);
+                Err(err)
+            }
+        }
+    }
+
+    fn persisted_xxmi_restore_from_archive(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &mut ModEntry,
+        game: &GameInstall,
+        use_default_path: bool,
+    ) -> Result<()> {
+        xxmi::restore_mod(mod_entry, game, use_default_path)?;
+        Self::xxmi_restore_step(tx, mod_entry);
+        Ok(())
+    }
+
+    fn persisted_xxmi_recycle(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &ModEntry,
+    ) -> Result<()> {
+        let checkpoint = Self::xxmi_capture_step(tx, mod_entry, xxmi_persist::CaptureMode::Stash)?;
+        match xxmi::send_to_recycle_bin(mod_entry) {
+            Ok(()) => {
+                Self::xxmi_keep_step(tx, checkpoint);
+                Ok(())
+            }
+            Err(err) => {
+                Self::xxmi_rollback_step(tx, checkpoint);
+                Err(err)
+            }
+        }
+    }
+
+    fn persisted_xxmi_purge(
+        tx: &mut Option<xxmi_persist::PersistTx>,
+        mod_entry: &ModEntry,
+    ) -> Result<()> {
+        let checkpoint = Self::xxmi_capture_step(tx, mod_entry, xxmi_persist::CaptureMode::Purge)?;
+        let removal = (|| -> Result<()> {
+            if mod_entry.root_path.is_dir() {
+                fs::remove_dir_all(&mod_entry.root_path)?;
+            } else if mod_entry.root_path.is_file() {
+                fs::remove_file(&mod_entry.root_path)?;
+            }
+            Ok(())
+        })();
+        match removal {
+            Ok(()) => {
+                Self::xxmi_keep_step(tx, checkpoint);
+                Ok(())
+            }
+            Err(err) => {
+                Self::xxmi_rollback_step(tx, checkpoint);
+                Err(err)
+            }
+        }
+    }
+
+    /// One transaction per game for a batch, keyed by game id. Games that do not qualify
+    /// still get a `None` slot so the loop can borrow uniformly.
+    fn begin_xxmi_persist_tx_batch(
+        &self,
+        games: &[GameInstall],
+        member_game_ids: impl Iterator<Item = String>,
+    ) -> HashMap<String, Option<xxmi_persist::PersistTx>> {
+        let mut per_game = HashMap::new();
+        for game_id in member_game_ids {
+            per_game.entry(game_id.clone()).or_insert_with(|| {
+                games
+                    .iter()
+                    .find(|game| game.definition.id == game_id)
+                    .and_then(|game| self.begin_xxmi_persist_tx(game))
+            });
+        }
+        per_game
+    }
+
+    fn finish_xxmi_persist_tx_batch(
+        &mut self,
+        games: &[GameInstall],
+        per_game: HashMap<String, Option<xxmi_persist::PersistTx>>,
+        reload_requests: HashMap<String, ReloadHotkeyTrigger>,
+    ) {
+        for (game_id, tx) in per_game {
+            if let Some(game) = games.iter().find(|game| game.definition.id == game_id) {
+                let game = game.clone();
+                let request_reload = reload_requests.get(&game.definition.id).copied();
+                self.finish_xxmi_persist_tx(&game, tx, request_reload);
+            }
+        }
+    }
+
+    /// Restore for freshly installed mods that arrived carrying a `mod.cfg` — cross-machine
+    /// folder copies, recycle-bin undeletes, replaced updates. Only applies where no live
+    /// entries already exist under the mod's prefix: live entries are newer than anything
+    /// an imported stash can hold.
+    fn run_xxmi_persist_import_restore(&mut self, mod_ids: &[String]) {
+        if !self.state.static_prefs.preserve_mod_settings {
+            return;
+        }
+        let games = self.state.games.clone();
+        let member_game_ids: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter(|m| mod_ids.contains(&m.id))
+            .map(|m| m.game_id.clone())
+            .collect();
+        let mut per_game_tx = self.begin_xxmi_persist_tx_batch(&games, member_game_ids.into_iter());
+        for mod_entry in self
+            .state
+            .mods
+            .iter()
+            .filter(|m| mod_ids.contains(&m.id))
+        {
+            let Some(tx) = per_game_tx
+                .get_mut(&mod_entry.game_id)
+                .and_then(|slot| slot.as_mut())
+            else {
+                continue;
+            };
+            let checkpoint = tx.checkpoint();
+            if let Err(err) = tx.restore_imported(mod_entry) {
+                tx.rollback(checkpoint);
+                tx.warn(format!(
+                    "imported settings restore failed for {}: {err:#}",
+                    mod_entry.folder_name
+                ));
+            }
+        }
+        self.finish_xxmi_persist_tx_batch(&games, per_game_tx, HashMap::new());
+    }
+
+    fn request_xxmi_reload_for_live_mod_ids(
+        &mut self,
+        mod_ids: &[String],
+        trigger: ReloadHotkeyTrigger,
+    ) {
+        let games = self.state.games.clone();
+        let mut per_game = HashMap::new();
+        for game_id in self
+            .state
+            .mods
+            .iter()
+            .filter(|m| mod_ids.contains(&m.id) && m.status == ModStatus::Active)
+            .filter_map(|mod_entry| {
+                games
+                    .iter()
+                    .find(|game| {
+                        game.definition.id == mod_entry.game_id
+                            && self.xxmi_reload_enabled_for_game(game, trigger)
+                    })
+                    .map(|game| game.definition.id.clone())
+            })
+        {
+            per_game.entry(game_id).or_insert(trigger);
+        }
+        for (game_id, trigger) in per_game {
+            if let Some(game) = games.iter().find(|game| game.definition.id == game_id) {
+                let game = game.clone();
+                self.finish_xxmi_persist_tx(&game, None, Some(trigger));
+            }
+        }
+    }
+
+    /// Scan-time settings pass for one game: write baseline stashes for live mods that have
+    /// entries but no `mod.cfg` yet (the upgrade path that makes external-rename repair
+    /// possible), and reroute any mod whose stash prefix disagrees with its real path. The
+    /// baseline never touches `d3dx_user.ini`; reroute writes only on an actual mismatch.
+    fn run_xxmi_persist_scan_pass(&mut self, game_id: &str) {
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .cloned()
+        else {
+            return;
+        };
+        if !game.is_xxmi() {
+            return;
+        }
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        // The d3dx.ini foreground-window grant must be in place before launch for
+        // reload delivery to work while Hestia is foreground. Refresh it on scan, and
+        // remove Hestia's generated config when the reload option is disabled.
+        if let Err(err) = xxmi_persist::ensure_reload_config(
+            &game,
+            use_default,
+            game.apply_mod_changes_in_game,
+        ) {
+            self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+        }
+        if !self.state.static_prefs.preserve_mod_settings {
+            return;
+        }
+        let Some(mut tx) = self.begin_xxmi_persist_tx(&game) else {
+            return;
+        };
+        for mod_entry in self.state.mods.iter().filter(|m| m.game_id == game_id) {
+            let checkpoint = tx.checkpoint();
+            let result = if xxmi_persist::read_stash(&mod_entry.root_path).is_some() {
+                tx.reroute(mod_entry)
+            } else {
+                tx.baseline(mod_entry)
+            };
+            if let Err(err) = result {
+                tx.rollback(checkpoint);
+                tx.warn(format!(
+                    "settings scan pass failed for {}: {err:#}",
+                    mod_entry.folder_name
+                ));
+            }
+        }
+        self.finish_xxmi_persist_tx(&game, Some(tx), None);
+    }
+
     fn disable_mod_by_id(&mut self, mod_id: &str) {
         if self
             .mod_action_lock_reason_by_id(mod_id, ModMutationKind::DisableActive)
@@ -114,11 +633,12 @@ impl HestiaApp {
         }
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default = self.state.static_prefs.use_default_mods_path;
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             if mod_entry.status == ModStatus::Active {
                 let result = match game.as_ref().map(|game| game.definition.backend) {
-                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::Xxmi) => Self::persisted_xxmi_disable(&mut ptx, mod_entry),
                     Some(GameBackend::UnrealEngine) => {
                         unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
                     }
@@ -131,6 +651,13 @@ impl HestiaApp {
         } else {
             (None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(ReloadHotkeyTrigger::DisablingMods);
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name)) = (result, name) {
             let text = self.text();
@@ -149,36 +676,55 @@ impl HestiaApp {
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
-        let (result, name, action) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
+        let (result, name, action, trigger) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
                 ModStatus::Disabled => {
                     let result = match game.as_ref().map(|game| game.definition.backend) {
-                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::Xxmi) => Self::persisted_xxmi_enable(&mut ptx, mod_entry),
                         Some(GameBackend::UnrealEngine) => {
                             unrealengine::enable_mod(mod_entry, game.as_ref().expect("game checked"), use_default_path)
                         }
                         None => Err(anyhow!("game not found")),
                     };
-                    (Some(result), Some(name), Some(text.action_enabled()))
+                    (
+                        Some(result),
+                        Some(name),
+                        Some(text.action_enabled()),
+                        Some(ReloadHotkeyTrigger::EnablingMods),
+                    )
                 }
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
                         let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
                         if game.is_xxmi() {
-                            xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                            Self::persisted_xxmi_restore_from_archive(&mut ptx, mod_entry, game, use_default_path)?;
                         } else {
                             bail!("archive is not supported for Unreal Engine games");
                         }
                         Ok(())
                     })();
-                    (Some(result), Some(name), Some(text.action_unarchived()))
+                    (
+                        Some(result),
+                        Some(name),
+                        Some(text.action_unarchived()),
+                        Some(ReloadHotkeyTrigger::RestoringMods),
+                    )
                 }
-                _ => (None, None, None),
+                _ => (None, None, None, None),
             }
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(trigger)
+            .flatten();
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name), Some(action)) = (result, name, action) {
             match result {
@@ -206,12 +752,13 @@ impl HestiaApp {
         }
         let game = self.state.mods.iter().find(|m| m.id == mod_id).and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
         let (result, name) = if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
                 let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
                 if game.is_xxmi() {
-                    xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                    Self::persisted_xxmi_archive(&mut ptx, mod_entry, game, use_default_path)?;
                 } else {
                     bail!("archive is not supported for Unreal Engine games");
                 }
@@ -221,6 +768,13 @@ impl HestiaApp {
         } else {
             (None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(ReloadHotkeyTrigger::ArchivingMods);
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name)) = (result, name) {
             let text = self.text();
@@ -259,18 +813,35 @@ impl HestiaApp {
     }
 
     fn delete_mod_entry(&mut self, mod_entry: &ModEntry) -> Result<DeleteBehavior> {
+        let game = self.game_for_mod(mod_entry);
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
+        let behavior = self.delete_mod_entry_with_tx(mod_entry, &mut ptx);
+        if let Some(game) = game.as_ref() {
+            let request_reload =
+                (game.is_xxmi() && behavior.is_ok()).then_some(ReloadHotkeyTrigger::DeletingMods);
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
+        behavior
+    }
+
+    /// Both delete behaviors funnel through here — hooking only the recycle path would
+    /// leave permanent deletes orphaning `d3dx_user.ini` entries. Recycle captures to a
+    /// stash that rides into the bin (so an undelete round-trips); permanent delete purges
+    /// the entries without writing a stash the removal is about to destroy.
+    fn delete_mod_entry_with_tx(
+        &mut self,
+        mod_entry: &ModEntry,
+        ptx: &mut Option<xxmi_persist::PersistTx>,
+    ) -> Result<DeleteBehavior> {
         self.clear_mod_image_runtime_state(mod_entry);
         match self.state.static_prefs.delete_behavior {
             DeleteBehavior::RecycleBin => {
-                xxmi::send_to_recycle_bin(mod_entry)?;
+                Self::persisted_xxmi_recycle(ptx, mod_entry)?;
                 Ok(DeleteBehavior::RecycleBin)
             }
             DeleteBehavior::Permanent => {
-                if mod_entry.root_path.is_dir() {
-                    fs::remove_dir_all(&mod_entry.root_path)?;
-                } else if mod_entry.root_path.is_file() {
-                    fs::remove_file(&mod_entry.root_path)?;
-                }
+                Self::persisted_xxmi_purge(ptx, mod_entry)?;
                 Ok(DeleteBehavior::Permanent)
             }
         }
@@ -323,11 +894,12 @@ impl HestiaApp {
         let text = self.text();
         let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
         let use_default = self.state.static_prefs.use_default_mods_path;
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             if mod_entry.status == ModStatus::Active {
                 let result = match game.as_ref().map(|game| game.definition.backend) {
-                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::Xxmi) => Self::persisted_xxmi_disable(&mut ptx, mod_entry),
                     Some(GameBackend::UnrealEngine) => {
                         unrealengine::disable_mod(mod_entry, game.as_ref().expect("game checked"), use_default)
                     }
@@ -340,6 +912,13 @@ impl HestiaApp {
         } else {
             (None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(ReloadHotkeyTrigger::DisablingMods);
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name)) = (result, name) {
             self.finish_single_mod_action(result, &name, text.action_disabled(), text.disable_failed());
@@ -363,36 +942,55 @@ impl HestiaApp {
         let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let text = self.text();
-        let (result, name, action) = if let Some(mod_entry) = self.selected_mod_mut() {
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
+        let (result, name, action, trigger) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             match mod_entry.status {
                 ModStatus::Disabled => {
                     let result = match game.as_ref().map(|game| game.definition.backend) {
-                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::Xxmi) => Self::persisted_xxmi_enable(&mut ptx, mod_entry),
                         Some(GameBackend::UnrealEngine) => {
                             unrealengine::enable_mod(mod_entry, game.as_ref().expect("game checked"), use_default_path)
                         }
                         None => Err(anyhow!("game not found")),
                     };
-                    (Some(result), Some(name), Some(text.action_enabled()))
+                    (
+                        Some(result),
+                        Some(name),
+                        Some(text.action_enabled()),
+                        Some(ReloadHotkeyTrigger::EnablingMods),
+                    )
                 }
                 ModStatus::Archived => {
                     let result = (|| -> Result<()> {
                         let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
                         if game.is_xxmi() {
-                            xxmi::restore_mod(mod_entry, game, use_default_path)?;
+                            Self::persisted_xxmi_restore_from_archive(&mut ptx, mod_entry, game, use_default_path)?;
                         } else {
                             bail!("archive is not supported for Unreal Engine games");
                         }
                         Ok(())
                     })();
-                    (Some(result), Some(name), Some(text.action_unarchived()))
+                    (
+                        Some(result),
+                        Some(name),
+                        Some(text.action_unarchived()),
+                        Some(ReloadHotkeyTrigger::RestoringMods),
+                    )
                 }
-                _ => (None, None, None),
+                _ => (None, None, None, None),
             }
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(trigger)
+            .flatten();
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name), Some(action)) = (result, name, action) {
             match result {
@@ -425,12 +1023,13 @@ impl HestiaApp {
         }
         let game = self.selected_mod().and_then(|m| self.game_for_mod(m));
         let use_default_path = self.state.static_prefs.use_default_mods_path;
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
         let (result, name) = if let Some(mod_entry) = self.selected_mod_mut() {
             let name = mod_entry.folder_name.clone();
             let result = (|| -> Result<()> {
                 let game = game.as_ref().ok_or_else(|| anyhow!("game not selected"))?;
                 if game.is_xxmi() {
-                    xxmi::archive_mod(mod_entry, game, use_default_path)?;
+                    Self::persisted_xxmi_archive(&mut ptx, mod_entry, game, use_default_path)?;
                 } else {
                     bail!("archive is not supported for Unreal Engine games");
                 }
@@ -440,6 +1039,13 @@ impl HestiaApp {
         } else {
             (None, None)
         };
+        if let Some(game) = game.as_ref() {
+            let request_reload = (game.is_xxmi()
+                && result.as_ref().is_some_and(|result| result.is_ok()))
+            .then_some(ReloadHotkeyTrigger::ArchivingMods);
+            let game = game.clone();
+            self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        }
 
         if let (Some(result), Some(name)) = (result, name) {
             let text = self.text();
@@ -491,6 +1097,20 @@ impl HestiaApp {
             .collect();
         let mut disabled_count = 0;
         let mut skipped_locked = 0;
+        let member_game_ids: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter(|m| self.selected_mods.contains(&m.id) && m.status == ModStatus::Active)
+            .map(|m| m.game_id.clone())
+            .collect();
+        let mut per_game_tx = self.begin_xxmi_persist_tx_batch(&games, member_game_ids.into_iter());
+        let mut reload_requests = HashMap::new();
+        let disable_trigger_enabled = self
+            .state
+            .static_prefs
+            .reload_hotkey_triggers
+            .enabled(ReloadHotkeyTrigger::DisablingMods);
         // Single iteration: filter selected mods and disable in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
@@ -501,8 +1121,12 @@ impl HestiaApp {
                     skipped_locked += 1;
                     continue;
                 }
+                let mut fallback_tx = None;
+                let ptx = per_game_tx
+                    .get_mut(&mod_entry.game_id)
+                    .unwrap_or(&mut fallback_tx);
                 let result = match game.map(|game| game.definition.backend) {
-                    Some(GameBackend::Xxmi) => xxmi::disable_mod(mod_entry),
+                    Some(GameBackend::Xxmi) => Self::persisted_xxmi_disable(ptx, mod_entry),
                     Some(GameBackend::UnrealEngine) => {
                         unrealengine::disable_mod(mod_entry, game.expect("game checked"), use_default)
                     }
@@ -510,9 +1134,20 @@ impl HestiaApp {
                 };
                 if result.is_ok() {
                     disabled_count += 1;
+                    if disable_trigger_enabled
+                        && game.is_some_and(|game| {
+                            game.is_xxmi() && game.apply_mod_changes_in_game
+                        })
+                    {
+                        reload_requests.insert(
+                            mod_entry.game_id.clone(),
+                            ReloadHotkeyTrigger::DisablingMods,
+                        );
+                    }
                 }
             }
         }
+        self.finish_xxmi_persist_tx_batch(&games, per_game_tx, reload_requests);
         let action = self.text().action_disabled();
         self.finish_batch_mod_action(disabled_count, action);
         if skipped_locked > 0 {
@@ -531,19 +1166,45 @@ impl HestiaApp {
         let mut enabled_count = 0;
         let mut unarchived_count = 0;
         let mut skipped_locked = 0;
+        let member_game_ids: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter(|m| {
+                self.selected_mods.contains(&m.id)
+                    && matches!(m.status, ModStatus::Disabled | ModStatus::Archived)
+            })
+            .map(|m| m.game_id.clone())
+            .collect();
+        let mut per_game_tx = self.begin_xxmi_persist_tx_batch(&games, member_game_ids.into_iter());
+        let mut reload_requests = HashMap::new();
+        let enable_trigger_enabled = self
+            .state
+            .static_prefs
+            .reload_hotkey_triggers
+            .enabled(ReloadHotkeyTrigger::EnablingMods);
+        let restore_trigger_enabled = self
+            .state
+            .static_prefs
+            .reload_hotkey_triggers
+            .enabled(ReloadHotkeyTrigger::RestoringMods);
         // Single iteration: process all selected mods in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) {
                 let game = games
                     .iter()
                     .find(|game| game.definition.id == mod_entry.game_id);
+                let mut fallback_tx = None;
+                let ptx = per_game_tx
+                    .get_mut(&mod_entry.game_id)
+                    .unwrap_or(&mut fallback_tx);
                 if mod_entry.status == ModStatus::Disabled {
                     if locked_unreal_game_ids.contains(&mod_entry.game_id) {
                         skipped_locked += 1;
                         continue;
                     }
                     let result = match game.map(|game| game.definition.backend) {
-                        Some(GameBackend::Xxmi) => xxmi::enable_mod(mod_entry),
+                        Some(GameBackend::Xxmi) => Self::persisted_xxmi_enable(ptx, mod_entry),
                         Some(GameBackend::UnrealEngine) => {
                             unrealengine::enable_mod(mod_entry, game.expect("game checked"), use_default)
                         }
@@ -551,18 +1212,41 @@ impl HestiaApp {
                     };
                     if result.is_ok() {
                         enabled_count += 1;
+                        if enable_trigger_enabled
+                            && game.is_some_and(|game| {
+                                game.is_xxmi() && game.apply_mod_changes_in_game
+                            })
+                        {
+                            reload_requests.insert(
+                                mod_entry.game_id.clone(),
+                                ReloadHotkeyTrigger::EnablingMods,
+                            );
+                        }
                     }
                 } else if mod_entry.status == ModStatus::Archived {
                     if let Some(game_ref) = game {
                         if game_ref.is_xxmi()
-                            && xxmi::restore_mod(mod_entry, game_ref, use_default).is_ok()
+                            && Self::persisted_xxmi_restore_from_archive(
+                                ptx,
+                                mod_entry,
+                                game_ref,
+                                use_default,
+                            )
+                            .is_ok()
                         {
                             unarchived_count += 1;
+                            if restore_trigger_enabled && game_ref.apply_mod_changes_in_game {
+                                reload_requests.insert(
+                                    mod_entry.game_id.clone(),
+                                    ReloadHotkeyTrigger::RestoringMods,
+                                );
+                            }
                         }
                     }
                 }
             }
         }
+        self.finish_xxmi_persist_tx_batch(&games, per_game_tx, reload_requests);
         if enabled_count > 0 {
             let text = self.text();
             let action = text.action_enabled();
@@ -593,6 +1277,7 @@ impl HestiaApp {
         {
             bail!("{}", self.text().mods_locked_probably_by_game());
         }
+        let mut ptx = game.as_ref().and_then(|game| self.begin_xxmi_persist_tx(game));
         let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
             bail!("mod not found");
         };
@@ -602,11 +1287,34 @@ impl HestiaApp {
         if new_path.exists() {
             bail!("destination folder already exists: {}", new_name);
         }
-        fs::rename(&old_path, &new_path)?;
+        let request_reload = (game.as_ref().is_some_and(|game| game.is_xxmi())
+            && mod_entry.status == ModStatus::Active)
+        .then_some(ReloadHotkeyTrigger::RenamingMods);
+        // Capture while the mod is still at its old path; the stash lands inside the folder
+        // and travels with the rename.
+        let checkpoint = Self::xxmi_capture_step(&mut ptx, mod_entry, xxmi_persist::CaptureMode::Stash)?;
+        if let Err(err) = fs::rename(&old_path, &new_path) {
+            Self::xxmi_rollback_step(&mut ptx, checkpoint);
+            return Err(err.into());
+        }
+        Self::xxmi_keep_step(&mut ptx, checkpoint);
         mod_entry.root_path = new_path;
         mod_entry.folder_name = new_name.to_string();
         mod_entry.updated_at = Utc::now();
-        let game = game.as_ref().ok_or_else(|| anyhow!("game not found"))?;
+        // A live mod gets its settings back under the new prefix; a hidden mod must not
+        // have live entries written for it — only its stash anchor moves.
+        if mod_entry.status == ModStatus::Active {
+            Self::xxmi_restore_step(&mut ptx, mod_entry);
+        } else {
+            Self::xxmi_rebase_step(&mut ptx, mod_entry);
+        }
+        let game = game.ok_or_else(|| anyhow!("game not found"))?;
+        // Commit settings before the metadata write: a metadata failure must not lose the
+        // already-performed settings migration.
+        self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+        let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
+            bail!("mod not found");
+        };
         match game.definition.backend {
             GameBackend::Xxmi => xxmi::save_mod_metadata(mod_entry)?,
             GameBackend::UnrealEngine => unrealengine::write_portable_metadata(mod_entry)?,
@@ -658,20 +1366,42 @@ impl HestiaApp {
         
         // Archive mods in a single iteration
         let mut archived_count = 0;
+        let mut per_game_tx = self.begin_xxmi_persist_tx_batch(
+            &games,
+            mods_to_clear.iter().map(|m| m.game_id.clone()),
+        );
+        let mut reload_requests = HashMap::new();
+        let archive_trigger_enabled = self
+            .state
+            .static_prefs
+            .reload_hotkey_triggers
+            .enabled(ReloadHotkeyTrigger::ArchivingMods);
         for mod_entry in self.state.mods.iter_mut() {
             if mods_to_clear.iter().any(|m| m.id == mod_entry.id) {
                 if let Some(game_ref) = games
                     .iter()
                     .find(|game| game.definition.id == mod_entry.game_id)
                 {
+                    let mut fallback_tx = None;
+                    let ptx = per_game_tx
+                        .get_mut(&mod_entry.game_id)
+                        .unwrap_or(&mut fallback_tx);
                     if game_ref.is_xxmi()
-                        && xxmi::archive_mod(mod_entry, game_ref, use_default).is_ok()
+                        && Self::persisted_xxmi_archive(ptx, mod_entry, game_ref, use_default)
+                            .is_ok()
                     {
                         archived_count += 1;
+                        if archive_trigger_enabled && game_ref.apply_mod_changes_in_game {
+                            reload_requests.insert(
+                                mod_entry.game_id.clone(),
+                                ReloadHotkeyTrigger::ArchivingMods,
+                            );
+                        }
                     }
                 }
             }
         }
+        self.finish_xxmi_persist_tx_batch(&games, per_game_tx, reload_requests);
         let action = self.text().action_archived();
         self.finish_batch_mod_action(archived_count, action);
     }
@@ -686,6 +1416,12 @@ impl HestiaApp {
         let mut deleted_count = 0;
         let mut skipped_locked = 0;
         let mut last_err: Option<anyhow::Error> = None;
+        let games = self.state.games.clone();
+        let mut per_game_tx = self.begin_xxmi_persist_tx_batch(
+            &games,
+            mods_to_delete.iter().map(|m| m.game_id.clone()),
+        );
+        let mut reload_requests = HashMap::new();
         for mod_entry in mods_to_delete {
             if self
                 .mod_action_lock_reason(&mod_entry, ModMutationKind::Delete)
@@ -694,11 +1430,30 @@ impl HestiaApp {
                 skipped_locked += 1;
                 continue;
             }
-            match self.delete_mod_entry(&mod_entry) {
-                Ok(_) => deleted_count += 1,
+            let mut fallback_tx = None;
+            let ptx = per_game_tx
+                .get_mut(&mod_entry.game_id)
+                .unwrap_or(&mut fallback_tx);
+            match self.delete_mod_entry_with_tx(&mod_entry, ptx) {
+                Ok(_) => {
+                    deleted_count += 1;
+                    if games
+                        .iter()
+                        .find(|game| game.definition.id == mod_entry.game_id)
+                        .is_some_and(|game| {
+                            self.xxmi_reload_enabled_for_game(game, ReloadHotkeyTrigger::DeletingMods)
+                        })
+                    {
+                        reload_requests.insert(
+                            mod_entry.game_id.clone(),
+                            ReloadHotkeyTrigger::DeletingMods,
+                        );
+                    }
+                }
                 Err(err) => last_err = Some(err),
             }
         }
+        self.finish_xxmi_persist_tx_batch(&games, per_game_tx, reload_requests);
         if deleted_count > 0 {
             let text = self.text();
             let action = text.delete_action(self.state.static_prefs.delete_behavior);

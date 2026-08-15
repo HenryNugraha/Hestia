@@ -616,6 +616,26 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "When deleting a mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Move to Recycle Bin", // SettingsGeneralOperationalMoveToRecycleBin
     "Delete Permanently", // SettingsGeneralOperationalDeletePermanently
+    "── EXPERIMENTAL / XXMI Only ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "Preserve in-game mod settings", // SettingsGeneralOperationalPreserveModSettings
+    "Keeps saved in-game mod customization (XXMI persistent settings) when renaming, disabling, archiving, updating, or deleting mods, and across profile switches", // SettingsGeneralOperationalPreserveModSettingsTooltip
+    "Apply changes / reload mods in-game", // SettingsGeneralOperationalSendReloadHotkey
+    "After Hestia changes live XXMI mods while the game is running, send the XXMI reload hotkey so the game picks them up immediately", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "Trigger:", // SettingsGeneralOperationalReloadHotkeyTrigger
+    "Enabling mods", // SettingsGeneralOperationalReloadTriggerEnablingMods
+    "Disabling mods", // SettingsGeneralOperationalReloadTriggerDisablingMods
+    "Installing mods", // SettingsGeneralOperationalReloadTriggerInstallingMods
+    "Deleting mods", // SettingsGeneralOperationalReloadTriggerDeletingMods
+    "Updating mods", // SettingsGeneralOperationalReloadTriggerUpdatingMods
+    "Renaming mods", // SettingsGeneralOperationalReloadTriggerRenamingMods
+    "Archiving mods", // SettingsGeneralOperationalReloadTriggerArchivingMods
+    "Restoring mods", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Profile switch", // SettingsGeneralOperationalReloadTriggerProfileSwitch
+    "Modify d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
+    "Hestia needs to add the following line to access XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
+    "This d3dx.ini already has:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
+    "Replace it with Hestia’s value? Hestia will safely comment out the existing line so it's still there, just no longer having effect, then add Hestia's own configuration block below [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "No other configuration in the d3dx.ini file will be touched.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Tasks", // SettingsGeneralTasksSection
