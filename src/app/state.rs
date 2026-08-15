@@ -40,6 +40,13 @@ enum XxmiReloadEvent {
     Failed { game_id: String, message: String },
 }
 
+struct XxmiNamespaceCacheEntry {
+    root_path: PathBuf,
+    ini_hash: Option<String>,
+    content_mtime: Option<DateTime<Utc>>,
+    prefixes: Vec<String>,
+}
+
 enum InlineMarkdownEmbed {
     Image { texture_key: String },
     Youtube { url: String },
@@ -353,6 +360,9 @@ pub struct HestiaApp {
     refresh_pending_selected_game: Option<String>,
     xxmi_reload_event_tx: WorkerTx<XxmiReloadEvent>,
     xxmi_reload_event_rx: WorkerRx<XxmiReloadEvent>,
+    xxmi_reload_inflight: HashSet<String>,
+    xxmi_reload_pending: HashSet<String>,
+    xxmi_namespace_cache: HashMap<String, XxmiNamespaceCacheEntry>,
     profile_request_tx: WorkerTx<ProfileRequest>,
     profile_reconcile_request_tx: WorkerTx<ProfileReconcileSpec>,
     profile_event_rx: WorkerRx<ProfileEvent>,

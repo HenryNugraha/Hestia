@@ -16,6 +16,11 @@ fn push_unique_prefix(prefixes: &mut Vec<String>, prefix: String) {
     }
 }
 
+struct XxmiNamespaceContext {
+    shared_prefixes: Vec<String>,
+    prefixes_by_root: Vec<(PathBuf, Vec<String>)>,
+}
+
 impl HestiaApp {
     fn xxmi_reload_enabled_for_game(&self, game: &GameInstall, trigger: ReloadHotkeyTrigger) -> bool {
         game.is_xxmi()
@@ -234,25 +239,57 @@ impl HestiaApp {
     /// One settings-preservation transaction per game/importer. `None` when the feature is
     /// off, the game is not XXMI-backed, or no importer root is discoverable — callers then
     /// run the plain filesystem operation unchanged.
-    fn begin_xxmi_persist_tx(&self, game: &GameInstall) -> Option<xxmi_persist::PersistTx> {
+    fn begin_xxmi_persist_tx(&mut self, game: &GameInstall) -> Option<xxmi_persist::PersistTx> {
         if !self.state.static_prefs.preserve_mod_settings || !game.is_xxmi() {
             return None;
         }
         let mut tx = xxmi_persist::begin(game, self.state.static_prefs.use_default_mods_path)?;
-        tx.set_shared_explicit_prefixes(self.shared_explicit_prefixes_for_game(&game.definition.id));
+        let namespace_context = self.xxmi_namespace_context_for_game(&game.definition.id);
+        tx.set_shared_explicit_prefixes(namespace_context.shared_prefixes);
+        for (root_path, prefixes) in namespace_context.prefixes_by_root {
+            tx.set_explicit_namespace_prefixes_for_root(root_path, prefixes);
+        }
         Some(tx)
     }
 
-    fn shared_explicit_prefixes_for_game(&self, game_id: &str) -> Vec<String> {
-        let mut owners: Vec<(&str, String)> = Vec::new();
-        for mod_entry in self.state.mods.iter().filter(|mod_entry| {
-            mod_entry.game_id == game_id && !matches!(mod_entry.status, ModStatus::Archived)
-        }) {
-            for prefix in xxmi_persist::explicit_namespace_prefixes_for_mod_root(
-                &mod_entry.root_path,
-            ) {
-                owners.push((mod_entry.id.as_str(), prefix));
+    fn xxmi_namespace_context_for_game(&mut self, game_id: &str) -> XxmiNamespaceContext {
+        let known_mod_ids: HashSet<String> = self
+            .state
+            .mods
+            .iter()
+            .map(|mod_entry| mod_entry.id.clone())
+            .collect();
+        self.xxmi_namespace_cache
+            .retain(|mod_id, _| known_mod_ids.contains(mod_id));
+
+        let namespace_inputs: Vec<(String, PathBuf, Option<String>, Option<DateTime<Utc>>)> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| mod_entry.game_id == game_id)
+            .map(|mod_entry| {
+                (
+                    mod_entry.id.clone(),
+                    mod_entry.root_path.clone(),
+                    mod_entry.ini_hash.clone(),
+                    mod_entry.content_mtime,
+                )
+            })
+            .collect();
+
+        let mut owners: Vec<(String, String)> = Vec::new();
+        let mut prefixes_by_root = Vec::new();
+        for (mod_id, root_path, ini_hash, content_mtime) in namespace_inputs {
+            let prefixes = self.explicit_namespace_prefixes_for_mod_cached(
+                &mod_id,
+                &root_path,
+                &ini_hash,
+                content_mtime,
+            );
+            for prefix in &prefixes {
+                owners.push((mod_id.clone(), prefix.clone()));
             }
+            prefixes_by_root.push((root_path, prefixes));
         }
 
         let mut shared = Vec::new();
@@ -267,7 +304,38 @@ impl HestiaApp {
                 }
             }
         }
-        shared
+        XxmiNamespaceContext {
+            shared_prefixes: shared,
+            prefixes_by_root,
+        }
+    }
+
+    fn explicit_namespace_prefixes_for_mod_cached(
+        &mut self,
+        mod_id: &str,
+        root_path: &Path,
+        ini_hash: &Option<String>,
+        content_mtime: Option<DateTime<Utc>>,
+    ) -> Vec<String> {
+        if let Some(entry) = self.xxmi_namespace_cache.get(mod_id)
+            && entry.root_path == root_path
+            && entry.ini_hash == *ini_hash
+            && entry.content_mtime == content_mtime
+        {
+            return entry.prefixes.clone();
+        }
+
+        let prefixes = xxmi_persist::explicit_namespace_prefixes_for_mod_root(root_path);
+        self.xxmi_namespace_cache.insert(
+            mod_id.to_string(),
+            XxmiNamespaceCacheEntry {
+                root_path: root_path.to_path_buf(),
+                ini_hash: ini_hash.clone(),
+                content_mtime,
+                prefixes: prefixes.clone(),
+            },
+        );
+        prefixes
     }
 
     /// Commit the settings transaction and send the importer reload hotkey when either
@@ -306,19 +374,27 @@ impl HestiaApp {
         if !self.xxmi_reload_enabled_for_game(game, reload_trigger) {
             return;
         }
-        let Some(importer_root) = importer_root.or_else(|| {
-            xxmi_persist::importer_root_for(game, self.state.static_prefs.use_default_mods_path)
-        }) else {
+        if importer_root
+            .or_else(|| {
+                xxmi_persist::importer_root_for(game, self.state.static_prefs.use_default_mods_path)
+            })
+            .is_none()
+        {
             return;
-        };
-        self.send_xxmi_reload_hotkey_if_supported(game, &importer_root);
+        }
+        self.send_xxmi_reload_hotkey_if_supported(game);
     }
 
-    fn send_xxmi_reload_hotkey_if_supported(&mut self, game: &GameInstall, _importer_root: &Path) {
+    fn send_xxmi_reload_hotkey_if_supported(&mut self, game: &GameInstall) {
         if !(game.apply_mod_changes_in_game && self.game_process_running(game)) {
             return;
         }
         let game_id = game.definition.id.clone();
+        if self.xxmi_reload_inflight.contains(&game_id) {
+            self.xxmi_reload_pending.insert(game_id);
+            return;
+        }
+        self.xxmi_reload_inflight.insert(game_id.clone());
         let log_game_id = game_id.clone();
         let game = game.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
@@ -346,12 +422,17 @@ impl HestiaApp {
                 let _ = event_tx.send(event);
             })
         {
+            self.xxmi_reload_inflight.remove(&log_game_id);
             self.push_log(format!("XXMI reload ({log_game_id}): failed: {err}"));
         }
     }
 
     fn consume_xxmi_reload_events(&mut self) {
         while let Ok(event) = self.xxmi_reload_event_rx.try_recv() {
+            let game_id = match &event {
+                XxmiReloadEvent::Finished { game_id, .. }
+                | XxmiReloadEvent::Failed { game_id, .. } => game_id.clone(),
+            };
             match event {
                 XxmiReloadEvent::Finished { game_id, message } => {
                     self.push_log(format!("XXMI reload ({game_id}): {message}"));
@@ -359,6 +440,17 @@ impl HestiaApp {
                 XxmiReloadEvent::Failed { game_id, message } => {
                     self.push_log(format!("XXMI reload ({game_id}): failed: {message}"));
                 }
+            }
+            self.xxmi_reload_inflight.remove(&game_id);
+            if self.xxmi_reload_pending.remove(&game_id)
+                && let Some(game) = self
+                    .state
+                    .games
+                    .iter()
+                    .find(|game| game.definition.id == game_id)
+                    .cloned()
+            {
+                self.send_xxmi_reload_hotkey_if_supported(&game);
             }
         }
     }
@@ -534,18 +626,20 @@ impl HestiaApp {
     /// One transaction per game for a batch, keyed by game id. Games that do not qualify
     /// still get a `None` slot so the loop can borrow uniformly.
     fn begin_xxmi_persist_tx_batch(
-        &self,
+        &mut self,
         games: &[GameInstall],
         member_game_ids: impl Iterator<Item = String>,
     ) -> HashMap<String, Option<xxmi_persist::PersistTx>> {
         let mut per_game = HashMap::new();
         for game_id in member_game_ids {
-            per_game.entry(game_id.clone()).or_insert_with(|| {
-                games
-                    .iter()
-                    .find(|game| game.definition.id == game_id)
-                    .and_then(|game| self.begin_xxmi_persist_tx(game))
-            });
+            if per_game.contains_key(&game_id) {
+                continue;
+            }
+            let tx = games
+                .iter()
+                .find(|game| game.definition.id == game_id)
+                .and_then(|game| self.begin_xxmi_persist_tx(game));
+            per_game.insert(game_id, tx);
         }
         per_game
     }

@@ -649,6 +649,7 @@ pub struct PersistTx {
     doc_unreadable: bool,
     warnings: Vec<String>,
     shared_explicit_prefixes: Vec<String>,
+    explicit_prefixes_by_root: HashMap<PathBuf, Vec<String>>,
 }
 
 pub struct CommitOutcome {
@@ -678,6 +679,7 @@ pub fn begin(game: &GameInstall, use_default: bool) -> Option<PersistTx> {
         doc_unreadable,
         warnings,
         shared_explicit_prefixes: Vec::new(),
+        explicit_prefixes_by_root: HashMap::new(),
     })
 }
 
@@ -709,9 +711,24 @@ impl PersistTx {
         self.shared_explicit_prefixes = prefixes;
     }
 
+    pub fn set_explicit_namespace_prefixes_for_root(
+        &mut self,
+        root_path: PathBuf,
+        prefixes: Vec<String>,
+    ) {
+        self.explicit_prefixes_by_root.insert(root_path, prefixes);
+    }
+
     fn prefix_for(&self, view: &ModPersistView<'_>) -> Option<String> {
         let root = live_mod_root(view, self.mods_root.as_deref())?;
         namespace_prefix_for_root(&root, &self.importer_root)
+    }
+
+    fn explicit_prefixes_for(&self, view: &ModPersistView<'_>) -> Vec<String> {
+        self.explicit_prefixes_by_root
+            .get(view.root_path)
+            .cloned()
+            .unwrap_or_else(|| explicit_namespace_prefixes_for_root(view.root_path))
     }
 
     fn prefixes_for(&self, view: &ModPersistView<'_>) -> Vec<String> {
@@ -719,7 +736,7 @@ impl PersistTx {
         if let Some(prefix) = self.prefix_for(view) {
             prefixes.push(prefix);
         }
-        for prefix in explicit_namespace_prefixes_for_root(view.root_path) {
+        for prefix in self.explicit_prefixes_for(view) {
             if self.is_shared_explicit_prefix(&prefix) {
                 continue;
             }
@@ -731,6 +748,13 @@ impl PersistTx {
             }
         }
         prefixes
+    }
+
+    fn shared_explicit_prefixes_for(&self, view: &ModPersistView<'_>) -> Vec<String> {
+        self.explicit_prefixes_for(view)
+            .into_iter()
+            .filter(|prefix| self.is_shared_explicit_prefix(prefix))
+            .collect()
     }
 
     fn is_shared_explicit_prefix(&self, prefix: &str) -> bool {
@@ -768,7 +792,22 @@ impl PersistTx {
         for prefix in &prefixes {
             removed.extend(self.doc.take_prefix_full(prefix));
         }
-        if removed.is_empty() {
+        let mut copied_shared = Vec::new();
+        if mode == CaptureMode::Stash {
+            for prefix in self.shared_explicit_prefixes_for(view) {
+                for (key, value) in self.doc.read_prefix_full(&prefix) {
+                    if removed
+                        .iter()
+                        .chain(copied_shared.iter())
+                        .any(|(existing, _)| keys_ci_equal(existing, &key))
+                    {
+                        continue;
+                    }
+                    copied_shared.push((key, value));
+                }
+            }
+        }
+        if removed.is_empty() && copied_shared.is_empty() {
             // Empty reads are not a reliable "user wiped every setting" signal. During a
             // mod switch, the running importer may not have saved the just-restored live
             // values yet, so overwriting an existing stash here can destroy the only good
@@ -779,6 +818,7 @@ impl PersistTx {
             let source_prefix = prefixes[0].clone();
             let full_entries: Vec<StashEntry> = removed
                 .iter()
+                .chain(copied_shared.iter())
                 .map(|(key, value)| StashEntry {
                     key: key.clone(),
                     value: value.clone(),
@@ -2407,6 +2447,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             doc_unreadable: false,
             warnings: Vec::new(),
             shared_explicit_prefixes: Vec::new(),
+            explicit_prefixes_by_root: HashMap::new(),
         };
         (root, mods, tx)
     }
@@ -2480,7 +2521,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     }
 
     #[test]
-    fn capture_live_skips_shared_explicit_namespace_entries() {
+    fn capture_live_copies_shared_explicit_namespace_entries_without_taking_them() {
         let temp = tempfile::tempdir().unwrap();
         let (_root, mods, mut tx) = tx_for(&temp);
         tx.set_shared_explicit_prefixes(vec!["$\\rabbitfx\\".to_string()]);
@@ -2507,7 +2548,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(!text.contains("$\\mods\\rabbit addon\\mod.ini\\enabled"));
         let stash = read_stash(&mod_root).unwrap();
         assert!(
-            !stash
+            stash
                 .full_entries
                 .iter()
                 .any(|entry| entry.key == "$\\rabbitfx\\quality")
@@ -2984,6 +3025,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             doc_unreadable: true,
             warnings: vec!["skipped".to_string()],
             shared_explicit_prefixes: Vec::new(),
+            explicit_prefixes_by_root: HashMap::new(),
         };
         let mod_root = mods.join("Any");
         std::fs::create_dir_all(&mod_root).unwrap();
