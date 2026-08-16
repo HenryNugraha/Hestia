@@ -487,7 +487,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "取消链接", // LibraryUnlink
     "GameBanana 页面", // LibraryGameBananaPage
     "链接到 GameBanana 以启用更新跟踪和元数据同步。", // LibraryLinkGameBananaPrompt
-    "URL 或 ID", // LibraryUrlOrId
+    "GameBanana URL 或 ID", // LibraryUrlOrId
     "同步 Mod", // LibrarySyncMod
     "更新偏好：", // LibraryUpdatePreferences
     "正在与 GameBanana 同步…", // LibrarySyncingGameBanana
@@ -767,4 +767,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "下一张图片", // OverlayNextImage
     "图片已复制到剪贴板", // OverlayImageCopied
     "无法复制图片", // OverlayCouldNotCopyImage
+    "模组配置", // LibraryShowModConfig
+    "在此模组的 .ini 文件中未找到快捷键。", // LibraryModConfigEmpty
+    "关联模组", // LibraryLinkMod
 ];

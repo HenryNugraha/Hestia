@@ -194,6 +194,9 @@ pub struct HestiaApp {
     mod_detail_edit_target_id: Option<String>,
     mod_detail_rename_focus_target_id: Option<String>,
     mod_detail_edit_name: String,
+    mod_config_target_id: Option<String>,
+    mod_config_cache: Vec<ModConfigIni>,
+    mod_config_focus_requested: bool,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
     #[cfg(windows)]
@@ -258,6 +261,8 @@ pub struct HestiaApp {
     browse_state: BrowseState,
     my_mod_overlay_images: Vec<MyModOverlayImage>,
     my_mod_source_expanded: bool,
+    mod_detail_source_focus_pending: bool,
+    mod_detail_source_glow_start: Option<f64>,
     game_icon_textures: HashMap<String, egui::TextureHandle>,
     tool_icon_textures: HashMap<String, egui::TextureHandle>,
     game_cover_textures: HashMap<String, egui::TextureHandle>,

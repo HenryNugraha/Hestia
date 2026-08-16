@@ -7862,6 +7862,105 @@ impl HestiaApp {
         }
     }
 
+    /// Read-only viewer for a mod's 3DMigoto keybind/toggle config ("Show Mod Config").
+    /// Renders the sections cached in `mod_config_cache` when a target mod is set; the
+    /// window closes itself (clearing the target) when the user dismisses it.
+    fn render_mod_config_window(&mut self, ctx: &egui::Context) {
+        let Some(target_id) = self.mod_config_target_id.clone() else {
+            return;
+        };
+        let Some(mod_entry) = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == target_id)
+        else {
+            self.mod_config_target_id = None;
+            self.mod_config_cache.clear();
+            return;
+        };
+        let text = self.text();
+        let title = mod_entry
+            .metadata
+            .user
+            .title
+            .clone()
+            .unwrap_or_else(|| mod_entry.folder_name.clone());
+        let inis = &self.mod_config_cache;
+        let mut open = true;
+        let response = egui::Window::new(icon_text_sized(
+            Icon::FileCog,
+            &format!("{} — {title}", text.show_mod_config()),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new(("mod_config_window", target_id.as_str())))
+        .order(egui::Order::Foreground)
+        .open(&mut open)
+        .default_size(egui::vec2(470.0, 520.0))
+        .min_width(320.0)
+        .max_width(640.0)
+        .collapsible(true)
+        .resizable(true)
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            if inis.is_empty() {
+                ui.add_space(6.0);
+                ui.label(RichText::new(text.mod_config_empty()).color(Color32::from_gray(170)));
+                return;
+            }
+            ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let multiple = inis.len() > 1;
+                    for (index, ini) in inis.iter().enumerate() {
+                        if multiple {
+                            if index > 0 {
+                                ui.add_space(12.0);
+                            }
+                            ui.label(
+                                RichText::new(&ini.rel_path)
+                                    .strong()
+                                    .size(13.0)
+                                    .color(Color32::from_gray(205)),
+                            );
+                        }
+                        for section in &ini.sections {
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(&section.header)
+                                    .monospace()
+                                    .color(Color32::from_rgb(214, 158, 92)),
+                            );
+                            for line in &section.lines {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.add_space(10.0);
+                                    ui.label(
+                                        RichText::new(line)
+                                            .monospace()
+                                            .size(12.5)
+                                            .color(Color32::from_gray(212)),
+                                    );
+                                });
+                            }
+                        }
+                    }
+                });
+        });
+
+        if self.mod_config_focus_requested {
+            if let Some(inner) = response {
+                ctx.move_to_top(inner.response.layer_id);
+            }
+            self.mod_config_focus_requested = false;
+        }
+
+        if !open {
+            self.mod_config_target_id = None;
+            self.mod_config_cache.clear();
+        }
+    }
+
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {
         let text = self.text();
         // Use the available rect and extend it to fill the pane
@@ -7950,6 +8049,10 @@ impl HestiaApp {
             return;
         }
 
+        // The Mod Config window is bound to the mod it was opened for, not the current
+        // selection, so it survives closing or reopening the detail window.
+        self.render_mod_config_window(ui.ctx());
+
         let Some(selected) = self.selected_mod().cloned() else {
             self.render_browse_file_prompt(ui.ctx(), details_rect);
             return;
@@ -8033,40 +8136,243 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         ui.scope(|ui| {
                             ui.spacing_mut().button_padding = egui::vec2(0.0, 0.0);
-                            ui.spacing_mut().item_spacing.x = 4.0;
 
-                            let edit_btn = ui.add(
-                                egui::Button::new(icon_rich(
-                                    Icon::Pencil,
-                                    9.0,
-                                    Color32::from_gray(160),
-                                ))
-                                .frame(false),
+                            let gb_link =
+                                selected.source.as_ref().and_then(|s| s.gamebanana.as_ref());
+                            let gb_id = gb_link.map(|link| link.mod_id).unwrap_or(0);
+                            let gb_is_tool =
+                                gb_link.is_some_and(|link| gamebanana::is_tool_url(&link.url));
+
+                            let (menu_rect, menu_btn) =
+                                ui.allocate_exact_size(egui::vec2(26.0, 22.0), Sense::click());
+                            // Drive the animation off `contains_pointer` (not `hovered`) so it
+                            // holds steady through a click instead of dipping while the button
+                            // is held down or the popup opens.
+                            let hover_t = ui.ctx().animate_bool_with_time(
+                                ui.id().with(("mod_detail_menu_hover", &selected.id)),
+                                menu_btn.contains_pointer(),
+                                0.14,
                             );
-                            edit_btn.clone().on_hover_text(text.rename_shortcut());
-                            if edit_btn
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                self.start_selected_mod_rename();
+                            if hover_t > 0.0 {
+                                ui.painter().rect_filled(
+                                    menu_rect,
+                                    egui::CornerRadius::same(6),
+                                    Color32::from_white_alpha((32.0 * hover_t) as u8),
+                                );
                             }
-                            let open_folder_btn = ui.add(
-                                egui::Button::new(icon_rich(
-                                    Icon::FolderOpen,
-                                    9.0,
-                                    Color32::from_gray(160),
-                                ))
-                                .frame(false),
+                            ui.painter().text(
+                                menu_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                icon_char(Icon::Ellipsis),
+                                egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                                Color32::from_gray((150.0 + 85.0 * hover_t) as u8),
                             );
-                            open_folder_btn
-                                .clone()
-                                .on_hover_text(text.file_explorer());
-                            if open_folder_btn
+                            let menu_btn = menu_btn
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                let _ = open_in_explorer(&selected.root_path);
-                            }
+                                .on_hover_text(text.more());
+                            egui::Popup::menu(&menu_btn)
+                                .id(ui.id().with(("mod_detail_actions", &selected.id)))
+                                .width(196.0)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                .show(|ui| {
+                                    ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::Pencil,
+                                            text.rename(),
+                                            13.0,
+                                            13.0,
+                                        ))
+                                        .on_hover_text(text.rename_shortcut())
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        self.start_selected_mod_rename();
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FolderOpen,
+                                            text.open_in_file_explorer(),
+                                            13.0,
+                                            13.0,
+                                        ))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        let _ = open_in_explorer(&selected.root_path);
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(icon_text_sized(
+                                            Icon::FileCog,
+                                            text.show_mod_config(),
+                                            13.0,
+                                            13.0,
+                                        ))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        self.mod_config_target_id = Some(selected.id.clone());
+                                        self.mod_config_cache =
+                                            parse_mod_config_inis(&selected.root_path);
+                                        self.mod_config_focus_requested = true;
+                                        ui.close();
+                                    }
+
+                                    if gb_id > 0 {
+                                        ui.separator();
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::RefreshCw,
+                                                text.resync(),
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                                let source = mod_entry
+                                                    .source
+                                                    .get_or_insert_with(ModSourceData::default);
+                                                source.gamebanana = Some(GameBananaLink {
+                                                    mod_id: gb_id,
+                                                    url: gamebanana::browser_url_typed(
+                                                        gb_id, gb_is_tool,
+                                                    ),
+                                                });
+                                                source.history.updated_at = Some(Utc::now());
+                                                let _ = xxmi::save_mod_metadata(mod_entry);
+                                            }
+                                            self.queue_update_check_for_mod(&selected.id);
+                                            self.set_message_ok(text.syncing_gamebanana());
+                                            self.save_state();
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Globe,
+                                                text.gamebanana_page(),
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            if let Err(err) = open_external_url(
+                                                &gamebanana::browser_url_typed(gb_id, gb_is_tool),
+                                            ) {
+                                                self.report_error(
+                                                    err,
+                                                    Some(text.app_could_not_open_browser()),
+                                                );
+                                            }
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Compass,
+                                                "Hestia's Browse tab",
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            if gb_is_tool {
+                                                ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                                    gamebanana::browser_url_typed(gb_id, true),
+                                                ));
+                                            } else {
+                                                self.open_linked_mod_in_browse(gb_id);
+                                            }
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Copy,
+                                                text.copy_gamebanana_id(),
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            ui.ctx().copy_text(gb_id.to_string());
+                                            self.set_message_ok(text.gamebanana_id_copied());
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Link2Off,
+                                                text.unlink(),
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                                if let Some(source) = mod_entry.source.as_mut() {
+                                                    source.gamebanana = None;
+                                                    mod_entry.update_state =
+                                                        ModUpdateState::Unlinked;
+                                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                                }
+                                            }
+                                            self.save_state();
+                                            ui.close();
+                                        }
+                                    } else {
+                                        ui.separator();
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Link,
+                                                text.link_mod(),
+                                                13.0,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            self.my_mod_source_expanded = true;
+                                            self.mod_detail_source_focus_pending = true;
+                                            ui.ctx().request_repaint();
+                                            ui.close();
+                                        }
+                                    }
+
+                                    ui.separator();
+                                    let delete_locked = self
+                                        .mod_action_lock_reason_by_id(
+                                            &selected.id,
+                                            ModMutationKind::Delete,
+                                        )
+                                        .is_some();
+                                    let delete_response = ui.add_enabled(
+                                        !delete_locked,
+                                        egui::Button::new(icon_text_sized(
+                                            Icon::Trash2,
+                                            text.delete(),
+                                            13.0,
+                                            13.0,
+                                        )),
+                                    );
+                                    let delete_response = if delete_locked {
+                                        delete_response.on_disabled_hover_text(
+                                            text.mods_locked_probably_by_game(),
+                                        )
+                                    } else {
+                                        delete_response
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    };
+                                    if delete_response.clicked() {
+                                        self.delete_mod_by_id(&selected.id);
+                                        ui.close();
+                                    }
+                                });
                         });
                     }
                 });
@@ -9341,6 +9647,7 @@ impl HestiaApp {
 
                     if self.my_mod_source_expanded {
                         ui.add_space(8.0);
+                        let mut source_group_rect: Option<egui::Rect> = None;
                         let column_spacing = ui.spacing().item_spacing.x;
                         let column_width = ((ui.available_width() - column_spacing) / 2.0).max(0.0);
                         ui.horizontal_top(|ui| {
@@ -9400,7 +9707,7 @@ impl HestiaApp {
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
                                 static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
-                                ui.group(|ui| {
+                                let source_group_response = ui.group(|ui| {
                                     let mut changed = false;
                                     let mut link_and_sync_id: Option<(u64, bool)> = None;
                                     let mut unlink_requested = false;
@@ -9501,27 +9808,30 @@ impl HestiaApp {
                                             ui.add_space(2.0);
                                         } else {
                                             static_label(ui, RichText::new(text.link_gamebanana_prompt()).small().color(Color32::from_gray(160)));
-                                            ui.horizontal(|ui| {
-                                                let input_w = ((ui.available_width() - 84.0) / 2.0) * 1.2;
-                                                ui.add(
-                                                    TextEdit::singleline(&mut input_str)
-                                                        .hint_text(RichText::new(text.url_or_id()).color(Color32::from_gray(120)))
-                                                        .desired_width(input_w)
-                                                        .margin(egui::Margin::same(6))
-                                                );
-                                                ui.add_space(-6.0);
-                                                let parsed_link = parse_gb_link(&input_str);
-                                                if ui
-                                                    .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .clicked()
-                                                {
-                                                    if let Some(link) = parsed_link {
-                                                        link_and_sync_id = Some(link);
-                                                        input_str.clear();
-                                                    }
+                                            ui.add_space(4.0);
+                                            // Fill the section's fixed-width column. Clamp with plain
+                                            // literals so egui's sizing pass (which can report an
+                                            // unbounded available width) can't feed desired_width back
+                                            // into itself and grow the field without bound.
+                                            let input_w = (ui.available_width() - 12.0).clamp(80.0, 320.0);
+                                            ui.add(
+                                                TextEdit::singleline(&mut input_str)
+                                                    .hint_text(RichText::new(text.url_or_id()).color(Color32::from_gray(120)))
+                                                    .desired_width(input_w)
+                                                    .margin(egui::Margin::same(6))
+                                            );
+                                            ui.add_space(6.0);
+                                            let parsed_link = parse_gb_link(&input_str);
+                                            if ui
+                                                .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                if let Some(link) = parsed_link {
+                                                    link_and_sync_id = Some(link);
+                                                    input_str.clear();
                                                 }
-                                            });
+                                            }
                                         }
 
                                         let show_prefs = is_linked;
@@ -9665,10 +9975,41 @@ impl HestiaApp {
                                         self.save_state();
                                     }
                                 });
+                                source_group_rect = Some(source_group_response.response.rect);
                             },
                             );
                         });
+
+                        if let Some(source_rect) = source_group_rect {
+                            // "Link Mod" asked us to bring this section into view: animate the
+                            // scroll first, then glow the box briefly once we've arrived.
+                            if self.mod_detail_source_focus_pending {
+                                self.mod_detail_source_focus_pending = false;
+                                ui.scroll_to_rect_animation(
+                                    source_rect.expand(8.0),
+                                    Some(egui::Align::Center),
+                                    egui::style::ScrollAnimation::duration(0.28),
+                                );
+                                self.mod_detail_source_glow_start = Some(ui.input(|i| i.time));
+                                ui.ctx().request_repaint();
+                            }
+                            if let Some(start) = self.mod_detail_source_glow_start {
+                                let elapsed = ui.input(|i| i.time) - start;
+                                let glow = source_focus_glow_alpha(elapsed);
+                                if glow > 0.0 {
+                                    paint_source_focus_glow(ui.painter(), source_rect, glow);
+                                    ui.ctx().request_repaint();
+                                } else if elapsed >= SOURCE_FOCUS_GLOW_TOTAL {
+                                    self.mod_detail_source_glow_start = None;
+                                } else {
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
                     }
+                    // Breathing room below the section so the "Link Mod" glow halo clears the
+                    // scroll viewport's bottom edge and the scroll-to-center has room to land.
+                    ui.add_space(24.0);
                     apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
 
@@ -9688,4 +10029,60 @@ impl HestiaApp {
         self.render_browse_screenshot_overlay(ui.ctx());
         self.render_browse_file_prompt(ui.ctx(), details_rect);
     }
+}
+
+/// Total lifetime of the "Link Mod" source-section highlight, in seconds.
+const SOURCE_FOCUS_GLOW_TOTAL: f64 = 1.18;
+
+/// Alpha envelope (0..1) for the source-section highlight triggered by "Link Mod".
+/// The opening window is intentionally silent so the animated scroll lands first;
+/// the glow then ramps up, holds, and fades back out. Returns 0.0 once finished.
+fn source_focus_glow_alpha(elapsed: f64) -> f32 {
+    const SCROLL: f64 = 0.25;
+    const RAMP: f64 = 0.11;
+    const HOLD: f64 = 0.45;
+    const FADE: f64 = 0.35;
+    let t = elapsed - SCROLL;
+    if t < 0.0 {
+        0.0
+    } else if t < RAMP {
+        (t / RAMP) as f32
+    } else if t < RAMP + HOLD {
+        1.0
+    } else if t < RAMP + HOLD + FADE {
+        (1.0 - (t - RAMP - HOLD) / FADE) as f32
+    } else {
+        0.0
+    }
+}
+
+/// Paint a brief accent glow around the source section: a faint fill wash, a soft
+/// outward halo, and a bright core stroke, all scaled by `alpha` (0..1).
+fn paint_source_focus_glow(painter: &egui::Painter, rect: egui::Rect, alpha: f32) {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let accent = Color32::from_rgb(224, 122, 72);
+    let tint = |mul: f32| {
+        Color32::from_rgba_unmultiplied(
+            accent.r(),
+            accent.g(),
+            accent.b(),
+            (alpha * mul).clamp(0.0, 255.0) as u8,
+        )
+    };
+    painter.rect_filled(rect, egui::CornerRadius::same(8), tint(28.0));
+    for i in 1..=3u8 {
+        let grow = 2.0 + f32::from(i) * 3.0;
+        painter.rect_stroke(
+            rect.expand(grow),
+            egui::CornerRadius::same(8 + i * 2),
+            egui::Stroke::new(1.5, tint(70.0 / f32::from(i))),
+            egui::StrokeKind::Outside,
+        );
+    }
+    painter.rect_stroke(
+        rect.expand(1.5),
+        egui::CornerRadius::same(8),
+        egui::Stroke::new(2.0, tint(235.0)),
+        egui::StrokeKind::Outside,
+    );
 }

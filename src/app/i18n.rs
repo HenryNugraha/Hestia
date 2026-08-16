@@ -750,10 +750,13 @@ enum TextKey {
     OverlayNextImage,
     OverlayImageCopied,
     OverlayCouldNotCopyImage,
+    LibraryShowModConfig,
+    LibraryModConfigEmpty,
+    LibraryLinkMod,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::OverlayCouldNotCopyImage as usize + 1;
+    const COUNT: usize = Self::LibraryLinkMod as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2603,6 +2606,18 @@ impl TextCatalog {
 
     fn could_not_add_images(self) -> &'static str {
         self.get(TextKey::LibraryCouldNotAddImages)
+    }
+
+    fn show_mod_config(self) -> &'static str {
+        self.get(TextKey::LibraryShowModConfig)
+    }
+
+    fn mod_config_empty(self) -> &'static str {
+        self.get(TextKey::LibraryModConfigEmpty)
+    }
+
+    fn link_mod(self) -> &'static str {
+        self.get(TextKey::LibraryLinkMod)
     }
 
     fn image_removed(self) -> &'static str {

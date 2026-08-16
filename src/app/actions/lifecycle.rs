@@ -351,6 +351,9 @@ impl HestiaApp {
             mod_detail_edit_target_id: None,
             mod_detail_rename_focus_target_id: None,
             mod_detail_edit_name: String::new(),
+            mod_config_target_id: None,
+            mod_config_cache: Vec::new(),
+            mod_config_focus_requested: false,
             personal_note_edit_target_id: None,
             personal_note_edit_text: String::new(),
             #[cfg(windows)]
@@ -534,6 +537,8 @@ impl HestiaApp {
             reload_spin_until: 0.7,
             reload_was_busy: true,
             my_mod_source_expanded: false,
+            mod_detail_source_focus_pending: false,
+            mod_detail_source_glow_start: None,
             cache_limit_bytes,
             usage_cache_bytes: 0,
             usage_archive_bytes: 0,

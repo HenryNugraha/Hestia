@@ -487,7 +487,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Putus", // LibraryUnlink
     "Halaman GameBanana", // LibraryGameBananaPage
     "Tautkan ke GameBanana agar bisa melacak pembaruan dan sinkronisasi metadata.", // LibraryLinkGameBananaPrompt
-    "URL atau ID", // LibraryUrlOrId
+    "URL atau ID GameBanana", // LibraryUrlOrId
     "Sinkronkan Mod", // LibrarySyncMod
     "Preferensi Pembaruan:", // LibraryUpdatePreferences
     "Menyinkronkan dengan GameBanana…", // LibrarySyncingGameBanana
@@ -767,4 +767,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Gambar berikutnya", // OverlayNextImage
     "Gambar disalin ke papan klip", // OverlayImageCopied
     "Tidak dapat menyalin gambar", // OverlayCouldNotCopyImage
+    "Konfigurasi Mod", // LibraryShowModConfig
+    "Tidak ada keybind yang ditemukan di file .ini mod ini.", // LibraryModConfigEmpty
+    "Tautkan Mod", // LibraryLinkMod
 ];

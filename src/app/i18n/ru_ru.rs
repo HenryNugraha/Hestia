@@ -487,7 +487,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Отвязать", // LibraryUnlink
     "Страница GameBanana", // LibraryGameBananaPage
     "Привяжите мод к GameBanana, чтобы включить отслеживание обновлений и синхронизацию метаданных.", // LibraryLinkGameBananaPrompt
-    "URL или ID", // LibraryUrlOrId
+    "URL или ID GameBanana", // LibraryUrlOrId
     "Синхронизировать мод", // LibrarySyncMod
     "Параметры обновлений:", // LibraryUpdatePreferences
     "Синхронизация с GameBanana…", // LibrarySyncingGameBanana
@@ -766,4 +766,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Следующее изображение", // OverlayNextImage
     "Изображение скопировано в буфер обмена", // OverlayImageCopied
     "Не удалось скопировать изображение", // OverlayCouldNotCopyImage
+    "Настройки мода", // LibraryShowModConfig
+    "В .ini-файлах этого мода не найдено привязок клавиш.", // LibraryModConfigEmpty
+    "Связать мод", // LibraryLinkMod
 ];

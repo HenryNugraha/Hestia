@@ -487,7 +487,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Unlink", // LibraryUnlink
     "GameBanana Page", // LibraryGameBananaPage
     "Link to GameBanana to enable update tracking and metadata sync.", // LibraryLinkGameBananaPrompt
-    "URL or ID", // LibraryUrlOrId
+    "GameBanana URL or ID", // LibraryUrlOrId
     "Sync Mod", // LibrarySyncMod
     "Update Preferences:", // LibraryUpdatePreferences
     "Syncing with GameBanana…", // LibrarySyncingGameBanana
@@ -767,4 +767,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Next image", // OverlayNextImage
     "Image copied to clipboard", // OverlayImageCopied
     "Could not copy image", // OverlayCouldNotCopyImage
+    "Mod Config", // LibraryShowModConfig
+    "No keybinds found in this mod's .ini files.", // LibraryModConfigEmpty
+    "Link Mod", // LibraryLinkMod
 ];
