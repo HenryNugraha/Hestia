@@ -355,6 +355,8 @@ impl HestiaApp {
             mod_config_cache: Vec::new(),
             mod_config_focus_requested: false,
             mod_keybinds_available_cache: HashMap::new(),
+            metadata_hotkeys_view: None,
+            hotkeys_simplified: false,
             personal_note_edit_target_id: None,
             personal_note_edit_text: String::new(),
             #[cfg(windows)]

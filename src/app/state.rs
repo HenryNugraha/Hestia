@@ -199,6 +199,10 @@ pub struct HestiaApp {
     mod_config_focus_requested: bool,
     // mod id -> (ini_hash when computed, whether the mod's .ini has keybind sections)
     mod_keybinds_available_cache: HashMap<String, (Option<String>, bool)>,
+    // (mod id, parsed keybind sections) when "Hotkeys" is shown inline as the source.
+    metadata_hotkeys_view: Option<(String, Vec<ModConfigIni>)>,
+    // Stub toggle for the inline keybind view: false = Detailed, true = Simplified.
+    hotkeys_simplified: bool,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
     #[cfg(windows)]

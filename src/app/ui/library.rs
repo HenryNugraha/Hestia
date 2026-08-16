@@ -662,7 +662,7 @@ fn render_selected_mod_summary(ui: &mut Ui, text: TextCatalog, titles: &[String]
 
 fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
     egui::Frame::new()
-        .fill(Color32::from_rgba_premultiplied(72, 82, 94, 210))
+        .fill(Color32::from_rgba_premultiplied(60, 60, 60, 210))
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(7, 3))
         .show(ui, |ui| {
@@ -673,6 +673,26 @@ fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
             )
         })
         .inner
+}
+
+/// Like [`metadata_info_badge`] but interactive: a click-sensing chip that lightens
+/// on hover and while pressed. Used for badges that open the source-picker dropdown.
+fn metadata_dropdown_badge(ui: &mut Ui, text: &str) -> egui::Response {
+    let text_color = Color32::from_rgb(222, 228, 235);
+    let galley = ui.fonts_mut(|f| {
+        f.layout_no_wrap(text.to_string(), egui::FontId::proportional(11.0), text_color)
+    });
+    let margin = egui::vec2(7.0, 3.0);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + margin * 2.0, Sense::click());
+    let fill = if response.hovered() || response.is_pointer_button_down_on() {
+        Color32::from_rgba_premultiplied(82, 82, 82, 224)
+    } else {
+        Color32::from_rgba_premultiplied(60, 60, 60, 210)
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(6), fill);
+    ui.painter().galley(rect.min + margin, galley, text_color);
+    response
 }
 
 #[derive(Clone, Copy)]
@@ -3217,12 +3237,21 @@ impl HestiaApp {
         };
         metadata_source_row(ui, Icon::AlertCircle, neutral, "GameBanana", gamebanana_tooltip, false, false, false);
 
-        let hotkeys_tooltip = if self.mod_has_keybinds(selected) {
+        let has_keybinds = self.mod_has_keybinds(selected);
+        let hotkeys_tooltip = if has_keybinds {
             "Sourced from the mod's .ini files"
         } else {
             "This mod does not contain any hotkey"
         };
-        metadata_source_row(ui, Icon::Keyboard, neutral, "Hotkeys", hotkeys_tooltip, false, false, false);
+        if metadata_source_row(ui, Icon::Keyboard, neutral, "Hotkeys", hotkeys_tooltip, false, has_keybinds, false) {
+            // Show the mod's keybind config inline as the metadata source (parsed
+            // once here). Selecting any other source clears this transient view.
+            self.metadata_hotkeys_view =
+                Some((selected.id.clone(), parse_mod_config_inis(&selected.root_path)));
+            self.personal_note_edit_target_id = None;
+            self.personal_note_edit_text.clear();
+            ui.close();
+        }
 
         // TODO: Mod Data availability = this mod has persisted `$`-vars saved in the
         // importer's `d3dx_user.ini` (needs reading that file and matching this mod's
@@ -3261,11 +3290,11 @@ impl HestiaApp {
             && metadata_source_row(
                 ui,
                 // Base glyph stays normal (accent); the larger green "+" is overlaid
-                // separately (see `plus_overlay`). Also strip the "+ " from the shared
-                // add-note label (the header add-note button keeps its "+").
+                // separately (see `plus_overlay`). Strip the shared label's "+ " (the
+                // header button keeps it) and add "..." to signal it opens an editor.
                 Icon::File,
                 accent,
-                text.add_note().trim_start_matches("+ "),
+                &format!("{}...", text.add_note().trim_start_matches("+ ")),
                 text.editable_user_note(),
                 false,
                 true,
@@ -3315,6 +3344,7 @@ impl HestiaApp {
     }
 
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
+        self.metadata_hotkeys_view = None;
         let Some(mod_entry) = self
             .state
             .mods
@@ -3347,6 +3377,7 @@ impl HestiaApp {
     }
 
     fn start_personal_note_edit(&mut self, mod_id: &str, initial_text: String) {
+        self.metadata_hotkeys_view = None;
         self.personal_note_edit_target_id = Some(mod_id.to_string());
         self.personal_note_edit_text = initial_text;
     }
@@ -8054,39 +8085,7 @@ impl HestiaApp {
             ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    let multiple = inis.len() > 1;
-                    for (index, ini) in inis.iter().enumerate() {
-                        if multiple {
-                            if index > 0 {
-                                ui.add_space(12.0);
-                            }
-                            ui.label(
-                                RichText::new(&ini.rel_path)
-                                    .strong()
-                                    .size(13.0)
-                                    .color(Color32::from_gray(205)),
-                            );
-                        }
-                        for section in &ini.sections {
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(&section.header)
-                                    .monospace()
-                                    .color(Color32::from_rgb(214, 158, 92)),
-                            );
-                            for line in &section.lines {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.add_space(10.0);
-                                    ui.label(
-                                        RichText::new(line)
-                                            .monospace()
-                                            .size(12.5)
-                                            .color(Color32::from_gray(212)),
-                                    );
-                                });
-                            }
-                        }
-                    }
+                    render_mod_config_sections(ui, inis);
                 });
         });
 
@@ -8101,6 +8100,251 @@ impl HestiaApp {
             self.mod_config_target_id = None;
             self.mod_config_cache.clear();
         }
+    }
+
+    /// The mod detail action (⋯) menu: the button plus its popup of mod actions.
+    fn render_mod_detail_action_menu(&mut self, ui: &mut Ui, selected: &ModEntry) {
+        let text = self.text();
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding = egui::vec2(0.0, 0.0);
+
+            let gb_link =
+                selected.source.as_ref().and_then(|s| s.gamebanana.as_ref());
+            let gb_id = gb_link.map(|link| link.mod_id).unwrap_or(0);
+            let gb_is_tool =
+                gb_link.is_some_and(|link| gamebanana::is_tool_url(&link.url));
+
+            let (menu_rect, menu_btn) =
+                ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::click());
+            // Drive the animation off `contains_pointer` (not `hovered`) so it
+            // holds steady through a click instead of dipping while the button
+            // is held down or the popup opens.
+            let hover_t = ui.ctx().animate_bool_with_time(
+                ui.id().with(("mod_detail_menu_hover", &selected.id)),
+                menu_btn.contains_pointer(),
+                0.14,
+            );
+            if hover_t > 0.0 {
+                ui.painter().rect_filled(
+                    menu_rect,
+                    egui::CornerRadius::same(6),
+                    Color32::from_white_alpha((32.0 * hover_t) as u8),
+                );
+            }
+            ui.painter().text(
+                menu_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon_char(Icon::Ellipsis),
+                egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                Color32::from_gray((150.0 + 85.0 * hover_t) as u8),
+            );
+            let menu_btn = menu_btn
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(text.more());
+            egui::Popup::menu(&menu_btn)
+                .id(ui.id().with(("mod_detail_actions", &selected.id)))
+                .width(196.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+
+                    if ui
+                        .button(icon_text_sized(
+                            Icon::Pencil,
+                            text.rename(),
+                            13.0,
+                            13.0,
+                        ))
+                        .on_hover_text(text.rename_shortcut())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.start_selected_mod_rename();
+                        ui.close();
+                    }
+                    if ui
+                        .button(icon_text_sized(
+                            Icon::FolderOpen,
+                            text.open_in_file_explorer(),
+                            13.0,
+                            13.0,
+                        ))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        let _ = open_in_explorer(&selected.root_path);
+                        ui.close();
+                    }
+                    if ui
+                        .button(icon_text_sized(
+                            Icon::FileCog,
+                            text.show_mod_config(),
+                            13.0,
+                            13.0,
+                        ))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.mod_config_target_id = Some(selected.id.clone());
+                        self.mod_config_cache =
+                            parse_mod_config_inis(&selected.root_path);
+                        self.mod_config_focus_requested = true;
+                        ui.close();
+                    }
+
+                    if gb_id > 0 {
+                        ui.separator();
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::RefreshCw,
+                                text.resync(),
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                let source = mod_entry
+                                    .source
+                                    .get_or_insert_with(ModSourceData::default);
+                                source.gamebanana = Some(GameBananaLink {
+                                    mod_id: gb_id,
+                                    url: gamebanana::browser_url_typed(
+                                        gb_id, gb_is_tool,
+                                    ),
+                                });
+                                source.history.updated_at = Some(Utc::now());
+                                let _ = xxmi::save_mod_metadata(mod_entry);
+                            }
+                            self.queue_update_check_for_mod(&selected.id);
+                            self.set_message_ok(text.syncing_gamebanana());
+                            self.save_state();
+                            ui.close();
+                        }
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::Globe,
+                                text.gamebanana_page(),
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if let Err(err) = open_external_url(
+                                &gamebanana::browser_url_typed(gb_id, gb_is_tool),
+                            ) {
+                                self.report_error(
+                                    err,
+                                    Some(text.app_could_not_open_browser()),
+                                );
+                            }
+                            ui.close();
+                        }
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::Compass,
+                                "Hestia's Browse tab",
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if gb_is_tool {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                    gamebanana::browser_url_typed(gb_id, true),
+                                ));
+                            } else {
+                                self.open_linked_mod_in_browse(gb_id);
+                            }
+                            ui.close();
+                        }
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::Copy,
+                                text.copy_gamebanana_id(),
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(gb_id.to_string());
+                            self.set_message_ok(text.gamebanana_id_copied());
+                            ui.close();
+                        }
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::Link2Off,
+                                text.unlink(),
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                if let Some(source) = mod_entry.source.as_mut() {
+                                    source.gamebanana = None;
+                                    mod_entry.update_state =
+                                        ModUpdateState::Unlinked;
+                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                }
+                            }
+                            self.save_state();
+                            ui.close();
+                        }
+                    } else {
+                        ui.separator();
+                        if ui
+                            .button(icon_text_sized(
+                                Icon::Link,
+                                text.link_mod(),
+                                13.0,
+                                13.0,
+                            ))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.my_mod_source_expanded = true;
+                            self.mod_detail_source_focus_pending = true;
+                            ui.ctx().request_repaint();
+                            ui.close();
+                        }
+                    }
+
+                    ui.separator();
+                    let delete_locked = self
+                        .mod_action_lock_reason_by_id(
+                            &selected.id,
+                            ModMutationKind::Delete,
+                        )
+                        .is_some();
+                    let delete_response = ui.add_enabled(
+                        !delete_locked,
+                        egui::Button::new(icon_text_sized(
+                            Icon::Trash2,
+                            text.delete(),
+                            13.0,
+                            13.0,
+                        )),
+                    );
+                    let delete_response = if delete_locked {
+                        delete_response.on_disabled_hover_text(
+                            text.mods_locked_probably_by_game(),
+                        )
+                    } else {
+                        delete_response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    };
+                    if delete_response.clicked() {
+                        self.delete_mod_by_id(&selected.id);
+                        ui.close();
+                    }
+                });
+        });
     }
 
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {
@@ -8275,247 +8519,6 @@ impl HestiaApp {
                         }
                     } else {
                         ui.heading(&title);
-                        ui.add_space(-4.0);
-                        ui.scope(|ui| {
-                            ui.spacing_mut().button_padding = egui::vec2(0.0, 0.0);
-
-                            let gb_link =
-                                selected.source.as_ref().and_then(|s| s.gamebanana.as_ref());
-                            let gb_id = gb_link.map(|link| link.mod_id).unwrap_or(0);
-                            let gb_is_tool =
-                                gb_link.is_some_and(|link| gamebanana::is_tool_url(&link.url));
-
-                            let (menu_rect, menu_btn) =
-                                ui.allocate_exact_size(egui::vec2(26.0, 22.0), Sense::click());
-                            // Drive the animation off `contains_pointer` (not `hovered`) so it
-                            // holds steady through a click instead of dipping while the button
-                            // is held down or the popup opens.
-                            let hover_t = ui.ctx().animate_bool_with_time(
-                                ui.id().with(("mod_detail_menu_hover", &selected.id)),
-                                menu_btn.contains_pointer(),
-                                0.14,
-                            );
-                            if hover_t > 0.0 {
-                                ui.painter().rect_filled(
-                                    menu_rect,
-                                    egui::CornerRadius::same(6),
-                                    Color32::from_white_alpha((32.0 * hover_t) as u8),
-                                );
-                            }
-                            ui.painter().text(
-                                menu_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                icon_char(Icon::Ellipsis),
-                                egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
-                                Color32::from_gray((150.0 + 85.0 * hover_t) as u8),
-                            );
-                            let menu_btn = menu_btn
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(text.more());
-                            egui::Popup::menu(&menu_btn)
-                                .id(ui.id().with(("mod_detail_actions", &selected.id)))
-                                .width(196.0)
-                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                .show(|ui| {
-                                    ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
-
-                                    if ui
-                                        .button(icon_text_sized(
-                                            Icon::Pencil,
-                                            text.rename(),
-                                            13.0,
-                                            13.0,
-                                        ))
-                                        .on_hover_text(text.rename_shortcut())
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked()
-                                    {
-                                        self.start_selected_mod_rename();
-                                        ui.close();
-                                    }
-                                    if ui
-                                        .button(icon_text_sized(
-                                            Icon::FolderOpen,
-                                            text.open_in_file_explorer(),
-                                            13.0,
-                                            13.0,
-                                        ))
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked()
-                                    {
-                                        let _ = open_in_explorer(&selected.root_path);
-                                        ui.close();
-                                    }
-                                    if ui
-                                        .button(icon_text_sized(
-                                            Icon::FileCog,
-                                            text.show_mod_config(),
-                                            13.0,
-                                            13.0,
-                                        ))
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked()
-                                    {
-                                        self.mod_config_target_id = Some(selected.id.clone());
-                                        self.mod_config_cache =
-                                            parse_mod_config_inis(&selected.root_path);
-                                        self.mod_config_focus_requested = true;
-                                        ui.close();
-                                    }
-
-                                    if gb_id > 0 {
-                                        ui.separator();
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::RefreshCw,
-                                                text.resync(),
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            if let Some(mod_entry) = self.selected_mod_mut() {
-                                                let source = mod_entry
-                                                    .source
-                                                    .get_or_insert_with(ModSourceData::default);
-                                                source.gamebanana = Some(GameBananaLink {
-                                                    mod_id: gb_id,
-                                                    url: gamebanana::browser_url_typed(
-                                                        gb_id, gb_is_tool,
-                                                    ),
-                                                });
-                                                source.history.updated_at = Some(Utc::now());
-                                                let _ = xxmi::save_mod_metadata(mod_entry);
-                                            }
-                                            self.queue_update_check_for_mod(&selected.id);
-                                            self.set_message_ok(text.syncing_gamebanana());
-                                            self.save_state();
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::Globe,
-                                                text.gamebanana_page(),
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            if let Err(err) = open_external_url(
-                                                &gamebanana::browser_url_typed(gb_id, gb_is_tool),
-                                            ) {
-                                                self.report_error(
-                                                    err,
-                                                    Some(text.app_could_not_open_browser()),
-                                                );
-                                            }
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::Compass,
-                                                "Hestia's Browse tab",
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            if gb_is_tool {
-                                                ui.ctx().open_url(egui::OpenUrl::new_tab(
-                                                    gamebanana::browser_url_typed(gb_id, true),
-                                                ));
-                                            } else {
-                                                self.open_linked_mod_in_browse(gb_id);
-                                            }
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::Copy,
-                                                text.copy_gamebanana_id(),
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            ui.ctx().copy_text(gb_id.to_string());
-                                            self.set_message_ok(text.gamebanana_id_copied());
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::Link2Off,
-                                                text.unlink(),
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            if let Some(mod_entry) = self.selected_mod_mut() {
-                                                if let Some(source) = mod_entry.source.as_mut() {
-                                                    source.gamebanana = None;
-                                                    mod_entry.update_state =
-                                                        ModUpdateState::Unlinked;
-                                                    let _ = xxmi::save_mod_metadata(mod_entry);
-                                                }
-                                            }
-                                            self.save_state();
-                                            ui.close();
-                                        }
-                                    } else {
-                                        ui.separator();
-                                        if ui
-                                            .button(icon_text_sized(
-                                                Icon::Link,
-                                                text.link_mod(),
-                                                13.0,
-                                                13.0,
-                                            ))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            self.my_mod_source_expanded = true;
-                                            self.mod_detail_source_focus_pending = true;
-                                            ui.ctx().request_repaint();
-                                            ui.close();
-                                        }
-                                    }
-
-                                    ui.separator();
-                                    let delete_locked = self
-                                        .mod_action_lock_reason_by_id(
-                                            &selected.id,
-                                            ModMutationKind::Delete,
-                                        )
-                                        .is_some();
-                                    let delete_response = ui.add_enabled(
-                                        !delete_locked,
-                                        egui::Button::new(icon_text_sized(
-                                            Icon::Trash2,
-                                            text.delete(),
-                                            13.0,
-                                            13.0,
-                                        )),
-                                    );
-                                    let delete_response = if delete_locked {
-                                        delete_response.on_disabled_hover_text(
-                                            text.mods_locked_probably_by_game(),
-                                        )
-                                    } else {
-                                        delete_response
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    };
-                                    if delete_response.clicked() {
-                                        self.delete_mod_by_id(&selected.id);
-                                        ui.close();
-                                    }
-                                });
-                        });
                     }
                 });
                 let linked = selected.source.as_ref().and_then(|s| s.gamebanana.as_ref()).is_some();
@@ -8549,6 +8552,8 @@ impl HestiaApp {
                             .size(12.0)
                             .color(Color32::from_gray(176)),
                     );
+                    ui.add_space(-7.0);
+                    self.render_mod_detail_action_menu(ui, &selected);
                 });
                 ui.add_space(-4.0);
                 ui.horizontal(|ui| {
@@ -9274,6 +9279,10 @@ impl HestiaApp {
                         selected.metadata.extracted.readme_path.as_deref()
                             == Some(personal_note_source_path.as_str())
                             || personal_note_editing;
+                    let hotkeys_view_active = self
+                        .metadata_hotkeys_view
+                        .as_ref()
+                        .is_some_and(|(mod_id, _)| mod_id == &selected.id);
                     let can_offer_personal_note_choice = !linked
                         && personal_note_source.is_none()
                         && !selected.metadata.extracted.text_sources.is_empty();
@@ -9368,6 +9377,7 @@ impl HestiaApp {
                     if show_metadata
                         && (extracted_markdown.is_some()
                             || personal_note_editing
+                            || hotkeys_view_active
                             || (can_add_personal_note
                                 && matches!(
                                     self.state.static_prefs.metadata_visibility,
@@ -9409,7 +9419,79 @@ impl HestiaApp {
                                         .and_then(|name| name.to_str())
                                         .unwrap_or(source)
                                 });
-                                if personal_note_selected {
+                                if hotkeys_view_active {
+                                    let source_response =
+                                        metadata_dropdown_badge(ui, "Hotkeys ▾")
+                                            .on_hover_text("Sourced from the mod's .ini files")
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
+                                    egui::Popup::menu(&source_response)
+                                        .id(popup_id)
+                                        .width(METADATA_SOURCE_POPUP_WIDTH)
+                                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                        .show(|ui| {
+                                            self.render_metadata_source_list(
+                                                ui,
+                                                &selected,
+                                                &personal_note_source_path,
+                                                can_offer_personal_note_choice,
+                                            );
+                                        });
+
+                                    // Stub: single cycling toggle for the keybind view
+                                    // (Detail <-> Simple). Flips state; no effect yet.
+                                    // Neutral when idle, accent only on hover/press so it
+                                    // isn't distracting. No leading add_space so it sits at
+                                    // the same gap as the section label -> badge.
+                                    let mode_label = if self.hotkeys_simplified {
+                                        "Simple"
+                                    } else {
+                                        "Detail"
+                                    };
+                                    let mut mode_job = LayoutJob::default();
+                                    mode_job.append(
+                                        mode_label,
+                                        0.0,
+                                        TextFormat {
+                                            font_id: egui::FontId::proportional(12.0),
+                                            color: Color32::PLACEHOLDER,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    mode_job.append(
+                                        &icon_char(Icon::ArrowLeftRight).to_string(),
+                                        4.0,
+                                        TextFormat {
+                                            font_id: egui::FontId::new(
+                                                10.0,
+                                                FontFamily::Name(LUCIDE_FAMILY.into()),
+                                            ),
+                                            color: Color32::PLACEHOLDER,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    let mode_galley = ui.fonts_mut(|f| f.layout_job(mode_job));
+                                    let (mode_rect, mode_response) =
+                                        ui.allocate_exact_size(mode_galley.size(), Sense::click());
+                                    let mode_color = if mode_response.hovered()
+                                        || mode_response.is_pointer_button_down_on()
+                                    {
+                                        Color32::from_rgb(224, 130, 82)
+                                    } else {
+                                        Color32::from_gray(120)
+                                    };
+                                    ui.painter().galley(mode_rect.min, mode_galley, mode_color);
+                                    let mode_response = mode_response
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(if self.hotkeys_simplified {
+                                            "Switch to detailed view"
+                                        } else {
+                                            "Switch to simplified view"
+                                        });
+                                    if mode_response.clicked() {
+                                        self.hotkeys_simplified = !self.hotkeys_simplified;
+                                    }
+                                } else if personal_note_selected {
                                     let badge_text = if selected.metadata.extracted.text_sources.len() > 1
                                         || can_offer_personal_note_choice
                                     {
@@ -9417,12 +9499,15 @@ impl HestiaApp {
                                     } else {
                                         text.personal_note()
                                     };
-                                    let mut source_response =
+                                    let note_has_choices = selected.metadata.extracted.text_sources.len() > 1
+                                        || can_offer_personal_note_choice;
+                                    let mut source_response = if note_has_choices {
+                                        metadata_dropdown_badge(ui, badge_text)
+                                    } else {
                                         metadata_info_badge(ui, badge_text)
-                                            .on_hover_text(text.editable_user_note());
-                                    if selected.metadata.extracted.text_sources.len() > 1
-                                        || can_offer_personal_note_choice
-                                    {
+                                    }
+                                    .on_hover_text(text.editable_user_note());
+                                    if note_has_choices {
                                         source_response = source_response
                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                                         let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
@@ -9494,8 +9579,12 @@ impl HestiaApp {
                                     } else {
                                         clamped_source_name
                                     };
-                                    let mut source_response =
-                                        metadata_info_badge(ui, &badge_text).on_hover_text(source);
+                                    let mut source_response = if has_source_choices {
+                                        metadata_dropdown_badge(ui, &badge_text)
+                                    } else {
+                                        metadata_info_badge(ui, &badge_text)
+                                    }
+                                    .on_hover_text(source);
                                     if has_source_choices {
                                         source_response = source_response
                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -9553,7 +9642,11 @@ impl HestiaApp {
                                     }
                                 }
                             });
-                            if personal_note_editing {
+                            if hotkeys_view_active {
+                                if let Some((_, inis)) = &self.metadata_hotkeys_view {
+                                    render_mod_config_sections(ui, inis);
+                                }
+                            } else if personal_note_editing {
                                 self.render_personal_note_editor(ui, &selected.id);
                             } else if let Some(extracted) = extracted_markdown {
                                 let extracted = if personal_note_selected {
@@ -10178,4 +10271,82 @@ fn metadata_source_row(
         text_color,
     );
     enabled && response.clicked()
+}
+
+/// Render parsed 3DMigoto keybind sections into the current `ui` (no scroll area or
+/// empty-state handling — the caller wraps as needed). Shared by the config viewer
+/// window and the inline "Hotkeys" metadata source.
+fn render_mod_config_sections(ui: &mut Ui, inis: &[ModConfigIni]) {
+    for (index, ini) in inis.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(8.0);
+        }
+
+        // Collapsible file header: strip the DISABLED_BY_HESTIA/ prefix and prepend a
+        // triangle showing expand (▶) / collapse (▽) state. The whole row toggles it.
+        let display_path = ini
+            .rel_path
+            .strip_prefix(crate::model::DISABLED_CONTAINER)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(&ini.rel_path);
+        let expand_id = ui.make_persistent_id(("mod_config_file", &ini.rel_path));
+        let mut expanded = ui.data_mut(|d| d.get_temp::<bool>(expand_id).unwrap_or(true));
+        let arrow = if expanded { "▽" } else { "▶" };
+        // Fixed-width arrow slot so the bold path never shifts when the glyph width
+        // changes between ▶ and ▽. The path itself uses the Settings font (bold).
+        let header_inner = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_sized(
+                egui::vec2(12.0, 16.0),
+                egui::Label::new(
+                    RichText::new(arrow).size(11.0).color(Color32::from_gray(165)),
+                )
+                .selectable(false),
+            );
+            ui.add(
+                egui::Label::new(bold(display_path, Some(13.0)).color(Color32::from_gray(212)))
+                    .selectable(false),
+            );
+        });
+        let header_response = ui
+            .interact(header_inner.response.rect, expand_id, Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if header_response.clicked() {
+            expanded = !expanded;
+            ui.data_mut(|d| d.insert_temp(expand_id, expanded));
+        }
+        if !expanded {
+            continue;
+        }
+
+        // Re-indented content (ignoring the source file's own indentation). Lines
+        // within a key section are packed tight; the gap between sections is kept.
+        // No extra space before the first section, so the file header sits close to it.
+        for (section_index, section) in ini.sections.iter().enumerate() {
+            if section_index > 0 {
+                ui.add_space(6.0);
+            }
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    ui.label(
+                        RichText::new(&section.header)
+                            .size(12.5)
+                            .color(Color32::from_rgb(214, 158, 92)),
+                    );
+                });
+                for line in &section.lines {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(26.0);
+                        ui.label(
+                            RichText::new(line)
+                                .size(12.5)
+                                .color(Color32::from_gray(212)),
+                        );
+                    });
+                }
+            });
+        }
+    }
 }
