@@ -9644,7 +9644,11 @@ impl HestiaApp {
                             });
                             if hotkeys_view_active {
                                 if let Some((_, inis)) = &self.metadata_hotkeys_view {
-                                    render_mod_config_sections(ui, inis);
+                                    if self.hotkeys_simplified {
+                                        render_mod_config_simple(ui, inis);
+                                    } else {
+                                        render_mod_config_sections(ui, inis);
+                                    }
                                 }
                             } else if personal_note_editing {
                                 self.render_personal_note_editor(ui, &selected.id);
@@ -10271,6 +10275,236 @@ fn metadata_source_row(
         text_color,
     );
     enabled && response.clicked()
+}
+
+/// Format a 3DMigoto `key = ` value into something readable: drop the `no_*`
+/// modifier noise, title-case ctrl/alt/shift, and map common VK_/OEM_ names.
+fn format_config_key(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return "(unset)".to_string();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for tok in raw.split_whitespace() {
+        let t = tok.to_ascii_lowercase();
+        if t.starts_with("no_") {
+            continue;
+        }
+        parts.push(match t.as_str() {
+            "ctrl" => "Ctrl".to_string(),
+            "alt" => "Alt".to_string(),
+            "shift" => "Shift".to_string(),
+            _ => format_config_key_token(&t),
+        });
+    }
+    if parts.is_empty() {
+        "(unset)".to_string()
+    } else {
+        parts.join("+")
+    }
+}
+
+fn format_config_key_token(t: &str) -> String {
+    let named = match t {
+        "vk_down" => "Down",
+        "vk_up" => "Up",
+        "vk_left" => "Left",
+        "vk_right" => "Right",
+        "vk_return" | "vk_enter" => "Enter",
+        "vk_space" => "Space",
+        "vk_escape" => "Esc",
+        "vk_tab" => "Tab",
+        "vk_back" => "Backspace",
+        "vk_lbutton" => "L-Click",
+        "vk_rbutton" => "R-Click",
+        "vk_mbutton" => "M-Click",
+        "vk_prior" => "PgUp",
+        "vk_next" => "PgDn",
+        "vk_home" => "Home",
+        "vk_end" => "End",
+        "vk_delete" => "Del",
+        "vk_insert" => "Ins",
+        "oem_minus" => "-",
+        "oem_plus" => "=",
+        "oem_1" => ";",
+        "oem_2" => "/",
+        "oem_3" => "`",
+        "oem_4" => "[",
+        "oem_5" => "\\",
+        "oem_6" => "]",
+        "oem_7" => "'",
+        "oem_comma" => ",",
+        "oem_period" => ".",
+        _ => "",
+    };
+    if !named.is_empty() {
+        return named.to_string();
+    }
+    if let Some(f) = t.strip_prefix("vk_f") {
+        if !f.is_empty() && f.chars().all(|c| c.is_ascii_digit()) {
+            return format!("F{f}");
+        }
+    }
+    if let Some(rest) = t.strip_prefix("vk_") {
+        return rest.to_ascii_uppercase();
+    }
+    t.to_ascii_uppercase()
+}
+
+/// A header (already stripped of its `Key` prefix) is "generic" if nothing but
+/// `swap`, separators, and digits remain — e.g. `Swap_5`, `_3`, `12`.
+fn is_generic_swap_header(stripped: &str) -> bool {
+    let compact: String = stripped
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| *c != '_' && *c != ' ')
+        .collect();
+    let rest = compact.strip_prefix("swap").unwrap_or(&compact);
+    rest.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Split a PascalCase/camelCase label into words, keeping short all-caps runs
+/// (acronyms like `HUD`) intact, then capitalize the first letter.
+/// `HairColor` -> `Hair Color`.
+fn split_camel_label(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    for i in 0..chars.len() {
+        let c = chars[i];
+        if i > 0 && c.is_uppercase() {
+            let prev = chars[i - 1];
+            let next = chars.get(i + 1).copied();
+            if prev.is_lowercase()
+                || prev.is_ascii_digit()
+                || (prev.is_uppercase() && next.is_some_and(|n| n.is_lowercase()))
+            {
+                out.push(' ');
+            }
+        }
+        out.push(c);
+    }
+    let out = out.trim().to_string();
+    let mut it = out.chars();
+    match it.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + it.as_str(),
+        None => out,
+    }
+}
+
+/// Simplified keybind view: one line per real cycle toggle (`key -> label ->
+/// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
+/// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
+fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni]) {
+    struct Row {
+        show_ui: bool,
+        key: String,
+        label: String,
+        values: String,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+
+    for ini in inis {
+        for section in &ini.sections {
+            let mut key = "";
+            let mut typ = "";
+            let mut has_run = false;
+            let mut first_var: Option<(&str, &str)> = None;
+            for line in &section.lines {
+                let Some((k, v)) = line.split_once('=') else {
+                    continue;
+                };
+                let (k, v) = (k.trim(), v.trim());
+                if k.eq_ignore_ascii_case("key") {
+                    key = v;
+                } else if k.eq_ignore_ascii_case("type") {
+                    typ = v;
+                } else if k.eq_ignore_ascii_case("run") {
+                    has_run = true;
+                } else if let Some(name) = k.strip_prefix('$') {
+                    if first_var.is_none() {
+                        first_var = Some((name, v));
+                    }
+                }
+            }
+
+            // Hide plumbing (menu commands / mouse buttons) and hold bindings, plus
+            // anything with no cycle variable to toggle.
+            let Some((var_name, values)) = first_var else {
+                continue;
+            };
+            if has_run
+                || typ.eq_ignore_ascii_case("hold")
+                || key.to_ascii_lowercase().contains("button")
+            {
+                continue;
+            }
+
+            let inner = section.header.trim_start_matches('[').trim_end_matches(']');
+            let stripped = inner
+                .strip_prefix("Key")
+                .or_else(|| inner.strip_prefix("key"))
+                .unwrap_or(inner);
+            let label = if is_generic_swap_header(stripped) {
+                format!(
+                    "{} / {}",
+                    stripped.trim_start_matches(|c: char| c == '_' || c == ' '),
+                    var_name
+                )
+            } else {
+                split_camel_label(stripped)
+            };
+
+            let show_ui = matches!(
+                var_name.to_ascii_lowercase().as_str(),
+                "active" | "menu" | "show" | "showmenu" | "show_menu" | "showui" | "ui" | "gui"
+                    | "showgui" | "panel" | "menu_active"
+            ) || matches!(
+                stripped.to_ascii_lowercase().as_str(),
+                "menu" | "active" | "show" | "showmenu" | "ui" | "gui" | "panel"
+            );
+
+            rows.push(Row {
+                show_ui,
+                key: format_config_key(key),
+                label,
+                values: values.to_string(),
+            });
+        }
+    }
+
+    if rows.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("No toggle keys in this mod.")
+                .size(12.5)
+                .color(Color32::from_gray(150)),
+        );
+        return;
+    }
+
+    // Float the "show UI" toggle first (stable within groups).
+    rows.sort_by_key(|row| !row.show_ui);
+
+    ui.add_space(2.0);
+    for row in rows {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            metadata_info_badge(ui, &row.key);
+            ui.label(
+                RichText::new(&row.label)
+                    .size(12.5)
+                    .color(Color32::from_gray(214)),
+            );
+            if !row.values.is_empty() {
+                ui.label(
+                    RichText::new(&row.values)
+                        .size(12.0)
+                        .color(Color32::from_gray(140)),
+                );
+            }
+        });
+        ui.add_space(3.0);
+    }
 }
 
 /// Render parsed 3DMigoto keybind sections into the current `ui` (no scroll area or
