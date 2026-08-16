@@ -197,6 +197,8 @@ pub struct HestiaApp {
     mod_config_target_id: Option<String>,
     mod_config_cache: Vec<ModConfigIni>,
     mod_config_focus_requested: bool,
+    // mod id -> (ini_hash when computed, whether the mod's .ini has keybind sections)
+    mod_keybinds_available_cache: HashMap<String, (Option<String>, bool)>,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
     #[cfg(windows)]

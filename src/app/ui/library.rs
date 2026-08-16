@@ -3172,6 +3172,148 @@ impl HestiaApp {
         true
     }
 
+    /// Whether the mod's `.ini` files contain any 3DMigoto keybind section, cached
+    /// by `ini_hash` so the source picker doesn't walk the mod folder every frame.
+    fn mod_has_keybinds(&mut self, mod_entry: &ModEntry) -> bool {
+        if let Some((hash, has)) = self.mod_keybinds_available_cache.get(&mod_entry.id) {
+            if *hash == mod_entry.ini_hash {
+                return *has;
+            }
+        }
+        let has = !parse_mod_config_inis(&mod_entry.root_path).is_empty();
+        self.mod_keybinds_available_cache
+            .insert(mod_entry.id.clone(), (mod_entry.ini_hash.clone(), has));
+        has
+    }
+
+    /// Body of the metadata source-picker popup (rendered inside its Frame): the
+    /// systemic sources up top, a divider, then the mod's own text files. Beyond
+    /// Personal Note, the systemic entries are stubs for now — visible with their
+    /// glyphs but not yet wired to data. Accent glyphs mark the user's own sources.
+    fn render_metadata_source_list(
+        &mut self,
+        ui: &mut Ui,
+        selected: &ModEntry,
+        personal_note_source_path: &str,
+        can_offer_personal_note_choice: bool,
+    ) {
+        let text = self.text();
+        let accent = Color32::from_rgb(224, 130, 82);
+        let neutral = Color32::from_gray(150);
+
+        // Systemic sources: GameBanana description, Mod keys, Mod config. Stubbed
+        // until wired, but tooltips already reflect real availability. Literal
+        // strings for now; localize once the wording/behavior settles.
+        let gb_linked = selected
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .map(|link| link.mod_id)
+            .is_some_and(|mod_id| mod_id > 0);
+        let gamebanana_tooltip = if gb_linked {
+            "Description from GameBanana page"
+        } else {
+            "Unavailable - link mod to GameBanana first"
+        };
+        metadata_source_row(ui, Icon::AlertCircle, neutral, "GameBanana", gamebanana_tooltip, false, false, false);
+
+        let hotkeys_tooltip = if self.mod_has_keybinds(selected) {
+            "Sourced from the mod's .ini files"
+        } else {
+            "This mod does not contain any hotkey"
+        };
+        metadata_source_row(ui, Icon::Keyboard, neutral, "Hotkeys", hotkeys_tooltip, false, false, false);
+
+        // TODO: Mod Data availability = this mod has persisted `$`-vars saved in the
+        // importer's `d3dx_user.ini` (needs reading that file and matching this mod's
+        // namespace). Stubbed to unavailable until that plumbing exists.
+        let mod_data_available = false;
+        let mod_data_tooltip = if mod_data_available {
+            "Mod's customization config"
+        } else {
+            "There is no customization data saved"
+        };
+        metadata_source_row(ui, Icon::FileSliders, accent, "Mod Data", mod_data_tooltip, false, false, false);
+
+        let selected_path = selected.metadata.extracted.readme_path.as_deref();
+        let note_exists = selected
+            .metadata
+            .extracted
+            .text_sources
+            .iter()
+            .any(|source| source.path == personal_note_source_path);
+        if note_exists {
+            let is_selected = selected_path == Some(personal_note_source_path);
+            if metadata_source_row(
+                ui,
+                Icon::NotebookPen,
+                accent,
+                text.personal_note(),
+                text.editable_user_note(),
+                is_selected,
+                true,
+                false,
+            ) {
+                self.select_extracted_metadata_source(&selected.id, personal_note_source_path);
+                ui.close();
+            }
+        } else if can_offer_personal_note_choice
+            && metadata_source_row(
+                ui,
+                // Base glyph stays normal (accent); the larger green "+" is overlaid
+                // separately (see `plus_overlay`). Also strip the "+ " from the shared
+                // add-note label (the header add-note button keeps its "+").
+                Icon::File,
+                accent,
+                text.add_note().trim_start_matches("+ "),
+                text.editable_user_note(),
+                false,
+                true,
+                true,
+            )
+        {
+            self.start_personal_note_edit(&selected.id, String::new());
+            ui.close();
+        }
+
+        // The mod's own text files, below a divider.
+        let file_sources: Vec<_> = selected
+            .metadata
+            .extracted
+            .text_sources
+            .iter()
+            .filter(|source| source.path != personal_note_source_path)
+            .cloned()
+            .collect();
+        if !file_sources.is_empty() {
+            ui.add_space(3.0);
+            ui.separator();
+            ui.add_space(3.0);
+            for source in file_sources {
+                let is_selected = selected_path == Some(source.path.as_str());
+                let label = if source.label.trim().is_empty() {
+                    source.path.as_str()
+                } else {
+                    source.label.as_str()
+                };
+                let label = clamp_metadata_source_label(label);
+                if metadata_source_row(
+                    ui,
+                    Icon::FileText,
+                    neutral,
+                    &label,
+                    &source.path,
+                    is_selected,
+                    true,
+                    false,
+                ) {
+                    self.select_extracted_metadata_source(&selected.id, &source.path);
+                    ui.close();
+                }
+            }
+        }
+    }
+
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
         let Some(mod_entry) = self
             .state
@@ -9294,65 +9436,12 @@ impl HestiaApp {
                                                 egui::Frame::new()
                                                     .inner_margin(egui::Margin::same(6))
                                                     .show(ui, |ui| {
-                                                        for source in selected.metadata.extracted.text_sources.clone() {
-                                                            let selected_source =
-                                                                selected.metadata.extracted.readme_path.as_deref()
-                                                                    == Some(source.path.as_str())
-                                                                    && source.path == personal_note_source_path;
-                                                            let label = if source.path == personal_note_source_path {
-                                                                text.personal_note()
-                                                            } else if source.label.trim().is_empty() {
-                                                                source.path.as_str()
-                                                            } else {
-                                                                source.label.as_str()
-                                                            };
-                                                            let label = clamp_metadata_source_label(label);
-                                                            let (row_rect, response) = ui.allocate_exact_size(
-                                                                Vec2::new(ui.available_width(), 24.0),
-                                                                Sense::click(),
-                                                            );
-                                                            let response = response
-                                                                .on_hover_text(if source.path == personal_note_source_path {
-                                                                    text.editable_user_note()
-                                                                } else {
-                                                                    source.path.as_str()
-                                                                })
-                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                                            let fill = if selected_source {
-                                                                ui.visuals().selection.bg_fill
-                                                            } else if response.hovered() {
-                                                                ui.visuals().widgets.hovered.bg_fill
-                                                            } else {
-                                                                Color32::TRANSPARENT
-                                                            };
-                                                            if fill != Color32::TRANSPARENT {
-                                                                ui.painter().rect_filled(
-                                                                    row_rect,
-                                                                    egui::CornerRadius::same(4),
-                                                                    fill,
-                                                                );
-                                                            }
-                                                            let text_color = if selected_source {
-                                                                ui.visuals().selection.stroke.color
-                                                            } else {
-                                                                ui.visuals().text_color()
-                                                            };
-                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
-                                                            ui.painter().with_clip_rect(text_rect).text(
-                                                                text_rect.left_center(),
-                                                                egui::Align2::LEFT_CENTER,
-                                                                label.as_str(),
-                                                                egui::FontId::proportional(12.0),
-                                                                text_color,
-                                                            );
-                                                            if response.clicked() {
-                                                                self.select_extracted_metadata_source(
-                                                                    &selected.id,
-                                                                    &source.path,
-                                                                );
-                                                                ui.close();
-                                                            }
-                                                        }
+                                                        self.render_metadata_source_list(
+                                                            ui,
+                                                            &selected,
+                                                            &personal_note_source_path,
+                                                            can_offer_personal_note_choice,
+                                                        );
                                                     });
                                             });
                                     } else {
@@ -9421,93 +9510,12 @@ impl HestiaApp {
                                                 egui::Frame::new()
                                                     .inner_margin(egui::Margin::same(6))
                                                     .show(ui, |ui| {
-                                                        for source in selected.metadata.extracted.text_sources.clone() {
-                                                            let selected_source =
-                                                                selected.metadata.extracted.readme_path.as_deref()
-                                                                    == Some(source.path.as_str());
-                                                            let label = if source.label.trim().is_empty() {
-                                                                source.path.as_str()
-                                                            } else {
-                                                                source.label.as_str()
-                                                            };
-                                                            let label = clamp_metadata_source_label(label);
-                                                            let (row_rect, response) = ui.allocate_exact_size(
-                                                                Vec2::new(ui.available_width(), 24.0),
-                                                                Sense::click(),
-                                                            );
-                                                            let response = response
-                                                                .on_hover_text(if source.path == personal_note_source_path {
-                                                                    text.editable_user_note()
-                                                                } else {
-                                                                    source.path.as_str()
-                                                                })
-                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                                            let fill = if selected_source {
-                                                                ui.visuals().selection.bg_fill
-                                                            } else if response.hovered() {
-                                                                ui.visuals().widgets.hovered.bg_fill
-                                                            } else {
-                                                                Color32::TRANSPARENT
-                                                            };
-                                                            if fill != Color32::TRANSPARENT {
-                                                                ui.painter().rect_filled(
-                                                                    row_rect,
-                                                                    egui::CornerRadius::same(4),
-                                                                    fill,
-                                                                );
-                                                            }
-                                                            let text_color = if selected_source {
-                                                                ui.visuals().selection.stroke.color
-                                                            } else {
-                                                                ui.visuals().text_color()
-                                                            };
-                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
-                                                            ui.painter().with_clip_rect(text_rect).text(
-                                                                text_rect.left_center(),
-                                                                egui::Align2::LEFT_CENTER,
-                                                                label.as_str(),
-                                                                egui::FontId::proportional(12.0),
-                                                                text_color,
-                                                            );
-                                                            if response.clicked() {
-                                                                self.select_extracted_metadata_source(
-                                                                    &selected.id,
-                                                                    &source.path,
-                                                                );
-                                                                ui.close();
-                                                            }
-                                                        }
-                                                        if can_offer_personal_note_choice {
-                                                            let (row_rect, response) = ui.allocate_exact_size(
-                                                                Vec2::new(ui.available_width(), 24.0),
-                                                                Sense::click(),
-                                                            );
-                                                            let response = response
-                                                                .on_hover_text(text.editable_user_note())
-                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                                            if response.hovered() {
-                                                                ui.painter().rect_filled(
-                                                                    row_rect,
-                                                                    egui::CornerRadius::same(4),
-                                                                    ui.visuals().widgets.hovered.bg_fill,
-                                                                );
-                                                            }
-                                                            let text_rect = row_rect.shrink2(Vec2::new(7.0, 0.0));
-                                                            ui.painter().with_clip_rect(text_rect).text(
-                                                                text_rect.left_center(),
-                                                                egui::Align2::LEFT_CENTER,
-                                                                text.add_note(),
-                                                                egui::FontId::proportional(12.0),
-                                                                ui.visuals().text_color(),
-                                                            );
-                                                            if response.clicked() {
-                                                                self.start_personal_note_edit(
-                                                                    &selected.id,
-                                                                    String::new(),
-                                                                );
-                                                                ui.close();
-                                                            }
-                                                        }
+                                                        self.render_metadata_source_list(
+                                                            ui,
+                                                            &selected,
+                                                            &personal_note_source_path,
+                                                            can_offer_personal_note_choice,
+                                                        );
                                                     });
                                             });
                                     } else {
@@ -10085,4 +10093,89 @@ fn paint_source_focus_glow(painter: &egui::Painter, rect: egui::Rect, alpha: f32
         egui::Stroke::new(2.0, tint(235.0)),
         egui::StrokeKind::Outside,
     );
+}
+
+/// Paint one row of the metadata source picker: a leading Lucide glyph, then the
+/// label, with hover/selection fill. Disabled rows (stubs not yet wired to their
+/// data) are dimmed and inert. Returns true only when an enabled row is clicked.
+fn metadata_source_row(
+    ui: &mut Ui,
+    icon: Icon,
+    icon_color: Color32,
+    label: &str,
+    tooltip: &str,
+    is_selected: bool,
+    enabled: bool,
+    plus_overlay: bool,
+) -> bool {
+    let (row_rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), 24.0),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    let response = response.on_hover_text(tooltip);
+    let response = if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
+    let fill = if is_selected {
+        ui.visuals().selection.bg_fill
+    } else if enabled && response.hovered() {
+        ui.visuals().widgets.hovered.bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    if fill != Color32::TRANSPARENT {
+        ui.painter()
+            .rect_filled(row_rect, egui::CornerRadius::same(4), fill);
+    }
+    let icon_color = if enabled {
+        icon_color
+    } else {
+        Color32::from_rgba_unmultiplied(icon_color.r(), icon_color.g(), icon_color.b(), 115)
+    };
+    let icon_center = egui::pos2(row_rect.min.x + 13.0, row_rect.center().y);
+    ui.painter().text(
+        icon_center,
+        egui::Align2::CENTER_CENTER,
+        icon_char(icon),
+        egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+        icon_color,
+    );
+    // A single Lucide glyph can't be two-toned, so "add" rows keep a normal base
+    // glyph and get a larger green "+" overlaid as a badge overhanging the base
+    // glyph's bottom-right corner.
+    if plus_overlay {
+        let plus_color = if enabled {
+            Color32::from_rgb(110, 194, 132)
+        } else {
+            Color32::from_rgba_unmultiplied(110, 194, 132, 115)
+        };
+        ui.painter().text(
+            icon_center + egui::vec2(3.0, 3.0),
+            egui::Align2::CENTER_CENTER,
+            icon_char(Icon::Plus),
+            egui::FontId::new(11.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            plus_color,
+        );
+    }
+    let text_color = if !enabled {
+        Color32::from_gray(120)
+    } else if is_selected {
+        ui.visuals().selection.stroke.color
+    } else {
+        ui.visuals().text_color()
+    };
+    let text_rect = egui::Rect::from_min_max(
+        egui::pos2(row_rect.min.x + 26.0, row_rect.min.y),
+        egui::pos2(row_rect.max.x - 5.0, row_rect.max.y),
+    );
+    ui.painter().with_clip_rect(text_rect).text(
+        text_rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        text_color,
+    );
+    enabled && response.clicked()
 }
