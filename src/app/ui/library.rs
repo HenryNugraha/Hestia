@@ -9512,7 +9512,15 @@ impl HestiaApp {
                         });
 
                     ui.add_space(10.0);
-                    ui.horizontal(|ui| {
+                    // Bottom-align the row so the short controls (Add Note button, the
+                    // List/Raw toggle, the RabbitFX chip) sit on the dropdown header's
+                    // bottom edge instead of floating at its vertical center. Size the row
+                    // to its content the way `ui.horizontal` does (start from
+                    // interact_size.y, let the tall badge grow it); plain `with_layout`
+                    // would claim the full remaining pane height and leave a gap above.
+                    let row_size =
+                        egui::vec2(ui.available_size_before_wrap().x, ui.spacing().interact_size.y);
+                    ui.allocate_ui_with_layout(row_size, egui::Layout::left_to_right(egui::Align::Max), |ui| {
                         // The source dropdown badge IS the section header. Description is
                         // always available, so this is always an interactive dropdown.
                         let badge_text = match effective_source {
