@@ -760,6 +760,45 @@ fn keycap_badge(ui: &mut Ui, text: &str) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+fn hotkey_clear_icon_button(
+    ui: &mut Ui,
+    icon: Icon,
+    idle_color: Color32,
+    hover_color: Color32,
+    hover_fill: Color32,
+    y_offset: f32,
+    tooltip: &str,
+) -> egui::Response {
+    let size = Vec2::splat(18.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let hot = response.hovered() || response.is_pointer_button_down_on();
+    let color = if hot { hover_color } else { idle_color };
+    if hot {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(4), hover_fill);
+    }
+    ui.painter().text(
+        rect.center() + egui::vec2(0.0, y_offset),
+        egui::Align2::CENTER_CENTER,
+        icon_char(icon),
+        egui::FontId::new(11.5, FontFamily::Name(LUCIDE_FAMILY.into())),
+        color,
+    );
+    response
+        .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn hotkey_clear_confirm_label(ui: &mut Ui, text: &str, color: Color32) {
+    let font_id = egui::FontId::proportional(12.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id, color);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + egui::vec2(0.0, 2.0), Sense::hover());
+    ui.painter()
+        .galley(rect.min + egui::vec2(0.0, 2.0), galley, color);
+}
+
 /// The metadata source selector. Styled like the old "Description" section heading
 /// (bold, underlined, gray-195) rather than a filled pill, with a small non-underlined
 /// caret marking it as a dropdown. No background, so it brightens on hover/press. The
@@ -774,7 +813,7 @@ fn metadata_dropdown_badge(ui: &mut Ui, text: &str) -> egui::Response {
     };
     // Header size. Mirrors `bold()`'s Russian down-scaling.
     let label_size = if current_language() == Some(AppLanguage::Russian) {
-        20.0 
+        20.0
     } else {
         20.0
     };
@@ -9702,6 +9741,64 @@ impl HestiaApp {
                                     !self.state.static_prefs.hotkeys_simplified;
                                 self.save_state();
                             }
+                            if self
+                                .hotkey_clear_confirm_target_id
+                                .as_deref()
+                                .is_some_and(|target_id| target_id != selected.id)
+                            {
+                                self.hotkey_clear_confirm_target_id = None;
+                            }
+                            ui.add_space(4.0);
+                            let danger = Color32::from_rgb(218, 70, 70);
+                            let danger_fill = Color32::from_rgb(190, 42, 42);
+                            let armed = self.hotkey_clear_confirm_target_id.as_deref()
+                                == Some(selected.id.as_str());
+                            if armed {
+                                hotkey_clear_confirm_label(
+                                    ui,
+                                    "Clear mod's customization?",
+                                    danger,
+                                );
+                                if hotkey_clear_icon_button(
+                                    ui,
+                                    Icon::Trash2,
+                                    danger,
+                                    Color32::WHITE,
+                                    danger_fill,
+                                    1.0,
+                                    "Clear mod's customization",
+                                )
+                                .clicked()
+                                {
+                                    self.clear_hotkey_customization(&selected.id);
+                                    self.hotkey_clear_confirm_target_id = None;
+                                }
+                                if hotkey_clear_icon_button(
+                                    ui,
+                                    Icon::X,
+                                    Color32::from_gray(145),
+                                    Color32::from_gray(210),
+                                    Color32::from_rgba_premultiplied(82, 86, 92, 90),
+                                    1.0,
+                                    text.cancel(),
+                                )
+                                .clicked()
+                                {
+                                    self.hotkey_clear_confirm_target_id = None;
+                                }
+                            } else if hotkey_clear_icon_button(
+                                ui,
+                                Icon::Eraser,
+                                Color32::from_gray(128),
+                                danger,
+                                Color32::TRANSPARENT,
+                                1.0,
+                                "Clear mod's customization",
+                            )
+                            .clicked()
+                            {
+                                self.hotkey_clear_confirm_target_id = Some(selected.id.clone());
+                            }
                         } else if matches!(effective_source, MetadataSourceKind::TextFile)
                             && personal_note_selected
                         {
@@ -9869,11 +9966,15 @@ impl HestiaApp {
                                         ini_rel_path,
                                         var_name,
                                         value,
+                                        key_spec,
+                                        values,
                                     } => self.set_hotkey_value(
                                         &selected.id,
                                         &ini_rel_path,
                                         &var_name,
                                         &value,
+                                        &key_spec,
+                                        &values,
                                     ),
                                     HotkeyListAction::RunCommand { key_spec, label } => {
                                         self.run_hotkey_command(&selected.id, &key_spec, &label)
@@ -10615,6 +10716,8 @@ enum HotkeyListAction {
         ini_rel_path: String,
         var_name: String,
         value: String,
+        key_spec: String,
+        values: Vec<String>,
     },
     RunCommand {
         key_spec: String,
@@ -10670,6 +10773,13 @@ fn natural_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+fn config_key_has_specific_key(raw: &str) -> bool {
+    raw.split_whitespace().any(|token| {
+        let token = token.to_ascii_lowercase();
+        !token.starts_with("no_") && !matches!(token.as_str(), "ctrl" | "control" | "alt" | "shift")
+    })
+}
+
 /// Parse keybind sections into the simplified "List" rows (one per real cycle
 /// toggle), floating the "show UI" toggle to the top. Shared by the List renderer and
 /// the translation-string collector so the labels stay in sync.
@@ -10713,6 +10823,7 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                 // bindings, and command (`run =`) plumbing.
                 if has_run
                     || typ.eq_ignore_ascii_case("hold")
+                    || !config_key_has_specific_key(key)
                     || key.to_ascii_lowercase().contains("button")
                 {
                     continue;
@@ -10762,7 +10873,7 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                 let uses_vk = key
                     .split_whitespace()
                     .any(|token| token.to_ascii_lowercase().starts_with("vk_"));
-                if name_excluded || uses_vk {
+                if name_excluded || uses_vk || !config_key_has_specific_key(key) {
                     continue;
                 }
                 rows.push(HotkeyListRow {
@@ -10858,7 +10969,9 @@ fn next_hotkey_value(row: &HotkeyListRow, current: Option<&str>) -> Option<Strin
             .iter()
             .position(|value| value.eq_ignore_ascii_case(current.trim()))
     });
-    let next_index = current_index.map_or(0, |index| (index + 1) % row.values.len());
+    let next_index = current_index.map_or((row.values.len() > 1) as usize, |index| {
+        (index + 1) % row.values.len()
+    });
     row.values.get(next_index).cloned()
 }
 
@@ -10944,6 +11057,8 @@ fn render_mod_config_simple(
                         ini_rel_path: row.ini_rel_path.clone(),
                         var_name,
                         value,
+                        key_spec: row.raw_key.clone(),
+                        values: row.values.clone(),
                     });
                 } else if row.is_action {
                     action = Some(HotkeyListAction::RunCommand {
@@ -10961,6 +11076,8 @@ fn render_mod_config_simple(
                         ini_rel_path: row.ini_rel_path.clone(),
                         var_name,
                         value,
+                        key_spec: row.raw_key.clone(),
+                        values: row.values.clone(),
                     });
                 } else if row.is_action {
                     action = Some(HotkeyListAction::RunCommand {
@@ -11012,6 +11129,8 @@ fn render_mod_config_simple(
                             ini_rel_path: row.ini_rel_path.clone(),
                             var_name,
                             value: value.clone(),
+                            key_spec: row.raw_key.clone(),
+                            values: row.values.clone(),
                         });
                     }
                 }

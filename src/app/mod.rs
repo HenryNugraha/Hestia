@@ -132,6 +132,7 @@ impl eframe::App for HestiaApp {
             self.consume_install_events();
             self.consume_refresh_events();
             self.consume_xxmi_reload_events();
+            self.consume_hotkey_customization_events();
             self.consume_profile_events();
         }
         self.complete_startup_launch(ctx);

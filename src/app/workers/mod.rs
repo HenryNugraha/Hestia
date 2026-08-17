@@ -1,5 +1,6 @@
 include!("browse.rs");
 include!("images.rs");
+include!("hotkeys.rs");
 include!("install.rs");
 include!("path_scan.rs");
 include!("refresh.rs");

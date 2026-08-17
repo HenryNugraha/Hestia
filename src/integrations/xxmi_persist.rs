@@ -12,13 +12,15 @@
 //! 3DMigoto parse every `.ini` under `Mods`, including inside the metadata folder.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::DefaultHasher},
     fs,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    time::Duration,
+    thread,
+    time::{Duration, Instant, SystemTime},
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sysinfo::UpdateKind;
@@ -40,6 +42,8 @@ const USER_INI_HEADER: &str = "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT";
 const CONSTANTS_SECTION: &str = "[Constants]";
 const IMPORTER_ROOT_WALK_UP_LEVELS: usize = 4;
 const STASH_FORMAT_VERSION: u32 = 1;
+const LIVE_CLEAR_RELOAD_TIMEOUT: Duration = Duration::from_secs(12);
+const LIVE_CLEAR_RELOAD_POLL: Duration = Duration::from_millis(200);
 
 // ---------------------------------------------------------------------------
 // Case-insensitive key matching
@@ -681,9 +685,7 @@ fn choose_mod_variable_full_key(
     let rel_var_name = normalized_ini_relative_key(ini_rel_path, var_name);
     for prefix in prefixes {
         let expected_direct = format!("{prefix}{var_name}");
-        let expected_relative = rel_var_name
-            .as_ref()
-            .map(|rel| format!("{prefix}{rel}"));
+        let expected_relative = rel_var_name.as_ref().map(|rel| format!("{prefix}{rel}"));
         for key in existing_keys {
             if keys_ci_equal(&key, &expected_direct)
                 || expected_relative
@@ -694,14 +696,16 @@ fn choose_mod_variable_full_key(
             }
         }
     }
-    Some(if folder_prefix.is_some_and(|prefix| keys_ci_equal(prefix, fallback_prefix)) {
-        rel_var_name
-            .as_ref()
-            .map(|rel| format!("{fallback_prefix}{rel}"))
-            .unwrap_or_else(|| format!("{fallback_prefix}{var_name}"))
-    } else {
-        format!("{fallback_prefix}{var_name}")
-    })
+    Some(
+        if folder_prefix.is_some_and(|prefix| keys_ci_equal(prefix, fallback_prefix)) {
+            rel_var_name
+                .as_ref()
+                .map(|rel| format!("{fallback_prefix}{rel}"))
+                .unwrap_or_else(|| format!("{fallback_prefix}{var_name}"))
+        } else {
+            format!("{fallback_prefix}{var_name}")
+        },
+    )
 }
 
 fn collect_explicit_namespace_prefixes(path: &Path, prefixes: &mut Vec<String>) {
@@ -1227,12 +1231,16 @@ pub fn read_mod_variables(
     };
     let view = ModPersistView::from(entry);
     let prefixes = match view.status {
-        ModStatus::Active => {
-            live_mod_prefixes(&importer_root, game.mods_path(use_default).as_deref(), &view)
-        }
-        ModStatus::Disabled | ModStatus::Archived => {
-            mod_prefixes_for_view(&importer_root, game.mods_path(use_default).as_deref(), &view)
-        }
+        ModStatus::Active => live_mod_prefixes(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
+        ModStatus::Disabled | ModStatus::Archived => mod_prefixes_for_view(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
     };
     if prefixes.is_empty() {
         return Ok(HashMap::new());
@@ -1273,12 +1281,16 @@ pub fn set_mod_variable(
     let folder_prefix = live_mod_root(&view, game.mods_path(use_default).as_deref())
         .and_then(|root| namespace_prefix_for_root(&root, &importer_root));
     let prefixes = match view.status {
-        ModStatus::Active => {
-            live_mod_prefixes(&importer_root, game.mods_path(use_default).as_deref(), &view)
-        }
-        ModStatus::Disabled | ModStatus::Archived => {
-            mod_prefixes_for_view(&importer_root, game.mods_path(use_default).as_deref(), &view)
-        }
+        ModStatus::Active => live_mod_prefixes(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
+        ModStatus::Disabled | ModStatus::Archived => mod_prefixes_for_view(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
     };
     let Some(fallback_prefix) = prefixes.first() else {
         return Ok(false);
@@ -1344,6 +1356,272 @@ pub fn set_mod_variable(
     } else {
         Ok(false)
     }
+}
+
+pub fn clear_mod_variables(
+    game: &GameInstall,
+    use_default: bool,
+    entry: &ModEntry,
+) -> Result<bool> {
+    let Some(importer_root) = importer_root_for(game, use_default) else {
+        return Ok(false);
+    };
+    let view = ModPersistView::from(entry);
+    let prefixes = match view.status {
+        ModStatus::Active => live_mod_prefixes(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
+        ModStatus::Disabled | ModStatus::Archived => mod_prefixes_for_view(
+            &importer_root,
+            game.mods_path(use_default).as_deref(),
+            &view,
+        ),
+    };
+    if prefixes.is_empty() {
+        return Ok(false);
+    }
+    if matches!(view.status, ModStatus::Disabled | ModStatus::Archived) {
+        let path = stash_path(&entry.root_path);
+        match fs::remove_file(&path) {
+            Ok(()) => return Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err).context(format!("removing {}", path.display())),
+        }
+    }
+    let Some(mut doc) = UserIniDoc::open(&importer_root)? else {
+        return Ok(false);
+    };
+    for prefix in prefixes {
+        doc.take_prefix_full(&prefix);
+    }
+    if doc.dirty {
+        doc.save_atomic(&importer_root)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UserIniProbe {
+    modified: Option<SystemTime>,
+    len: Option<u64>,
+    hash: u64,
+    matching_entries: usize,
+}
+
+impl UserIniProbe {
+    fn file_changed_from(&self, before: &Self) -> bool {
+        self.modified != before.modified || self.len != before.len || self.hash != before.hash
+    }
+}
+
+fn user_ini_probe(importer_root: &Path, prefixes: &[String]) -> Result<UserIniProbe> {
+    let path = importer_root.join(USER_INI_FILE);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => Some(metadata),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err).context(format!("reading metadata for {}", path.display())),
+    };
+    let modified = metadata.as_ref().and_then(|metadata| metadata.modified().ok());
+    let len = metadata.as_ref().map(|metadata| metadata.len());
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => return Err(err).context(format!("reading {}", path.display())),
+    };
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let hash = hasher.finish();
+    let matching_entries = if bytes.is_empty() {
+        0
+    } else {
+        let text = String::from_utf8(bytes)
+            .map_err(|_| anyhow!("{} is not valid UTF-8", path.display()))?;
+        let doc = UserIniDoc::from_text(&text);
+        prefixes
+            .iter()
+            .map(|prefix| doc.read_prefix_full(prefix).len())
+            .sum()
+    };
+    Ok(UserIniProbe {
+        modified,
+        len,
+        hash,
+        matching_entries,
+    })
+}
+
+fn wait_for_user_ini_update(
+    importer_root: &Path,
+    prefixes: &[String],
+    before: &UserIniProbe,
+    stage: &str,
+    allow_quiet_timeout: bool,
+) -> Result<UserIniProbe> {
+    let started = Instant::now();
+    loop {
+        let current = user_ini_probe(importer_root, prefixes)?;
+        if current.file_changed_from(before) || current.matching_entries != before.matching_entries {
+            return Ok(current);
+        }
+        if started.elapsed() >= LIVE_CLEAR_RELOAD_TIMEOUT {
+            if allow_quiet_timeout {
+                return Ok(current);
+            }
+            bail!(
+                "timed out waiting for {USER_INI_FILE} to update after {stage} reload"
+            );
+        }
+        thread::sleep(LIVE_CLEAR_RELOAD_POLL);
+    }
+}
+
+fn remove_prefixes_from_user_ini(importer_root: &Path, prefixes: &[String]) -> Result<usize> {
+    let Some(mut doc) = UserIniDoc::open(importer_root)? else {
+        return Ok(0);
+    };
+    let mut removed = 0usize;
+    for prefix in prefixes {
+        removed += doc.take_prefix_full(prefix).len();
+    }
+    if doc.dirty {
+        doc.save_atomic(importer_root)?;
+    }
+    Ok(removed)
+}
+
+fn live_clear_temp_path(mods_root: &Path) -> Result<PathBuf> {
+    let parent = mods_root
+        .parent()
+        .ok_or_else(|| anyhow!("mods root has no parent: {}", mods_root.display()))?;
+    let base = parent.join("Mods_HestiaTMP");
+    fs::create_dir_all(&base).context(format!("creating {}", base.display()))?;
+    let stamp = Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| Utc::now().timestamp_millis());
+    for index in 0..100u32 {
+        let candidate = base.join(format!("clear-{stamp}-{index}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!("could not allocate a temporary clear folder under {}", base.display())
+}
+
+fn ensure_reload_was_sent(report: ReloadHotkeyReport, stage: &str) -> Result<String> {
+    if report.message.starts_with("sent ") {
+        Ok(report.message)
+    } else {
+        bail!("{stage} reload was not sent: {}", report.message)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LiveClearReport {
+    pub cleared: bool,
+    pub message: String,
+}
+
+pub fn clear_mod_variables_live_by_reload_rename(
+    game: &GameInstall,
+    use_default: bool,
+    entry: &ModEntry,
+) -> Result<LiveClearReport> {
+    if entry.status != ModStatus::Active {
+        return Ok(LiveClearReport {
+            cleared: false,
+            message: "unchanged; mod is not active".to_string(),
+        });
+    }
+    let Some(importer_root) = importer_root_for(game, use_default) else {
+        return Ok(LiveClearReport {
+            cleared: false,
+            message: "unchanged; importer root was not found".to_string(),
+        });
+    };
+    let Some(mods_root) = game.mods_path(use_default) else {
+        return Ok(LiveClearReport {
+            cleared: false,
+            message: "unchanged; mods root was not found".to_string(),
+        });
+    };
+    let view = ModPersistView::from(entry);
+    let prefixes = live_mod_prefixes(&importer_root, Some(&mods_root), &view);
+    if prefixes.is_empty() {
+        return Ok(LiveClearReport {
+            cleared: false,
+            message: "unchanged; no d3dx_user.ini namespace was found".to_string(),
+        });
+    }
+    let before = user_ini_probe(&importer_root, &prefixes)?;
+    if before.matching_entries == 0 {
+        return Ok(LiveClearReport {
+            cleared: false,
+            message: "unchanged; no saved customization entries were found".to_string(),
+        });
+    }
+
+    let original_root = entry.root_path.clone();
+    let temp_root = live_clear_temp_path(&mods_root)?;
+    fs::rename(&original_root, &temp_root).context(format!(
+        "moving {} to {}",
+        original_root.display(),
+        temp_root.display()
+    ))?;
+
+    let mut restore_needed = true;
+    let result = (|| -> Result<LiveClearReport> {
+        let first_reload = ensure_reload_was_sent(
+            send_reload_hotkey_foreground_aware(game, use_default)?,
+            "hide",
+        )?;
+        let hidden_probe =
+            wait_for_user_ini_update(&importer_root, &prefixes, &before, "hide", false)?;
+        let removed_hidden = remove_prefixes_from_user_ini(&importer_root, &prefixes)?;
+
+        fs::rename(&temp_root, &original_root).context(format!(
+            "moving {} back to {}",
+            temp_root.display(),
+            original_root.display()
+        ))?;
+        restore_needed = false;
+
+        let restore_baseline = user_ini_probe(&importer_root, &prefixes)?;
+        let second_reload = ensure_reload_was_sent(
+            send_reload_hotkey_foreground_aware(game, use_default)?,
+            "restore",
+        )?;
+        let restored_probe = wait_for_user_ini_update(
+            &importer_root,
+            &prefixes,
+            &restore_baseline,
+            "restore",
+            true,
+        )?;
+        let removed_restored = remove_prefixes_from_user_ini(&importer_root, &prefixes)?;
+        let removed_total = removed_hidden + removed_restored;
+        let cleared = removed_total > 0
+            || hidden_probe.matching_entries < before.matching_entries
+            || restored_probe.matching_entries < restore_baseline.matching_entries;
+        Ok(LiveClearReport {
+            cleared,
+            message: format!(
+                "live clear finished; {first_reload}; {second_reload}; removed {removed_total} saved entr{}",
+                if removed_total == 1 { "y" } else { "ies" }
+            ),
+        })
+    })();
+
+    if restore_needed {
+        if fs::rename(&temp_root, &original_root).is_ok() {
+            let _ = send_reload_hotkey_foreground_aware(game, use_default);
+        }
+    }
+    let _ = temp_root.parent().and_then(|parent| fs::remove_dir(parent).ok());
+    result
 }
 
 pub fn user_ini_snapshot_from_metadata(
@@ -3064,6 +3342,80 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let values = read_mod_variables(&game, false, &entry).unwrap();
 
         assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn clear_mod_variables_removes_active_mod_entries_only() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        fs::write(
+            importer_root.join(USER_INI_FILE),
+            "[Constants]\r\n$\\mods\\arcane\\mod.ini\\swap = 2\r\n$\\mods\\other\\mod.ini\\swap = 1\r\n",
+        )
+        .unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Active);
+
+        let cleared = clear_mod_variables(&game, false, &entry).unwrap();
+
+        assert!(cleared);
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(!text.contains("$\\mods\\arcane\\mod.ini\\swap"));
+        assert!(text.contains("$\\mods\\other\\mod.ini\\swap = 1"));
+    }
+
+    #[test]
+    fn user_ini_probe_and_prefix_removal_track_target_mod_only() {
+        let (_temp, importer_root, _mods_root) = test_roots();
+        fs::write(
+            importer_root.join(USER_INI_FILE),
+            "[Constants]\r\n$\\mods\\arcane\\mod.ini\\swap = 2\r\n$\\mods\\arcane\\mod.ini\\color = 1\r\n$\\mods\\other\\mod.ini\\swap = 1\r\n",
+        )
+        .unwrap();
+        let prefixes = vec!["$\\mods\\arcane\\".to_string()];
+
+        let before = user_ini_probe(&importer_root, &prefixes).unwrap();
+        let removed = remove_prefixes_from_user_ini(&importer_root, &prefixes).unwrap();
+        let after = user_ini_probe(&importer_root, &prefixes).unwrap();
+
+        assert_eq!(before.matching_entries, 2);
+        assert_eq!(removed, 2);
+        assert_eq!(after.matching_entries, 0);
+        assert!(after.file_changed_from(&before));
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(!text.contains("$\\mods\\arcane\\"));
+        assert!(text.contains("$\\mods\\other\\mod.ini\\swap = 1"));
+    }
+
+    #[test]
+    fn clear_mod_variables_removes_disabled_mod_stash() {
+        let (_temp, _importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Disabled);
+        set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        let cleared = clear_mod_variables(&game, false, &entry).unwrap();
+
+        assert!(cleared);
+        assert!(read_stash(&entry.root_path).is_none());
+    }
+
+    #[test]
+    fn clear_mod_variables_removes_archived_mod_stash() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let archived_root = importer_root.join("Mods_Archived").join("Arcane");
+        fs::create_dir_all(&archived_root).unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(archived_root, ModStatus::Archived);
+        set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        let cleared = clear_mod_variables(&game, false, &entry).unwrap();
+
+        assert!(cleared);
+        assert!(read_stash(&entry.root_path).is_none());
     }
 
     #[cfg(windows)]

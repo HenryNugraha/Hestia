@@ -187,6 +187,15 @@ impl HestiaApp {
             refresh_result_tx,
         );
         let (xxmi_reload_event_tx, xxmi_reload_event_rx) = worker_channel::<XxmiReloadEvent>();
+        let (hotkey_customization_tx, hotkey_customization_request_rx) =
+            worker_channel::<HotkeyCustomizationRequest>();
+        let (hotkey_customization_event_tx, hotkey_customization_rx) =
+            worker_channel::<HotkeyCustomizationEvent>();
+        spawn_hotkey_customization_worker(
+            &runtime_services,
+            hotkey_customization_request_rx,
+            hotkey_customization_event_tx,
+        );
         let (profile_request_tx, profile_request_rx) = worker_channel::<ProfileRequest>();
         let (profile_reconcile_request_tx, profile_reconcile_request_rx) =
             worker_channel::<ProfileReconcileSpec>();
@@ -357,6 +366,11 @@ impl HestiaApp {
             mod_keybinds_available_cache: HashMap::new(),
             metadata_hotkeys_view: None,
             mod_hotkey_values_cache: HashMap::new(),
+            mod_hotkey_values_loading: HashSet::new(),
+            hotkey_customization_tx,
+            hotkey_customization_rx,
+            hotkey_clear_inflight: HashSet::new(),
+            hotkey_clear_confirm_target_id: None,
             personal_note_edit_target_id: None,
             personal_note_edit_text: String::new(),
             #[cfg(windows)]
@@ -3307,6 +3321,7 @@ impl HestiaApp {
             || !self.install_event_rx.is_empty()
             || !self.refresh_result_rx.is_empty()
             || !self.xxmi_reload_event_rx.is_empty()
+            || !self.hotkey_customization_rx.is_empty()
             || !self.profile_event_rx.is_empty();
 
         self.pending_events.has_worker_events = has_events;

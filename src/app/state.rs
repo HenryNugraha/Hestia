@@ -40,6 +40,70 @@ enum XxmiReloadEvent {
     Failed { game_id: String, message: String },
 }
 
+enum HotkeyCustomizationRequest {
+    LoadValues {
+        game: GameInstall,
+        use_default: bool,
+        entry: ModEntry,
+    },
+    SetValue {
+        game: GameInstall,
+        use_default: bool,
+        entry: ModEntry,
+        ini_rel_path: String,
+        var_name: String,
+        value: String,
+        key_spec: String,
+        steps: Option<usize>,
+        reload_after_write: bool,
+    },
+    Clear {
+        game: GameInstall,
+        use_default: bool,
+        entry: ModEntry,
+        live: bool,
+        reload_after_clear: bool,
+    },
+    RunCommand {
+        game: GameInstall,
+        use_default: bool,
+        mod_id: String,
+        key_spec: String,
+        label: String,
+    },
+}
+
+enum HotkeyCustomizationEvent {
+    ValuesLoaded {
+        mod_id: String,
+        ini_hash: Option<String>,
+        values: HashMap<String, String>,
+    },
+    ValueFinished {
+        game_id: String,
+        folder_name: String,
+        var_name: String,
+        value: String,
+        status: String,
+    },
+    ClearFinished {
+        mod_id: String,
+        game_id: String,
+        folder_name: String,
+        status: String,
+        message: String,
+    },
+    CommandFinished {
+        game_id: String,
+        label: String,
+        message: String,
+    },
+    Failed {
+        mod_id: Option<String>,
+        message: String,
+    },
+}
+
 struct XxmiNamespaceCacheEntry {
     root_path: PathBuf,
     ini_hash: Option<String>,
@@ -203,6 +267,11 @@ pub struct HestiaApp {
     metadata_hotkeys_view: Option<(String, Vec<ModConfigIni>)>,
     // mod id -> (ini_hash when read, persisted customization values from d3dx_user.ini)
     mod_hotkey_values_cache: HashMap<String, (Option<String>, HashMap<String, String>)>,
+    mod_hotkey_values_loading: HashSet<String>,
+    hotkey_customization_tx: WorkerTx<HotkeyCustomizationRequest>,
+    hotkey_customization_rx: WorkerRx<HotkeyCustomizationEvent>,
+    hotkey_clear_inflight: HashSet<String>,
+    hotkey_clear_confirm_target_id: Option<String>,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
     #[cfg(windows)]
