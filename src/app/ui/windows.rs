@@ -2892,6 +2892,10 @@ impl HestiaApp {
                                             &mut self.state.static_prefs.reload_hotkey_triggers.restoring_mods,
                                             text.reload_trigger_label(ReloadHotkeyTrigger::RestoringMods),
                                         );
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.reload_hotkey_triggers.customizing_mods,
+                                            text.reload_trigger_label(ReloadHotkeyTrigger::CustomizingMods),
+                                        );
                                     });
                                 });
                             });
@@ -2903,6 +2907,7 @@ impl HestiaApp {
                                 || self.state.static_prefs.reload_hotkey_triggers.renaming_mods != reload_triggers.renaming_mods
                                 || self.state.static_prefs.reload_hotkey_triggers.archiving_mods != reload_triggers.archiving_mods
                                 || self.state.static_prefs.reload_hotkey_triggers.restoring_mods != reload_triggers.restoring_mods
+                                || self.state.static_prefs.reload_hotkey_triggers.customizing_mods != reload_triggers.customizing_mods
                                 || self.state.static_prefs.reload_hotkey_triggers.profile_switch != reload_triggers.profile_switch
                             {
                                 should_save = true;

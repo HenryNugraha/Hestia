@@ -420,19 +420,31 @@ pub fn restore_mod(
 }
 
 pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
-    if !mod_entry.root_path.exists() {
+    recycle_path(&mod_entry.root_path)
+}
+
+/// Send `path` to the recycle bin, retrying briefly and then falling back to
+/// the native shell operation on Windows.
+///
+/// `trash` collapses every shell-side refusal into a bare "Some operations
+/// were aborted": a file the game still holds open, a volume whose recycle bin
+/// is disabled or too small for the folder, an over-long path. A single
+/// attempt is therefore never a reliable verdict, and callers that can keep
+/// working without the bin should treat a failure here as non-fatal.
+pub fn recycle_path(path: &Path) -> Result<()> {
+    if !path.exists() {
         return Ok(());
     }
 
     let mut trash_err: Option<anyhow::Error> = None;
     for delay_ms in [150_u64, 400, 900] {
-        match trash::delete(&mod_entry.root_path) {
+        match trash::delete(path) {
             Ok(()) => return Ok(()),
             Err(err) => {
-                if !mod_entry.root_path.exists() {
+                if !path.exists() {
                     return Ok(());
                 }
-                if cleanup_metadata_only_mod_dir(&mod_entry.root_path)? {
+                if cleanup_metadata_only_mod_dir(path)? {
                     return Ok(());
                 }
                 trash_err = Some(anyhow!(err));
@@ -445,13 +457,13 @@ pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
     {
         let mut shell_err: Option<anyhow::Error> = None;
         for delay_ms in [150_u64, 400, 900] {
-            match shell_recycle_delete(&mod_entry.root_path) {
+            match shell_recycle_delete(path) {
                 Ok(()) => return Ok(()),
                 Err(err) => {
-                    if !mod_entry.root_path.exists() {
+                    if !path.exists() {
                         return Ok(());
                     }
-                    if cleanup_metadata_only_mod_dir(&mod_entry.root_path)? {
+                    if cleanup_metadata_only_mod_dir(path)? {
                         return Ok(());
                     }
                     shell_err = Some(err);
@@ -782,12 +794,60 @@ fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> Result<Path
     Ok(parent.join("Mods_Archived"))
 }
 
+/// Scratch folders an install leaves behind when it is interrupted or when the
+/// old folder could not be disposed of. They still hold a full mod payload, so
+/// without this they would scan as duplicate mods — and 3dmigoto would load
+/// them alongside the real one.
+fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
+    let name = path.file_name().and_then(OsStr::to_str)?;
+    if name.starts_with(".hestia_old_") {
+        Some(InstallScratch::Retired)
+    } else if name.starts_with(".hestia_tmp_") {
+        Some(InstallScratch::Staging)
+    } else {
+        None
+    }
+}
+
+enum InstallScratch {
+    /// Already swapped out by a Replace install — deleting it is the pending
+    /// disposal finishing late, so it is always safe to remove.
+    Retired,
+    /// An install may still be copying into it right now, so only sweep it once
+    /// it has clearly been abandoned.
+    Staging,
+}
+
+const STALE_STAGING_DIR_AGE: Duration = Duration::from_secs(6 * 60 * 60);
+
+fn staging_dir_is_abandoned(path: &Path) -> bool {
+    let Ok(modified) = fs::metadata(path).and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= STALE_STAGING_DIR_AGE)
+}
+
 fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     let mut mod_dirs = Vec::new();
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
         if !path.is_dir() {
             continue;
+        }
+        match install_scratch_kind(&path) {
+            Some(InstallScratch::Retired) => {
+                let _ = fs::remove_dir_all(&path);
+                continue;
+            }
+            Some(InstallScratch::Staging) => {
+                if staging_dir_is_abandoned(&path) {
+                    let _ = fs::remove_dir_all(&path);
+                }
+                continue;
+            }
+            None => {}
         }
         if mod_dir_has_payload(&path)? {
             mod_dirs.push(path);

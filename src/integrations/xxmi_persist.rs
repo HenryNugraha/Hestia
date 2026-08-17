@@ -567,6 +567,143 @@ pub fn explicit_namespace_prefixes_for_mod_root(mod_root: &Path) -> Vec<String> 
     explicit_namespace_prefixes_for_root(mod_root)
 }
 
+fn live_mod_prefixes(
+    importer_root: &Path,
+    mods_root: Option<&Path>,
+    view: &ModPersistView<'_>,
+) -> Vec<String> {
+    if !is_live(&view.status) {
+        return Vec::new();
+    }
+    let mut prefixes = Vec::new();
+    if let Some(root) = live_mod_root(view, mods_root)
+        && let Some(prefix) = namespace_prefix_for_root(&root, importer_root)
+    {
+        prefixes.push(prefix);
+    }
+    for prefix in explicit_namespace_prefixes_for_root(view.root_path) {
+        if !prefixes
+            .iter()
+            .any(|existing| keys_ci_equal(existing, &prefix))
+        {
+            prefixes.push(prefix);
+        }
+    }
+    prefixes
+}
+
+fn mod_prefixes_for_view(
+    importer_root: &Path,
+    mods_root: Option<&Path>,
+    view: &ModPersistView<'_>,
+) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    if let Some(root) = live_mod_root(view, mods_root)
+        && let Some(prefix) = namespace_prefix_for_root(&root, importer_root)
+    {
+        prefixes.push(prefix);
+    }
+    for prefix in explicit_namespace_prefixes_for_root(view.root_path) {
+        if !prefixes
+            .iter()
+            .any(|existing| keys_ci_equal(existing, &prefix))
+        {
+            prefixes.push(prefix);
+        }
+    }
+    prefixes
+}
+
+fn normalized_var_name(var_name: &str) -> Option<String> {
+    let var_name = var_name.trim().trim_start_matches('$').trim();
+    (!var_name.is_empty()).then(|| var_name.to_string())
+}
+
+fn normalized_ini_relative_key(rel_path: &str, var_name: &str) -> Option<String> {
+    let rel_path = rel_path.trim().trim_matches(['/', '\\']).replace('/', "\\");
+    if rel_path.is_empty() {
+        return None;
+    }
+    Some(format!("{}\\{var_name}", ascii_lowercase(&rel_path)))
+}
+
+fn read_stash_relative_values(stash: &ModStash, prefixes: &[String]) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    for prefix in prefixes {
+        for entry in &stash.full_entries {
+            if let Some(len) = ci_prefix_len(&entry.key, prefix) {
+                values.insert(entry.key[len..].to_string(), entry.value.clone());
+            }
+        }
+    }
+    if values.is_empty() {
+        for entry in &stash.entries {
+            values.insert(entry.key.clone(), entry.value.clone());
+        }
+    }
+    values
+}
+
+fn set_stash_full_entry(
+    stash: &mut ModStash,
+    full_key: String,
+    value: String,
+    legacy_prefix: &str,
+) -> bool {
+    for entry in &mut stash.full_entries {
+        if keys_ci_equal(&entry.key, &full_key) {
+            if entry.value == value {
+                return false;
+            }
+            entry.value = value;
+            stash.entries = full_entries_to_legacy_entries(&stash.full_entries, legacy_prefix);
+            stash.captured_at = Utc::now();
+            return true;
+        }
+    }
+    stash.full_entries.push(StashEntry {
+        key: full_key,
+        value,
+    });
+    stash.entries = full_entries_to_legacy_entries(&stash.full_entries, legacy_prefix);
+    stash.captured_at = Utc::now();
+    true
+}
+
+fn choose_mod_variable_full_key(
+    existing_keys: &[String],
+    prefixes: &[String],
+    folder_prefix: Option<&String>,
+    ini_rel_path: &str,
+    var_name: &str,
+) -> Option<String> {
+    let fallback_prefix = prefixes.first()?;
+    let rel_var_name = normalized_ini_relative_key(ini_rel_path, var_name);
+    for prefix in prefixes {
+        let expected_direct = format!("{prefix}{var_name}");
+        let expected_relative = rel_var_name
+            .as_ref()
+            .map(|rel| format!("{prefix}{rel}"));
+        for key in existing_keys {
+            if keys_ci_equal(&key, &expected_direct)
+                || expected_relative
+                    .as_ref()
+                    .is_some_and(|expected| keys_ci_equal(&key, expected))
+            {
+                return Some(key.clone());
+            }
+        }
+    }
+    Some(if folder_prefix.is_some_and(|prefix| keys_ci_equal(prefix, fallback_prefix)) {
+        rel_var_name
+            .as_ref()
+            .map(|rel| format!("{fallback_prefix}{rel}"))
+            .unwrap_or_else(|| format!("{fallback_prefix}{var_name}"))
+    } else {
+        format!("{fallback_prefix}{var_name}")
+    })
+}
+
 fn collect_explicit_namespace_prefixes(path: &Path, prefixes: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
@@ -1078,6 +1215,135 @@ pub fn apply_user_ini_snapshot(importer_root: &Path, text: &str) -> Result<()> {
         target.display()
     ))?;
     Ok(())
+}
+
+pub fn read_mod_variables(
+    game: &GameInstall,
+    use_default: bool,
+    entry: &ModEntry,
+) -> Result<HashMap<String, String>> {
+    let Some(importer_root) = importer_root_for(game, use_default) else {
+        return Ok(HashMap::new());
+    };
+    let view = ModPersistView::from(entry);
+    let prefixes = match view.status {
+        ModStatus::Active => {
+            live_mod_prefixes(&importer_root, game.mods_path(use_default).as_deref(), &view)
+        }
+        ModStatus::Disabled | ModStatus::Archived => {
+            mod_prefixes_for_view(&importer_root, game.mods_path(use_default).as_deref(), &view)
+        }
+    };
+    if prefixes.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if matches!(view.status, ModStatus::Disabled | ModStatus::Archived) {
+        return Ok(read_stash(&entry.root_path)
+            .as_ref()
+            .map(|stash| read_stash_relative_values(stash, &prefixes))
+            .unwrap_or_default());
+    }
+    let Some(doc) = UserIniDoc::open(&importer_root)? else {
+        return Ok(HashMap::new());
+    };
+    let mut values = HashMap::new();
+    for prefix in prefixes {
+        for (key, value) in doc.read_prefix(&prefix) {
+            values.insert(key, value);
+        }
+    }
+    Ok(values)
+}
+
+pub fn set_mod_variable(
+    game: &GameInstall,
+    use_default: bool,
+    entry: &ModEntry,
+    ini_rel_path: &str,
+    var_name: &str,
+    value: &str,
+) -> Result<bool> {
+    let Some(var_name) = normalized_var_name(var_name) else {
+        return Ok(false);
+    };
+    let Some(importer_root) = importer_root_for(game, use_default) else {
+        return Ok(false);
+    };
+    let view = ModPersistView::from(entry);
+    let folder_prefix = live_mod_root(&view, game.mods_path(use_default).as_deref())
+        .and_then(|root| namespace_prefix_for_root(&root, &importer_root));
+    let prefixes = match view.status {
+        ModStatus::Active => {
+            live_mod_prefixes(&importer_root, game.mods_path(use_default).as_deref(), &view)
+        }
+        ModStatus::Disabled | ModStatus::Archived => {
+            mod_prefixes_for_view(&importer_root, game.mods_path(use_default).as_deref(), &view)
+        }
+    };
+    let Some(fallback_prefix) = prefixes.first() else {
+        return Ok(false);
+    };
+    if matches!(view.status, ModStatus::Disabled | ModStatus::Archived) {
+        let mut stash = read_stash(&entry.root_path).unwrap_or_else(|| ModStash {
+            version: STASH_FORMAT_VERSION,
+            source_prefix: fallback_prefix.clone(),
+            captured_at: Utc::now(),
+            entries: Vec::new(),
+            full_entries: Vec::new(),
+        });
+        if stash.source_prefix.is_empty() {
+            stash.source_prefix = fallback_prefix.clone();
+        }
+        let existing_keys: Vec<String> = stash
+            .full_entries
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect();
+        let Some(full_key) = choose_mod_variable_full_key(
+            &existing_keys,
+            &prefixes,
+            folder_prefix.as_ref(),
+            ini_rel_path,
+            &var_name,
+        ) else {
+            return Ok(false);
+        };
+        let legacy_prefix = stash.source_prefix.clone();
+        let changed = set_stash_full_entry(
+            &mut stash,
+            full_key,
+            value.trim().to_string(),
+            &legacy_prefix,
+        );
+        if changed {
+            write_stash(&entry.root_path, &stash)?;
+        }
+        return Ok(changed);
+    }
+    let mut doc = match UserIniDoc::open(&importer_root)? {
+        Some(doc) => doc,
+        None => UserIniDoc::new_empty(),
+    };
+    let existing_keys: Vec<String> = prefixes
+        .iter()
+        .flat_map(|prefix| doc.read_prefix_full(prefix).into_iter().map(|(key, _)| key))
+        .collect();
+    let Some(full_key) = choose_mod_variable_full_key(
+        &existing_keys,
+        &prefixes,
+        folder_prefix.as_ref(),
+        ini_rel_path,
+        &var_name,
+    ) else {
+        return Ok(false);
+    };
+    doc.merge_full_entries(&[(full_key, value.trim().to_string())]);
+    if doc.dirty {
+        doc.save_atomic(&importer_root)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 pub fn user_ini_snapshot_from_metadata(
@@ -1618,6 +1884,124 @@ fn reload_hotkey_vk(importer_root: &Path) -> u16 {
         }
     }
     DEFAULT
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Default)]
+struct KeySpec {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    key: u16,
+}
+
+#[cfg(windows)]
+fn vk_for_named_token(token: &str) -> Option<u16> {
+    let token = token.to_ascii_lowercase();
+    let name = token.strip_prefix("vk_").unwrap_or(&token);
+    if let Some(number) = name.strip_prefix('f')
+        && let Ok(index) = number.parse::<u16>()
+        && (1..=24).contains(&index)
+    {
+        return Some(0x70 + index - 1);
+    }
+    match name {
+        "back" => Some(0x08),
+        "tab" => Some(0x09),
+        "return" | "enter" => Some(0x0D),
+        "shift" => Some(0x10),
+        "control" | "ctrl" => Some(0x11),
+        "menu" | "alt" => Some(0x12),
+        "escape" | "esc" => Some(0x1B),
+        "space" => Some(0x20),
+        "prior" | "pageup" | "pgup" => Some(0x21),
+        "next" | "pagedown" | "pgdn" => Some(0x22),
+        "end" => Some(0x23),
+        "home" => Some(0x24),
+        "left" => Some(0x25),
+        "up" => Some(0x26),
+        "right" => Some(0x27),
+        "down" => Some(0x28),
+        "insert" | "ins" => Some(0x2D),
+        "delete" | "del" => Some(0x2E),
+        "oem_1" => Some(0xBA),
+        "oem_plus" => Some(0xBB),
+        "oem_comma" => Some(0xBC),
+        "oem_minus" => Some(0xBD),
+        "oem_period" => Some(0xBE),
+        "oem_2" => Some(0xBF),
+        "oem_3" => Some(0xC0),
+        "oem_4" => Some(0xDB),
+        "oem_5" => Some(0xDC),
+        "oem_6" => Some(0xDD),
+        "oem_7" => Some(0xDE),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn vk_for_char_token(token: &str) -> Option<(u16, bool)> {
+    let mut chars = token.chars();
+    let c = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    let shift = c.is_ascii_uppercase();
+    match c.to_ascii_uppercase() {
+        'A'..='Z' => Some((c.to_ascii_uppercase() as u16, shift)),
+        '0'..='9' => Some((c as u16, false)),
+        ' ' => Some((0x20, false)),
+        ';' => Some((0xBA, false)),
+        '=' => Some((0xBB, false)),
+        ',' => Some((0xBC, false)),
+        '-' => Some((0xBD, false)),
+        '.' => Some((0xBE, false)),
+        '/' => Some((0xBF, false)),
+        '`' => Some((0xC0, false)),
+        '[' => Some((0xDB, false)),
+        '\\' => Some((0xDC, false)),
+        ']' => Some((0xDD, false)),
+        '\'' => Some((0xDE, false)),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn parse_key_spec(raw: &str) -> Option<KeySpec> {
+    let mut spec = KeySpec::default();
+    for token in raw.split_whitespace() {
+        let token_lc = token.to_ascii_lowercase();
+        if token_lc.starts_with("no_") {
+            continue;
+        }
+        match token_lc.as_str() {
+            "ctrl" | "control" => {
+                spec.ctrl = true;
+                continue;
+            }
+            "alt" => {
+                spec.alt = true;
+                continue;
+            }
+            "shift" => {
+                spec.shift = true;
+                continue;
+            }
+            _ => {}
+        }
+        if spec.key != 0 {
+            return None;
+        }
+        if let Some(vk) = vk_for_named_token(&token_lc) {
+            spec.key = vk;
+        } else if let Some((vk, needs_shift)) = vk_for_char_token(token) {
+            spec.key = vk;
+            spec.shift |= needs_shift;
+        } else {
+            return None;
+        }
+    }
+    (spec.key != 0).then_some(spec)
 }
 
 #[cfg(windows)]
@@ -2186,6 +2570,147 @@ pub fn send_reload_hotkey_foreground_aware(
     })
 }
 
+#[cfg(windows)]
+fn send_key_spec(spec: KeySpec) -> Result<bool> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+        KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
+    };
+
+    let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+    let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
+    let shift_down = unsafe { GetAsyncKeyState(i32::from(VK_SHIFT.0)) } < 0;
+    if ctrl_down || alt_down || shift_down {
+        return Ok(false);
+    }
+
+    let key_input = |vk: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let send_one = |input: INPUT, label: &str| -> Result<()> {
+        let inputs = [input];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if sent != inputs.len() as u32 {
+            return Err(anyhow!("SendInput delivered {sent} of 1 {label} input"));
+        }
+        Ok(())
+    };
+
+    send_one(key_input(spec.key, KEYEVENTF_KEYUP), "hotkey settle-up")?;
+    std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
+
+    let mut modifiers = Vec::new();
+    if spec.ctrl {
+        modifiers.push(VK_CONTROL.0);
+    }
+    if spec.alt {
+        modifiers.push(VK_MENU.0);
+    }
+    if spec.shift {
+        modifiers.push(VK_SHIFT.0);
+    }
+    for modifier in &modifiers {
+        send_one(
+            key_input(*modifier, KEYBD_EVENT_FLAGS(0)),
+            "hotkey modifier down",
+        )?;
+    }
+    send_one(key_input(spec.key, KEYBD_EVENT_FLAGS(0)), "hotkey key down")?;
+    std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_HOLD_MS));
+    let key_up_result = send_one(key_input(spec.key, KEYEVENTF_KEYUP), "hotkey key up");
+    for modifier in modifiers.iter().rev() {
+        let _ = send_one(key_input(*modifier, KEYEVENTF_KEYUP), "hotkey modifier up");
+    }
+    key_up_result?;
+    Ok(true)
+}
+
+#[cfg(windows)]
+pub fn send_mod_hotkey_foreground_aware(
+    game: &GameInstall,
+    use_default: bool,
+    key_spec: &str,
+) -> Result<ReloadHotkeyReport> {
+    let Some(importer_root) = importer_root_for(game, use_default) else {
+        return Ok(ReloadHotkeyReport {
+            message: "skipped: importer root was not found".to_string(),
+        });
+    };
+    let Some(spec) = parse_key_spec(key_spec) else {
+        return Ok(ReloadHotkeyReport {
+            message: format!("skipped: unsupported hotkey binding {key_spec:?}"),
+        });
+    };
+
+    let mut last_foreground = ReloadForeground::None;
+    for attempt in 1..=FOREGROUND_RELOAD_ATTEMPTS {
+        let foreground = foreground_for_reload(game);
+        let label = foreground.label();
+        match foreground {
+            ReloadForeground::Game { .. } => {
+                let sent = send_key_spec(spec)?;
+                return Ok(ReloadHotkeyReport {
+                    message: if sent {
+                        format!("sent mod hotkey; {label}; direct game foreground path")
+                    } else {
+                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                    },
+                });
+            }
+            ReloadForeground::Hestia { .. } => {
+                if !reload_hotkey_supported(&importer_root) {
+                    return Ok(ReloadHotkeyReport {
+                        message: format!(
+                            "skipped: Hestia is foreground but additional_foreground_window is unavailable; {label}"
+                        ),
+                    });
+                }
+                let sent = send_key_spec(spec)?;
+                return Ok(ReloadHotkeyReport {
+                    message: if sent {
+                        format!("sent mod hotkey; {label}")
+                    } else {
+                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                    },
+                });
+            }
+            other => {
+                last_foreground = other;
+                if attempt < FOREGROUND_RELOAD_ATTEMPTS {
+                    std::thread::sleep(FOREGROUND_RELOAD_RETRY_DELAY);
+                }
+            }
+        }
+    }
+
+    Ok(ReloadHotkeyReport {
+        message: format!(
+            "skipped: foreground was not Hestia or the game after {FOREGROUND_RELOAD_ATTEMPTS} attempts; last {}",
+            last_foreground.label()
+        ),
+    })
+}
+
+#[cfg(not(windows))]
+pub fn send_mod_hotkey_foreground_aware(
+    _game: &GameInstall,
+    _use_default: bool,
+    _key_spec: &str,
+) -> Result<ReloadHotkeyReport> {
+    Ok(ReloadHotkeyReport {
+        message: "skipped: mod hotkey sending is only supported on Windows".to_string(),
+    })
+}
+
 static SYNTHETIC_RELOAD_KEY_SUPPRESS_UNTIL: std::sync::OnceLock<
     std::sync::Mutex<Option<std::time::Instant>>,
 > = std::sync::OnceLock::new();
@@ -2315,6 +2840,52 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         }
     }
 
+    fn game(mods_path: PathBuf) -> GameInstall {
+        GameInstall {
+            definition: crate::model::GameDefinition {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                backend: GameBackend::Xxmi,
+                xxmi_code: "TEST".to_string(),
+            },
+            mods_path_override: Some(mods_path),
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: true,
+            enabled: true,
+        }
+    }
+
+    fn mod_entry(root_path: PathBuf, status: ModStatus) -> ModEntry {
+        ModEntry {
+            id: "mod".to_string(),
+            game_id: "test".to_string(),
+            folder_name: "Arcane".to_string(),
+            root_path,
+            status,
+            metadata: crate::model::ModMetadata::default(),
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            source: None,
+            update_state: crate::model::ModUpdateState::Unlinked,
+        }
+    }
+
+    fn test_roots() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let importer_root = temp.path().to_path_buf();
+        let mods_root = importer_root.join("Mods");
+        fs::create_dir_all(&mods_root).unwrap();
+        fs::write(importer_root.join("d3dx.ini"), "[Include]\n").unwrap();
+        (temp, importer_root, mods_root)
+    }
+
     #[test]
     fn roundtrip_preserves_untouched_text() {
         let doc = doc();
@@ -2358,6 +2929,157 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(text.contains("$\\mods\\other mod\\other.ini\\value = 9"));
         assert!(text.contains("$\\mods\\other mod\\other.ini\\fresh = 7"));
         assert_eq!(text.matches("other.ini\\value").count(), 1);
+    }
+
+    #[test]
+    fn set_mod_variable_updates_existing_ini_relative_key() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        fs::write(
+            importer_root.join(USER_INI_FILE),
+            "[Constants]\r\n$\\mods\\arcane\\mod.ini\\swap = 0\r\n",
+        )
+        .unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Active);
+
+        let wrote = set_mod_variable(&game, false, &entry, "mod.ini", "swap", "2").unwrap();
+
+        assert!(wrote);
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(text.contains("$\\mods\\arcane\\mod.ini\\swap = 2"));
+        assert!(!text.contains("$\\mods\\arcane\\swap = 2"));
+    }
+
+    #[test]
+    fn set_mod_variable_appends_ini_relative_key_when_missing() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        fs::write(importer_root.join(USER_INI_FILE), "[Constants]\r\n").unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Active);
+
+        let wrote = set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        assert!(wrote);
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(text.contains("$\\mods\\arcane\\mod.ini\\swap = 1"));
+    }
+
+    #[test]
+    fn set_mod_variable_writes_disabled_mod_stash() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        fs::write(importer_root.join(USER_INI_FILE), "[Constants]\r\n").unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Disabled);
+
+        let wrote = set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        assert!(wrote);
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(!text.contains("swap = 1"));
+        let stash = read_stash(&entry.root_path).unwrap();
+        assert_eq!(stash.source_prefix, "$\\mods\\arcane\\");
+        assert_eq!(
+            stash
+                .full_entries
+                .iter()
+                .find(|entry| entry.key == "$\\mods\\arcane\\mod.ini\\swap")
+                .map(|entry| entry.value.as_str()),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn set_mod_variable_writes_archived_mod_stash() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let archived_root = importer_root.join("Mods_Archived").join("Arcane");
+        fs::create_dir_all(&archived_root).unwrap();
+        fs::write(importer_root.join(USER_INI_FILE), "[Constants]\r\n").unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(archived_root, ModStatus::Archived);
+
+        let wrote = set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        assert!(wrote);
+        let text = fs::read_to_string(importer_root.join(USER_INI_FILE)).unwrap();
+        assert!(!text.contains("swap = 1"));
+        let stash = read_stash(&entry.root_path).unwrap();
+        assert_eq!(stash.source_prefix, "$\\mods\\arcane\\");
+        assert_eq!(
+            stash
+                .full_entries
+                .iter()
+                .find(|entry| entry.key == "$\\mods\\arcane\\mod.ini\\swap")
+                .map(|entry| entry.value.as_str()),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn read_mod_variables_returns_relative_keys_for_active_mod() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        fs::write(
+            importer_root.join(USER_INI_FILE),
+            "[Constants]\r\n$\\mods\\arcane\\mod.ini\\swap = 2\r\n",
+        )
+        .unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Active);
+
+        let values = read_mod_variables(&game, false, &entry).unwrap();
+
+        assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn read_mod_variables_returns_disabled_stash_values() {
+        let (_temp, _importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Disabled);
+        set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        let values = read_mod_variables(&game, false, &entry).unwrap();
+
+        assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn read_mod_variables_returns_archived_stash_values() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let archived_root = importer_root.join("Mods_Archived").join("Arcane");
+        fs::create_dir_all(&archived_root).unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(archived_root, ModStatus::Archived);
+        set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
+
+        let values = read_mod_variables(&game, false, &entry).unwrap();
+
+        assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("1"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parses_simple_mod_hotkey_specs() {
+        let shift_slash = parse_key_spec("shift /").unwrap();
+        assert!(shift_slash.shift);
+        assert_eq!(shift_slash.key, 0xBF);
+        let no_mod_period = parse_key_spec("no_modifiers .").unwrap();
+        assert!(!no_mod_period.ctrl);
+        assert!(!no_mod_period.alt);
+        assert!(!no_mod_period.shift);
+        assert_eq!(no_mod_period.key, 0xBE);
+        let ctrl_four = parse_key_spec("ctrl 4").unwrap();
+        assert!(ctrl_four.ctrl);
+        assert_eq!(ctrl_four.key, 0x34);
     }
 
     #[test]

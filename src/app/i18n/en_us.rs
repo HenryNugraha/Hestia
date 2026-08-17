@@ -638,6 +638,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Renaming mods", // SettingsGeneralOperationalReloadTriggerRenamingMods
     "Archiving mods", // SettingsGeneralOperationalReloadTriggerArchivingMods
     "Restoring mods", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Customizing mods", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Profile switch", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Modify d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
     "Hestia needs to add the following line to access XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro

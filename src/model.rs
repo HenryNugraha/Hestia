@@ -30,6 +30,7 @@ pub enum ReloadHotkeyTrigger {
     RenamingMods,
     ArchivingMods,
     RestoringMods,
+    CustomizingMods,
     ProfileSwitch,
 }
 
@@ -53,6 +54,8 @@ pub struct ReloadHotkeyTriggers {
     #[serde(default = "serde_default_true")]
     pub restoring_mods: bool,
     #[serde(default = "serde_default_true")]
+    pub customizing_mods: bool,
+    #[serde(default = "serde_default_true")]
     pub profile_switch: bool,
 }
 
@@ -67,6 +70,7 @@ impl Default for ReloadHotkeyTriggers {
             renaming_mods: true,
             archiving_mods: true,
             restoring_mods: true,
+            customizing_mods: true,
             profile_switch: true,
         }
     }
@@ -83,6 +87,7 @@ impl ReloadHotkeyTriggers {
             ReloadHotkeyTrigger::RenamingMods => self.renaming_mods,
             ReloadHotkeyTrigger::ArchivingMods => self.archiving_mods,
             ReloadHotkeyTrigger::RestoringMods => self.restoring_mods,
+            ReloadHotkeyTrigger::CustomizingMods => self.customizing_mods,
             ReloadHotkeyTrigger::ProfileSwitch => self.profile_switch,
         }
     }

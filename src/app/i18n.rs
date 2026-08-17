@@ -631,6 +631,7 @@ enum TextKey {
     SettingsGeneralOperationalReloadTriggerRenamingMods,
     SettingsGeneralOperationalReloadTriggerArchivingMods,
     SettingsGeneralOperationalReloadTriggerRestoringMods,
+    SettingsGeneralOperationalReloadTriggerCustomizingMods,
     SettingsGeneralOperationalReloadTriggerProfileSwitch,
     SettingsGeneralOperationalD3dxConflictTitle,
     SettingsGeneralOperationalD3dxConflictIntro,
@@ -3254,6 +3255,9 @@ impl TextCatalog {
             }
             ReloadHotkeyTrigger::RestoringMods => {
                 self.get(TextKey::SettingsGeneralOperationalReloadTriggerRestoringMods)
+            }
+            ReloadHotkeyTrigger::CustomizingMods => {
+                self.get(TextKey::SettingsGeneralOperationalReloadTriggerCustomizingMods)
             }
             ReloadHotkeyTrigger::ProfileSwitch => {
                 self.get(TextKey::SettingsGeneralOperationalReloadTriggerProfileSwitch)

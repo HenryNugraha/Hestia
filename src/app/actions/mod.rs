@@ -1,5 +1,6 @@
 include!("lifecycle.rs");
 include!("library.rs");
+include!("hotkeys.rs");
 include!("browse.rs");
 include!("install.rs");
 include!("media.rs");

@@ -638,6 +638,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mengganti nama mod", // SettingsGeneralOperationalReloadTriggerRenamingMods
     "Mengarsipkan mod", // SettingsGeneralOperationalReloadTriggerArchivingMods
     "Memulihkan mod", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Menyesuaikan mod", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Beralih profil", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Ubah d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
     "Hestia perlu menambahkan baris berikut untuk mengakses XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro

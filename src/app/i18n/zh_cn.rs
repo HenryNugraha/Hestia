@@ -638,6 +638,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "重命名 Mod", // SettingsGeneralOperationalReloadTriggerRenamingMods
     "归档 Mod", // SettingsGeneralOperationalReloadTriggerArchivingMods
     "恢复 Mod", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "自定义 Mod", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "切换配置文件", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "修改 d3dx.ini？", // SettingsGeneralOperationalD3dxConflictTitle
     "Hestia 需要添加以下行才能访问 XXMI：\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro

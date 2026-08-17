@@ -638,6 +638,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Переименование модов", // SettingsGeneralOperationalReloadTriggerRenamingMods
     "Архивация модов", // SettingsGeneralOperationalReloadTriggerArchivingMods
     "Восстановление модов", // SettingsGeneralOperationalReloadTriggerRestoringMods
+    "Настройка модов", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Переключение профиля", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Изменить d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
     "Hestia нужно добавить следующую строку для доступа к XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro

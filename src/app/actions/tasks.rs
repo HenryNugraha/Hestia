@@ -309,7 +309,7 @@ impl HestiaApp {
                 let entry = entry?;
                 let path = entry.path();
                 match self.state.static_prefs.delete_behavior {
-                    DeleteBehavior::RecycleBin => trash::delete(&path)?,
+                    DeleteBehavior::RecycleBin => xxmi::recycle_path(&path)?,
                     DeleteBehavior::Permanent => {
                         if path.is_dir() {
                             fs::remove_dir_all(&path)?;

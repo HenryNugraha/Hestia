@@ -1,3 +1,22 @@
+/// Dispose of the folder a Replace install swapped aside.
+///
+/// The new mod is already live at this point, so nothing here may fail the
+/// install. Prefer the recycle bin, fall back to a permanent delete (Replace
+/// means the user asked for this folder to go), and if even that is refused
+/// leave the `.hestia_old_*` folder behind rather than tearing it apart —
+/// a stray folder is recoverable, a half-deleted one is not.
+fn dispose_replaced_folder(retired: &Path) {
+    if xxmi::recycle_path(retired).is_ok() {
+        return;
+    }
+    if let Err(err) = fs::remove_dir_all(retired) {
+        tracing::warn!(
+            "replaced mod folder left behind at {}: {err}",
+            retired.display()
+        );
+    }
+}
+
 fn spawn_install_workers(
     runtime_services: &RuntimeServices,
     portable: PortablePaths,
@@ -160,9 +179,35 @@ fn spawn_install_workers(
                                                 &live_target,
                                             );
                                         if live_target.exists() {
-                                            trash::delete(&live_target)?;
+                                            // Swap the old folder aside before the new one
+                                            // lands: recycling it first makes the whole
+                                            // install hinge on the recycle bin accepting a
+                                            // folder it may well refuse (open file handles,
+                                            // a disabled or undersized bin on that volume,
+                                            // an over-long path). A rename touches none of
+                                            // that, so disposal becomes a cleanup step that
+                                            // is allowed to fail.
+                                            let retired = target_root
+                                                .join(format!(".hestia_old_{}_{}", job_id, i));
+                                            if retired.exists() {
+                                                let _ = fs::remove_dir_all(&retired);
+                                            }
+                                            fs::rename(&live_target, &retired).map_err(|err| {
+                                                anyhow!(
+                                                    "could not move the existing folder aside \
+                                                     (is the game or a file explorer holding it \
+                                                     open?): {err}"
+                                                )
+                                            })?;
+                                            if let Err(err) = fs::rename(&temp_target, &live_target)
+                                            {
+                                                let _ = fs::rename(&retired, &live_target);
+                                                return Err(anyhow!(err));
+                                            }
+                                            dispose_replaced_folder(&retired);
+                                        } else {
+                                            fs::rename(&temp_target, &live_target)?;
                                         }
-                                        fs::rename(&temp_target, &live_target)?;
                                         crate::integrations::xxmi_persist::restore_stash_bytes(
                                             &live_target,
                                             &preserved_stash,

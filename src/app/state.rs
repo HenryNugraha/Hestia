@@ -201,6 +201,8 @@ pub struct HestiaApp {
     mod_keybinds_available_cache: HashMap<String, (Option<String>, bool)>,
     // (mod id, parsed keybind sections) when "Hotkeys" is shown inline as the source.
     metadata_hotkeys_view: Option<(String, Vec<ModConfigIni>)>,
+    // mod id -> (ini_hash when read, persisted customization values from d3dx_user.ini)
+    mod_hotkey_values_cache: HashMap<String, (Option<String>, HashMap<String, String>)>,
     personal_note_edit_target_id: Option<String>,
     personal_note_edit_text: String,
     #[cfg(windows)]

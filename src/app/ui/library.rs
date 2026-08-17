@@ -722,19 +722,42 @@ fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
 /// reads as a keyboard key rather than blending in with the source dropdown pill
 /// (`metadata_dropdown_badge`) above it.
 fn keycap_badge(ui: &mut Ui, text: &str) -> egui::Response {
-    egui::Frame::new()
-        .fill(Color32::from_rgba_premultiplied(46, 48, 53, 235))
-        .stroke(egui::Stroke::new(1.0, Color32::from_gray(92)))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(text)
-                    .size(11.0)
-                    .color(Color32::from_rgb(210, 216, 224)),
-            )
-        })
-        .inner
+    let font_id = egui::FontId::proportional(11.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id, Color32::WHITE);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + egui::vec2(12.0, 4.0), Sense::click());
+    let hot = response.hovered() || response.is_pointer_button_down_on();
+    let fill = if hot {
+        Color32::from_rgba_premultiplied(70, 55, 48, 245)
+    } else {
+        Color32::from_rgba_premultiplied(46, 48, 53, 235)
+    };
+    let stroke = if hot {
+        egui::Stroke::new(1.0, Color32::from_rgb(224, 130, 82))
+    } else {
+        egui::Stroke::new(1.0, Color32::from_gray(92))
+    };
+    let text_color = if hot {
+        Color32::from_rgb(240, 218, 205)
+    } else {
+        Color32::from_rgb(210, 216, 224)
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(4), fill);
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(4),
+        stroke,
+        egui::StrokeKind::Outside,
+    );
+    ui.painter().galley(
+        rect.center() - galley.size() * 0.5,
+        galley,
+        text_color,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The metadata source selector. Styled like the old "Description" section heading
@@ -3514,6 +3537,7 @@ impl HestiaApp {
     fn select_hotkeys_source(&mut self, selected: &ModEntry) {
         self.metadata_hotkeys_view =
             Some((selected.id.clone(), parse_mod_config_inis(&selected.root_path)));
+        self.refresh_hotkey_values_cache_for_entry(selected);
         self.personal_note_edit_target_id = None;
         self.personal_note_edit_text.clear();
         if let Some(mod_entry) = self.state.mods.iter_mut().find(|entry| entry.id == selected.id) {
@@ -9521,6 +9545,7 @@ impl HestiaApp {
                                 parse_mod_config_inis(&selected.root_path),
                             ));
                         }
+                        self.ensure_hotkey_values_cached(&selected);
                     }
 
                     let gb_linked = selected
@@ -9821,18 +9846,40 @@ impl HestiaApp {
                             } else {
                                 self.batch_translate_strings(&selected.id, &labels)
                             };
-                            if let Some((_, inis)) = &self.metadata_hotkeys_view {
+                            let current_values = self.cached_hotkey_values(&selected.id);
+                            let action = if let Some((_, inis)) = &self.metadata_hotkeys_view {
                                 if simplified {
                                     render_mod_config_simple(
                                         ui,
                                         inis,
                                         text.hotkeys_no_toggle_keys(),
                                         &hotkey_translations,
-                                    );
+                                        &current_values,
+                                    )
                                 } else {
                                     render_mod_config_sections(ui, inis);
+                                    None
                                 }
-                            }
+                            } else {
+                                None
+                            };
+                            if let Some(action) = action {
+                                match action {
+                                    HotkeyListAction::SetValue {
+                                        ini_rel_path,
+                                        var_name,
+                                        value,
+                                    } => self.set_hotkey_value(
+                                        &selected.id,
+                                        &ini_rel_path,
+                                        &var_name,
+                                        &value,
+                                    ),
+                                    HotkeyListAction::RunCommand { key_spec, label } => {
+                                        self.run_hotkey_command(&selected.id, &key_spec, &label)
+                                    }
+                                }
+                            };
                         }
                         MetadataSourceKind::ModData => {
                             // Stub: `mod_data_available` is always false, so this arm is
@@ -10555,9 +10602,24 @@ struct HotkeyListRow {
     // A command binding (`run =`) with no cycle value — e.g. "reset menu position".
     // Sorted to the bottom and shown without a `= …` value.
     is_action: bool,
+    ini_rel_path: String,
+    raw_key: String,
     key: String,
     label: String,
-    values: String,
+    var_name: Option<String>,
+    values: Vec<String>,
+}
+
+enum HotkeyListAction {
+    SetValue {
+        ini_rel_path: String,
+        var_name: String,
+        value: String,
+    },
+    RunCommand {
+        key_spec: String,
+        label: String,
+    },
 }
 
 /// Number of modifier keys (Alt/Ctrl/Shift) in a formatted key string, so simpler
@@ -10675,16 +10737,19 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                 rows.push(HotkeyListRow {
                     show_ui,
                     is_action: false,
+                    ini_rel_path: ini.rel_path.clone(),
+                    raw_key: key.to_string(),
                     key: format_config_key(key),
                     label,
                     // Cycle states as "0 / 1 / 2" (clearer than "0,1,2"), dropping empty
                     // entries left by trailing or doubled commas.
+                    var_name: Some(var_name.to_string()),
                     values: values
                         .split(',')
                         .map(str::trim)
                         .filter(|part| !part.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" / "),
+                        .map(str::to_string)
+                        .collect(),
                 });
             } else if has_run {
                 // Command binding with no cycle var (e.g. "reset menu position"). Keep
@@ -10703,9 +10768,12 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                 rows.push(HotkeyListRow {
                     show_ui: false,
                     is_action: true,
+                    ini_rel_path: ini.rel_path.clone(),
+                    raw_key: key.to_string(),
                     key: format_config_key(key),
                     label: humanize_section_label(stripped),
-                    values: String::new(),
+                    var_name: None,
+                    values: Vec::new(),
                 });
             }
         }
@@ -10744,6 +10812,92 @@ fn hotkeys_list_translatable_labels(inis: &[ModConfigIni]) -> Vec<String> {
     out
 }
 
+fn hotkey_rel_var_key(ini_rel_path: &str, var_name: &str) -> Option<String> {
+    let rel_path = ini_rel_path
+        .trim()
+        .trim_matches(['/', '\\'])
+        .replace('/', "\\");
+    if rel_path.is_empty() {
+        return None;
+    }
+    Some(format!("{}\\{var_name}", rel_path.to_ascii_lowercase()))
+}
+
+fn hotkey_current_value<'a>(
+    row: &HotkeyListRow,
+    current_values: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    let var_name = row.var_name.as_deref()?;
+    if let Some((_, value)) = current_values
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(var_name))
+    {
+        return Some(value.as_str());
+    }
+    if let Some(rel_key) = hotkey_rel_var_key(&row.ini_rel_path, var_name)
+        && let Some((_, value)) = current_values
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(&rel_key))
+    {
+        return Some(value.as_str());
+    }
+    let suffix = format!("\\{var_name}");
+    let mut matches = current_values
+        .iter()
+        .filter(|(key, _)| key.to_lowercase().ends_with(&suffix.to_lowercase()));
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first.1.as_str())
+}
+
+fn next_hotkey_value(row: &HotkeyListRow, current: Option<&str>) -> Option<String> {
+    if row.values.is_empty() {
+        return None;
+    }
+    let current_index = current.and_then(|current| {
+        row.values
+            .iter()
+            .position(|value| value.eq_ignore_ascii_case(current.trim()))
+    });
+    let next_index = current_index.map_or(0, |index| (index + 1) % row.values.len());
+    row.values.get(next_index).cloned()
+}
+
+fn clickable_hotkey_label(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
+    let font_id = egui::FontId::proportional(12.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id, Color32::WHITE);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
+    let hot = response.hovered() || response.is_pointer_button_down_on();
+    let text_color = if hot {
+        Color32::from_rgb(224, 130, 82)
+    } else {
+        color
+    };
+    ui.painter().galley(rect.min, galley, text_color);
+    if hot {
+        let y = rect.max.y - 1.0;
+        ui.painter().line_segment(
+            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+            egui::Stroke::new(1.0, text_color),
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn paint_hotkey_element_hover(ui: &Ui, response: &egui::Response, corner_radius: u8) {
+    if !(response.hovered() || response.is_pointer_button_down_on()) {
+        return;
+    }
+    let rect = response.rect.expand2(egui::vec2(3.0, 1.0));
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(corner_radius),
+        egui::Stroke::new(1.0, Color32::from_rgb(224, 130, 82)),
+        egui::StrokeKind::Outside,
+    );
+}
+
 /// Simplified keybind view: one line per real cycle toggle (`key -> label ->
 /// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
 /// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
@@ -10753,7 +10907,8 @@ fn render_mod_config_simple(
     inis: &[ModConfigIni],
     no_toggle_keys: &str,
     translations: &HashMap<String, String>,
-) {
+    current_values: &HashMap<String, String>,
+) -> Option<HotkeyListAction> {
     let rows = hotkeys_list_rows(inis);
     if rows.is_empty() {
         ui.add_space(4.0);
@@ -10762,15 +10917,17 @@ fn render_mod_config_simple(
                 .size(12.5)
                 .color(Color32::from_gray(150)),
         );
-        return;
+        return None;
     }
 
+    let mut action = None;
     ui.add_space(2.0);
     for row in rows {
         let label = translations
             .get(&row.label)
             .map(String::as_str)
             .unwrap_or(&row.label);
+        let current = hotkey_current_value(&row, current_values).map(str::to_string);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(
@@ -10778,23 +10935,91 @@ fn render_mod_config_simple(
                     .size(14.0)
                     .color(Color32::from_gray(150)),
             );
-            keycap_badge(ui, &row.key);
-            ui.label(
-                RichText::new(label)
-                    .size(12.5)
-                    .color(Color32::from_gray(214)),
-            );
+            let key_response = keycap_badge(ui, &row.key);
+            if key_response.clicked() && action.is_none() {
+                if let Some(var_name) = row.var_name.clone()
+                    && let Some(value) = next_hotkey_value(&row, current.as_deref())
+                {
+                    action = Some(HotkeyListAction::SetValue {
+                        ini_rel_path: row.ini_rel_path.clone(),
+                        var_name,
+                        value,
+                    });
+                } else if row.is_action {
+                    action = Some(HotkeyListAction::RunCommand {
+                        key_spec: row.raw_key.clone(),
+                        label: row.label.clone(),
+                    });
+                }
+            }
+            let label_response = clickable_hotkey_label(ui, label, Color32::from_gray(214));
+            if label_response.clicked() && action.is_none() {
+                if let Some(var_name) = row.var_name.clone()
+                    && let Some(value) = next_hotkey_value(&row, current.as_deref())
+                {
+                    action = Some(HotkeyListAction::SetValue {
+                        ini_rel_path: row.ini_rel_path.clone(),
+                        var_name,
+                        value,
+                    });
+                } else if row.is_action {
+                    action = Some(HotkeyListAction::RunCommand {
+                        key_spec: row.raw_key.clone(),
+                        label: row.label.clone(),
+                    });
+                }
+            }
             if !row.values.is_empty() {
                 // "= 0,1" reads more clearly than a bare "0,1" for people new to modding.
                 ui.label(
-                    RichText::new(format!("= {}", row.values))
+                    RichText::new("=")
                         .size(12.0)
                         .color(Color32::from_gray(140)),
                 );
+                for (value_index, value) in row.values.iter().enumerate() {
+                    if value_index > 0 {
+                        ui.label(
+                            RichText::new("/")
+                                .size(12.0)
+                                .color(Color32::from_gray(100)),
+                        );
+                    }
+                    let is_current = current
+                        .as_deref()
+                        .is_some_and(|current| current.trim().eq_ignore_ascii_case(value));
+                    let value_color = if is_current {
+                        Color32::from_rgb(224, 130, 82)
+                    } else {
+                        Color32::from_gray(158)
+                    };
+                    let value_response = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(value.as_str())
+                                    .size(12.0)
+                                    .strong()
+                                    .color(value_color),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    paint_hotkey_element_hover(ui, &value_response, 3);
+                    if value_response.clicked()
+                        && action.is_none()
+                        && let Some(var_name) = row.var_name.clone()
+                    {
+                        action = Some(HotkeyListAction::SetValue {
+                            ini_rel_path: row.ini_rel_path.clone(),
+                            var_name,
+                            value: value.clone(),
+                        });
+                    }
+                }
             }
         });
         ui.add_space(3.0);
     }
+    action
 }
 
 /// Render parsed 3DMigoto keybind sections into the current `ui` (no scroll area or
