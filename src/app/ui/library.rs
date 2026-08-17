@@ -429,8 +429,10 @@ fn soft_add_note_button(ui: &mut Ui, text: &str) -> egui::Response {
         .layout_no_wrap(text.to_string(), font_id.clone(), Color32::WHITE);
     let size = Vec2::new(galley.size().x, 16.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let color = if response.hovered() {
-        Color32::WHITE
+    // Hover tints green — the same green as the "+" overlay on the dropdown's
+    // "Add note…" glyph (mirrors how the List/Raw toggle tints rust on hover).
+    let color = if response.hovered() || response.is_pointer_button_down_on() {
+        Color32::from_rgb(110, 194, 132)
     } else {
         Color32::from_gray(150)
     };
@@ -3528,14 +3530,35 @@ impl HestiaApp {
     }
 
     fn render_personal_note_editor(&mut self, ui: &mut Ui, mod_id: &str) {
+        // Corner radius of the note input box. Raise this to round it more; the global
+        // input radius (12) lives in platform.rs `widgets.*.corner_radius`.
+        const NOTE_INPUT_CORNER_RADIUS: u8 = 2;
+        // Inner padding between the box edge and the text (x = left/right, y = top/bottom).
+        const NOTE_INPUT_PADDING_X: i8 = 8;
+        const NOTE_INPUT_PADDING_Y: i8 = 6;
         let width = personal_note_content_width(ui);
-        let response = ui.add(
-            TextEdit::multiline(&mut self.personal_note_edit_text)
-                .id_source(("personal_note_editor", mod_id))
-                .desired_width(width)
-                .desired_rows(8)
-                .lock_focus(true),
-        );
+        // Scope the radius override so it only applies to this text box, not to
+        // widgets the caller renders afterwards in the same `ui`.
+        let response = ui
+            .scope(|ui| {
+                let radius = egui::CornerRadius::same(NOTE_INPUT_CORNER_RADIUS);
+                ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                ui.add(
+                    TextEdit::multiline(&mut self.personal_note_edit_text)
+                        .id_source(("personal_note_editor", mod_id))
+                        .desired_width(width)
+                        .desired_rows(8)
+                        .margin(egui::Margin::symmetric(
+                            NOTE_INPUT_PADDING_X,
+                            NOTE_INPUT_PADDING_Y,
+                        ))
+                        .lock_focus(true),
+                )
+            })
+            .inner;
         response.request_focus();
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Enter)) {
             self.save_personal_note_edit(mod_id);
@@ -8838,7 +8861,14 @@ impl HestiaApp {
                             .is_some();
                         let has_unlinked_text_to_translate = !translation_is_linked
                             && !self.unlinked_texts_to_translate(&selected.id).is_empty();
-                        if translation_is_linked || has_unlinked_text_to_translate {
+                        // Also offer translation on unlinked mods that only carry keybinds,
+                        // so the inline Hotkeys view (List labels / Raw lines) can be translated.
+                        let has_hotkeys_to_translate =
+                            !translation_is_linked && self.mod_has_keybinds(&selected);
+                        if translation_is_linked
+                            || has_unlinked_text_to_translate
+                            || has_hotkeys_to_translate
+                        {
                             let translation_state = self.my_mods_translation_state.get(&selected.id);
                             let is_loading = if translation_is_linked {
                                 translation_state.map(|state| state.translation_loading).unwrap_or(false)
@@ -9430,14 +9460,15 @@ impl HestiaApp {
                         selected.metadata.extracted.readme_path.as_deref()
                             == Some(personal_note_source_path.as_str())
                             || personal_note_editing;
-                    let can_offer_personal_note_choice = !linked
-                        && personal_note_source.is_none()
-                        && !selected.metadata.extracted.text_sources.is_empty();
-                    // The add-note affordance shows for any mod without a text source
-                    // yet, regardless of link state (Description and the extracted
-                    // metadata now share one dropdown-driven section).
+                    // Always offer "Add note…" in the dropdown when the mod has no note
+                    // yet (regardless of link state or other sources), so every source is
+                    // reachable from the dropdown every time.
+                    let can_offer_personal_note_choice = personal_note_source.is_none();
+                    // The header "+ Add Note" shows whenever this mod has no saved
+                    // personal note (regardless of readmes or other sources) and we
+                    // aren't already editing one.
                     let can_add_personal_note =
-                        selected.metadata.extracted.text_sources.is_empty() && !personal_note_editing;
+                        personal_note_source.is_none() && !personal_note_editing;
 
                     // Availability of each systemic source, used to resolve (and validate)
                     // the persisted pick so a stale choice degrades gracefully instead of
@@ -9763,9 +9794,41 @@ impl HestiaApp {
                             }
                         }
                         MetadataSourceKind::Hotkeys => {
+                            let simplified = self.state.static_prefs.hotkeys_simplified;
+                            // Only the List view has translatable text (labels); Raw is
+                            // config syntax, left as-is. Active if either the unlinked or
+                            // the linked (GameBanana) translate toggle is on for this mod.
+                            let translating = simplified
+                                && self
+                                    .my_mods_translation_state
+                                    .get(&selected.id)
+                                    .is_some_and(|state| {
+                                        state.unlinked_translation_enabled
+                                            || state.translation_lang.is_some()
+                                    });
+                            // Collect the labels first (this drops the metadata_hotkeys_view
+                            // borrow before the &mut self translation request).
+                            let labels: Vec<String> = if translating {
+                                self.metadata_hotkeys_view
+                                    .as_ref()
+                                    .map(|(_, inis)| hotkeys_list_translatable_labels(inis))
+                                    .unwrap_or_default()
+                            } else {
+                                Vec::new()
+                            };
+                            let hotkey_translations = if labels.is_empty() {
+                                HashMap::new()
+                            } else {
+                                self.batch_translate_strings(&selected.id, &labels)
+                            };
                             if let Some((_, inis)) = &self.metadata_hotkeys_view {
-                                if self.state.static_prefs.hotkeys_simplified {
-                                    render_mod_config_simple(ui, inis, text.hotkeys_no_toggle_keys());
+                                if simplified {
+                                    render_mod_config_simple(
+                                        ui,
+                                        inis,
+                                        text.hotkeys_no_toggle_keys(),
+                                        &hotkey_translations,
+                                    );
                                 } else {
                                     render_mod_config_sections(ui, inis);
                                 }
@@ -10477,18 +10540,79 @@ fn split_camel_label(s: &str) -> String {
     }
 }
 
-/// Simplified keybind view: one line per real cycle toggle (`key -> label ->
-/// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
-/// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
-fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni], no_toggle_keys: &str) {
-    struct Row {
-        show_ui: bool,
-        key: String,
-        label: String,
-        values: String,
-    }
-    let mut rows: Vec<Row> = Vec::new();
+/// Human label for a section name: `.` is a hierarchy separator rendered as `": "`,
+/// and each segment is de-camel-cased. `Menu.ResetPosition` -> `Menu: Reset Position`.
+fn humanize_section_label(name: &str) -> String {
+    name.split('.')
+        .filter(|segment| !segment.is_empty())
+        .map(split_camel_label)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
 
+struct HotkeyListRow {
+    show_ui: bool,
+    // A command binding (`run =`) with no cycle value — e.g. "reset menu position".
+    // Sorted to the bottom and shown without a `= …` value.
+    is_action: bool,
+    key: String,
+    label: String,
+    values: String,
+}
+
+/// Number of modifier keys (Alt/Ctrl/Shift) in a formatted key string, so simpler
+/// combos sort before more complex ones (e.g. `Alt+1` and `Ctrl+3` before `Alt+Ctrl+2`).
+fn key_modifier_count(key: &str) -> usize {
+    key.split('+')
+        .filter(|part| matches!(part.trim(), "Alt" | "Ctrl" | "Shift"))
+        .count()
+}
+
+/// Case-insensitive natural comparison so keys sort intuitively: `F2` before `F10`
+/// and `Alt+2` before `Alt+10`, rather than lexicographically.
+fn natural_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut ac = a.chars().peekable();
+    let mut bc = b.chars().peekable();
+    loop {
+        match (ac.peek().copied(), bc.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let mut nx: u64 = 0;
+                while let Some(d) = ac.peek().copied().filter(char::is_ascii_digit) {
+                    nx = nx.saturating_mul(10).saturating_add((d as u8 - b'0') as u64);
+                    ac.next();
+                }
+                let mut ny: u64 = 0;
+                while let Some(d) = bc.peek().copied().filter(char::is_ascii_digit) {
+                    ny = ny.saturating_mul(10).saturating_add((d as u8 - b'0') as u64);
+                    bc.next();
+                }
+                match nx.cmp(&ny) {
+                    Ordering::Equal => {}
+                    non_eq => return non_eq,
+                }
+            }
+            (Some(x), Some(y)) => {
+                match x.to_ascii_lowercase().cmp(&y.to_ascii_lowercase()) {
+                    Ordering::Equal => {
+                        ac.next();
+                        bc.next();
+                    }
+                    non_eq => return non_eq,
+                }
+            }
+        }
+    }
+}
+
+/// Parse keybind sections into the simplified "List" rows (one per real cycle
+/// toggle), floating the "show UI" toggle to the top. Shared by the List renderer and
+/// the translation-string collector so the labels stay in sync.
+fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
+    let mut rows: Vec<HotkeyListRow> = Vec::new();
     for ini in inis {
         for section in &ini.sections {
             let mut key = "";
@@ -10513,51 +10637,124 @@ fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni], no_toggle_keys: 
                 }
             }
 
-            // Hide plumbing (menu commands / mouse buttons) and hold bindings, plus
-            // anything with no cycle variable to toggle.
-            let Some((var_name, values)) = first_var else {
-                continue;
-            };
-            if has_run
-                || typ.eq_ignore_ascii_case("hold")
-                || key.to_ascii_lowercase().contains("button")
-            {
-                continue;
-            }
-
             let inner = section.header.trim_start_matches('[').trim_end_matches(']');
             let stripped = inner
                 .strip_prefix("Key")
                 .or_else(|| inner.strip_prefix("key"))
                 .unwrap_or(inner);
-            let label = if is_generic_swap_header(stripped) {
-                format!(
-                    "{} / {}",
-                    stripped.trim_start_matches(|c: char| c == '_' || c == ' '),
-                    var_name
-                )
-            } else {
-                split_camel_label(stripped)
-            };
+            // Some authors name the section after the variable, e.g. `[Key$HairColor]`;
+            // drop the leading `$` so the label reads "Hair Color", not "$Hair Color".
+            let stripped = stripped.strip_prefix('$').unwrap_or(stripped);
 
-            let show_ui = matches!(
-                var_name.to_ascii_lowercase().as_str(),
-                "active" | "menu" | "show" | "showmenu" | "show_menu" | "showui" | "ui" | "gui"
-                    | "showgui" | "panel" | "menu_active"
-            ) || matches!(
-                stripped.to_ascii_lowercase().as_str(),
-                "menu" | "active" | "show" | "showmenu" | "ui" | "gui" | "panel"
-            );
-
-            rows.push(Row {
-                show_ui,
-                key: format_config_key(key),
-                label,
-                values: values.to_string(),
-            });
+            if let Some((var_name, values)) = first_var {
+                // Cycle toggle: needs a `$var` to flip. Skip mouse buttons, hold
+                // bindings, and command (`run =`) plumbing.
+                if has_run
+                    || typ.eq_ignore_ascii_case("hold")
+                    || key.to_ascii_lowercase().contains("button")
+                {
+                    continue;
+                }
+                let label = if is_generic_swap_header(stripped) {
+                    format!(
+                        "{} / {}",
+                        stripped.trim_start_matches(|c: char| c == '_' || c == ' '),
+                        var_name
+                    )
+                } else {
+                    humanize_section_label(stripped)
+                };
+                let show_ui = matches!(
+                    var_name.to_ascii_lowercase().as_str(),
+                    "active" | "menu" | "show" | "showmenu" | "show_menu" | "showui" | "ui"
+                        | "gui" | "showgui" | "panel" | "menu_active"
+                ) || matches!(
+                    stripped.to_ascii_lowercase().as_str(),
+                    "menu" | "active" | "show" | "showmenu" | "ui" | "gui" | "panel"
+                );
+                rows.push(HotkeyListRow {
+                    show_ui,
+                    is_action: false,
+                    key: format_config_key(key),
+                    label,
+                    // Cycle states as "0 / 1 / 2" (clearer than "0,1,2"), dropping empty
+                    // entries left by trailing or doubled commas.
+                    values: values
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" / "),
+                });
+            } else if has_run {
+                // Command binding with no cycle var (e.g. "reset menu position"). Keep
+                // only the useful keyboard ones: drop menu plumbing by name and anything
+                // using a VK_ key (mouse buttons, arrows, …). Shown last, no cycle values.
+                let inner_lc = inner.to_ascii_lowercase();
+                let name_excluded = inner_lc.starts_with("keyclick")
+                    || inner_lc.starts_with("keyclose")
+                    || inner_lc.starts_with("commandlist");
+                let uses_vk = key
+                    .split_whitespace()
+                    .any(|token| token.to_ascii_lowercase().starts_with("vk_"));
+                if name_excluded || uses_vk {
+                    continue;
+                }
+                rows.push(HotkeyListRow {
+                    show_ui: false,
+                    is_action: true,
+                    key: format_config_key(key),
+                    label: humanize_section_label(stripped),
+                    values: String::new(),
+                });
+            }
         }
     }
+    // Order: menu/"show UI" toggle first, then cycle toggles, then command/action keys
+    // (the "reset" keys) last; within each group, fewer modifiers first, then natural key.
+    rows.sort_by(|a, b| {
+        fn rank(row: &HotkeyListRow) -> u8 {
+            if row.show_ui {
+                0
+            } else if row.is_action {
+                2
+            } else {
+                1
+            }
+        }
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| key_modifier_count(&a.key).cmp(&key_modifier_count(&b.key)))
+            .then_with(|| natural_key_cmp(&a.key, &b.key))
+    });
+    rows
+}
 
+/// The translatable labels from the List view (descriptive names derived from the
+/// section headers). Deduped. Only the List has natural language — the Raw view is
+/// config syntax (keys, `$vars`, numbers), so it is left untranslated.
+fn hotkeys_list_translatable_labels(inis: &[ModConfigIni]) -> Vec<String> {
+    let mut out: Vec<String> = hotkeys_list_rows(inis)
+        .into_iter()
+        .map(|row| row.label)
+        .collect();
+    out.retain(|label| !label.trim().is_empty());
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Simplified keybind view: one line per real cycle toggle (`key -> label ->
+/// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
+/// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
+/// `translations` swaps each label for its translated form when one is available.
+fn render_mod_config_simple(
+    ui: &mut Ui,
+    inis: &[ModConfigIni],
+    no_toggle_keys: &str,
+    translations: &HashMap<String, String>,
+) {
+    let rows = hotkeys_list_rows(inis);
     if rows.is_empty() {
         ui.add_space(4.0);
         ui.label(
@@ -10568,11 +10765,12 @@ fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni], no_toggle_keys: 
         return;
     }
 
-    // Float the "show UI" toggle first (stable within groups).
-    rows.sort_by_key(|row| !row.show_ui);
-
     ui.add_space(2.0);
     for row in rows {
+        let label = translations
+            .get(&row.label)
+            .map(String::as_str)
+            .unwrap_or(&row.label);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(
@@ -10582,13 +10780,14 @@ fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni], no_toggle_keys: 
             );
             keycap_badge(ui, &row.key);
             ui.label(
-                RichText::new(&row.label)
+                RichText::new(label)
                     .size(12.5)
                     .color(Color32::from_gray(214)),
             );
             if !row.values.is_empty() {
+                // "= 0,1" reads more clearly than a bare "0,1" for people new to modding.
                 ui.label(
-                    RichText::new(&row.values)
+                    RichText::new(format!("= {}", row.values))
                         .size(12.0)
                         .color(Color32::from_gray(140)),
                 );

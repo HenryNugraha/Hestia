@@ -163,6 +163,73 @@ impl HestiaApp {
             .flatten()
     }
 
+    /// Cache-only lookup of an unlinked-text translation, independent of the per-mod
+    /// `unlinked_translation_enabled` flag. The Hotkeys view uses this because its
+    /// translation can be driven by either the unlinked or the linked translate toggle.
+    fn unlinked_translation_cached(&self, mod_entry_id: &str, content: &str) -> Option<&str> {
+        let content_hash = Self::unlinked_text_content_hash(content.trim());
+        let key =
+            Self::unlinked_translation_memory_key(self.current_translation_lang(), &content_hash);
+        self.my_mods_translation_state
+            .get(mod_entry_id)?
+            .unlinked_translations
+            .get(&key)
+            .map(String::as_str)
+    }
+
+    /// Batch-translate short strings through the unlinked-text pipeline. Chunks the set
+    /// to stay under the translate API's 12,000-char per-request limit, and joins each
+    /// chunk with an explicit `∎∎∎` delimiter (a rare math symbol translators pass
+    /// through) rather than a bare newline, so the segments survive translation and map
+    /// back 1:1. The line-count check is only a last-resort guard. Returns
+    /// original -> translated for the segments that came back intact.
+    pub(crate) fn batch_translate_strings(
+        &mut self,
+        mod_entry_id: &str,
+        strings: &[String],
+    ) -> HashMap<String, String> {
+        const CHAR_LIMIT: usize = 11_000; // headroom under the API's 12,000
+        const DELIM: &str = "\n∎∎∎\n";
+        const SPLIT: &str = "∎∎∎";
+        let delim_len = DELIM.chars().count();
+        let mut result = HashMap::new();
+
+        let mut start = 0;
+        while start < strings.len() {
+            // Grow a chunk until adding the next string would exceed the limit.
+            let mut end = start;
+            let mut len = 0usize;
+            while end < strings.len() {
+                let add =
+                    strings[end].chars().count() + if end == start { 0 } else { delim_len };
+                if end > start && len + add > CHAR_LIMIT {
+                    break;
+                }
+                len += add;
+                end += 1;
+            }
+            if end == start {
+                end = start + 1; // a single oversized string still goes out on its own
+            }
+
+            let chunk = &strings[start..end];
+            let blob = chunk.join(DELIM);
+            self.request_unlinked_text_translation(mod_entry_id, blob.clone(), false);
+            if let Some(translated) = self.unlinked_translation_cached(mod_entry_id, &blob) {
+                let parts: Vec<&str> = translated.split(SPLIT).map(str::trim).collect();
+                if parts.len() == chunk.len() {
+                    for (original, part) in chunk.iter().zip(parts) {
+                        if !part.is_empty() {
+                            result.insert(original.clone(), part.to_string());
+                        }
+                    }
+                }
+            }
+            start = end;
+        }
+        result
+    }
+
     fn request_unlinked_text_translation(
         &mut self,
         mod_entry_id: &str,
