@@ -41,7 +41,7 @@ use crate::{
         DeleteBehavior, FileSetRecipe, GameBackend, GameBananaFileMeta, GameBananaLink,
         GameBananaSnapshot, GameInstall, IgnoredUpdateSignature, ImportInspection,
         ImportResolution, ImportSource, LaunchBehavior, LibraryCategoryDisplayMode,
-        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataVisibility, ModCategory,
+        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataSourceKind, ModCategory,
         ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
         ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileId, ProfileRecord,
         ReloadHotkeyTrigger, RendererPreference, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,

@@ -471,9 +471,21 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Could not add images", // LibraryCouldNotAddImages
     "Image removed", // LibraryImageRemoved
     "Could not remove image", // LibraryCouldNotRemoveImage
-    "Description", // LibraryDescription
-    "Metadata", // LibraryMetadata
     "Requires RabbitFX", // LibraryRequiresRabbitFx
+    "Description", // LibraryMetaSourceDescription
+    "Description from GameBanana page", // LibraryMetaSourceDescriptionGbTooltip
+    "Mod description", // LibraryMetaSourceDescriptionTooltip
+    "Hotkeys", // LibraryMetaSourceHotkeys
+    "Sourced from the mod's .ini files", // LibraryMetaSourceHotkeysTooltip
+    "This mod does not contain any hotkey", // LibraryMetaSourceHotkeysUnavailable
+    "Mod Data", // LibraryMetaSourceModData
+    "Mod's customization config", // LibraryMetaSourceModDataTooltip
+    "There is no customization data saved", // LibraryMetaSourceModDataUnavailable
+    "List", // LibraryHotkeysViewList
+    "Raw", // LibraryHotkeysViewRaw
+    "Switch to raw view", // LibraryHotkeysSwitchToRaw
+    "Switch to list view", // LibraryHotkeysSwitchToList
+    "No toggle keys in this mod.", // LibraryHotkeysNoToggleKeys
     "Add a personal note", // LibraryAddPersonalNote
     "Save personal note", // LibrarySavePersonalNote
     "Editable user note", // LibraryEditableUserNote
@@ -565,15 +577,11 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "When launching a game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "After installing a mod:", // SettingsGeneralBehaviorAfterInstallingMod
     "When launching a tool:", // SettingsGeneralBehaviorWhenLaunchingTool
-    "Mod detail metadata:", // SettingsGeneralBehaviorModDetailMetadata
     "Do Nothing", // SettingsGeneralBehaviorDoNothing
     "Minimize Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Exit Hestia", // SettingsGeneralBehaviorExitHestia
     "Add to Selection", // SettingsGeneralBehaviorAddToSelection
     "Open Mod Detail", // SettingsGeneralBehaviorOpenModDetail
-    "Never show", // SettingsGeneralBehaviorNeverShow
-    "Show if no description", // SettingsGeneralBehaviorShowIfNoDescription
-    "Always show", // SettingsGeneralBehaviorAlwaysShow
 
     // Window: Settings > General > Installed Mods List
     "Installed Mods List", // SettingsGeneralInstalledModsListSection

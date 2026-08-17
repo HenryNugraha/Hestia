@@ -469,9 +469,21 @@ enum TextKey {
     LibraryCouldNotAddImages,
     LibraryImageRemoved,
     LibraryCouldNotRemoveImage,
-    LibraryDescription,
-    LibraryMetadata,
     LibraryRequiresRabbitFx,
+    LibraryMetaSourceDescription,
+    LibraryMetaSourceDescriptionGbTooltip,
+    LibraryMetaSourceDescriptionTooltip,
+    LibraryMetaSourceHotkeys,
+    LibraryMetaSourceHotkeysTooltip,
+    LibraryMetaSourceHotkeysUnavailable,
+    LibraryMetaSourceModData,
+    LibraryMetaSourceModDataTooltip,
+    LibraryMetaSourceModDataUnavailable,
+    LibraryHotkeysViewList,
+    LibraryHotkeysViewRaw,
+    LibraryHotkeysSwitchToRaw,
+    LibraryHotkeysSwitchToList,
+    LibraryHotkeysNoToggleKeys,
     LibraryAddPersonalNote,
     LibrarySavePersonalNote,
     LibraryEditableUserNote,
@@ -560,15 +572,11 @@ enum TextKey {
     SettingsGeneralBehaviorWhenLaunchingGame,
     SettingsGeneralBehaviorAfterInstallingMod,
     SettingsGeneralBehaviorWhenLaunchingTool,
-    SettingsGeneralBehaviorModDetailMetadata,
     SettingsGeneralBehaviorDoNothing,
     SettingsGeneralBehaviorMinimizeHestia,
     SettingsGeneralBehaviorExitHestia,
     SettingsGeneralBehaviorAddToSelection,
     SettingsGeneralBehaviorOpenModDetail,
-    SettingsGeneralBehaviorNeverShow,
-    SettingsGeneralBehaviorShowIfNoDescription,
-    SettingsGeneralBehaviorAlwaysShow,
 
     SettingsGeneralInstalledModsListSection,
     SettingsGeneralInstalledModsGroupListBy,
@@ -2628,16 +2636,64 @@ impl TextCatalog {
         self.get(TextKey::LibraryCouldNotRemoveImage)
     }
 
-    fn description(self) -> &'static str {
-        self.get(TextKey::LibraryDescription)
-    }
-
-    fn metadata(self) -> &'static str {
-        self.get(TextKey::LibraryMetadata)
-    }
-
     fn requires_rabbitfx(self) -> &'static str {
         self.get(TextKey::LibraryRequiresRabbitFx)
+    }
+
+    fn meta_source_description(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceDescription)
+    }
+
+    fn meta_source_description_gb_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceDescriptionGbTooltip)
+    }
+
+    fn meta_source_description_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceDescriptionTooltip)
+    }
+
+    fn meta_source_hotkeys(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceHotkeys)
+    }
+
+    fn meta_source_hotkeys_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceHotkeysTooltip)
+    }
+
+    fn meta_source_hotkeys_unavailable(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceHotkeysUnavailable)
+    }
+
+    fn meta_source_mod_data(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceModData)
+    }
+
+    fn meta_source_mod_data_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceModDataTooltip)
+    }
+
+    fn meta_source_mod_data_unavailable(self) -> &'static str {
+        self.get(TextKey::LibraryMetaSourceModDataUnavailable)
+    }
+
+    fn hotkeys_view_list(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysViewList)
+    }
+
+    fn hotkeys_view_raw(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysViewRaw)
+    }
+
+    fn hotkeys_switch_to_raw(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysSwitchToRaw)
+    }
+
+    fn hotkeys_switch_to_list(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysSwitchToList)
+    }
+
+    fn hotkeys_no_toggle_keys(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysNoToggleKeys)
     }
 
     fn add_personal_note(self) -> &'static str {
@@ -3378,10 +3434,6 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralBehaviorWhenLaunchingTool)
     }
 
-    fn mod_detail_metadata(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralBehaviorModDetailMetadata)
-    }
-
     fn launch_behavior(self, behavior: LaunchBehavior) -> &'static str {
         match behavior {
             LaunchBehavior::DoNothing => self.get(TextKey::SettingsGeneralBehaviorDoNothing),
@@ -3399,16 +3451,6 @@ impl TextCatalog {
             AfterInstallBehavior::OpenModDetail => {
                 self.get(TextKey::SettingsGeneralBehaviorOpenModDetail)
             }
-        }
-    }
-
-    fn metadata_visibility(self, visibility: MetadataVisibility) -> &'static str {
-        match visibility {
-            MetadataVisibility::Never => self.get(TextKey::SettingsGeneralBehaviorNeverShow),
-            MetadataVisibility::OnlyIfNoDescription => {
-                self.get(TextKey::SettingsGeneralBehaviorShowIfNoDescription)
-            }
-            MetadataVisibility::Always => self.get(TextKey::SettingsGeneralBehaviorAlwaysShow),
         }
     }
 

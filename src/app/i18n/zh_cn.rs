@@ -471,9 +471,21 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "无法添加图片", // LibraryCouldNotAddImages
     "图片已移除", // LibraryImageRemoved
     "无法移除图片", // LibraryCouldNotRemoveImage
-    "描述", // LibraryDescription
-    "元数据", // LibraryMetadata
     "需要 RabbitFX", // LibraryRequiresRabbitFx
+    "描述", // LibraryMetaSourceDescription
+    "来自 GameBanana 页面的描述", // LibraryMetaSourceDescriptionGbTooltip
+    "Mod 描述", // LibraryMetaSourceDescriptionTooltip
+    "快捷键", // LibraryMetaSourceHotkeys
+    "来自该 Mod 的 .ini 文件", // LibraryMetaSourceHotkeysTooltip
+    "此 Mod 不包含任何快捷键", // LibraryMetaSourceHotkeysUnavailable
+    "Mod 数据", // LibraryMetaSourceModData
+    "Mod 的自定义配置", // LibraryMetaSourceModDataTooltip
+    "没有已保存的自定义数据", // LibraryMetaSourceModDataUnavailable
+    "列表", // LibraryHotkeysViewList
+    "原始", // LibraryHotkeysViewRaw
+    "切换到原始视图", // LibraryHotkeysSwitchToRaw
+    "切换到列表视图", // LibraryHotkeysSwitchToList
+    "此 Mod 中没有可切换的按键。", // LibraryHotkeysNoToggleKeys
     "添加个人便签", // LibraryAddPersonalNote
     "保存个人便签", // LibrarySavePersonalNote
     "可编辑的用户便签", // LibraryEditableUserNote
@@ -565,15 +577,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "启动游戏时：", // SettingsGeneralBehaviorWhenLaunchingGame
     "安装 Mod 后：", // SettingsGeneralBehaviorAfterInstallingMod
     "启动工具时：", // SettingsGeneralBehaviorWhenLaunchingTool
-    "Mod 详情元数据：", // SettingsGeneralBehaviorModDetailMetadata
     "不执行操作", // SettingsGeneralBehaviorDoNothing
     "最小化 Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "退出 Hestia", // SettingsGeneralBehaviorExitHestia
     "加入选中项", // SettingsGeneralBehaviorAddToSelection
     "打开 Mod 详情", // SettingsGeneralBehaviorOpenModDetail
-    "从不显示", // SettingsGeneralBehaviorNeverShow
-    "没有描述时显示", // SettingsGeneralBehaviorShowIfNoDescription
-    "始终显示", // SettingsGeneralBehaviorAlwaysShow
 
     // Window: Settings > General > Installed Mods List
     "已安装 Mod 列表", // SettingsGeneralInstalledModsListSection

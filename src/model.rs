@@ -100,8 +100,10 @@ pub struct StaticPreferences {
     pub hide_disabled: bool,
     #[serde(default)]
     pub hide_archived: bool,
-    #[serde(default)]
-    pub metadata_visibility: MetadataVisibility,
+    /// Inline Hotkeys view mode: false = Raw (per-file sections), true = List
+    /// (simplified). Defaults to List.
+    #[serde(default = "serde_default_true")]
+    pub hotkeys_simplified: bool,
     #[serde(default)]
     pub scan_rabbitfx_requirement: bool,
     #[serde(default)]
@@ -193,7 +195,7 @@ impl Default for StaticPreferences {
             use_default_mods_path: true,
             hide_disabled: false,
             hide_archived: false,
-            metadata_visibility: MetadataVisibility::default(),
+            hotkeys_simplified: true,
             scan_rabbitfx_requirement: false,
             font_style: AppFontStyle::default(),
             language: AppLanguage::detect_system_supported().unwrap_or_default(),
@@ -1018,14 +1020,6 @@ fn default_unreal_disabled_mods_path_from_mods_path(mods_path: &Path) -> PathBuf
     mods_path.with_file_name(UNREAL_DISABLED_MODS_DIR)
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum MetadataVisibility {
-    Never,
-    #[default]
-    OnlyIfNoDescription,
-    Always,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AppFontStyle {
     Classic,
@@ -1113,6 +1107,19 @@ pub enum ModStatus {
     Archived,
 }
 
+/// Which metadata source the mod-detail pane is currently showing. Persisted per
+/// mod so reopening restores the last-viewed source. `TextFile` is backed by the
+/// existing `extracted.readme_path` / `user.extracted_metadata_source_path`
+/// (personal note included); the others are self-describing. Resolved against live
+/// availability at render time, so a stale pick falls back gracefully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetadataSourceKind {
+    Description,
+    TextFile,
+    Hotkeys,
+    ModData,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExtractedMetadata {
     pub description: Option<String>,
@@ -1143,6 +1150,8 @@ pub struct UserMetadata {
     pub screenshots: Vec<String>,
     #[serde(default)]
     pub extracted_metadata_source_path: Option<String>,
+    #[serde(default)]
+    pub selected_metadata_source: Option<MetadataSourceKind>,
     #[serde(default)]
     pub category: String,
     #[serde(default)]

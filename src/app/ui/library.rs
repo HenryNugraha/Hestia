@@ -292,6 +292,46 @@ fn clamp_metadata_source_label(text: &str) -> String {
     clamped
 }
 
+/// Resolve which metadata source the detail pane actually shows, validating the
+/// persisted pick against live availability so a stale choice (removed keybinds,
+/// deleted readme, not-yet-wired Mod Data) degrades gracefully instead of showing
+/// an empty or broken view. `Description` is always available (it renders the
+/// "No description" + add-note state when empty), so it is the terminal fallback.
+fn effective_metadata_source(
+    want: Option<MetadataSourceKind>,
+    personal_note_editing: bool,
+    has_description: bool,
+    hotkeys_available: bool,
+    textfile_available: bool,
+    mod_data_available: bool,
+    legacy_explicit_readme: bool,
+) -> MetadataSourceKind {
+    use MetadataSourceKind::*;
+    // An active note edit owns the view so the editor renders; a fresh Add Note has
+    // no readme_path yet, so textfile_available may still be false here.
+    if personal_note_editing {
+        return TextFile;
+    }
+    // Honor the saved pick only while it is still available.
+    match want {
+        Some(Hotkeys) if hotkeys_available => return Hotkeys,
+        Some(TextFile) if textfile_available => return TextFile,
+        Some(ModData) if mod_data_available => return ModData,
+        Some(Description) => return Description,
+        _ => {}
+    }
+    // Priority fallback (also the None/legacy migration path).
+    if legacy_explicit_readme {
+        TextFile
+    } else if has_description {
+        Description
+    } else if textfile_available {
+        TextFile
+    } else {
+        Description
+    }
+}
+
 const METADATA_SOURCE_POPUP_WIDTH: f32 = 132.0;
 
 static PERSONAL_NOTE_HTML_TAG_RE: Lazy<Regex> =
@@ -675,23 +715,75 @@ fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
         .inner
 }
 
-/// Like [`metadata_info_badge`] but interactive: a click-sensing chip that lightens
-/// on hover and while pressed. Used for badges that open the source-picker dropdown.
+/// A keycap-style chip for the hotkey key column in the "List" view: bordered,
+/// squarer, and darker than the flat `metadata_info_badge`, so a key like `Alt+5`
+/// reads as a keyboard key rather than blending in with the source dropdown pill
+/// (`metadata_dropdown_badge`) above it.
+fn keycap_badge(ui: &mut Ui, text: &str) -> egui::Response {
+    egui::Frame::new()
+        .fill(Color32::from_rgba_premultiplied(46, 48, 53, 235))
+        .stroke(egui::Stroke::new(1.0, Color32::from_gray(92)))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .size(11.0)
+                    .color(Color32::from_rgb(210, 216, 224)),
+            )
+        })
+        .inner
+}
+
+/// The metadata source selector. Styled like the old "Description" section heading
+/// (bold, underlined, gray-195) rather than a filled pill, with a small non-underlined
+/// caret marking it as a dropdown. No background, so it brightens on hover/press. The
+/// caller bakes the trailing " ▾" into `text`. Built as a manual galley (rather than a
+/// plain `bold()` label) precisely to get the hover recolor and the lighter caret.
 fn metadata_dropdown_badge(ui: &mut Ui, text: &str) -> egui::Response {
-    let text_color = Color32::from_rgb(222, 228, 235);
-    let galley = ui.fonts_mut(|f| {
-        f.layout_no_wrap(text.to_string(), egui::FontId::proportional(11.0), text_color)
-    });
-    let margin = egui::vec2(7.0, 3.0);
-    let (rect, response) = ui.allocate_exact_size(galley.size() + margin * 2.0, Sense::click());
-    let fill = if response.hovered() || response.is_pointer_button_down_on() {
-        Color32::from_rgba_premultiplied(82, 82, 82, 224)
-    } else {
-        Color32::from_rgba_premultiplied(60, 60, 60, 210)
+    let idle = Color32::from_gray(195);
+    let hot = Color32::from_gray(235);
+    let (label, has_caret) = match text.strip_suffix('▾') {
+        Some(head) => (head.trim_end(), true),
+        None => (text, false),
     };
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(6), fill);
-    ui.painter().galley(rect.min + margin, galley, text_color);
+    // Header size. Mirrors `bold()`'s Russian down-scaling.
+    let label_size = if current_language() == Some(AppLanguage::Russian) {
+        20.0 
+    } else {
+        20.0
+    };
+    let layout = |ui: &mut Ui, color: Color32| {
+        let mut job = LayoutJob::default();
+        job.append(
+            label,
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::new(label_size, FontFamily::Name(BOLD_FONT_FAMILY.into())),
+                color,
+                underline: egui::Stroke::new(1.0, color),
+                ..Default::default()
+            },
+        );
+        if has_caret {
+            job.append(
+                "▾",
+                6.0,
+                TextFormat {
+                    font_id: egui::FontId::proportional(label_size * 0.8),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let idle_galley = layout(ui, idle);
+    let (rect, response) = ui.allocate_exact_size(idle_galley.size(), Sense::click());
+    let hovered = response.hovered() || response.is_pointer_button_down_on();
+    let color = if hovered { hot } else { idle };
+    let galley = if hovered { layout(ui, hot) } else { idle_galley };
+    ui.painter().galley(rect.min, galley, color);
     response
 }
 
@@ -3216,6 +3308,7 @@ impl HestiaApp {
         selected: &ModEntry,
         personal_note_source_path: &str,
         can_offer_personal_note_choice: bool,
+        effective_source: MetadataSourceKind,
     ) {
         let text = self.text();
         let accent = Color32::from_rgb(224, 130, 82);
@@ -3224,32 +3317,46 @@ impl HestiaApp {
         // Systemic sources: GameBanana description, Mod keys, Mod config. Stubbed
         // until wired, but tooltips already reflect real availability. Literal
         // strings for now; localize once the wording/behavior settles.
+        // Description ("GameBanana" when linked to a GB page, otherwise the mod's own
+        // description). Always available and selectable — even when empty it renders the
+        // "No description" + add-note state, so you can always return to it.
         let gb_linked = selected
             .source
             .as_ref()
             .and_then(|source| source.gamebanana.as_ref())
             .map(|link| link.mod_id)
             .is_some_and(|mod_id| mod_id > 0);
-        let gamebanana_tooltip = if gb_linked {
-            "Description from GameBanana page"
+        let description_selected = matches!(effective_source, MetadataSourceKind::Description);
+        let description_tooltip = if gb_linked {
+            text.meta_source_description_gb_tooltip()
         } else {
-            "Unavailable - link mod to GameBanana first"
+            text.meta_source_description_tooltip()
         };
-        metadata_source_row(ui, Icon::AlertCircle, neutral, "GameBanana", gamebanana_tooltip, false, false, false);
+        if metadata_source_row(
+            ui,
+            Icon::AlertCircle,
+            neutral,
+            text.meta_source_description(),
+            description_tooltip,
+            description_selected,
+            true,
+            false,
+        ) {
+            self.select_description_source(&selected.id);
+            ui.close();
+        }
 
         let has_keybinds = self.mod_has_keybinds(selected);
         let hotkeys_tooltip = if has_keybinds {
-            "Sourced from the mod's .ini files"
+            text.meta_source_hotkeys_tooltip()
         } else {
-            "This mod does not contain any hotkey"
+            text.meta_source_hotkeys_unavailable()
         };
-        if metadata_source_row(ui, Icon::Keyboard, neutral, "Hotkeys", hotkeys_tooltip, false, has_keybinds, false) {
-            // Show the mod's keybind config inline as the metadata source (parsed
-            // once here). Selecting any other source clears this transient view.
-            self.metadata_hotkeys_view =
-                Some((selected.id.clone(), parse_mod_config_inis(&selected.root_path)));
-            self.personal_note_edit_target_id = None;
-            self.personal_note_edit_text.clear();
+        let hotkeys_selected = matches!(effective_source, MetadataSourceKind::Hotkeys);
+        if metadata_source_row(ui, Icon::Keyboard, neutral, text.meta_source_hotkeys(), hotkeys_tooltip, hotkeys_selected, has_keybinds, false) {
+            // Show the mod's keybind config inline; persists the pick and warms the
+            // parsed-ini cache. Selecting any other source clears the view.
+            self.select_hotkeys_source(selected);
             ui.close();
         }
 
@@ -3258,11 +3365,12 @@ impl HestiaApp {
         // namespace). Stubbed to unavailable until that plumbing exists.
         let mod_data_available = false;
         let mod_data_tooltip = if mod_data_available {
-            "Mod's customization config"
+            text.meta_source_mod_data_tooltip()
         } else {
-            "There is no customization data saved"
+            text.meta_source_mod_data_unavailable()
         };
-        metadata_source_row(ui, Icon::FileSliders, accent, "Mod Data", mod_data_tooltip, false, false, false);
+        let mod_data_selected = matches!(effective_source, MetadataSourceKind::ModData);
+        metadata_source_row(ui, Icon::FileSliders, accent, text.meta_source_mod_data(), mod_data_tooltip, mod_data_selected, mod_data_available, false);
 
         let selected_path = selected.metadata.extracted.readme_path.as_deref();
         let note_exists = selected
@@ -3272,7 +3380,8 @@ impl HestiaApp {
             .iter()
             .any(|source| source.path == personal_note_source_path);
         if note_exists {
-            let is_selected = selected_path == Some(personal_note_source_path);
+            let is_selected = matches!(effective_source, MetadataSourceKind::TextFile)
+                && selected_path == Some(personal_note_source_path);
             if metadata_source_row(
                 ui,
                 Icon::NotebookPen,
@@ -3319,7 +3428,8 @@ impl HestiaApp {
             ui.separator();
             ui.add_space(3.0);
             for source in file_sources {
-                let is_selected = selected_path == Some(source.path.as_str());
+                let is_selected = matches!(effective_source, MetadataSourceKind::TextFile)
+                    && selected_path == Some(source.path.as_str());
                 let label = if source.label.trim().is_empty() {
                     source.path.as_str()
                 } else {
@@ -3365,6 +3475,7 @@ impl HestiaApp {
         };
 
         mod_entry.metadata.user.extracted_metadata_source_path = Some(source.path.clone());
+        mod_entry.metadata.user.selected_metadata_source = Some(MetadataSourceKind::TextFile);
         mod_entry.metadata.extracted.description = Some(source.content);
         mod_entry.metadata.extracted.readme_path = Some(source.path);
         let _ = xxmi::save_mod_metadata(mod_entry);
@@ -3373,7 +3484,41 @@ impl HestiaApp {
             self.personal_note_edit_text.clear();
         }
         self.save_state();
+        // This is the one select-helper that refreshes translation: it makes a text
+        // source the shown content, and translation keys off `readme_path`.
         self.handle_unlinked_metadata_source_changed(mod_id);
+    }
+
+    /// Show the mod's primary description ("GameBanana"/user/snapshot) as the metadata
+    /// source. Does NOT call `handle_unlinked_metadata_source_changed`: description
+    /// translation flows through the primary `markdown` path, and `readme_path` may
+    /// still point at an unrelated text source.
+    fn select_description_source(&mut self, mod_id: &str) {
+        self.metadata_hotkeys_view = None;
+        if self.personal_note_edit_target_id.as_deref() == Some(mod_id) {
+            self.personal_note_edit_target_id = None;
+            self.personal_note_edit_text.clear();
+        }
+        if let Some(mod_entry) = self.state.mods.iter_mut().find(|entry| entry.id == mod_id) {
+            mod_entry.metadata.user.selected_metadata_source =
+                Some(MetadataSourceKind::Description);
+            let _ = xxmi::save_mod_metadata(mod_entry);
+        }
+        self.save_state();
+    }
+
+    /// Show the mod's parsed keybind `.ini`s inline. Persists the pick and populates
+    /// the transient parsed-ini cache. Does NOT trigger readme translation.
+    fn select_hotkeys_source(&mut self, selected: &ModEntry) {
+        self.metadata_hotkeys_view =
+            Some((selected.id.clone(), parse_mod_config_inis(&selected.root_path)));
+        self.personal_note_edit_target_id = None;
+        self.personal_note_edit_text.clear();
+        if let Some(mod_entry) = self.state.mods.iter_mut().find(|entry| entry.id == selected.id) {
+            mod_entry.metadata.user.selected_metadata_source = Some(MetadataSourceKind::Hotkeys);
+            let _ = xxmi::save_mod_metadata(mod_entry);
+        }
+        self.save_state();
     }
 
     fn start_personal_note_edit(&mut self, mod_id: &str, initial_text: String) {
@@ -3431,6 +3576,8 @@ impl HestiaApp {
                 );
                 mod_entry.metadata.user.extracted_metadata_source_path =
                     Some(personal_note_path.clone());
+                mod_entry.metadata.user.selected_metadata_source =
+                    Some(MetadataSourceKind::TextFile);
                 mod_entry.metadata.extracted.description = Some(content);
                 mod_entry.metadata.extracted.readme_path = Some(personal_note_path);
                 mod_entry.metadata.prompt_for_missing_metadata = false;
@@ -3453,10 +3600,14 @@ impl HestiaApp {
                     {
                         mod_entry.metadata.user.extracted_metadata_source_path =
                             Some(fallback.path.clone());
+                        mod_entry.metadata.user.selected_metadata_source =
+                            Some(MetadataSourceKind::TextFile);
                         mod_entry.metadata.extracted.description = Some(fallback.content);
                         mod_entry.metadata.extracted.readme_path = Some(fallback.path);
                     } else {
                         mod_entry.metadata.user.extracted_metadata_source_path = None;
+                        mod_entry.metadata.user.selected_metadata_source =
+                            Some(MetadataSourceKind::Description);
                         mod_entry.metadata.extracted.description = None;
                         mod_entry.metadata.extracted.readme_path = None;
                     }
@@ -9279,76 +9430,267 @@ impl HestiaApp {
                         selected.metadata.extracted.readme_path.as_deref()
                             == Some(personal_note_source_path.as_str())
                             || personal_note_editing;
-                    let hotkeys_view_active = self
-                        .metadata_hotkeys_view
-                        .as_ref()
-                        .is_some_and(|(mod_id, _)| mod_id == &selected.id);
                     let can_offer_personal_note_choice = !linked
                         && personal_note_source.is_none()
                         && !selected.metadata.extracted.text_sources.is_empty();
-                    // Under `Always` the metadata section must render for every mod;
-                    // linked mods without any text source would otherwise have no
-                    // content at all, so the add-note affordance is their body.
-                    let can_add_personal_note = (!linked
-                        || matches!(
-                            self.state.static_prefs.metadata_visibility,
-                            MetadataVisibility::Always
-                        ))
-                        && selected.metadata.extracted.text_sources.is_empty()
-                        && !personal_note_editing;
-                    let metadata_as_description = matches!(
-                        self.state.static_prefs.metadata_visibility,
-                        MetadataVisibility::OnlyIfNoDescription
-                    ) && !has_description
-                        && (extracted_markdown.is_some() || personal_note_editing);
+                    // The add-note affordance shows for any mod without a text source
+                    // yet, regardless of link state (Description and the extracted
+                    // metadata now share one dropdown-driven section).
+                    let can_add_personal_note =
+                        selected.metadata.extracted.text_sources.is_empty() && !personal_note_editing;
 
-                    if !metadata_as_description {
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            static_label(ui, bold(text.description(), Some(14.0)).underline().color(Color32::from_gray(195)));
-                            if selected.metadata.extracted.requires_rabbitfx {
-                                metadata_info_badge(ui, text.requires_rabbitfx());
-                            }
-                            if can_add_personal_note
-                                && !matches!(
-                                    self.state.static_prefs.metadata_visibility,
-                                    MetadataVisibility::Always
-                                )
-                            {
-                                let add_note_response = soft_add_note_button(ui, text.add_note())
-                                    .on_hover_text(text.add_personal_note())
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if add_note_response.clicked() {
-                                    self.start_personal_note_edit(&selected.id, String::new());
-                                }
-                            }
-                            if personal_note_editing
-                                && !matches!(
-                                    self.state.static_prefs.metadata_visibility,
-                                    MetadataVisibility::Always
-                                )
-                            {
-                                let save_note_response = ui
-                                    .add(
-                                        egui::Button::new(icon_rich(
-                                            Icon::Check,
-                                            13.0,
-                                            Color32::from_rgb(110, 194, 132),
-                                        ))
-                                        .frame(false),
-                                    )
-                                    .on_hover_text(text.save_personal_note())
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if save_note_response.clicked() {
-                                    self.save_personal_note_edit(&selected.id);
-                                }
-                            }
+                    // Availability of each systemic source, used to resolve (and validate)
+                    // the persisted pick so a stale choice degrades gracefully instead of
+                    // showing an empty or broken view.
+                    let hotkeys_available = self.mod_has_keybinds(&selected);
+                    let mod_data_available = false; // TODO: wire d3dx_user.ini `$`-vars.
+                    let textfile_available = selected
+                        .metadata
+                        .extracted
+                        .readme_path
+                        .as_deref()
+                        .is_some_and(|path| {
+                            selected
+                                .metadata
+                                .extracted
+                                .text_sources
+                                .iter()
+                                .any(|source| source.path == path)
                         });
-                        if personal_note_editing
-                            && !matches!(self.state.static_prefs.metadata_visibility, MetadataVisibility::Always)
+                    // A pre-change explicit readme pick is honored only while it is still
+                    // the valid effective source (extraction repoints readme_path to the
+                    // best source when the saved path goes missing).
+                    let legacy_explicit_readme = selected
+                        .metadata
+                        .user
+                        .extracted_metadata_source_path
+                        .is_some()
+                        && selected.metadata.user.extracted_metadata_source_path.as_deref()
+                            == selected.metadata.extracted.readme_path.as_deref();
+                    let effective_source = effective_metadata_source(
+                        selected.metadata.user.selected_metadata_source,
+                        personal_note_editing,
+                        has_description,
+                        hotkeys_available,
+                        textfile_available,
+                        mod_data_available,
+                        legacy_explicit_readme,
+                    );
+
+                    // Keep the parsed-ini cache warm for this mod while Hotkeys is shown
+                    // (the cache is data only; the persisted kind is the source of truth).
+                    if matches!(effective_source, MetadataSourceKind::Hotkeys) {
+                        let needs_parse = self
+                            .metadata_hotkeys_view
+                            .as_ref()
+                            .map_or(true, |(mod_id, _)| mod_id != &selected.id);
+                        if needs_parse {
+                            self.metadata_hotkeys_view = Some((
+                                selected.id.clone(),
+                                parse_mod_config_inis(&selected.root_path),
+                            ));
+                        }
+                    }
+
+                    let gb_linked = selected
+                        .source
+                        .as_ref()
+                        .and_then(|source| source.gamebanana.as_ref())
+                        .map(|link| link.mod_id)
+                        .is_some_and(|mod_id| mod_id > 0);
+                    let source_file_name = selected
+                        .metadata
+                        .extracted
+                        .readme_path
+                        .as_deref()
+                        .map(|source| {
+                            Path::new(source)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(source)
+                                .to_string()
+                        });
+
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        // The source dropdown badge IS the section header. Description is
+                        // always available, so this is always an interactive dropdown.
+                        let badge_text = match effective_source {
+                            MetadataSourceKind::Description => {
+                                format!("{} ▾", text.meta_source_description())
+                            }
+                            MetadataSourceKind::TextFile => {
+                                if personal_note_selected {
+                                    format!("{} ▾", text.personal_note())
+                                } else {
+                                    let label = source_file_name
+                                        .as_deref()
+                                        .map(clamp_metadata_source_label)
+                                        .unwrap_or_else(|| text.personal_note().to_string());
+                                    format!("{label} ▾")
+                                }
+                            }
+                            MetadataSourceKind::Hotkeys => format!("{} ▾", text.meta_source_hotkeys()),
+                            MetadataSourceKind::ModData => format!("{} ▾", text.meta_source_mod_data()),
+                        };
+                        let badge_tooltip = match effective_source {
+                            MetadataSourceKind::Description => {
+                                if gb_linked {
+                                    text.meta_source_description_gb_tooltip()
+                                } else {
+                                    text.meta_source_description_tooltip()
+                                }
+                            }
+                            MetadataSourceKind::TextFile => {
+                                if personal_note_selected {
+                                    text.editable_user_note()
+                                } else {
+                                    selected
+                                        .metadata
+                                        .extracted
+                                        .readme_path
+                                        .as_deref()
+                                        .unwrap_or_default()
+                                }
+                            }
+                            MetadataSourceKind::Hotkeys => text.meta_source_hotkeys_tooltip(),
+                            MetadataSourceKind::ModData => text.meta_source_mod_data_tooltip(),
+                        };
+                        let source_response = metadata_dropdown_badge(ui, &badge_text)
+                            .on_hover_text(badge_tooltip)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
+                        egui::Popup::menu(&source_response)
+                            .id(popup_id)
+                            .width(METADATA_SOURCE_POPUP_WIDTH)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
+                                ui.set_min_width(METADATA_SOURCE_POPUP_WIDTH);
+                                ui.spacing_mut().item_spacing.y = 3.0;
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin::same(6))
+                                    .show(ui, |ui| {
+                                        self.render_metadata_source_list(
+                                            ui,
+                                            &selected,
+                                            &personal_note_source_path,
+                                            can_offer_personal_note_choice,
+                                            effective_source,
+                                        );
+                                    });
+                            });
+
+                        if selected.metadata.extracted.requires_rabbitfx {
+                            metadata_info_badge(ui, text.requires_rabbitfx());
+                        }
+
+                        if matches!(effective_source, MetadataSourceKind::Hotkeys) {
+                            // Raw <-> List cycling toggle. Neutral when idle, accent
+                            // only on hover/press so it isn't distracting. Persisted
+                            // globally (static_prefs) so the choice survives restarts.
+                            let mode_label = if self.state.static_prefs.hotkeys_simplified {
+                                text.hotkeys_view_list()
+                            } else {
+                                text.hotkeys_view_raw()
+                            };
+                            let mut mode_job = LayoutJob::default();
+                            mode_job.append(
+                                mode_label,
+                                0.0,
+                                TextFormat {
+                                    font_id: egui::FontId::proportional(12.0),
+                                    color: Color32::PLACEHOLDER,
+                                    ..Default::default()
+                                },
+                            );
+                            mode_job.append(
+                                &icon_char(Icon::ArrowLeftRight).to_string(),
+                                4.0,
+                                TextFormat {
+                                    font_id: egui::FontId::new(
+                                        10.0,
+                                        FontFamily::Name(LUCIDE_FAMILY.into()),
+                                    ),
+                                    color: Color32::PLACEHOLDER,
+                                    ..Default::default()
+                                },
+                            );
+                            let mode_galley = ui.fonts_mut(|f| f.layout_job(mode_job));
+                            let (mode_rect, mode_response) =
+                                ui.allocate_exact_size(mode_galley.size(), Sense::click());
+                            let mode_color = if mode_response.hovered()
+                                || mode_response.is_pointer_button_down_on()
+                            {
+                                Color32::from_rgb(224, 130, 82)
+                            } else {
+                                Color32::from_gray(120)
+                            };
+                            ui.painter().galley(mode_rect.min, mode_galley, mode_color);
+                            let mode_response = mode_response
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(if self.state.static_prefs.hotkeys_simplified {
+                                    text.hotkeys_switch_to_raw()
+                                } else {
+                                    text.hotkeys_switch_to_list()
+                                });
+                            if mode_response.clicked() {
+                                self.state.static_prefs.hotkeys_simplified =
+                                    !self.state.static_prefs.hotkeys_simplified;
+                                self.save_state();
+                            }
+                        } else if matches!(effective_source, MetadataSourceKind::TextFile)
+                            && personal_note_selected
                         {
-                            self.render_personal_note_editor(ui, &selected.id);
-                        } else {
+                            // Personal note: pencil to edit / green check to save.
+                            let note_button_icon = if personal_note_editing {
+                                Icon::Check
+                            } else {
+                                Icon::Pencil
+                            };
+                            let note_button_color = if personal_note_editing {
+                                Color32::from_rgb(110, 194, 132)
+                            } else {
+                                Color32::from_gray(160)
+                            };
+                            let note_button = ui
+                                .add(
+                                    egui::Button::new(icon_rich(
+                                        note_button_icon,
+                                        9.0,
+                                        note_button_color,
+                                    ))
+                                    .frame(false),
+                                )
+                                .on_hover_text(if personal_note_editing {
+                                    text.save_personal_note()
+                                } else {
+                                    text.edit_personal_note()
+                                })
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if note_button.clicked() {
+                                if personal_note_editing {
+                                    self.save_personal_note_edit(&selected.id);
+                                } else {
+                                    self.start_personal_note_edit(
+                                        &selected.id,
+                                        personal_note_source
+                                            .map(|source| source.content.clone())
+                                            .unwrap_or_default(),
+                                    );
+                                }
+                            }
+                        } else if can_add_personal_note {
+                            let add_note_response = soft_add_note_button(ui, text.add_note())
+                                .on_hover_text(text.add_personal_note())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if add_note_response.clicked() {
+                                self.start_personal_note_edit(&selected.id, String::new());
+                            }
+                        }
+                    });
+
+                    match effective_source {
+                        MetadataSourceKind::Description => {
                             self.queue_gif_previews_for_markdown(
                                 ui.ctx(),
                                 &markdown,
@@ -9366,291 +9708,8 @@ impl HestiaApp {
                                 Some(&selected.root_path),
                             );
                         }
-                    }
-                    
-                    let show_metadata = match self.state.static_prefs.metadata_visibility {
-                        MetadataVisibility::Never => false,
-                        MetadataVisibility::OnlyIfNoDescription => !has_description,
-                        MetadataVisibility::Always => true,
-                    };
-
-                    if show_metadata
-                        && (extracted_markdown.is_some()
-                            || personal_note_editing
-                            || hotkeys_view_active
-                            || (can_add_personal_note
-                                && matches!(
-                                    self.state.static_prefs.metadata_visibility,
-                                    MetadataVisibility::Always
-                                )))
-                    {
-                            if has_description {
-                                ui.add_space(16.0);
-                                ui.separator();
-                                ui.add_space(16.0);
-                            } else {
-                                ui.add_space(10.0);
-                            }
-                            ui.horizontal(|ui| {
-                                static_label(
-                                    ui,
-                                    bold(if metadata_as_description {
-                                        text.description()
-                                    } else {
-                                        text.metadata()
-                                    }, Some(14.0))
-                                        .underline()
-                                        .color(Color32::from_gray(195)),
-                                );
-                                if metadata_as_description
-                                    && selected.metadata.extracted.requires_rabbitfx
-                                {
-                                    metadata_info_badge(ui, text.requires_rabbitfx());
-                                }
-                                let source_path = selected
-                                    .metadata
-                                    .extracted
-                                    .readme_path
-                                    .as_deref()
-                                    .filter(|path| !path.trim().is_empty());
-                                let source_name = source_path.map(|source| {
-                                    Path::new(source)
-                                        .file_name()
-                                        .and_then(|name| name.to_str())
-                                        .unwrap_or(source)
-                                });
-                                if hotkeys_view_active {
-                                    let source_response =
-                                        metadata_dropdown_badge(ui, "Hotkeys ▾")
-                                            .on_hover_text("Sourced from the mod's .ini files")
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
-                                    egui::Popup::menu(&source_response)
-                                        .id(popup_id)
-                                        .width(METADATA_SOURCE_POPUP_WIDTH)
-                                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                        .show(|ui| {
-                                            self.render_metadata_source_list(
-                                                ui,
-                                                &selected,
-                                                &personal_note_source_path,
-                                                can_offer_personal_note_choice,
-                                            );
-                                        });
-
-                                    // Stub: single cycling toggle for the keybind view
-                                    // (Detail <-> Simple). Flips state; no effect yet.
-                                    // Neutral when idle, accent only on hover/press so it
-                                    // isn't distracting. No leading add_space so it sits at
-                                    // the same gap as the section label -> badge.
-                                    let mode_label = if self.hotkeys_simplified {
-                                        "Simple"
-                                    } else {
-                                        "Detail"
-                                    };
-                                    let mut mode_job = LayoutJob::default();
-                                    mode_job.append(
-                                        mode_label,
-                                        0.0,
-                                        TextFormat {
-                                            font_id: egui::FontId::proportional(12.0),
-                                            color: Color32::PLACEHOLDER,
-                                            ..Default::default()
-                                        },
-                                    );
-                                    mode_job.append(
-                                        &icon_char(Icon::ArrowLeftRight).to_string(),
-                                        4.0,
-                                        TextFormat {
-                                            font_id: egui::FontId::new(
-                                                10.0,
-                                                FontFamily::Name(LUCIDE_FAMILY.into()),
-                                            ),
-                                            color: Color32::PLACEHOLDER,
-                                            ..Default::default()
-                                        },
-                                    );
-                                    let mode_galley = ui.fonts_mut(|f| f.layout_job(mode_job));
-                                    let (mode_rect, mode_response) =
-                                        ui.allocate_exact_size(mode_galley.size(), Sense::click());
-                                    let mode_color = if mode_response.hovered()
-                                        || mode_response.is_pointer_button_down_on()
-                                    {
-                                        Color32::from_rgb(224, 130, 82)
-                                    } else {
-                                        Color32::from_gray(120)
-                                    };
-                                    ui.painter().galley(mode_rect.min, mode_galley, mode_color);
-                                    let mode_response = mode_response
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text(if self.hotkeys_simplified {
-                                            "Switch to detailed view"
-                                        } else {
-                                            "Switch to simplified view"
-                                        });
-                                    if mode_response.clicked() {
-                                        self.hotkeys_simplified = !self.hotkeys_simplified;
-                                    }
-                                } else if personal_note_selected {
-                                    let badge_text = if selected.metadata.extracted.text_sources.len() > 1
-                                        || can_offer_personal_note_choice
-                                    {
-                                        &format!("{} ▾", text.personal_note())
-                                    } else {
-                                        text.personal_note()
-                                    };
-                                    let note_has_choices = selected.metadata.extracted.text_sources.len() > 1
-                                        || can_offer_personal_note_choice;
-                                    let mut source_response = if note_has_choices {
-                                        metadata_dropdown_badge(ui, badge_text)
-                                    } else {
-                                        metadata_info_badge(ui, badge_text)
-                                    }
-                                    .on_hover_text(text.editable_user_note());
-                                    if note_has_choices {
-                                        source_response = source_response
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                        let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
-                                        egui::Popup::menu(&source_response)
-                                            .id(popup_id)
-                                            .width(METADATA_SOURCE_POPUP_WIDTH)
-                                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                            .show(|ui| {
-                                                ui.set_min_width(METADATA_SOURCE_POPUP_WIDTH);
-                                                ui.spacing_mut().item_spacing.y = 3.0;
-                                                egui::Frame::new()
-                                                    .inner_margin(egui::Margin::same(6))
-                                                    .show(ui, |ui| {
-                                                        self.render_metadata_source_list(
-                                                            ui,
-                                                            &selected,
-                                                            &personal_note_source_path,
-                                                            can_offer_personal_note_choice,
-                                                        );
-                                                    });
-                                            });
-                                    } else {
-                                        source_response.on_hover_cursor(egui::CursorIcon::Default);
-                                    }
-                                    let note_button_icon = if personal_note_editing {
-                                        Icon::Check
-                                    } else {
-                                        Icon::Pencil
-                                    };
-                                    let note_button_color = if personal_note_editing {
-                                        Color32::from_rgb(110, 194, 132)
-                                    } else {
-                                        Color32::from_gray(160)
-                                    };
-                                    let note_button = ui
-                                        .add(
-                                            egui::Button::new(icon_rich(
-                                                note_button_icon,
-                                                9.0,
-                                                note_button_color,
-                                            ))
-                                            .frame(false),
-                                        )
-                                        .on_hover_text(if personal_note_editing {
-                                            text.save_personal_note()
-                                        } else {
-                                            text.edit_personal_note()
-                                        })
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    if note_button.clicked() {
-                                        if personal_note_editing {
-                                            self.save_personal_note_edit(&selected.id);
-                                        } else {
-                                            self.start_personal_note_edit(
-                                                &selected.id,
-                                                personal_note_source
-                                                    .map(|source| source.content.clone())
-                                                    .unwrap_or_default(),
-                                            );
-                                        }
-                                    }
-                                } else if let (Some(source), Some(source_name)) = (source_path, source_name) {
-                                    let has_source_choices =
-                                        selected.metadata.extracted.text_sources.len() > 1
-                                            || can_offer_personal_note_choice;
-                                    let clamped_source_name = clamp_metadata_source_label(source_name);
-                                    let badge_text = if has_source_choices {
-                                        format!("{clamped_source_name} ▾")
-                                    } else {
-                                        clamped_source_name
-                                    };
-                                    let mut source_response = if has_source_choices {
-                                        metadata_dropdown_badge(ui, &badge_text)
-                                    } else {
-                                        metadata_info_badge(ui, &badge_text)
-                                    }
-                                    .on_hover_text(source);
-                                    if has_source_choices {
-                                        source_response = source_response
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                        let popup_id = ui.id().with(("metadata_source_popup", &selected.id));
-                                        egui::Popup::menu(&source_response)
-                                            .id(popup_id)
-                                            .width(METADATA_SOURCE_POPUP_WIDTH)
-                                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                            .show(|ui| {
-                                                ui.set_min_width(METADATA_SOURCE_POPUP_WIDTH);
-                                                ui.spacing_mut().item_spacing.y = 3.0;
-                                                egui::Frame::new()
-                                                    .inner_margin(egui::Margin::same(6))
-                                                    .show(ui, |ui| {
-                                                        self.render_metadata_source_list(
-                                                            ui,
-                                                            &selected,
-                                                            &personal_note_source_path,
-                                                            can_offer_personal_note_choice,
-                                                        );
-                                                    });
-                                            });
-                                    } else {
-                                        source_response.on_hover_cursor(egui::CursorIcon::Default);
-                                    }
-                                } else if can_add_personal_note
-                                    && matches!(
-                                        self.state.static_prefs.metadata_visibility,
-                                        MetadataVisibility::Always
-                                    )
-                                {
-                                    let add_note_response = soft_add_note_button(ui, text.add_note())
-                                        .on_hover_text(text.add_personal_note())
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    if add_note_response.clicked() {
-                                        self.start_personal_note_edit(
-                                            &selected.id,
-                                            String::new(),
-                                        );
-                                    }
-                                } else if personal_note_editing {
-                                    let save_note_response = ui
-                                        .add(
-                                            egui::Button::new(icon_rich(
-                                                Icon::Check,
-                                                13.0,
-                                                Color32::from_rgb(110, 194, 132),
-                                            ))
-                                            .frame(false),
-                                        )
-                                        .on_hover_text(text.save_personal_note())
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    if save_note_response.clicked() {
-                                        self.save_personal_note_edit(&selected.id);
-                                    }
-                                }
-                            });
-                            if hotkeys_view_active {
-                                if let Some((_, inis)) = &self.metadata_hotkeys_view {
-                                    if self.hotkeys_simplified {
-                                        render_mod_config_simple(ui, inis);
-                                    } else {
-                                        render_mod_config_sections(ui, inis);
-                                    }
-                                }
-                            } else if personal_note_editing {
+                        MetadataSourceKind::TextFile => {
+                            if personal_note_editing {
                                 self.render_personal_note_editor(ui, &selected.id);
                             } else if let Some(extracted) = extracted_markdown {
                                 let extracted = if personal_note_selected {
@@ -9694,6 +9753,25 @@ impl HestiaApp {
                                     ).wrap().selectable(false)).on_hover_cursor(egui::CursorIcon::Default);
                                 }
                             }
+                        }
+                        MetadataSourceKind::Hotkeys => {
+                            if let Some((_, inis)) = &self.metadata_hotkeys_view {
+                                if self.state.static_prefs.hotkeys_simplified {
+                                    render_mod_config_simple(ui, inis, text.hotkeys_no_toggle_keys());
+                                } else {
+                                    render_mod_config_sections(ui, inis);
+                                }
+                            }
+                        }
+                        MetadataSourceKind::ModData => {
+                            // Stub: `mod_data_available` is always false, so this arm is
+                            // unreachable today; render a placeholder rather than panic.
+                            ui.add(egui::Label::new(
+                                RichText::new("No customization data")
+                                    .size(13.0)
+                                    .color(Color32::from_gray(140)),
+                            ));
+                        }
                     }
                     ui.add_space(10.0);
                     let row_height = 20.0;
@@ -10394,7 +10472,7 @@ fn split_camel_label(s: &str) -> String {
 /// Simplified keybind view: one line per real cycle toggle (`key -> label ->
 /// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
 /// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
-fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni]) {
+fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni], no_toggle_keys: &str) {
     struct Row {
         show_ui: bool,
         key: String,
@@ -10475,7 +10553,7 @@ fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni]) {
     if rows.is_empty() {
         ui.add_space(4.0);
         ui.label(
-            RichText::new("No toggle keys in this mod.")
+            RichText::new(no_toggle_keys)
                 .size(12.5)
                 .color(Color32::from_gray(150)),
         );
@@ -10489,7 +10567,12 @@ fn render_mod_config_simple(ui: &mut Ui, inis: &[ModConfigIni]) {
     for row in rows {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            metadata_info_badge(ui, &row.key);
+            ui.label(
+                RichText::new("•")
+                    .size(14.0)
+                    .color(Color32::from_gray(150)),
+            );
+            keycap_badge(ui, &row.key);
             ui.label(
                 RichText::new(&row.label)
                     .size(12.5)

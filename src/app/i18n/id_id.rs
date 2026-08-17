@@ -471,9 +471,21 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tidak dapat menambahkan gambar", // LibraryCouldNotAddImages
     "Gambar dihapus", // LibraryImageRemoved
     "Tidak dapat menghapus gambar", // LibraryCouldNotRemoveImage
-    "Deskripsi", // LibraryDescription
-    "Metadata", // LibraryMetadata
     "Membutuhkan RabbitFX", // LibraryRequiresRabbitFx
+    "Deskripsi", // LibraryMetaSourceDescription
+    "Deskripsi dari halaman GameBanana", // LibraryMetaSourceDescriptionGbTooltip
+    "Deskripsi mod", // LibraryMetaSourceDescriptionTooltip
+    "Hotkey", // LibraryMetaSourceHotkeys
+    "Bersumber dari file .ini mod", // LibraryMetaSourceHotkeysTooltip
+    "Mod ini tidak memiliki hotkey", // LibraryMetaSourceHotkeysUnavailable
+    "Data Mod", // LibraryMetaSourceModData
+    "Konfigurasi kustomisasi mod", // LibraryMetaSourceModDataTooltip
+    "Tidak ada data kustomisasi tersimpan", // LibraryMetaSourceModDataUnavailable
+    "Daftar", // LibraryHotkeysViewList
+    "Mentah", // LibraryHotkeysViewRaw
+    "Beralih ke tampilan mentah", // LibraryHotkeysSwitchToRaw
+    "Beralih ke tampilan daftar", // LibraryHotkeysSwitchToList
+    "Tidak ada tombol pengalih di mod ini.", // LibraryHotkeysNoToggleKeys
     "Tambahkan catatan pribadi", // LibraryAddPersonalNote
     "Simpan catatan pribadi", // LibrarySavePersonalNote
     "Catatan pengguna yang bisa diedit", // LibraryEditableUserNote
@@ -565,15 +577,11 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Saat menjalankan game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "Setelah memasang mod:", // SettingsGeneralBehaviorAfterInstallingMod
     "Saat menjalankan alat:", // SettingsGeneralBehaviorWhenLaunchingTool
-    "Metadata detail mod:", // SettingsGeneralBehaviorModDetailMetadata
     "Jangan lakukan apa-apa", // SettingsGeneralBehaviorDoNothing
     "Minimalkan Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Keluar dari Hestia", // SettingsGeneralBehaviorExitHestia
     "Tambahkan ke pilihan", // SettingsGeneralBehaviorAddToSelection
     "Buka detail mod", // SettingsGeneralBehaviorOpenModDetail
-    "Jangan pernah tampilkan", // SettingsGeneralBehaviorNeverShow
-    "Tampilkan jika tidak ada deskripsi", // SettingsGeneralBehaviorShowIfNoDescription
-    "Selalu tampilkan", // SettingsGeneralBehaviorAlwaysShow
 
     // Window: Settings > General > Installed Mods List
     "Daftar Mod Terpasang", // SettingsGeneralInstalledModsListSection

@@ -471,9 +471,21 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Не удалось добавить изображения", // LibraryCouldNotAddImages
     "Изображение удалено", // LibraryImageRemoved
     "Не удалось удалить изображение", // LibraryCouldNotRemoveImage
-    "Описание", // LibraryDescription
-    "Метаданные", // LibraryMetadata
     "Требуется RabbitFX", // LibraryRequiresRabbitFx
+    "Описание", // LibraryMetaSourceDescription
+    "Описание со страницы GameBanana", // LibraryMetaSourceDescriptionGbTooltip
+    "Описание мода", // LibraryMetaSourceDescriptionTooltip
+    "Горячие клавиши", // LibraryMetaSourceHotkeys
+    "Из .ini-файлов мода", // LibraryMetaSourceHotkeysTooltip
+    "В этом моде нет горячих клавиш", // LibraryMetaSourceHotkeysUnavailable
+    "Данные мода", // LibraryMetaSourceModData
+    "Настройки кастомизации мода", // LibraryMetaSourceModDataTooltip
+    "Нет сохранённых данных кастомизации", // LibraryMetaSourceModDataUnavailable
+    "Список", // LibraryHotkeysViewList
+    "Исходный", // LibraryHotkeysViewRaw
+    "Переключить на исходный вид", // LibraryHotkeysSwitchToRaw
+    "Переключить на вид списком", // LibraryHotkeysSwitchToList
+    "В этом моде нет переключаемых клавиш.", // LibraryHotkeysNoToggleKeys
     "Добавить личную заметку", // LibraryAddPersonalNote
     "Сохранить личную заметку", // LibrarySavePersonalNote
     "Редактируемая заметка пользователя", // LibraryEditableUserNote
@@ -565,15 +577,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При запуске игры:", // SettingsGeneralBehaviorWhenLaunchingGame
     "После установки мода:", // SettingsGeneralBehaviorAfterInstallingMod
     "При запуске утилиты:", // SettingsGeneralBehaviorWhenLaunchingTool
-    "Метаданные в сведениях о моде:", // SettingsGeneralBehaviorModDetailMetadata
     "Ничего не делать", // SettingsGeneralBehaviorDoNothing
     "Свернуть Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Выйти из Hestia", // SettingsGeneralBehaviorExitHestia
     "Добавить в выделенное", // SettingsGeneralBehaviorAddToSelection
     "Открыть сведения о моде", // SettingsGeneralBehaviorOpenModDetail
-    "Не показывать", // SettingsGeneralBehaviorNeverShow
-    "Показывать, если нет описания", // SettingsGeneralBehaviorShowIfNoDescription
-    "Всегда показывать", // SettingsGeneralBehaviorAlwaysShow
 
     // Window: Settings > General > Installed Mods List
     "Список установленных модов", // SettingsGeneralInstalledModsListSection

@@ -2459,7 +2459,6 @@ impl HestiaApp {
                             let launch_behavior = self.state.static_prefs.launch_behavior;
                             let tool_launch_behavior = self.state.static_prefs.tool_launch_behavior;
                             let after_install = self.state.static_prefs.after_install_behavior;
-                            let meta_vis = self.state.static_prefs.metadata_visibility;
                             let left_column_needed = settings_column_width(
                                 ui,
                                 &[text.when_launching_game(), text.after_installing_mod()],
@@ -2474,14 +2473,11 @@ impl HestiaApp {
                             );
                             let right_column_needed = settings_column_width(
                                 ui,
-                                &[text.when_launching_tool(), text.mod_detail_metadata()],
+                                &[text.when_launching_tool()],
                                 &[
                                     text.launch_behavior(LaunchBehavior::DoNothing),
                                     text.launch_behavior(LaunchBehavior::Minimize),
                                     text.launch_behavior(LaunchBehavior::Exit),
-                                    text.metadata_visibility(MetadataVisibility::Never),
-                                    text.metadata_visibility(MetadataVisibility::OnlyIfNoDescription),
-                                    text.metadata_visibility(MetadataVisibility::Always),
                                 ],
                             );
                             let left_column_width =
@@ -2531,16 +2527,6 @@ impl HestiaApp {
                                                 });
                                         },
                                     );
-                                    ui.add_space(8.0);
-                                    setting_block(ui, text.mod_detail_metadata(), &mut |ui| {
-                                        egui::ComboBox::from_id_salt("metadata_visibility")
-                                            .selected_text(text.metadata_visibility(self.state.static_prefs.metadata_visibility))
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::Never, text.metadata_visibility(MetadataVisibility::Never));
-                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::OnlyIfNoDescription, text.metadata_visibility(MetadataVisibility::OnlyIfNoDescription));
-                                                ui.selectable_value(&mut self.state.static_prefs.metadata_visibility, MetadataVisibility::Always, text.metadata_visibility(MetadataVisibility::Always));
-                                            });
-                                    });
                                 });
                             });
                             if self.state.static_prefs.launch_behavior != launch_behavior {
@@ -2550,9 +2536,6 @@ impl HestiaApp {
                                 should_save = true;
                             }
                             if self.state.static_prefs.after_install_behavior != after_install {
-                                should_save = true;
-                            }
-                            if self.state.static_prefs.metadata_visibility != meta_vis {
                                 should_save = true;
                             }
                             ui.add_space(1.0);
