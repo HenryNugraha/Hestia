@@ -481,6 +481,9 @@ enum TextKey {
     LibraryHotkeysSwitchToRaw,
     LibraryHotkeysSwitchToList,
     LibraryHotkeysNoToggleKeys,
+    LibraryHotkeysWriteBlockedLabel,
+    LibraryHotkeysWriteBlockedHint,
+    LibraryHotkeysRunningToast,
     LibraryAddPersonalNote,
     LibrarySavePersonalNote,
     LibraryEditableUserNote,
@@ -2671,6 +2674,18 @@ impl TextCatalog {
 
     fn hotkeys_no_toggle_keys(self) -> &'static str {
         self.get(TextKey::LibraryHotkeysNoToggleKeys)
+    }
+
+    fn hotkeys_write_blocked_label(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysWriteBlockedLabel)
+    }
+
+    fn hotkeys_write_blocked_hint(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysWriteBlockedHint)
+    }
+
+    fn hotkeys_running_toast(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeysRunningToast)
     }
 
     fn add_personal_note(self) -> &'static str {

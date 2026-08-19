@@ -483,6 +483,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Переключить на исходный вид", // LibraryHotkeysSwitchToRaw
     "Переключить на вид списком", // LibraryHotkeysSwitchToList
     "В этом моде нет переключаемых клавиш.", // LibraryHotkeysNoToggleKeys
+    "Только чтение", // LibraryHotkeysWriteBlockedLabel
+    "Только чтение, пока игра запущена. Чтобы менять их на лету, включите «Разрешить Hestia перезагружать XXMI» в настройках, затем перезапустите игру.", // LibraryHotkeysWriteBlockedHint
+    "Игра сейчас запущена!", // LibraryHotkeysRunningToast
     "Добавить личную заметку", // LibraryAddPersonalNote
     "Сохранить личную заметку", // LibrarySavePersonalNote
     "Редактируемая заметка пользователя", // LibraryEditableUserNote

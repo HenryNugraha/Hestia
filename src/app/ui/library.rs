@@ -9470,7 +9470,14 @@ impl HestiaApp {
 
                     // Keep the parsed-ini cache warm for this mod while Hotkeys is shown
                     // (the cache is data only; the persisted kind is the source of truth).
-                    if matches!(effective_source, MetadataSourceKind::Hotkeys) {
+                    // `hotkeys_write_blocked` = the game is up but the folded consent is off,
+                    // so neither cycling a value nor resetting can reach it. Computed once
+                    // here (throttled inside) and shared by the header (Reset vs read-only
+                    // status) and the value list (inert rows).
+                    let hotkeys_write_blocked = if matches!(
+                        effective_source,
+                        MetadataSourceKind::Hotkeys
+                    ) {
                         let needs_parse = self
                             .metadata_hotkeys_view
                             .as_ref()
@@ -9482,7 +9489,10 @@ impl HestiaApp {
                             ));
                         }
                         self.ensure_hotkey_values_cached(&selected);
-                    }
+                        self.hotkeys_write_blocked(&selected, ui.ctx())
+                    } else {
+                        false
+                    };
 
                     let gb_linked = selected
                         .source
@@ -9644,56 +9654,147 @@ impl HestiaApp {
                                 self.hotkey_clear_confirm_target_id = None;
                             }
                             ui.add_space(4.0);
-                            let danger = Color32::from_rgb(218, 70, 70);
-                            let danger_fill = Color32::from_rgb(190, 42, 42);
-                            let armed = self.hotkey_clear_confirm_target_id.as_deref()
-                                == Some(selected.id.as_str());
-                            if armed {
-                                hotkey_clear_confirm_label(
-                                    ui,
-                                    "Clear mod's customization?",
-                                    danger,
-                                );
-                                if hotkey_clear_icon_button(
-                                    ui,
-                                    Icon::Trash2,
-                                    danger,
-                                    Color32::WHITE,
-                                    danger_fill,
-                                    1.0,
-                                    "Clear mod's customization",
-                                )
-                                .clicked()
-                                {
-                                    self.clear_hotkey_customization(&selected.id);
-                                    self.hotkey_clear_confirm_target_id = None;
-                                }
-                                if hotkey_clear_icon_button(
-                                    ui,
-                                    Icon::X,
-                                    Color32::from_gray(145),
-                                    Color32::from_gray(210),
-                                    Color32::from_rgba_premultiplied(82, 86, 92, 90),
-                                    1.0,
-                                    text.cancel(),
-                                )
-                                .clicked()
-                                {
-                                    self.hotkey_clear_confirm_target_id = None;
-                                }
-                            } else if hotkey_clear_icon_button(
-                                ui,
-                                Icon::Eraser,
-                                Color32::from_gray(128),
-                                danger,
-                                Color32::TRANSPARENT,
-                                1.0,
-                                "Clear mod's customization",
-                            )
-                            .clicked()
+                            // S2: this one slot shows EITHER the Reset control OR a read-only
+                            // status — never both. A blocked panel has nothing to reset live,
+                            // so the eraser gives way to a ⚠ status plus a "(why?)" explainer
+                            // whose tooltip carries the two-step fix.
+                            //
+                            // Nudge the whole slot to sit snug under the toggle's baseline.
+                            // Fine-tune here: negative x = left, positive y = down.
+                            let reset_slot_shift = egui::vec2(-6.0, 1.0);
+                            let slot_rect = ui.cursor().translate(reset_slot_shift);
+                            let mut slot_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(slot_rect)
+                                    .layout(*ui.layout()),
+                            );
                             {
-                                self.hotkey_clear_confirm_target_id = Some(selected.id.clone());
+                                let ui = &mut slot_ui;
+                                if hotkeys_write_blocked {
+                                    if self.hotkey_clear_confirm_target_id.as_deref()
+                                        == Some(selected.id.as_str())
+                                    {
+                                        self.hotkey_clear_confirm_target_id = None;
+                                    }
+                                    let amber = Color32::from_rgb(219, 158, 66);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.label(icon_rich(Icon::AlertTriangle, 12.0, amber));
+                                        ui.label(
+                                            RichText::new(text.hotkeys_write_blocked_label())
+                                                .size(12.0)
+                                                .color(amber),
+                                        );
+                                        why_link(ui, text.hotkeys_write_blocked_hint());
+                                    });
+                                } else {
+                                    let danger = Color32::from_rgb(218, 70, 70);
+                                    let danger_fill = Color32::from_rgb(190, 42, 42);
+                                    let armed = self.hotkey_clear_confirm_target_id.as_deref()
+                                        == Some(selected.id.as_str());
+                                    let confirm_anim_id = egui::Id::new((
+                                        "hotkey_clear_confirm_anim",
+                                        selected.id.as_str(),
+                                    ));
+                                    if armed {
+                                        // Fine-tune the confirmation spacing here:
+                                        //   confirm_label_gap  = label "…?" → trash icon
+                                        //   confirm_button_gap = trash icon → X (cancel)
+                                        let confirm_label_gap = 4.0;
+                                        let confirm_button_gap = 2.0;
+                                        // Intro slide-in: the cluster slides out rightward from
+                                        // the eraser's spot, clipped on the left so it appears to
+                                        // emerge from behind it. Fine-tune the feel here:
+                                        //   confirm_slide_secs     = duration (bigger = slower)
+                                        //   confirm_slide_distance = px it travels in from the left
+                                        let confirm_slide_secs = 0.28;
+                                        let confirm_slide_distance = 24.0;
+                                        let t = ui.ctx().animate_bool_with_time(
+                                            confirm_anim_id,
+                                            true,
+                                            confirm_slide_secs,
+                                        );
+                                        // Ease-out so it decelerates into place.
+                                        let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                                        let dx = -(1.0 - eased) * confirm_slide_distance;
+
+                                        let base = ui.cursor();
+                                        let mut anim_ui = ui.new_child(
+                                            egui::UiBuilder::new()
+                                                .max_rect(base.translate(egui::vec2(dx, 0.0)))
+                                                .layout(*ui.layout()),
+                                        );
+                                        let mut clip = anim_ui.clip_rect();
+                                        clip.min.x = clip.min.x.max(base.min.x);
+                                        anim_ui.set_clip_rect(clip);
+                                        {
+                                            let ui = &mut anim_ui;
+                                            ui.spacing_mut().item_spacing.x = 0.0;
+                                            hotkey_clear_confirm_label(
+                                                ui,
+                                                "Clear mod's customization?",
+                                                danger,
+                                            );
+                                            ui.add_space(confirm_label_gap);
+                                            if hotkey_clear_icon_button(
+                                                ui,
+                                                Icon::Trash2,
+                                                danger,
+                                                Color32::WHITE,
+                                                danger_fill,
+                                                1.0,
+                                                "Clear mod's customization",
+                                            )
+                                            .clicked()
+                                            {
+                                                self.clear_hotkey_customization(&selected.id);
+                                                self.hotkey_clear_confirm_target_id = None;
+                                            }
+                                            ui.add_space(confirm_button_gap);
+                                            if hotkey_clear_icon_button(
+                                                ui,
+                                                Icon::X,
+                                                Color32::from_gray(145),
+                                                Color32::from_gray(210),
+                                                Color32::from_rgba_premultiplied(82, 86, 92, 90),
+                                                1.0,
+                                                text.cancel(),
+                                            )
+                                            .clicked()
+                                            {
+                                                self.hotkey_clear_confirm_target_id = None;
+                                            }
+                                        }
+                                        let used = anim_ui
+                                            .min_rect()
+                                            .translate(egui::vec2(-dx, 0.0));
+                                        ui.advance_cursor_after_rect(used);
+                                    } else {
+                                        // Reset so the next arm replays the intro from the start.
+                                        ui.ctx().animate_bool_with_time(
+                                            confirm_anim_id,
+                                            false,
+                                            0.0,
+                                        );
+                                        if hotkey_clear_icon_button(
+                                            ui,
+                                            Icon::Eraser,
+                                            Color32::from_gray(128),
+                                            danger,
+                                            Color32::TRANSPARENT,
+                                            1.0,
+                                            "Clear mod's customization",
+                                        )
+                                        .clicked()
+                                        {
+                                            self.hotkey_clear_confirm_target_id =
+                                                Some(selected.id.clone());
+                                        }
+                                    }
+                                }
                             }
+                            let used = slot_ui.min_rect().translate(-reset_slot_shift);
+                            ui.advance_cursor_after_rect(used);
                         } else if matches!(effective_source, MetadataSourceKind::TextFile)
                             && personal_note_selected
                         {
@@ -9841,6 +9942,11 @@ impl HestiaApp {
                             let current_values = self.cached_hotkey_values(&selected.id);
                             let action = if let Some((_, inis)) = &self.metadata_hotkeys_view {
                                 if simplified {
+                                    // Rows stay at full appearance; clicks/hover are inert
+                                    // Rows stay fully interactive (hover + clickable) even
+                                    // while blocked, so they still read as actionable. The
+                                    // click is intercepted below: a blocked change can't
+                                    // reach the running game, so it toasts instead of firing.
                                     render_mod_config_simple(
                                         ui,
                                         inis,
@@ -9856,23 +9962,34 @@ impl HestiaApp {
                                 None
                             };
                             if let Some(action) = action {
-                                match action {
-                                    HotkeyListAction::SetValue {
-                                        ini_rel_path,
-                                        var_name,
-                                        value,
-                                        key_spec,
-                                        values,
-                                    } => self.set_hotkey_value(
-                                        &selected.id,
-                                        &ini_rel_path,
-                                        &var_name,
-                                        &value,
-                                        &key_spec,
-                                        &values,
-                                    ),
-                                    HotkeyListAction::RunCommand { key_spec, label } => {
-                                        self.run_hotkey_command(&selected.id, &key_spec, &label)
+                                if hotkeys_write_blocked {
+                                    self.push_toast(
+                                        text.hotkeys_running_toast().to_string(),
+                                        false,
+                                    );
+                                } else {
+                                    match action {
+                                        HotkeyListAction::SetValue {
+                                            ini_rel_path,
+                                            var_name,
+                                            value,
+                                            key_spec,
+                                            values,
+                                        } => self.set_hotkey_value(
+                                            &selected.id,
+                                            &ini_rel_path,
+                                            &var_name,
+                                            &value,
+                                            &key_spec,
+                                            &values,
+                                        ),
+                                        HotkeyListAction::RunCommand { key_spec, label } => {
+                                            self.run_hotkey_command(
+                                                &selected.id,
+                                                &key_spec,
+                                                &label,
+                                            )
+                                        }
                                     }
                                 }
                             };
@@ -10882,6 +10999,51 @@ fn clickable_hotkey_label(ui: &mut Ui, text: &str, color: Color32) -> egui::Resp
         );
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A small, subtle "(why?)" explainer. On hover the inner word gets a dashed
+/// underline and the cursor gains a question mark (`CursorIcon::Help`); the tooltip
+/// carries the full explanation. The parentheses stay plain — only "why?" is decorated.
+fn why_link(ui: &mut Ui, tooltip: &str) {
+    let font = egui::FontId::proportional(11.0);
+    let base = Color32::from_gray(125);
+    // Measure the pieces so the dashed underline lands under just the "why?" span.
+    let (open_w, word_w, close_w, height) = ui.fonts_mut(|f| {
+        let open = f.layout_no_wrap("(".to_string(), font.clone(), base);
+        let word = f.layout_no_wrap("why?".to_string(), font.clone(), base);
+        let close = f.layout_no_wrap(")".to_string(), font.clone(), base);
+        (open.size().x, word.size().x, close.size().x, word.size().y)
+    });
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(open_w + word_w + close_w, height),
+        Sense::hover(),
+    );
+    let hovered = response.hovered();
+    let color = if hovered {
+        Color32::from_gray(180)
+    } else {
+        base
+    };
+    ui.painter()
+        .text(rect.min, egui::Align2::LEFT_TOP, "(why?)", font, color);
+    if hovered {
+        let x0 = rect.min.x + open_w;
+        let x1 = x0 + word_w;
+        let y = rect.max.y - 0.5;
+        let (dash, gap) = (2.0, 2.0);
+        let mut x = x0;
+        while x < x1 {
+            let seg_end = (x + dash).min(x1);
+            ui.painter().line_segment(
+                [egui::pos2(x, y), egui::pos2(seg_end, y)],
+                egui::Stroke::new(1.0, color),
+            );
+            x += dash + gap;
+        }
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::Help)
+        .on_hover_text(tooltip);
 }
 
 fn paint_hotkey_element_hover(ui: &Ui, response: &egui::Response, corner_radius: u8) {

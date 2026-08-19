@@ -483,6 +483,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Switch to raw view", // LibraryHotkeysSwitchToRaw
     "Switch to list view", // LibraryHotkeysSwitchToList
     "No toggle keys in this mod.", // LibraryHotkeysNoToggleKeys
+    "Read-only", // LibraryHotkeysWriteBlockedLabel
+    "Read-only while the game is running. To change these live, turn on \"Let Hestia trigger XXMI reload\" in Settings, then restart the game.", // LibraryHotkeysWriteBlockedHint
+    "Game is currently running!", // LibraryHotkeysRunningToast
     "Add a personal note", // LibraryAddPersonalNote
     "Save personal note", // LibrarySavePersonalNote
     "Editable user note", // LibraryEditableUserNote

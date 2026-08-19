@@ -65,6 +65,37 @@ impl HestiaApp {
             .unwrap_or_default()
     }
 
+    /// Whether cycling a hotkey value in the List view can't reach the game right now:
+    /// the mod's XXMI game is running but the folded consent is off, so Hestia can't push
+    /// a reload and the write would never take effect. Non-XXMI games and consent-on games
+    /// are never blocked. The running check enumerates processes, so the result is cached
+    /// for ~0.5s (keyed by game id) to keep it out of the per-frame render cost; a repaint
+    /// is scheduled so a game exit or launch flips the state within one interval.
+    fn hotkeys_write_blocked(&mut self, entry: &ModEntry, ctx: &egui::Context) -> bool {
+        const TTL: f64 = 0.5;
+        let Some(game) = self.game_for_mod(entry) else {
+            self.hotkeys_write_block_cache = None;
+            return false;
+        };
+        if !game.is_xxmi() || game.apply_mod_changes_in_game {
+            self.hotkeys_write_block_cache = None;
+            return false;
+        }
+        // Keep re-checking while a consent-off XXMI game's List view is on screen so the
+        // block engages/lifts promptly when the game launches or exits.
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        let now = ctx.input(|input| input.time);
+        if let Some((game_id, blocked, next_check_at)) = &self.hotkeys_write_block_cache
+            && *game_id == game.definition.id
+            && now < *next_check_at
+        {
+            return *blocked;
+        }
+        let blocked = self.game_process_running(&game);
+        self.hotkeys_write_block_cache = Some((game.definition.id.clone(), blocked, now + TTL));
+        blocked
+    }
+
     fn consume_hotkey_customization_events(&mut self) {
         while let Ok(event) = self.hotkey_customization_rx.try_recv() {
             match event {

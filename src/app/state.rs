@@ -283,6 +283,9 @@ pub struct HestiaApp {
     // Live-state watch: while the Hotkeys view is open for a mod whose game has the folded
     // consent on and is running, poll `d3dx_user.ini` for changes and re-read on flush.
     live_state_watch: Option<LiveStateWatch>,
+    // Throttled cache for the Hotkeys List write-block check (game running + consent off),
+    // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
+    hotkeys_write_block_cache: Option<(String, bool, f64)>,
     hotkey_customization_tx: WorkerTx<HotkeyCustomizationRequest>,
     hotkey_customization_rx: WorkerRx<HotkeyCustomizationEvent>,
     hotkey_clear_inflight: HashSet<String>,

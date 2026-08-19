@@ -483,6 +483,9 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "切换到原始视图", // LibraryHotkeysSwitchToRaw
     "切换到列表视图", // LibraryHotkeysSwitchToList
     "此 Mod 中没有可切换的按键。", // LibraryHotkeysNoToggleKeys
+    "只读", // LibraryHotkeysWriteBlockedLabel
+    "游戏运行时为只读。若要实时更改，请在设置中启用“允许 Hestia 触发 XXMI 重载”，然后重启游戏。", // LibraryHotkeysWriteBlockedHint
+    "游戏正在运行！", // LibraryHotkeysRunningToast
     "添加个人便签", // LibraryAddPersonalNote
     "保存个人便签", // LibrarySavePersonalNote
     "可编辑的用户便签", // LibraryEditableUserNote

@@ -483,6 +483,9 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Beralih ke tampilan mentah", // LibraryHotkeysSwitchToRaw
     "Beralih ke tampilan daftar", // LibraryHotkeysSwitchToList
     "Tidak ada tombol pengalih di mod ini.", // LibraryHotkeysNoToggleKeys
+    "Hanya-baca", // LibraryHotkeysWriteBlockedLabel
+    "Hanya-baca selama gim berjalan. Untuk mengubahnya secara langsung, aktifkan \"Izinkan Hestia memicu reload XXMI\" di Setelan, lalu mulai ulang gim.", // LibraryHotkeysWriteBlockedHint
+    "Gim sedang berjalan!", // LibraryHotkeysRunningToast
     "Tambahkan catatan pribadi", // LibraryAddPersonalNote
     "Simpan catatan pribadi", // LibrarySavePersonalNote
     "Catatan pengguna yang bisa diedit", // LibraryEditableUserNote
