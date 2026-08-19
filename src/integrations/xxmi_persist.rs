@@ -1831,23 +1831,32 @@ namespace = hestia\\bridge\r\n\
 [System]\r\n\
 ; additional_foreground_window support was not detected for this importer DLL.\r\n";
 
-const HESTIA_D3DX_BEGIN: &str = "; --- Hestia begin ---";
-const HESTIA_D3DX_END: &str = "; --- Hestia end ---";
+// Current HESTIA SECTION markers and the canonical grant lines Hestia writes inside them.
+const HESTIA_SECTION_START: &str = "; --- HESTIA SECTION START ---";
+const HESTIA_SECTION_END: &str = "; --- HESTIA SECTION END ---";
+const HESTIA_SECTION_NOTE_GENERATED: &str = "; Generated automatically.";
+const HESTIA_SECTION_NOTE_REFRAIN: &str =
+    "; Refrain from editing this section — changes may be lost.";
+/// Marker Hestia stamps immediately above a pre-existing `[System]` line it neutralizes, so
+/// the original can be restored verbatim (drop this marker, uncomment the line below) and
+/// duplicate-key precedence never decides the outcome.
+const HESTIA_STASH_MARKER: &str = "; Disabled by Hestia while it injects its own value";
 const FOREGROUND_WINDOW_KEY: &str = "additional_foreground_window";
 const HESTIA_WINDOW_TITLE: &str = "Hestia";
 /// `[System]` key whose value is the autosave cadence in seconds. Hestia forces it to
-/// `1` when live-state mirroring is enabled so mirrored variables flush within ~1s.
+/// `1` so mirrored in-game customization flushes within ~1s.
 const AUTOSAVE_INTERVAL_KEY: &str = "settings_auto_save_interval";
-/// The value Hestia writes for the autosave interval when live-state is enabled.
+/// The value Hestia writes for the autosave interval.
 const HESTIA_AUTOSAVE_INTERVAL: &str = "1";
-/// Prefix Hestia stamps onto a pre-existing active `settings_auto_save_interval` line it
-/// neutralizes, so the original value can be restored verbatim and duplicate-key
-/// precedence never decides the outcome.
+/// User-facing note surfaced when Hestia refuses to edit a file with malformed markers.
+const MALFORMED_MARKERS_NOTICE: &str = "d3dx.ini has malformed Hestia section markers, so Hestia left the file untouched. Fix or remove the \"; --- HESTIA SECTION START/END ---\" lines.";
+/// User-facing note surfaced when Hestia drops a leftover stash marker it can no longer pair.
+const ORPHAN_MARKER_NOTICE: &str =
+    "d3dx.ini: removed a leftover Hestia stash marker; the line it guarded was left as-is.";
+// Legacy artifacts from older builds, still recognized so upgrades clean them up.
+const HESTIA_D3DX_BEGIN: &str = "; --- Hestia begin ---";
+const HESTIA_D3DX_END: &str = "; --- Hestia end ---";
 const HESTIA_DISABLED_PREFIX: &str = "; [Hestia disabled] ";
-/// Comment describing a combined Hestia block (one that manages the autosave interval
-/// alongside, or instead of, the foreground binding).
-const HESTIA_D3DX_COMBINED_COMMENT: &str =
-    "; Managed by Hestia. Safe to delete this marked block if you stop using Hestia.";
 const FOREGROUND_RELOAD_ATTEMPTS: u32 = 5;
 const FOREGROUND_RELOAD_RETRY_DELAY: Duration = Duration::from_millis(100);
 const FOREGROUND_SETTLE_TIMEOUT: Duration = Duration::from_millis(900);
@@ -1884,32 +1893,23 @@ struct FocusRouteOutcome {
 
 enum D3dxPatch {
     Unchanged,
-    Updated(String),
-    // Known limitation: XXMI reads `additional_foreground_window` as one value, not a
-    // multi-value list. If another tool already owns it, Hestia skips the patch and reload send.
-    BlockedByExistingBinding,
+    Updated {
+        text: String,
+        /// Non-fatal notes to surface (e.g. a stash left commented because an active copy
+        /// won). Empty on the common clean path.
+        notices: Vec<String>,
+    },
+    /// Markers were malformed; Hestia refused to touch the file. `reason` is surfaced to
+    /// the user so they can repair the markers by hand.
+    Refused { reason: String },
 }
 
 /// Whether a synthetic reload hotkey can actually reach this importer while Hestia is the
-/// foreground window. Without `additional_foreground_window` support in the installed DLL
-/// (`check_foreground_window = 1` ships enabled), a send from Hestia lands nowhere useful
-/// and the caller should skip it — the next launch reads the file anyway.
+/// foreground window. Hestia assumes every supported XXMI fork DLL honours
+/// `additional_foreground_window`, so the only gate is that Hestia's binding is actually
+/// active in `d3dx.ini`; if it isn't, a send lands nowhere useful and the caller skips it.
 pub fn reload_hotkey_supported(importer_root: &Path) -> bool {
-    importer_dll_supports_foreground_window(importer_root)
-        && d3dx_ini_hestia_foreground_binding_active(importer_root)
-}
-
-/// Read-only capability probe: the importer DLL supports `additional_foreground_window`
-/// when its bytes contain the UTF-16LE spelling of the option name. No code is executed.
-fn importer_dll_supports_foreground_window(importer_root: &Path) -> bool {
-    let Ok(bytes) = fs::read(importer_root.join("d3d11.dll")) else {
-        return false;
-    };
-    let needle: Vec<u8> = "additional_foreground_window"
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect();
-    bytes.windows(needle.len()).any(|window| window == needle)
+    d3dx_ini_hestia_foreground_binding_active(importer_root)
 }
 
 /// Install or refresh Hestia's reload helper binding in root `d3dx.ini`.
@@ -1917,13 +1917,17 @@ fn importer_dll_supports_foreground_window(importer_root: &Path) -> bool {
 /// `additional_foreground_window` is a root `d3dx.ini` option, not a mod ini option. Older
 /// builds wrote `Mods\hestia.ini`; this function removes that legacy file only when its bytes
 /// exactly match Hestia's generated content.
+///
+/// Returns any non-fatal notices the caller should surface (e.g. a refusal to touch a file
+/// with malformed markers, or a stash left commented because an active value won). An empty
+/// vec is the clean path.
 pub fn ensure_reload_config(
     game: &GameInstall,
     use_default: bool,
     enable_reload: bool,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let Some(importer_root) = importer_root_for(game, use_default) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if let Some(mods_path) = game.mods_path(use_default)
         && mods_path.is_dir()
@@ -1935,18 +1939,15 @@ pub fn ensure_reload_config(
     let bytes = fs::read(&d3dx_ini).context(format!("reading {}", d3dx_ini.display()))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| anyhow!("{} is not valid UTF-8", d3dx_ini.display()))?;
-    // One folded consent drives both d3dx.ini grants. The foreground reload binding needs a
-    // DLL that supports `additional_foreground_window`; the autosave interval works on every
-    // fork DLL, so it is gated only on the consent itself.
-    let foreground = enable_reload && importer_dll_supports_foreground_window(&importer_root);
-    let live_state = enable_reload;
 
-    match patch_d3dx_ini_text(&text, foreground, live_state) {
-        D3dxPatch::Unchanged | D3dxPatch::BlockedByExistingBinding => Ok(()),
-        D3dxPatch::Updated(updated) => {
+    match patch_d3dx_ini_text(&text, enable_reload) {
+        D3dxPatch::Unchanged => Ok(Vec::new()),
+        D3dxPatch::Refused { reason } => Ok(vec![reason]),
+        D3dxPatch::Updated { text: updated, notices } => {
             rotate_d3dx_backup(&d3dx_ini)?;
             persistence::write_atomic_text(&d3dx_ini, &updated)
-                .context(format!("writing {}", d3dx_ini.display()))
+                .context(format!("writing {}", d3dx_ini.display()))?;
+            Ok(notices)
         }
     }
 }
@@ -1958,14 +1959,16 @@ pub fn reload_config_conflict(
     let Some(importer_root) = importer_root_for(game, use_default) else {
         return Ok(None);
     };
-    if !importer_dll_supports_foreground_window(&importer_root) {
-        return Ok(None);
-    }
     let path = importer_root.join(D3DX_INI_FILE);
     let text = fs::read_to_string(&path).context(format!("reading {}", path.display()))?;
     let body = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut lines = split_ini_lines(body);
-    remove_exact_hestia_d3dx_block(&mut lines);
+    // Ignore anything Hestia owns: a current or legacy managed block never counts as a
+    // user-owned conflict.
+    if let SectionScan::One { start, end } = scan_hestia_section(&lines) {
+        peel_hestia_section(&mut lines, start, end);
+    }
+    normalize_legacy_hestia_artifacts(&mut lines);
     let Some((_, value)) = first_system_foreground_binding_entry(&lines) else {
         return Ok(None);
     };
@@ -1977,24 +1980,6 @@ pub fn reload_config_conflict(
             path,
             current_value: current_value.to_string(),
         }))
-    }
-}
-
-pub fn replace_reload_config_conflict(game: &GameInstall, use_default: bool) -> Result<()> {
-    let Some(importer_root) = importer_root_for(game, use_default) else {
-        return Ok(());
-    };
-    let d3dx_ini = importer_root.join(D3DX_INI_FILE);
-    let bytes = fs::read(&d3dx_ini).context(format!("reading {}", d3dx_ini.display()))?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| anyhow!("{} is not valid UTF-8", d3dx_ini.display()))?;
-    match patch_d3dx_ini_text_replace_conflict(&text) {
-        D3dxPatch::Unchanged | D3dxPatch::BlockedByExistingBinding => Ok(()),
-        D3dxPatch::Updated(updated) => {
-            rotate_d3dx_backup(&d3dx_ini)?;
-            persistence::write_atomic_text(&d3dx_ini, &updated)
-                .context(format!("writing {}", d3dx_ini.display()))
-        }
     }
 }
 
@@ -2011,128 +1996,310 @@ fn cleanup_legacy_helper_ini(mods_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Manage Hestia's `d3dx.ini` grants: the `additional_foreground_window` reload binding
-/// (`foreground`) and the `settings_auto_save_interval = 1` live-state cadence
-/// (`live_state`). Both are folded into one consent, so a single call drives both.
+/// Apply or remove Hestia's `[System]` grants in `d3dx.ini` text.
 ///
-/// The two concerns are applied as independent passes so the well-tested foreground
-/// algorithm stays byte-for-byte unchanged: with `live_state = false` the interval pass is
-/// a no-op and the result is identical to the historical foreground-only patcher.
-fn patch_d3dx_ini_text(text: &str, foreground: bool, live_state: bool) -> D3dxPatch {
-    // Pass 1: foreground binding (original algorithm, untouched).
-    let after_foreground = match patch_d3dx_ini_text_foreground(text, foreground) {
-        D3dxPatch::Updated(updated) => updated,
-        D3dxPatch::Unchanged => text.to_string(),
-        D3dxPatch::BlockedByExistingBinding => {
-            // A foreign tool owns the foreground key. If live-state is not also requested,
-            // preserve the historical "blocked, touch nothing" outcome.
-            if !live_state {
-                return D3dxPatch::BlockedByExistingBinding;
-            }
-            text.to_string()
-        }
-    };
-    // Pass 2: autosave interval, layered onto whatever pass 1 produced.
-    let after_interval = manage_hestia_interval(&after_foreground, live_state);
-    finish_d3dx_patch(text, after_interval)
-}
-
-fn patch_d3dx_ini_text_foreground(text: &str, enable: bool) -> D3dxPatch {
+/// One folded consent drives both keys: `additional_foreground_window = Hestia` (reload +
+/// hotkey delivery while Hestia is focused) and `settings_auto_save_interval = 1` (so
+/// in-game customization flushes within ~1s). Both live in a single marked HESTIA SECTION
+/// at the top of `[System]`, which is the sole authority for those keys.
+///
+/// The model is record-and-reverse: on enable, any pre-existing active copy of a managed
+/// key is stashed in place (commented, with a restore marker) so the block never fights a
+/// duplicate; on disable the block is peeled and each stash restored verbatim. Anything
+/// Hestia cannot prove it wrote is preserved, and malformed markers abort the edit rather
+/// than risk mangling a hand-edited file.
+fn patch_d3dx_ini_text(text: &str, enable: bool) -> D3dxPatch {
     let has_bom = text.starts_with('\u{feff}');
-    let body = if has_bom {
-        text.strip_prefix('\u{feff}').unwrap_or(text)
-    } else {
-        text
-    };
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let line_ending = detect_line_ending(body);
     let trailing_newline = body.ends_with('\n');
     let mut lines = split_ini_lines(body);
-    let removed_hestia_block = remove_exact_hestia_d3dx_block(&mut lines);
 
-    if enable {
-        match first_system_foreground_binding(&lines) {
-            Some(value) if value.trim().eq_ignore_ascii_case(HESTIA_WINDOW_TITLE) => {
-                if removed_hestia_block {
-                    return finish_d3dx_patch(
-                        text,
-                        join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-                    );
-                }
-                return D3dxPatch::Unchanged;
-            }
-            Some(_) => {
-                // XXMI reads this through single-value GetIniString(), not its multi-key helper.
-                // Existing non-Hestia values are deliberately left alone until Hestia has a
-                // verified conflict-resolution UI.
-                if removed_hestia_block {
-                    return finish_d3dx_patch(
-                        text,
-                        join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-                    );
-                }
-                return D3dxPatch::BlockedByExistingBinding;
-            }
-            None => {
-                insert_hestia_foreground_binding(&mut lines);
-                return finish_d3dx_patch(text, join_ini_lines(&lines, line_ending, true, has_bom));
-            }
-        }
+    // Malformed markers (missing END, duplicate/nested START, END-before-START) → refuse to
+    // touch the file; the user resolves the markers by hand.
+    if matches!(scan_hestia_section(&lines), SectionScan::Malformed) {
+        return D3dxPatch::Refused {
+            reason: MALFORMED_MARKERS_NOTICE.to_string(),
+        };
     }
 
-    if removed_hestia_block {
-        finish_d3dx_patch(
-            text,
-            join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-        )
-    } else if comment_hestia_foreground_binding_in_marked_block(&mut lines) {
-        finish_d3dx_patch(
-            text,
-            join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-        )
-    } else if let Some((idx, value)) = first_system_foreground_binding_entry(&lines)
-        && value.trim().eq_ignore_ascii_case(HESTIA_WINDOW_TITLE)
-    {
-        lines[idx] = format!("; {}", lines[idx]);
-        finish_d3dx_patch(
-            text,
-            join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-        )
-    } else {
-        D3dxPatch::Unchanged
-    }
-}
+    // Fold any block/stash written by older builds into the current shape first.
+    normalize_legacy_hestia_artifacts(&mut lines);
 
-fn patch_d3dx_ini_text_replace_conflict(text: &str) -> D3dxPatch {
-    let has_bom = text.starts_with('\u{feff}');
-    let body = if has_bom {
-        text.strip_prefix('\u{feff}').unwrap_or(text)
+    let notices = if enable {
+        enable_hestia_section(&mut lines);
+        Vec::new()
     } else {
-        text
+        disable_hestia_section(&mut lines)
     };
-    let line_ending = detect_line_ending(body);
-    let trailing_newline = body.ends_with('\n');
-    let mut lines = split_ini_lines(body);
-    remove_exact_hestia_d3dx_block(&mut lines);
 
-    if let Some((idx, value)) = first_system_foreground_binding_entry(&lines) {
-        if value.trim().eq_ignore_ascii_case(HESTIA_WINDOW_TITLE) {
-            return finish_d3dx_patch(
-                text,
-                join_ini_lines(&lines, line_ending, trailing_newline, has_bom),
-            );
-        }
-        lines[idx] = format!("; {}", lines[idx]);
-    }
-    insert_hestia_foreground_binding(&mut lines);
-    finish_d3dx_patch(text, join_ini_lines(&lines, line_ending, true, has_bom))
-}
-
-fn finish_d3dx_patch(original: &str, updated: String) -> D3dxPatch {
-    if updated == original {
+    let updated = join_ini_lines(&lines, line_ending, trailing_newline, has_bom);
+    if updated == text {
         D3dxPatch::Unchanged
     } else {
-        D3dxPatch::Updated(updated)
+        D3dxPatch::Updated {
+            text: updated,
+            notices,
+        }
     }
+}
+
+enum SectionScan {
+    None,
+    One { start: usize, end: usize },
+    Malformed,
+}
+
+/// Locate the single well-formed HESTIA SECTION, or report that the markers are malformed.
+fn scan_hestia_section(lines: &[String]) -> SectionScan {
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == HESTIA_SECTION_START)
+        .map(|(idx, _)| idx)
+        .collect();
+    let ends: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == HESTIA_SECTION_END)
+        .map(|(idx, _)| idx)
+        .collect();
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) => SectionScan::None,
+        ([start], [end]) if start < end => SectionScan::One {
+            start: *start,
+            end: *end,
+        },
+        _ => SectionScan::Malformed,
+    }
+}
+
+/// The canonical HESTIA SECTION body, without a trailing blank (inserters add spacing).
+fn canonical_hestia_section_lines() -> Vec<String> {
+    vec![
+        HESTIA_SECTION_START.to_string(),
+        HESTIA_SECTION_NOTE_GENERATED.to_string(),
+        HESTIA_SECTION_NOTE_REFRAIN.to_string(),
+        format!("{FOREGROUND_WINDOW_KEY} = {HESTIA_WINDOW_TITLE}"),
+        format!("{AUTOSAVE_INTERVAL_KEY} = {HESTIA_AUTOSAVE_INTERVAL}"),
+        HESTIA_SECTION_END.to_string(),
+    ]
+}
+
+/// Parse an active (uncommented) `key = value` line, trimming both sides.
+fn active_kv(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+        return None;
+    }
+    let (key, value) = trimmed.split_once('=')?;
+    Some((key.trim(), value.trim()))
+}
+
+fn is_foreground_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case(FOREGROUND_WINDOW_KEY)
+}
+
+fn is_interval_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY)
+}
+
+fn is_managed_key(key: &str) -> bool {
+    is_foreground_key(key) || is_interval_key(key)
+}
+
+/// A canonical grant line Hestia itself writes (FG = Hestia, or IV = 1).
+fn is_hestia_canonical_line(line: &str) -> bool {
+    match active_kv(line) {
+        Some((key, value)) => {
+            (is_foreground_key(key) && value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE))
+                || (is_interval_key(key) && value == HESTIA_AUTOSAVE_INTERVAL)
+        }
+        None => false,
+    }
+}
+
+fn system_header_index(lines: &[String]) -> Option<usize> {
+    lines.iter().position(|line| {
+        section_name(line.trim()).is_some_and(|section| section.eq_ignore_ascii_case("System"))
+    })
+}
+
+/// Enable: re-assert the canonical block from a clean slate, stashing any active managed
+/// keys so the block is the single authority.
+fn enable_hestia_section(lines: &mut Vec<String>) {
+    if let SectionScan::One { start, end } = scan_hestia_section(lines) {
+        peel_hestia_section(lines, start, end);
+    }
+    stash_active_managed_keys(lines);
+    insert_canonical_section(lines);
+}
+
+/// Disable: peel the block (lifting foreign lines) and restore every stash Hestia stamped.
+fn disable_hestia_section(lines: &mut Vec<String>) -> Vec<String> {
+    if let SectionScan::One { start, end } = scan_hestia_section(lines) {
+        peel_hestia_section(lines, start, end);
+    }
+    restore_stashed_managed_keys(lines)
+}
+
+/// Remove the block spanning `start..=end` (plus one trailing blank), keeping — "lifting" —
+/// any interior line Hestia can't prove it wrote. Disposable interior: blank lines,
+/// comments, and an embedded `[System]` header (legacy blocks carried one). Dropped: the
+/// canonical FG/IV lines. Everything else is lifted back into place, never discarded.
+fn peel_hestia_section(lines: &mut Vec<String>, start: usize, end: usize) {
+    let lifted: Vec<String> = lines[start + 1..end]
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if let Some(section) = section_name(trimmed) {
+                // Drop an embedded `[System]`; lift any other stray section header.
+                return !section.eq_ignore_ascii_case("System");
+            }
+            if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+                return false;
+            }
+            !is_hestia_canonical_line(line)
+        })
+        .cloned()
+        .collect();
+    let mut drain_end = end + 1;
+    if lines.get(drain_end).is_some_and(|line| line.trim().is_empty()) {
+        drain_end += 1;
+    }
+    lines.splice(start..drain_end, lifted);
+}
+
+/// Stash every active managed-key line inside `[System]` in place: replace `foo = bar`
+/// with a two-line pair (restore marker, then `; foo = bar`). The block then owns the only
+/// active copy, and each original can be restored verbatim on disable.
+fn stash_active_managed_keys(lines: &mut Vec<String>) {
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
+    let mut in_system = false;
+    for line in lines.drain(..) {
+        let trimmed = line.trim();
+        if let Some(section) = section_name(trimmed) {
+            in_system = section.eq_ignore_ascii_case("System");
+            out.push(line);
+            continue;
+        }
+        if in_system
+            && let Some((key, _)) = active_kv(&line)
+            && is_managed_key(key)
+        {
+            out.push(HESTIA_STASH_MARKER.to_string());
+            out.push(format!("; {line}"));
+            continue;
+        }
+        out.push(line);
+    }
+    *lines = out;
+}
+
+/// Insert the canonical block at the top of the first `[System]`, followed by a blank line.
+/// With no `[System]`, append one plus the block at EOF.
+fn insert_canonical_section(lines: &mut Vec<String>) {
+    let mut block = canonical_hestia_section_lines();
+    if let Some(header) = system_header_index(lines) {
+        block.push(String::new());
+        lines.splice(header + 1..header + 1, block);
+        return;
+    }
+    if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+        lines.push(String::new());
+    }
+    lines.push("[System]".to_string());
+    lines.extend(block);
+}
+
+/// Restore each stash pair Hestia stamped, returning notices for the cases it couldn't
+/// cleanly reverse. Restore = drop the marker, uncomment the line below. Two exceptions:
+/// an active copy of the key already present (an active value always wins → keep ours
+/// commented), and a marker whose paired line the user un-commented or removed (drop only
+/// the marker, leave their line untouched).
+fn restore_stashed_managed_keys(lines: &mut Vec<String>) -> Vec<String> {
+    let mut notices = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if lines[idx].trim() != HESTIA_STASH_MARKER {
+            idx += 1;
+            continue;
+        }
+        let Some(stashed_line) = lines.get(idx + 1).cloned() else {
+            // Lone marker at EOF.
+            lines.remove(idx);
+            notices.push(ORPHAN_MARKER_NOTICE.to_string());
+            continue;
+        };
+        let Some(original) = stashed_line.strip_prefix("; ") else {
+            // The paired line isn't a commented original (user un-commented it, or it was
+            // otherwise replaced) → drop only our marker and leave their line as-is.
+            lines.remove(idx);
+            notices.push(ORPHAN_MARKER_NOTICE.to_string());
+            continue;
+        };
+        let original = original.to_string();
+        let key = active_kv(&original).map(|(key, _)| key.to_string());
+        if let Some(key) = &key
+            && active_managed_key_present(lines, key)
+        {
+            // An active copy already exists (e.g. a value the user edited inside the block,
+            // now lifted out). It wins; keep our stash commented, drop only the marker.
+            lines.remove(idx);
+            notices.push(format!(
+                "d3dx.ini: kept your commented \"{key}\" — an active \"{key}\" is already present."
+            ));
+            continue;
+        }
+        lines.remove(idx);
+        lines[idx] = original;
+        idx += 1;
+    }
+    notices
+}
+
+/// Whether an active line for `key` exists anywhere in a `[System]` section. Commented
+/// stash lines never count (they aren't active), so a pending stash never masks itself.
+fn active_managed_key_present(lines: &[String], key: &str) -> bool {
+    let mut in_system = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if let Some(section) = section_name(trimmed) {
+            in_system = section.eq_ignore_ascii_case("System");
+            continue;
+        }
+        if in_system
+            && let Some((line_key, _)) = active_kv(line)
+            && line_key.eq_ignore_ascii_case(key)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Fold artifacts written by older Hestia builds into a shape the current logic manages:
+/// restore inline-neutralized intervals to active lines, and peel legacy `--- Hestia ---`
+/// blocks the same way (lift foreign, drop ours).
+fn normalize_legacy_hestia_artifacts(lines: &mut Vec<String>) {
+    for line in lines.iter_mut() {
+        if let Some(rest) = line.strip_prefix(HESTIA_DISABLED_PREFIX) {
+            *line = rest.to_string();
+        }
+    }
+    while let Some((start, end)) = find_block_range(lines, HESTIA_D3DX_BEGIN, HESTIA_D3DX_END) {
+        peel_hestia_section(lines, start, end);
+    }
+}
+
+/// The range `(start, end)` of the first block delimited by `start_marker` / `end_marker`.
+fn find_block_range(lines: &[String], start_marker: &str, end_marker: &str) -> Option<(usize, usize)> {
+    let start = lines.iter().position(|line| line.trim() == start_marker)?;
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim() == end_marker)
+        .map(|offset| start + 1 + offset)?;
+    Some((start, end))
 }
 
 fn d3dx_ini_hestia_foreground_binding_active(importer_root: &Path) -> bool {
@@ -2180,261 +2347,6 @@ fn join_ini_lines(
         text.push_str(line_ending);
     }
     text
-}
-
-fn hestia_foreground_binding_lines() -> Vec<String> {
-    vec![
-        HESTIA_D3DX_BEGIN.to_string(),
-        "; Enables Hestia to trigger XXMI's in-game reload while Hestia is focused.".to_string(),
-        "; Safe to delete this marked block if you stop using Hestia.".to_string(),
-        format!("{FOREGROUND_WINDOW_KEY} = {HESTIA_WINDOW_TITLE}"),
-        HESTIA_D3DX_END.to_string(),
-        String::new(),
-    ]
-}
-
-fn insert_hestia_foreground_binding(lines: &mut Vec<String>) {
-    if let Some(system_idx) = lines.iter().position(|line| {
-        section_name(line.trim()).is_some_and(|section| section.eq_ignore_ascii_case("System"))
-    }) {
-        let mut binding = hestia_foreground_binding_lines();
-        lines.splice(system_idx + 1..system_idx + 1, binding.drain(..));
-        return;
-    }
-
-    if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
-        lines.push(String::new());
-    }
-    lines.push("[System]".to_string());
-    lines.extend(hestia_foreground_binding_lines());
-}
-
-fn hestia_d3dx_block_range(lines: &[String]) -> Option<(usize, usize, usize)> {
-    let Some(begin) = lines
-        .iter()
-        .position(|line| line.trim() == HESTIA_D3DX_BEGIN)
-    else {
-        return None;
-    };
-    let Some(end) = lines[begin + 1..]
-        .iter()
-        .position(|line| line.trim() == HESTIA_D3DX_END)
-        .map(|idx| begin + 1 + idx)
-    else {
-        return None;
-    };
-    let mut drain_end = end + 1;
-    if lines
-        .get(drain_end)
-        .is_some_and(|line| line.trim().is_empty())
-    {
-        drain_end += 1;
-    }
-    Some((begin, end, drain_end))
-}
-
-/// Remove a Hestia-generated `d3dx.ini` block, but only when its interior is entirely
-/// content Hestia itself writes (comments, blanks, a legacy embedded `[System]` header,
-/// and the foreground/interval settings). A block a user edited to hold other settings is
-/// refused, so manual edits between the markers are never silently discarded. This
-/// tolerant check subsumes the historical exact-match forms and also handles blocks that
-/// carry the live-state interval line.
-fn remove_exact_hestia_d3dx_block(lines: &mut Vec<String>) -> bool {
-    let Some((begin, end, drain_end)) = hestia_d3dx_block_range(lines) else {
-        return false;
-    };
-    if !hestia_block_interior_is_recognized(&lines[begin + 1..end]) {
-        return false;
-    }
-    lines.drain(begin..drain_end);
-    true
-}
-
-fn hestia_block_interior_is_recognized(interior: &[String]) -> bool {
-    interior.iter().all(|line| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
-            return true;
-        }
-        if let Some(section) = section_name(trimmed) {
-            return section.eq_ignore_ascii_case("System");
-        }
-        if let Some((key, _)) = trimmed.split_once('=') {
-            let key = key.trim();
-            return key.eq_ignore_ascii_case(FOREGROUND_WINDOW_KEY)
-                || key.eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY);
-        }
-        false
-    })
-}
-
-/// Layer the live-state autosave grant onto text that pass 1 already produced. When
-/// enabling, any active user `settings_auto_save_interval` in `[System]` is neutralized
-/// (so 3DMigoto duplicate-key precedence can never override Hestia's value) and a
-/// `= 1` line is placed inside the Hestia block (reusing the foreground block if present,
-/// or creating an interval-only block otherwise). When disabling, the interval line is
-/// removed, an emptied block is dropped, and any neutralized user value is restored.
-fn manage_hestia_interval(text: &str, enable: bool) -> String {
-    let has_bom = text.starts_with('\u{feff}');
-    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let line_ending = detect_line_ending(body);
-    let trailing_newline = body.ends_with('\n');
-    let mut lines = split_ini_lines(body);
-
-    if enable {
-        comment_conflicting_system_interval(&mut lines);
-        ensure_hestia_interval_line(&mut lines);
-    } else {
-        remove_hestia_interval_line(&mut lines);
-        restore_commented_system_interval(&mut lines);
-    }
-
-    join_ini_lines(&lines, line_ending, trailing_newline, has_bom)
-}
-
-fn hestia_interval_block_lines() -> Vec<String> {
-    vec![
-        HESTIA_D3DX_BEGIN.to_string(),
-        HESTIA_D3DX_COMBINED_COMMENT.to_string(),
-        format!("{AUTOSAVE_INTERVAL_KEY} = {HESTIA_AUTOSAVE_INTERVAL}"),
-        HESTIA_D3DX_END.to_string(),
-        String::new(),
-    ]
-}
-
-fn insert_hestia_interval_block(lines: &mut Vec<String>) {
-    if let Some(system_idx) = lines.iter().position(|line| {
-        section_name(line.trim()).is_some_and(|section| section.eq_ignore_ascii_case("System"))
-    }) {
-        let mut block = hestia_interval_block_lines();
-        lines.splice(system_idx + 1..system_idx + 1, block.drain(..));
-        return;
-    }
-    if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
-        lines.push(String::new());
-    }
-    lines.push("[System]".to_string());
-    lines.extend(hestia_interval_block_lines());
-}
-
-/// Position of the interval line inside a Hestia block, if present.
-fn hestia_block_interval_index(lines: &[String], begin: usize, end: usize) -> Option<usize> {
-    (begin + 1..end).find(|&i| {
-        lines[i].trim().split_once('=').is_some_and(|(key, _)| {
-            key.trim().eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY)
-        })
-    })
-}
-
-/// Ensure exactly one `settings_auto_save_interval = 1` line inside the Hestia block,
-/// creating an interval-only block if none exists yet.
-fn ensure_hestia_interval_line(lines: &mut Vec<String>) {
-    let desired = format!("{AUTOSAVE_INTERVAL_KEY} = {HESTIA_AUTOSAVE_INTERVAL}");
-    if let Some((begin, end, _)) = hestia_d3dx_block_range(lines) {
-        if let Some(idx) = hestia_block_interval_index(lines, begin, end) {
-            if lines[idx].trim() != desired {
-                lines[idx] = desired;
-            }
-        } else {
-            lines.insert(end, desired);
-        }
-        return;
-    }
-    insert_hestia_interval_block(lines);
-}
-
-/// Remove the interval line from the Hestia block. If that leaves the block with no
-/// setting lines (only comments), remove the whole block so no empty marker pair lingers.
-fn remove_hestia_interval_line(lines: &mut Vec<String>) -> bool {
-    let Some((begin, end, _)) = hestia_d3dx_block_range(lines) else {
-        return false;
-    };
-    let Some(idx) = hestia_block_interval_index(lines, begin, end) else {
-        return false;
-    };
-    lines.remove(idx);
-    if let Some((begin, end, drain_end)) = hestia_d3dx_block_range(lines) {
-        let has_setting = lines[begin + 1..end].iter().any(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty()
-                && !trimmed.starts_with(';')
-                && !trimmed.starts_with('#')
-                && section_name(trimmed).is_none()
-        });
-        if !has_setting {
-            lines.drain(begin..drain_end);
-        }
-    }
-    true
-}
-
-/// Comment out any active `settings_auto_save_interval` in `[System]` that lives outside
-/// the Hestia block, stamping it with a restore marker. Returns whether anything changed.
-fn comment_conflicting_system_interval(lines: &mut [String]) -> bool {
-    let block = hestia_d3dx_block_range(lines);
-    let mut in_system = false;
-    let mut changed = false;
-    for (idx, line) in lines.iter_mut().enumerate() {
-        if let Some((begin, end, _)) = block
-            && idx >= begin
-            && idx <= end
-        {
-            continue;
-        }
-        let trimmed = line.trim();
-        if let Some(section) = section_name(trimmed) {
-            in_system = section.eq_ignore_ascii_case("System");
-            continue;
-        }
-        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
-            continue;
-        }
-        if !in_system {
-            continue;
-        }
-        if trimmed
-            .split_once('=')
-            .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY))
-        {
-            *line = format!("{HESTIA_DISABLED_PREFIX}{trimmed}");
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// Restore any interval line Hestia previously neutralized, stripping the restore marker.
-fn restore_commented_system_interval(lines: &mut [String]) -> bool {
-    let mut changed = false;
-    for line in lines.iter_mut() {
-        if let Some(rest) = line.strip_prefix(HESTIA_DISABLED_PREFIX) {
-            *line = rest.to_string();
-            changed = true;
-        }
-    }
-    changed
-}
-
-fn comment_hestia_foreground_binding_in_marked_block(lines: &mut [String]) -> bool {
-    let Some((begin, end, _)) = hestia_d3dx_block_range(lines) else {
-        return false;
-    };
-    for line in &mut lines[begin + 1..end] {
-        let trimmed = line.trim();
-        if trimmed.starts_with(';') || trimmed.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim().eq_ignore_ascii_case(FOREGROUND_WINDOW_KEY)
-            && value.trim().eq_ignore_ascii_case(HESTIA_WINDOW_TITLE)
-        {
-            *line = format!("; {}", line);
-            return true;
-        }
-    }
-    false
 }
 
 fn first_system_foreground_binding(lines: &[String]) -> Option<&str> {
@@ -4637,190 +4549,290 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(!root.join(USER_INI_TMP_FILE).exists());
     }
 
+    /// The canonical block body Hestia writes inside `[System]` (CRLF), without the leading
+    /// `[System]` header or the trailing blank separator.
+    const CANON_BLOCK_CRLF: &str = "; --- HESTIA SECTION START ---\r\n\
+; Generated automatically.\r\n\
+; Refrain from editing this section — changes may be lost.\r\n\
+additional_foreground_window = Hestia\r\n\
+settings_auto_save_interval = 1\r\n\
+; --- HESTIA SECTION END ---\r\n";
+
+    fn expect_updated(patch: D3dxPatch) -> (String, Vec<String>) {
+        match patch {
+            D3dxPatch::Updated { text, notices } => (text, notices),
+            D3dxPatch::Unchanged => panic!("expected Updated, got Unchanged"),
+            D3dxPatch::Refused { reason } => panic!("expected Updated, got Refused: {reason}"),
+        }
+    }
+
+    fn active_interval_count(text: &str) -> usize {
+        text.lines()
+            .filter(|line| {
+                active_kv(line).is_some_and(|(key, _)| is_interval_key(key))
+            })
+            .count()
+    }
+
+    fn active_foreground_count(text: &str) -> usize {
+        text.lines()
+            .filter(|line| active_kv(line).is_some_and(|(key, _)| is_foreground_key(key)))
+            .count()
+    }
+
+    // E1: enable on a plain [System] injects the canonical block; re-enabling is a no-op.
     #[test]
-    fn d3dx_patch_merges_marked_binding_into_system_section() {
+    fn enable_injects_canonical_section() {
         let original =
             "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true, false) else {
-            panic!("expected d3dx.ini to be patched");
-        };
+        let (updated, notices) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(notices.is_empty());
         assert!(updated.starts_with("[Loader]\r\nTarget = Game.exe"));
-        assert!(updated.contains("[System]\r\n; --- Hestia begin ---\r\n"));
-        assert!(updated.contains("additional_foreground_window = Hestia\r\n; --- Hestia end ---"));
-        assert!(updated.contains("[Loader]\r\nTarget = Game.exe"));
+        assert!(updated.contains(&format!("[System]\r\n{CANON_BLOCK_CRLF}")));
         assert_eq!(updated.matches("[System]").count(), 1);
+        assert_eq!(active_foreground_count(&updated), 1);
+        assert_eq!(active_interval_count(&updated), 1);
         assert!(matches!(
-            patch_d3dx_ini_text(&updated, true, false),
+            patch_d3dx_ini_text(&updated, true),
             D3dxPatch::Unchanged
         ));
     }
 
+    // E2: an existing user interval is stashed in place; only Hestia's copy stays active.
     #[test]
-    fn d3dx_patch_leaves_existing_non_hestia_binding_alone() {
-        let original = "[System]\r\nadditional_foreground_window = Other Tool\r\n";
-        assert!(matches!(
-            patch_d3dx_ini_text(original, true, false),
-            D3dxPatch::BlockedByExistingBinding
-        ));
-    }
-
-    #[test]
-    fn d3dx_patch_removes_hestia_block_when_support_is_disabled() {
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, false)
-        else {
-            panic!("expected initial insert");
-        };
-        let D3dxPatch::Updated(cleaned) = patch_d3dx_ini_text(&updated, false, false) else {
-            panic!("expected generated block removal");
-        };
-        assert!(!cleaned.contains(HESTIA_D3DX_BEGIN));
-        assert!(cleaned.contains("[System]\r\nx = 1\r\n"));
-    }
-
-    #[test]
-    fn d3dx_patch_disables_loose_hestia_binding_when_support_is_disabled() {
-        let original = "[System]\r\nadditional_foreground_window = hestia\r\nx = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false, false) else {
-            panic!("expected loose Hestia binding to be commented out");
-        };
-        assert!(updated.contains("; additional_foreground_window = hestia\r\n"));
-        assert!(updated.contains("x = 1\r\n"));
-    }
-
-    #[test]
-    fn d3dx_patch_preserves_modified_hestia_block_when_support_is_disabled() {
-        let original = "[System]\r\n; --- Hestia begin ---\r\n\
-; user edited this block\r\n\
-additional_foreground_window = Hestia\r\n\
-custom_user_field = keep me\r\n\
-; --- Hestia end ---\r\n\
-x = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false, false) else {
-            panic!("expected Hestia binding inside modified block to be commented out");
-        };
-        assert!(updated.contains("; --- Hestia begin ---\r\n"));
-        assert!(updated.contains("; additional_foreground_window = Hestia\r\n"));
-        assert!(updated.contains("custom_user_field = keep me\r\n"));
-        assert!(updated.contains("; --- Hestia end ---\r\n"));
-        assert!(updated.contains("x = 1\r\n"));
-    }
-
-    #[test]
-    fn live_state_adds_interval_line_to_plain_system() {
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", false, true)
-        else {
-            panic!("expected interval block insert");
-        };
-        assert!(updated.contains("[System]\r\n; --- Hestia begin ---\r\n"));
-        assert!(updated.contains("settings_auto_save_interval = 1\r\n"));
-        assert!(updated.contains("; --- Hestia end ---"));
-        assert!(updated.contains("x = 1\r\n"));
-        // Reapplying is a no-op.
-        assert!(matches!(
-            patch_d3dx_ini_text(&updated, false, true),
-            D3dxPatch::Unchanged
-        ));
-    }
-
-    #[test]
-    fn live_state_and_foreground_share_one_block() {
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, true)
-        else {
-            panic!("expected combined block");
-        };
-        // One marked block carrying both grants.
-        assert_eq!(updated.matches(HESTIA_D3DX_BEGIN).count(), 1);
-        assert!(updated.contains("additional_foreground_window = Hestia\r\n"));
-        assert!(updated.contains("settings_auto_save_interval = 1\r\n"));
-    }
-
-    #[test]
-    fn live_state_neutralizes_and_restores_existing_interval() {
-        let original = "[System]\r\ncheck_foreground_window = 1\r\nsettings_auto_save_interval = 30\r\n";
-        let D3dxPatch::Updated(enabled) = patch_d3dx_ini_text(original, false, true) else {
-            panic!("expected user interval to be neutralized");
-        };
-        assert!(enabled.contains("; [Hestia disabled] settings_auto_save_interval = 30\r\n"));
-        // Exactly one active interval line (ours).
-        assert_eq!(
-            enabled
-                .lines()
-                .filter(|l| {
-                    let t = l.trim();
-                    !t.starts_with(';')
-                        && t.split_once('=').is_some_and(|(k, _)| {
-                            k.trim().eq_ignore_ascii_case("settings_auto_save_interval")
-                        })
-                })
-                .count(),
-            1
-        );
-        // Disabling restores the user's original value and removes our block.
-        let D3dxPatch::Updated(disabled) = patch_d3dx_ini_text(&enabled, false, false) else {
-            panic!("expected restore");
-        };
-        assert!(!disabled.contains(HESTIA_D3DX_BEGIN));
-        assert!(!disabled.contains("[Hestia disabled]"));
-        assert!(disabled.contains("settings_auto_save_interval = 30\r\n"));
-    }
-
-    #[test]
-    fn disabling_live_state_keeps_foreground_binding() {
-        let D3dxPatch::Updated(both) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, true)
-        else {
-            panic!("expected combined block");
-        };
-        let D3dxPatch::Updated(fg_only) = patch_d3dx_ini_text(&both, true, false) else {
-            panic!("expected interval removed, foreground kept");
-        };
-        assert!(fg_only.contains("additional_foreground_window = Hestia\r\n"));
-        assert!(!fg_only.contains("settings_auto_save_interval"));
-        assert_eq!(fg_only.matches(HESTIA_D3DX_BEGIN).count(), 1);
-    }
-
-    #[test]
-    fn live_state_enable_then_disable_round_trips() {
-        let original = "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
-        let D3dxPatch::Updated(enabled) = patch_d3dx_ini_text(original, false, true) else {
-            panic!("expected enable");
-        };
-        let D3dxPatch::Updated(disabled) = patch_d3dx_ini_text(&enabled, false, false) else {
-            panic!("expected disable");
-        };
-        assert_eq!(disabled, original);
-    }
-
-    #[test]
-    fn d3dx_patch_replace_conflict_comments_existing_binding() {
+    fn enable_stashes_existing_interval() {
         let original =
-            "[System]\r\n; user comment\r\nadditional_foreground_window = Other Tool\r\nx = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text_replace_conflict(original) else {
-            panic!("expected conflicting binding to be replaced");
-        };
-        assert!(updated.starts_with("[System]\r\n; --- Hestia begin ---\r\n"));
-        assert!(updated.contains("; additional_foreground_window = Other Tool\r\n"));
-        assert!(updated.contains("; user comment\r\n"));
-        assert!(updated.contains("x = 1\r\n"));
-        assert_eq!(updated.matches("additional_foreground_window").count(), 2);
+            "[System]\r\ncheck_foreground_window = 1\r\nsettings_auto_save_interval = 60\r\n";
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(updated.contains(&format!(
+            "{HESTIA_STASH_MARKER}\r\n; settings_auto_save_interval = 60\r\n"
+        )));
+        assert_eq!(active_interval_count(&updated), 1);
     }
 
+    // E3: a foreign foreground tool and a user interval are both stashed; the block wins.
     #[test]
-    fn d3dx_patch_removes_legacy_duplicate_system_block() {
+    fn enable_stashes_foreign_foreground_and_interval() {
+        let original =
+            "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(updated.contains(&format!(
+            "{HESTIA_STASH_MARKER}\r\n; additional_foreground_window = ReShade\r\n"
+        )));
+        assert!(updated.contains(&format!(
+            "{HESTIA_STASH_MARKER}\r\n; settings_auto_save_interval = 60\r\n"
+        )));
+        assert_eq!(active_foreground_count(&updated), 1);
+        assert_eq!(active_interval_count(&updated), 1);
+    }
+
+    // E4: even a user-typed `= Hestia` is stashed, so the block is the sole authority.
+    #[test]
+    fn enable_stashes_user_typed_hestia_foreground() {
+        let original = "[System]\r\nadditional_foreground_window = Hestia\r\n";
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(updated.contains(&format!(
+            "{HESTIA_STASH_MARKER}\r\n; additional_foreground_window = Hestia\r\n"
+        )));
+        assert_eq!(active_foreground_count(&updated), 1);
+    }
+
+    // E6: a block missing the interval line is repaired to canonical on the next enable.
+    #[test]
+    fn enable_repairs_block_missing_interval() {
+        let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
+; Generated automatically.\r\n\
+; Refrain from editing this section — changes may be lost.\r\n\
+additional_foreground_window = Hestia\r\n\
+; --- HESTIA SECTION END ---\r\n\
+\r\n\
+x = 1\r\n";
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(updated.contains(&format!("[System]\r\n{CANON_BLOCK_CRLF}")));
+        assert_eq!(active_interval_count(&updated), 1);
+        assert!(matches!(
+            patch_d3dx_ini_text(&updated, true),
+            D3dxPatch::Unchanged
+        ));
+    }
+
+    // E7: with no [System] at all, Hestia appends one carrying the block.
+    #[test]
+    fn enable_appends_system_when_absent() {
+        let original = "[Loader]\r\nTarget = Game.exe\r\n";
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        assert!(updated.contains("[System]\r\n; --- HESTIA SECTION START ---\r\n"));
+        assert_eq!(active_foreground_count(&updated), 1);
+        assert_eq!(active_interval_count(&updated), 1);
+    }
+
+    // D1 / C1: enable then disable restores the file byte-for-byte, twice over.
+    #[test]
+    fn enable_disable_round_trips_and_is_stable() {
+        let original =
+            "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
+        let (enabled, _) = expect_updated(patch_d3dx_ini_text(original, true));
+        let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&enabled, false));
+        assert!(notices.is_empty());
+        assert_eq!(disabled, original);
+        // C1: a second enable reproduces the first exactly.
+        let (enabled_again, _) = expect_updated(patch_d3dx_ini_text(&disabled, true));
+        assert_eq!(enabled_again, enabled);
+    }
+
+    // D2: grants with nothing stashed simply vanish on disable.
+    #[test]
+    fn disable_removes_unstashed_grants() {
+        let (enabled, _) = expect_updated(patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true));
+        let (disabled, _) = expect_updated(patch_d3dx_ini_text(&enabled, false));
+        assert_eq!(disabled, "[System]\r\nx = 1\r\n");
+    }
+
+    // D3: a user-edited in-block interval is lifted out active, and the older stash — now
+    // outvoted by an active copy — is left commented with a notice.
+    #[test]
+    fn disable_lifts_user_edited_interval_and_keeps_stash_commented() {
+        let (enabled, _) = expect_updated(patch_d3dx_ini_text(
+            "[System]\r\nsettings_auto_save_interval = 60\r\n",
+            true,
+        ));
+        let tampered = enabled.replace(
+            "settings_auto_save_interval = 1\r\n",
+            "settings_auto_save_interval = 5\r\n",
+        );
+        let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&tampered, false));
+        assert!(disabled.contains("settings_auto_save_interval = 5\r\n"));
+        assert!(disabled.contains("; settings_auto_save_interval = 60\r\n"));
+        assert!(!disabled.contains(HESTIA_SECTION_START));
+        assert!(!notices.is_empty());
+    }
+
+    // D4 / D5: interior comments — the user's, and our own already-commented grant — are
+    // disposable and go with the block.
+    #[test]
+    fn disable_drops_interior_comments() {
+        let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
+; Generated automatically.\r\n\
+; my own note\r\n\
+; additional_foreground_window = Hestia\r\n\
+settings_auto_save_interval = 1\r\n\
+; --- HESTIA SECTION END ---\r\n\
+\r\n\
+x = 1\r\n";
+        let (disabled, _) = expect_updated(patch_d3dx_ini_text(original, false));
+        assert_eq!(disabled, "[System]\r\nx = 1\r\n");
+    }
+
+    // D6: a foreign key a user parked inside the block is lifted, not discarded.
+    #[test]
+    fn disable_lifts_foreign_key_in_block() {
+        let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
+; Generated automatically.\r\n\
+additional_foreground_window = Hestia\r\n\
+foo = 1\r\n\
+settings_auto_save_interval = 1\r\n\
+; --- HESTIA SECTION END ---\r\n\
+\r\n\
+x = 1\r\n";
+        let (disabled, _) = expect_updated(patch_d3dx_ini_text(original, false));
+        assert!(disabled.contains("foo = 1\r\n"));
+        assert!(!disabled.contains(HESTIA_SECTION_START));
+        assert!(!disabled.contains("additional_foreground_window"));
+    }
+
+    // D7: a missing END marker is malformed → refuse and touch nothing.
+    #[test]
+    fn refuses_on_missing_end_marker() {
+        let original =
+            "[System]\r\n; --- HESTIA SECTION START ---\r\nadditional_foreground_window = Hestia\r\n";
+        assert!(matches!(
+            patch_d3dx_ini_text(original, false),
+            D3dxPatch::Refused { .. }
+        ));
+        assert!(matches!(
+            patch_d3dx_ini_text(original, true),
+            D3dxPatch::Refused { .. }
+        ));
+    }
+
+    // D8: duplicate START markers are malformed → refuse.
+    #[test]
+    fn refuses_on_duplicate_start_marker() {
+        let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
+; --- HESTIA SECTION START ---\r\n\
+additional_foreground_window = Hestia\r\n\
+; --- HESTIA SECTION END ---\r\n";
+        assert!(matches!(
+            patch_d3dx_ini_text(original, true),
+            D3dxPatch::Refused { .. }
+        ));
+    }
+
+    // D9: a stash whose paired line the user un-commented → drop only the marker, keep
+    // their now-active line, and note it.
+    #[test]
+    fn disable_drops_orphan_marker_when_user_uncommented_line() {
+        let original = format!(
+            "[System]\r\n{HESTIA_STASH_MARKER}\r\nsettings_auto_save_interval = 60\r\n"
+        );
+        let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&original, false));
+        assert!(!disabled.contains(HESTIA_STASH_MARKER));
+        assert!(disabled.contains("settings_auto_save_interval = 60\r\n"));
+        assert!(!notices.is_empty());
+    }
+
+    // C3: disabling a file Hestia never touched is a no-op.
+    #[test]
+    fn disable_on_clean_file_is_noop() {
+        assert!(matches!(
+            patch_d3dx_ini_text("[System]\r\nx = 1\r\n", false),
+            D3dxPatch::Unchanged
+        ));
+    }
+
+    // Migration: a block written by an older build is replaced by the current one on enable.
+    #[test]
+    fn enable_migrates_legacy_block() {
         let original = "; --- Hestia begin ---\r\n\
-; Hestia uses this experimental block to let XXMI receive reload hotkeys while Hestia is focused.\r\n\
-; Safe to delete this whole block if you remove Hestia.\r\n\
+; Enables Hestia to trigger XXMI's in-game reload while Hestia is focused.\r\n\
+; Safe to delete this marked block if you stop using Hestia.\r\n\
 [System]\r\n\
 additional_foreground_window = Hestia\r\n\
 ; --- Hestia end ---\r\n\
 \r\n\
 [Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true, false) else {
-            panic!("expected legacy block to be replaced");
-        };
+        let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
         assert!(updated.starts_with("[Loader]\r\nTarget = Game.exe"));
         assert_eq!(updated.matches("[System]").count(), 1);
-        assert!(updated.contains("[System]\r\n; --- Hestia begin ---\r\n"));
+        assert!(!updated.contains(HESTIA_D3DX_BEGIN));
+        assert!(updated.contains(&format!("[System]\r\n{CANON_BLOCK_CRLF}")));
         assert!(updated.contains("check_foreground_window = 1\r\n"));
+    }
+
+    // Migration: an old inline-neutralized interval is restored on disable.
+    #[test]
+    fn disable_migrates_legacy_inline_stash() {
+        let original =
+            "[System]\r\n; [Hestia disabled] settings_auto_save_interval = 30\r\nx = 1\r\n";
+        let (disabled, _) = expect_updated(patch_d3dx_ini_text(original, false));
+        assert!(disabled.contains("settings_auto_save_interval = 30\r\n"));
+        assert!(!disabled.contains("[Hestia disabled]"));
+    }
+
+    // BOM and LF inputs survive an enable/disable round-trip unchanged.
+    #[test]
+    fn round_trips_preserve_bom_and_lf() {
+        let bom_crlf = "\u{feff}[System]\r\nsettings_auto_save_interval = 60\r\n";
+        let (enabled, _) = expect_updated(patch_d3dx_ini_text(bom_crlf, true));
+        assert!(enabled.starts_with('\u{feff}'));
+        let (disabled, _) = expect_updated(patch_d3dx_ini_text(&enabled, false));
+        assert_eq!(disabled, bom_crlf);
+
+        let lf = "[System]\nadditional_foreground_window = ReShade\n";
+        let (enabled_lf, _) = expect_updated(patch_d3dx_ini_text(lf, true));
+        assert!(!enabled_lf.contains('\r'));
+        let (disabled_lf, _) = expect_updated(patch_d3dx_ini_text(&enabled_lf, false));
+        assert_eq!(disabled_lf, lf);
     }
 
     #[test]

@@ -484,7 +484,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Switch to list view", // LibraryHotkeysSwitchToList
     "No toggle keys in this mod.", // LibraryHotkeysNoToggleKeys
     "Read-only", // LibraryHotkeysWriteBlockedLabel
-    "Read-only while the game is running. To change these live, turn on \"Let Hestia trigger XXMI reload\" in Settings, then restart the game.", // LibraryHotkeysWriteBlockedHint
+    "Read-only while the game is running.\nTo edit these live, turn on \"Let Hestia modify d3dx.ini configuration\" in\nSettings > General > Operational > Experimental, then restart the game.", // LibraryHotkeysWriteBlockedHint
     "Game is currently running!", // LibraryHotkeysRunningToast
     "Add a personal note", // LibraryAddPersonalNote
     "Save personal note", // LibrarySavePersonalNote
@@ -647,10 +647,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Customizing mods", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Profile switch", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Modify d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
-    "Hestia needs to add the following line to access XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
-    "This d3dx.ini already has:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
-    "Replace it with Hestia’s value? Hestia will safely comment out the existing line so it's still there, just no longer having effect, then add Hestia's own configuration block below [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
-    "No other configuration in the d3dx.ini file will be touched.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
+    "To reload mods and read their customization while the game runs, Hestia adds two lines under [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
+    "Your d3dx.ini already sets additional_foreground_window = {value}.", // SettingsGeneralOperationalD3dxConflictExisting
+    "Replace it? Hestia comments out any conflicting value (kept but inactive) and keeps its own settings in a marked block below [System]. Turning the option off restores your originals.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Nothing else in d3dx.ini is changed. A backup is saved before every edit.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Tasks", // SettingsGeneralTasksSection
@@ -782,5 +782,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Next image", // OverlayNextImage
     "Image copied to clipboard", // OverlayImageCopied
     "Could not copy image", // OverlayCouldNotCopyImage
+    "Clear mod's customization", // LibraryHotkeyClearCustomization
     "Link Mod", // LibraryLinkMod
 ];

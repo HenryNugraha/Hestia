@@ -484,7 +484,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Beralih ke tampilan daftar", // LibraryHotkeysSwitchToList
     "Tidak ada tombol pengalih di mod ini.", // LibraryHotkeysNoToggleKeys
     "Hanya-baca", // LibraryHotkeysWriteBlockedLabel
-    "Hanya-baca selama gim berjalan. Untuk mengubahnya secara langsung, aktifkan \"Izinkan Hestia memicu reload XXMI\" di Setelan, lalu mulai ulang gim.", // LibraryHotkeysWriteBlockedHint
+    "Hanya-baca selama gim berjalan.\nUntuk mengeditnya secara langsung, aktifkan \"Izinkan Hestia mengubah konfigurasi d3dx.ini\" di\nSetelan > Umum > Operasional > Eksperimental, lalu mulai ulang gim.", // LibraryHotkeysWriteBlockedHint
     "Gim sedang berjalan!", // LibraryHotkeysRunningToast
     "Buatkan catatan pribadi", // LibraryAddPersonalNote
     "Simpan catatan pribadi", // LibrarySavePersonalNote
@@ -647,10 +647,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Menyesuaikan mod", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Beralih profil", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Ubah d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
-    "Hestia perlu menambahkan baris berikut untuk mengakses XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
-    "d3dx.ini ini sudah memiliki:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
-    "Ganti dengan nilai Hestia? Hestia akan mengomentari baris yang ada dengan aman agar tetap ada, hanya tidak lagi berpengaruh, lalu menambahkan blok konfigurasi milik Hestia tepat di bawah [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
-    "Tidak ada konfigurasi lain di file d3dx.ini yang akan disentuh.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
+    "Untuk memuat ulang mod dan membaca kustomisasinya saat gim berjalan, Hestia menambahkan dua baris di bawah [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
+    "d3dx.ini kamu sudah menyetel additional_foreground_window = {value}.", // SettingsGeneralOperationalD3dxConflictExisting
+    "Ganti? Hestia akan mengomentari nilai yang bentrok (tetap ada, tapi nonaktif) dan menyimpan pengaturannya sendiri dalam blok bertanda di bawah [System]. Mematikan opsi ini akan mengembalikan nilai aslimu.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Tidak ada bagian lain di d3dx.ini yang diubah. Cadangan disimpan sebelum setiap perubahan.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Unduhan", // SettingsGeneralTasksSection
@@ -782,5 +782,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Gambar berikutnya", // OverlayNextImage
     "Gambar disalin ke papan klip", // OverlayImageCopied
     "Tidak dapat menyalin gambar", // OverlayCouldNotCopyImage
+    "Hapus pengaturan mod", // LibraryHotkeyClearCustomization
     "Tautkan Mod", // LibraryLinkMod
 ];

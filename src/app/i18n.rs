@@ -765,6 +765,7 @@ enum TextKey {
     OverlayNextImage,
     OverlayImageCopied,
     OverlayCouldNotCopyImage,
+    LibraryHotkeyClearCustomization,
     LibraryLinkMod,
 }
 
@@ -2623,6 +2624,10 @@ impl TextCatalog {
 
     fn link_mod(self) -> &'static str {
         self.get(TextKey::LibraryLinkMod)
+    }
+
+    fn clear_mod_customization(self) -> &'static str {
+        self.get(TextKey::LibraryHotkeyClearCustomization)
     }
 
     fn image_removed(self) -> &'static str {

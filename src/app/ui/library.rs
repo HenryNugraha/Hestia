@@ -9732,7 +9732,7 @@ impl HestiaApp {
                                             ui.spacing_mut().item_spacing.x = 0.0;
                                             hotkey_clear_confirm_label(
                                                 ui,
-                                                "Clear mod's customization?",
+                                                &format!("{}?", text.clear_mod_customization()),
                                                 danger,
                                             );
                                             ui.add_space(confirm_label_gap);
@@ -9743,7 +9743,7 @@ impl HestiaApp {
                                                 Color32::WHITE,
                                                 danger_fill,
                                                 1.0,
-                                                "Clear mod's customization",
+                                                text.clear_mod_customization(),
                                             )
                                             .clicked()
                                             {
@@ -9783,7 +9783,7 @@ impl HestiaApp {
                                             danger,
                                             Color32::TRANSPARENT,
                                             1.0,
-                                            "Clear mod's customization",
+                                            text.clear_mod_customization(),
                                         )
                                         .clicked()
                                         {

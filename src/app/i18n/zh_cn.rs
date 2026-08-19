@@ -484,7 +484,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "切换到列表视图", // LibraryHotkeysSwitchToList
     "此 Mod 中没有可切换的按键。", // LibraryHotkeysNoToggleKeys
     "只读", // LibraryHotkeysWriteBlockedLabel
-    "游戏运行时为只读。若要实时更改，请在设置中启用“允许 Hestia 触发 XXMI 重载”，然后重启游戏。", // LibraryHotkeysWriteBlockedHint
+    "游戏运行时为只读。\n若要实时编辑，请在 设置 > 常规 > 操作 > 实验性 中开启\n“允许 Hestia 修改 d3dx.ini 配置”，然后重启游戏。", // LibraryHotkeysWriteBlockedHint
     "游戏正在运行！", // LibraryHotkeysRunningToast
     "添加个人便签", // LibraryAddPersonalNote
     "保存个人便签", // LibrarySavePersonalNote
@@ -647,10 +647,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "自定义 Mod", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "切换配置文件", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "修改 d3dx.ini？", // SettingsGeneralOperationalD3dxConflictTitle
-    "Hestia 需要添加以下行才能访问 XXMI：\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
-    "此 d3dx.ini 已有：\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
-    "要替换为 Hestia 的值吗？Hestia 会安全地注释掉现有行，使其仍保留在文件中但不再生效，然后在 [System] 下方添加 Hestia 自己的配置块。", // SettingsGeneralOperationalD3dxConflictReplaceDetails
-    "不会触碰 d3dx.ini 文件中的其他配置。", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
+    "为在游戏运行时重新加载 Mod 并读取其自定义，Hestia 会在 [System] 下方添加两行：\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
+    "你的 d3dx.ini 已将 additional_foreground_window 设为 {value}。", // SettingsGeneralOperationalD3dxConflictExisting
+    "要替换吗？Hestia 会注释掉任何冲突的值（保留但不生效），并将自己的设置放入 [System] 下方的标记块中。关闭该选项会恢复你的原始值。", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "d3dx.ini 中的其他内容不会改动。每次编辑前都会保存备份。", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "任务", // SettingsGeneralTasksSection
@@ -782,5 +782,6 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "下一张图片", // OverlayNextImage
     "图片已复制到剪贴板", // OverlayImageCopied
     "无法复制图片", // OverlayCouldNotCopyImage
+    "清除 Mod 设置", // LibraryHotkeyClearCustomization
     "关联模组", // LibraryLinkMod
 ];

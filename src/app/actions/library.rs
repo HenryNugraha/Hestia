@@ -32,12 +32,19 @@ impl HestiaApp {
         if !game.is_xxmi() {
             return;
         }
-        if let Err(err) = xxmi_persist::ensure_reload_config(
+        match xxmi_persist::ensure_reload_config(
             game,
             self.state.static_prefs.use_default_mods_path,
             game.apply_mod_changes_in_game,
         ) {
-            self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+            Ok(notices) => {
+                for notice in notices {
+                    self.report_warn(notice, None);
+                }
+            }
+            Err(err) => {
+                self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+            }
         }
         // The folded consent also governs the live-state helper: install it (mirroring the
         // active mods' shown variables) when on, remove it when off.
@@ -128,19 +135,12 @@ impl HestiaApp {
             self.set_game_reload_preference(&prompt.game_id, false);
             return;
         };
-        let use_default = self.state.static_prefs.use_default_mods_path;
-        match xxmi_persist::replace_reload_config_conflict(&game, use_default) {
-            Ok(()) => {
-                self.set_game_reload_preference(&prompt.game_id, true);
-                let mut updated = game;
-                updated.apply_mod_changes_in_game = true;
-                self.refresh_xxmi_reload_config_for_game(&updated);
-            }
-            Err(err) => {
-                self.set_game_reload_preference(&prompt.game_id, false);
-                self.report_warn(format!("XXMI reload config replacement failed: {err:#}"), None);
-            }
-        }
+        // "Replace" is just a consented enable: the normal enable path stashes the user's
+        // conflicting foreground value in place and injects Hestia's, reversibly.
+        self.set_game_reload_preference(&prompt.game_id, true);
+        let mut updated = game;
+        updated.apply_mod_changes_in_game = true;
+        self.refresh_xxmi_reload_config_for_game(&updated);
     }
 
     fn mod_action_lock_reason_by_id(
@@ -756,12 +756,19 @@ impl HestiaApp {
         // The d3dx.ini foreground-window grant must be in place before launch for
         // reload delivery to work while Hestia is foreground. Refresh it on scan, and
         // remove Hestia's generated config when the reload option is disabled.
-        if let Err(err) = xxmi_persist::ensure_reload_config(
+        match xxmi_persist::ensure_reload_config(
             &game,
             use_default,
             game.apply_mod_changes_in_game,
         ) {
-            self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+            Ok(notices) => {
+                for notice in notices {
+                    self.report_warn(notice, None);
+                }
+            }
+            Err(err) => {
+                self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
+            }
         }
         // Regenerate the live-state helper from the freshly-scanned active mod set, so a
         // changed mod roster (enable/disable/update) is reflected in what gets mirrored.

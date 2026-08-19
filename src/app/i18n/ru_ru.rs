@@ -484,7 +484,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Переключить на вид списком", // LibraryHotkeysSwitchToList
     "В этом моде нет переключаемых клавиш.", // LibraryHotkeysNoToggleKeys
     "Только чтение", // LibraryHotkeysWriteBlockedLabel
-    "Только чтение, пока игра запущена. Чтобы менять их на лету, включите «Разрешить Hestia перезагружать XXMI» в настройках, затем перезапустите игру.", // LibraryHotkeysWriteBlockedHint
+    "Только чтение, пока игра запущена.\nЧтобы менять их на лету, включите «Разрешить Hestia изменять конфигурацию d3dx.ini» в\nОпции > Общие > Операции > Экспериментально, затем перезапустите игру.", // LibraryHotkeysWriteBlockedHint
     "Игра сейчас запущена!", // LibraryHotkeysRunningToast
     "Добавить личную заметку", // LibraryAddPersonalNote
     "Сохранить личную заметку", // LibrarySavePersonalNote
@@ -647,10 +647,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Настройка модов", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Переключение профиля", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Изменить d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
-    "Hestia нужно добавить следующую строку для доступа к XXMI:\n\t➔ additional_foreground_window = Hestia", // SettingsGeneralOperationalD3dxConflictIntro
-    "В этом d3dx.ini уже есть:\n\t➔ additional_foreground_window = {value}", // SettingsGeneralOperationalD3dxConflictExisting
-    "Заменить его значением Hestia? Hestia безопасно закомментирует существующую строку, чтобы она осталась на месте, но больше не действовала, а затем добавит собственный блок конфигурации под [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
-    "Другие настройки в файле d3dx.ini затронуты не будут.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
+    "Чтобы перезагружать моды и читать их кастомизацию во время игры, Hestia добавляет две строки в [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
+    "В вашем d3dx.ini уже задано additional_foreground_window = {value}.", // SettingsGeneralOperationalD3dxConflictExisting
+    "Заменить? Hestia закомментирует любое конфликтующее значение (останется, но не действует) и разместит свои настройки в помеченном блоке под [System]. Отключение параметра вернёт ваши исходные значения.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Больше ничего в d3dx.ini не меняется. Перед каждым изменением сохраняется резервная копия.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
     // Window: Settings > General > Tasks
     "Задачи", // SettingsGeneralTasksSection
@@ -781,5 +781,6 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Следующее изображение", // OverlayNextImage
     "Изображение скопировано в буфер обмена", // OverlayImageCopied
     "Не удалось скопировать изображение", // OverlayCouldNotCopyImage
+    "Сбросить настройки мода", // LibraryHotkeyClearCustomization
     "Связать мод", // LibraryLinkMod
 ];
