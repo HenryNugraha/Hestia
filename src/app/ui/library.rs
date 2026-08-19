@@ -303,7 +303,6 @@ fn effective_metadata_source(
     has_description: bool,
     hotkeys_available: bool,
     textfile_available: bool,
-    mod_data_available: bool,
     legacy_explicit_readme: bool,
 ) -> MetadataSourceKind {
     use MetadataSourceKind::*;
@@ -316,7 +315,6 @@ fn effective_metadata_source(
     match want {
         Some(Hotkeys) if hotkeys_available => return Hotkeys,
         Some(TextFile) if textfile_available => return TextFile,
-        Some(ModData) if mod_data_available => return ModData,
         Some(Description) => return Description,
         _ => {}
     }
@@ -3423,18 +3421,6 @@ impl HestiaApp {
             self.select_hotkeys_source(selected);
             ui.close();
         }
-
-        // TODO: Mod Data availability = this mod has persisted `$`-vars saved in the
-        // importer's `d3dx_user.ini` (needs reading that file and matching this mod's
-        // namespace). Stubbed to unavailable until that plumbing exists.
-        let mod_data_available = false;
-        let mod_data_tooltip = if mod_data_available {
-            text.meta_source_mod_data_tooltip()
-        } else {
-            text.meta_source_mod_data_unavailable()
-        };
-        let mod_data_selected = matches!(effective_source, MetadataSourceKind::ModData);
-        metadata_source_row(ui, Icon::FileSliders, accent, text.meta_source_mod_data(), mod_data_tooltip, mod_data_selected, mod_data_available, false);
 
         let selected_path = selected.metadata.extracted.readme_path.as_deref();
         let note_exists = selected
@@ -8272,73 +8258,6 @@ impl HestiaApp {
         }
     }
 
-    /// Read-only viewer for a mod's 3DMigoto keybind/toggle config ("Show Mod Config").
-    /// Renders the sections cached in `mod_config_cache` when a target mod is set; the
-    /// window closes itself (clearing the target) when the user dismisses it.
-    fn render_mod_config_window(&mut self, ctx: &egui::Context) {
-        let Some(target_id) = self.mod_config_target_id.clone() else {
-            return;
-        };
-        let Some(mod_entry) = self
-            .state
-            .mods
-            .iter()
-            .find(|mod_entry| mod_entry.id == target_id)
-        else {
-            self.mod_config_target_id = None;
-            self.mod_config_cache.clear();
-            return;
-        };
-        let text = self.text();
-        let title = mod_entry
-            .metadata
-            .user
-            .title
-            .clone()
-            .unwrap_or_else(|| mod_entry.folder_name.clone());
-        let inis = &self.mod_config_cache;
-        let mut open = true;
-        let response = egui::Window::new(icon_text_sized(
-            Icon::FileCog,
-            &format!("{} — {title}", text.show_mod_config()),
-            14.0,
-            14.0,
-        ))
-        .id(egui::Id::new(("mod_config_window", target_id.as_str())))
-        .order(egui::Order::Foreground)
-        .open(&mut open)
-        .default_size(egui::vec2(470.0, 520.0))
-        .min_width(320.0)
-        .max_width(640.0)
-        .collapsible(true)
-        .resizable(true)
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            if inis.is_empty() {
-                ui.add_space(6.0);
-                ui.label(RichText::new(text.mod_config_empty()).color(Color32::from_gray(170)));
-                return;
-            }
-            ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    render_mod_config_sections(ui, inis);
-                });
-        });
-
-        if self.mod_config_focus_requested {
-            if let Some(inner) = response {
-                ctx.move_to_top(inner.response.layer_id);
-            }
-            self.mod_config_focus_requested = false;
-        }
-
-        if !open {
-            self.mod_config_target_id = None;
-            self.mod_config_cache.clear();
-        }
-    }
-
     /// The mod detail action (⋯) menu: the button plus its popup of mod actions.
     fn render_mod_detail_action_menu(&mut self, ui: &mut Ui, selected: &ModEntry) {
         let text = self.text();
@@ -8410,22 +8329,6 @@ impl HestiaApp {
                         .clicked()
                     {
                         let _ = open_in_explorer(&selected.root_path);
-                        ui.close();
-                    }
-                    if ui
-                        .button(icon_text_sized(
-                            Icon::FileCog,
-                            text.show_mod_config(),
-                            13.0,
-                            13.0,
-                        ))
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        self.mod_config_target_id = Some(selected.id.clone());
-                        self.mod_config_cache =
-                            parse_mod_config_inis(&selected.root_path);
-                        self.mod_config_focus_requested = true;
                         ui.close();
                     }
 
@@ -8671,10 +8574,6 @@ impl HestiaApp {
             self.render_browse_file_prompt(ui.ctx(), details_rect);
             return;
         }
-
-        // The Mod Config window is bound to the mod it was opened for, not the current
-        // selection, so it survives closing or reopening the detail window.
-        self.render_mod_config_window(ui.ctx());
 
         let Some(selected) = self.selected_mod().cloned() else {
             self.render_browse_file_prompt(ui.ctx(), details_rect);
@@ -9537,7 +9436,6 @@ impl HestiaApp {
                     // the persisted pick so a stale choice degrades gracefully instead of
                     // showing an empty or broken view.
                     let hotkeys_available = self.mod_has_keybinds(&selected);
-                    let mod_data_available = false; // TODO: wire d3dx_user.ini `$`-vars.
                     let textfile_available = selected
                         .metadata
                         .extracted
@@ -9567,7 +9465,6 @@ impl HestiaApp {
                         has_description,
                         hotkeys_available,
                         textfile_available,
-                        mod_data_available,
                         legacy_explicit_readme,
                     );
 
@@ -9634,7 +9531,6 @@ impl HestiaApp {
                                 }
                             }
                             MetadataSourceKind::Hotkeys => format!("{} ▾", text.meta_source_hotkeys()),
-                            MetadataSourceKind::ModData => format!("{} ▾", text.meta_source_mod_data()),
                         };
                         let badge_tooltip = match effective_source {
                             MetadataSourceKind::Description => {
@@ -9657,7 +9553,6 @@ impl HestiaApp {
                                 }
                             }
                             MetadataSourceKind::Hotkeys => text.meta_source_hotkeys_tooltip(),
-                            MetadataSourceKind::ModData => text.meta_source_mod_data_tooltip(),
                         };
                         let source_response = metadata_dropdown_badge(ui, &badge_text)
                             .on_hover_text(badge_tooltip)
@@ -9981,15 +9876,6 @@ impl HestiaApp {
                                     }
                                 }
                             };
-                        }
-                        MetadataSourceKind::ModData => {
-                            // Stub: `mod_data_available` is always false, so this arm is
-                            // unreachable today; render a placeholder rather than panic.
-                            ui.add(egui::Label::new(
-                                RichText::new("No customization data")
-                                    .size(13.0)
-                                    .color(Color32::from_gray(140)),
-                            ));
                         }
                     }
                     ui.add_space(10.0);

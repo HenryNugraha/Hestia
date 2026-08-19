@@ -226,7 +226,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "工具 (Ctrl+T)", // ChromeToolsTooltip
     "下载 (Ctrl+J)", // ChromeTasksTooltip
     "日志 (Ctrl+L)", // ChromeLogTooltip
-    "设置 (F10)", // ChromeSettingsTooltip
+    "设置 (Ctrl+P)", // ChromeSettingsTooltip
     "未启用游戏", // ChromeNoGamesDetected
     "查看“设置 → 游戏”", // ChromeSeeSettingsGames
 
@@ -478,9 +478,6 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "快捷键", // LibraryMetaSourceHotkeys
     "来自该 Mod 的 .ini 文件", // LibraryMetaSourceHotkeysTooltip
     "此 Mod 不包含任何快捷键", // LibraryMetaSourceHotkeysUnavailable
-    "Mod 数据", // LibraryMetaSourceModData
-    "Mod 的自定义配置", // LibraryMetaSourceModDataTooltip
-    "没有已保存的自定义数据", // LibraryMetaSourceModDataUnavailable
     "列表", // LibraryHotkeysViewList
     "原始", // LibraryHotkeysViewRaw
     "切换到原始视图", // LibraryHotkeysSwitchToRaw
@@ -777,7 +774,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "下一张图片", // OverlayNextImage
     "图片已复制到剪贴板", // OverlayImageCopied
     "无法复制图片", // OverlayCouldNotCopyImage
-    "模组配置", // LibraryShowModConfig
-    "在此模组的 .ini 文件中未找到快捷键。", // LibraryModConfigEmpty
     "关联模组", // LibraryLinkMod
 ];

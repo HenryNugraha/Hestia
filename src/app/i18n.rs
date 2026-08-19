@@ -476,9 +476,6 @@ enum TextKey {
     LibraryMetaSourceHotkeys,
     LibraryMetaSourceHotkeysTooltip,
     LibraryMetaSourceHotkeysUnavailable,
-    LibraryMetaSourceModData,
-    LibraryMetaSourceModDataTooltip,
-    LibraryMetaSourceModDataUnavailable,
     LibraryHotkeysViewList,
     LibraryHotkeysViewRaw,
     LibraryHotkeysSwitchToRaw,
@@ -760,8 +757,6 @@ enum TextKey {
     OverlayNextImage,
     OverlayImageCopied,
     OverlayCouldNotCopyImage,
-    LibraryShowModConfig,
-    LibraryModConfigEmpty,
     LibraryLinkMod,
 }
 
@@ -2618,14 +2613,6 @@ impl TextCatalog {
         self.get(TextKey::LibraryCouldNotAddImages)
     }
 
-    fn show_mod_config(self) -> &'static str {
-        self.get(TextKey::LibraryShowModConfig)
-    }
-
-    fn mod_config_empty(self) -> &'static str {
-        self.get(TextKey::LibraryModConfigEmpty)
-    }
-
     fn link_mod(self) -> &'static str {
         self.get(TextKey::LibraryLinkMod)
     }
@@ -2664,18 +2651,6 @@ impl TextCatalog {
 
     fn meta_source_hotkeys_unavailable(self) -> &'static str {
         self.get(TextKey::LibraryMetaSourceHotkeysUnavailable)
-    }
-
-    fn meta_source_mod_data(self) -> &'static str {
-        self.get(TextKey::LibraryMetaSourceModData)
-    }
-
-    fn meta_source_mod_data_tooltip(self) -> &'static str {
-        self.get(TextKey::LibraryMetaSourceModDataTooltip)
-    }
-
-    fn meta_source_mod_data_unavailable(self) -> &'static str {
-        self.get(TextKey::LibraryMetaSourceModDataUnavailable)
     }
 
     fn hotkeys_view_list(self) -> &'static str {

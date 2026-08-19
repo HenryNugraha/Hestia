@@ -226,7 +226,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Tools (Ctrl+T)", // ChromeToolsTooltip
     "Tasks (Ctrl+J)", // ChromeTasksTooltip
     "Log (Ctrl+L)", // ChromeLogTooltip
-    "Settings (F10)", // ChromeSettingsTooltip
+    "Settings (Ctrl+P)", // ChromeSettingsTooltip
     "No Games Enabled", // ChromeNoGamesDetected
     "See Settings → Games", // ChromeSeeSettingsGames
 
@@ -478,9 +478,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Hotkeys", // LibraryMetaSourceHotkeys
     "Sourced from the mod's .ini files", // LibraryMetaSourceHotkeysTooltip
     "This mod does not contain any hotkey", // LibraryMetaSourceHotkeysUnavailable
-    "Mod Data", // LibraryMetaSourceModData
-    "Mod's customization config", // LibraryMetaSourceModDataTooltip
-    "There is no customization data saved", // LibraryMetaSourceModDataUnavailable
     "List", // LibraryHotkeysViewList
     "Raw", // LibraryHotkeysViewRaw
     "Switch to raw view", // LibraryHotkeysSwitchToRaw
@@ -777,7 +774,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Next image", // OverlayNextImage
     "Image copied to clipboard", // OverlayImageCopied
     "Could not copy image", // OverlayCouldNotCopyImage
-    "Mod Config", // LibraryShowModConfig
-    "No keybinds found in this mod's .ini files.", // LibraryModConfigEmpty
     "Link Mod", // LibraryLinkMod
 ];

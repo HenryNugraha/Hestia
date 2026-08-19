@@ -226,7 +226,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Утилиты (Ctrl+T)", // ChromeToolsTooltip
     "Задачи (Ctrl+J)", // ChromeTasksTooltip
     "Журнал (Ctrl+L)", // ChromeLogTooltip
-    "Настройки (F10)", // ChromeSettingsTooltip
+    "Настройки (Ctrl+P)", // ChromeSettingsTooltip
     "Нет включенных игр", // ChromeNoGamesDetected
     "См. «Настройки → Игры»", // ChromeSeeSettingsGames
 
@@ -478,9 +478,6 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Горячие клавиши", // LibraryMetaSourceHotkeys
     "Из .ini-файлов мода", // LibraryMetaSourceHotkeysTooltip
     "В этом моде нет горячих клавиш", // LibraryMetaSourceHotkeysUnavailable
-    "Данные мода", // LibraryMetaSourceModData
-    "Настройки кастомизации мода", // LibraryMetaSourceModDataTooltip
-    "Нет сохранённых данных кастомизации", // LibraryMetaSourceModDataUnavailable
     "Список", // LibraryHotkeysViewList
     "Исходный", // LibraryHotkeysViewRaw
     "Переключить на исходный вид", // LibraryHotkeysSwitchToRaw
@@ -776,7 +773,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Следующее изображение", // OverlayNextImage
     "Изображение скопировано в буфер обмена", // OverlayImageCopied
     "Не удалось скопировать изображение", // OverlayCouldNotCopyImage
-    "Настройки мода", // LibraryShowModConfig
-    "В .ini-файлах этого мода не найдено привязок клавиш.", // LibraryModConfigEmpty
     "Связать мод", // LibraryLinkMod
 ];

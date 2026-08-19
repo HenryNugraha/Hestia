@@ -360,9 +360,6 @@ impl HestiaApp {
             mod_detail_edit_target_id: None,
             mod_detail_rename_focus_target_id: None,
             mod_detail_edit_name: String::new(),
-            mod_config_target_id: None,
-            mod_config_cache: Vec::new(),
-            mod_config_focus_requested: false,
             mod_keybinds_available_cache: HashMap::new(),
             metadata_hotkeys_view: None,
             mod_hotkey_values_cache: HashMap::new(),
@@ -565,7 +562,6 @@ impl HestiaApp {
             window_state_cache,
             window_state_last_save: 0.0,
             window_was_maximized,
-            suppress_synthetic_reload_key_until: None,
             selection_empty_at: None,
             startup_scan_loading: true,
             startup_launch_pending: true,
@@ -2642,17 +2638,14 @@ impl HestiaApp {
         }) {
             self.toggle_primary_view();
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F10)) {
-            // A synthetic XXMI reload F10 sent by Hestia itself arrives here too while
-            // Hestia is foreground; swallow that one press instead of toggling settings.
-            let suppressed = self
-                .suppress_synthetic_reload_key_until
-                .take()
-                .is_some_and(|until| Instant::now() < until)
-                || xxmi_persist::take_synthetic_reload_key_suppression();
-            if !suppressed {
-                self.settings_open = !self.settings_open;
-            }
+        // Ctrl+P — the settings/preferences shortcut. Deliberately NOT a bare
+        // function key like F10: while the XXMI foreground grant is active, any bare key
+        // Hestia handles also bleeds to the game (F10 = XXMI reload), so settings lives on
+        // a Ctrl combo that no XXMI mod binds.
+        if ctx.input_mut(|input| {
+            input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::P))
+        }) {
+            self.settings_open = !self.settings_open;
         }
         if ctx.input_mut(|input| {
             input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::L))

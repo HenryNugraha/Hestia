@@ -226,7 +226,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Alat (Ctrl+T)", // ChromeToolsTooltip
     "Unduhan (Ctrl+J)", // ChromeTasksTooltip
     "Log (Ctrl+L)", // ChromeLogTooltip
-    "Setelan (F10)", // ChromeSettingsTooltip
+    "Setelan (Ctrl+P)", // ChromeSettingsTooltip
     "Belum Ada Game yang Diaktifkan", // ChromeNoGamesDetected
     "Lihat Setelan → Game", // ChromeSeeSettingsGames
 
@@ -478,9 +478,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Hotkey", // LibraryMetaSourceHotkeys
     "Bersumber dari file .ini mod", // LibraryMetaSourceHotkeysTooltip
     "Mod ini tidak memiliki hotkey", // LibraryMetaSourceHotkeysUnavailable
-    "Data Mod", // LibraryMetaSourceModData
-    "Konfigurasi kustomisasi mod", // LibraryMetaSourceModDataTooltip
-    "Tidak ada data kustomisasi tersimpan", // LibraryMetaSourceModDataUnavailable
     "Daftar", // LibraryHotkeysViewList
     "Mentah", // LibraryHotkeysViewRaw
     "Beralih ke tampilan mentah", // LibraryHotkeysSwitchToRaw
@@ -777,7 +774,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Gambar berikutnya", // OverlayNextImage
     "Gambar disalin ke papan klip", // OverlayImageCopied
     "Tidak dapat menyalin gambar", // OverlayCouldNotCopyImage
-    "Konfigurasi Mod", // LibraryShowModConfig
-    "Tidak ada keybind yang ditemukan di file .ini mod ini.", // LibraryModConfigEmpty
     "Tautkan Mod", // LibraryLinkMod
 ];

@@ -273,9 +273,6 @@ pub struct HestiaApp {
     mod_detail_edit_target_id: Option<String>,
     mod_detail_rename_focus_target_id: Option<String>,
     mod_detail_edit_name: String,
-    mod_config_target_id: Option<String>,
-    mod_config_cache: Vec<ModConfigIni>,
-    mod_config_focus_requested: bool,
     // mod id -> (ini_hash when computed, whether the mod's .ini has keybind sections)
     mod_keybinds_available_cache: HashMap<String, (Option<String>, bool)>,
     // (mod id, parsed keybind sections) when "Hotkeys" is shown inline as the source.
@@ -489,10 +486,6 @@ pub struct HestiaApp {
     window_state_cache: Option<WindowStateSnapshot>,
     window_state_last_save: f64,
     window_was_maximized: bool,
-    /// Set right after Hestia sends a synthetic XXMI reload hotkey. F10 is also Hestia's
-    /// own settings shortcut, and the synthetic press lands in Hestia's queue while it is
-    /// the foreground window — consume that one press instead of toggling settings.
-    suppress_synthetic_reload_key_until: Option<Instant>,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
     startup_launch_pending: bool,

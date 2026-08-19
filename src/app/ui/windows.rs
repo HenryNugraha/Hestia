@@ -2824,12 +2824,21 @@ impl HestiaApp {
                                 )
                                 .on_hover_text(text.send_reload_hotkey_tooltip());
                                 // Muted caption spelling out the input-bleed side effect of the
-                                // foreground grant this toggle installs.
-                                ui.label(
-                                    RichText::new(text.send_reload_hotkey_bleed_caption())
-                                        .size(11.0)
-                                        .color(Color32::from_gray(150)),
-                                );
+                                // foreground grant this toggle installs. Indented by the checkbox
+                                // icon width + spacing so it lines up under the checkbox's label.
+                                // Pull it up toward the checkbox; make this more negative to
+                                // tighten the vertical gap, less negative to loosen it.
+                                ui.add_space(-12.0);
+                                let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
+                                ui.horizontal(|ui| {
+                                    ui.add_space(label_indent);
+                                    ui.label(
+                                        RichText::new(text.send_reload_hotkey_bleed_caption())
+                                            .size(11.0)
+                                            .italics()
+                                            .color(Color32::from_gray(150)),
+                                    );
+                                });
                             });
                             if desired_send_reload_hotkey != send_reload_hotkey {
                                 if let Some(game_id) = selected_game_id.as_deref() {

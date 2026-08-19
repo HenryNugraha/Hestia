@@ -1122,7 +1122,6 @@ pub enum MetadataSourceKind {
     Description,
     TextFile,
     Hotkeys,
-    ModData,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

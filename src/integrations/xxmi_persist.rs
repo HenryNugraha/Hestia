@@ -3100,7 +3100,6 @@ fn send_reload_hotkey_via_hestia_focus(
             "Hestia window did not become foreground before reload send"
         ));
     }
-    suppress_next_synthetic_reload_key();
     let sent = send_reload_hotkey_burst(importer_root, RELOAD_KEY_PULSE_COUNT)?;
     std::thread::sleep(Duration::from_millis(80));
     let restored = set_foreground_window(restore_hwnd)
@@ -3178,7 +3177,6 @@ pub fn send_reload_hotkey_foreground_aware(
                         ),
                     });
                 }
-                suppress_next_synthetic_reload_key();
                 let sent = send_reload_hotkey_burst(&importer_root, RELOAD_KEY_PULSE_COUNT)?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
@@ -3354,34 +3352,6 @@ pub fn send_mod_hotkey_foreground_aware(
     Ok(ReloadHotkeyReport {
         message: "skipped: mod hotkey sending is only supported on Windows".to_string(),
     })
-}
-
-static SYNTHETIC_RELOAD_KEY_SUPPRESS_UNTIL: std::sync::OnceLock<
-    std::sync::Mutex<Option<std::time::Instant>>,
-> = std::sync::OnceLock::new();
-
-pub fn suppress_next_synthetic_reload_key() {
-    let lock = SYNTHETIC_RELOAD_KEY_SUPPRESS_UNTIL.get_or_init(|| std::sync::Mutex::new(None));
-    if let Ok(mut until) = lock.lock() {
-        *until = Some(std::time::Instant::now() + Duration::from_millis(2500));
-    }
-}
-
-pub fn take_synthetic_reload_key_suppression() -> bool {
-    let Some(lock) = SYNTHETIC_RELOAD_KEY_SUPPRESS_UNTIL.get() else {
-        return false;
-    };
-    let Ok(mut until) = lock.lock() else {
-        return false;
-    };
-    match *until {
-        Some(expires_at) if std::time::Instant::now() < expires_at => true,
-        Some(_) => {
-            *until = None;
-            false
-        }
-        None => false,
-    }
 }
 
 /// Send the importer's reload hotkey so a running game picks up changed live mods or a
