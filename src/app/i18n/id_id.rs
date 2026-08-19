@@ -475,22 +475,22 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Deskripsi", // LibraryMetaSourceDescription
     "Deskripsi dari halaman GameBanana", // LibraryMetaSourceDescriptionGbTooltip
     "Deskripsi mod", // LibraryMetaSourceDescriptionTooltip
-    "Hotkey", // LibraryMetaSourceHotkeys
+    "Tombol", // LibraryMetaSourceHotkeys
     "Bersumber dari file .ini mod", // LibraryMetaSourceHotkeysTooltip
     "Mod ini tidak memiliki hotkey", // LibraryMetaSourceHotkeysUnavailable
     "Daftar", // LibraryHotkeysViewList
-    "Mentah", // LibraryHotkeysViewRaw
+    "Mentahan", // LibraryHotkeysViewRaw
     "Beralih ke tampilan mentah", // LibraryHotkeysSwitchToRaw
     "Beralih ke tampilan daftar", // LibraryHotkeysSwitchToList
     "Tidak ada tombol pengalih di mod ini.", // LibraryHotkeysNoToggleKeys
     "Hanya-baca", // LibraryHotkeysWriteBlockedLabel
     "Hanya-baca selama gim berjalan. Untuk mengubahnya secara langsung, aktifkan \"Izinkan Hestia memicu reload XXMI\" di Setelan, lalu mulai ulang gim.", // LibraryHotkeysWriteBlockedHint
     "Gim sedang berjalan!", // LibraryHotkeysRunningToast
-    "Tambahkan catatan pribadi", // LibraryAddPersonalNote
+    "Buatkan catatan pribadi", // LibraryAddPersonalNote
     "Simpan catatan pribadi", // LibrarySavePersonalNote
     "Catatan pengguna yang bisa diedit", // LibraryEditableUserNote
     "Edit catatan pribadi", // LibraryEditPersonalNote
-    "+ Tambah Catatan", // LibraryAddNote
+    "+ Buat Catatan", // LibraryAddNote
     "Lokal", // LibraryLocal
     "Buka di Penjelajah Berkas", // LibraryOpenInFileExplorer
     "Sumber", // LibrarySource
@@ -627,9 +627,14 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "── EKSPERIMENTAL / Hanya XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
     "Simpan pengaturan kustomisasi mod", // SettingsGeneralOperationalPreserveModSettings
     "Menjaga kustomisasi mod dalam game yang tersimpan (pengaturan persisten XXMI) saat mengganti nama, menonaktifkan, mengarsipkan, memperbarui, atau menghapus mod, serta saat berganti profil", // SettingsGeneralOperationalPreserveModSettingsTooltip
-    "Biarkan Hestia memicu hotkey muat ulang XXMI & mod", // SettingsGeneralOperationalSendReloadHotkey
+    "Izinkan Hestia mengubah konfigurasi d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
     "Setelah Hestia mengubah mod XXMI yang aktif saat game berjalan, kirim hotkey muat ulang XXMI agar game langsung memuatnya. Juga membuat daftar Hotkey menampilkan nilai langsung tiap mod di dalam game dan mengubahnya secara tepat, termasuk perubahan yang kamu buat lewat tombol mod itu sendiri", // SettingsGeneralOperationalSendReloadHotkeyTooltip
-    "ⓘ Hotkey mod yang ditekan di Hestia akan berpengaruh di dalam game", // SettingsGeneralOperationalSendReloadHotkeyBleedCaption
+    "Hestia perlu mengubah {code} untuk membaca data kustomisasi mod dengan andal", // SettingsGeneralOperationalD3dxBulletAutosave
+    "Hestia perlu mengubah {code} untuk memicu muat ulang XXMI dan hotkey mod", // SettingsGeneralOperationalD3dxBulletForeground
+    "Mengubah ini memerlukan restart game secara manual", // SettingsGeneralOperationalD3dxBulletRestart
+    "Hotkey mod yang ditekan di Hestia akan berpengaruh di dalam game", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "Kemampuan terbatas saat game berjalan", // SettingsGeneralOperationalPreserveLimited
+    "Berfungsi penuh selama bermain", // SettingsGeneralOperationalPreserveFull
     "Muat ulang XXMI otomatis saat:", // SettingsGeneralOperationalReloadHotkeyTrigger
     "Mengaktifkan mod", // SettingsGeneralOperationalReloadTriggerEnablingMods
     "Menonaktifkan mod", // SettingsGeneralOperationalReloadTriggerDisablingMods

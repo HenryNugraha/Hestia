@@ -622,7 +622,12 @@ enum TextKey {
     SettingsGeneralOperationalPreserveModSettingsTooltip,
     SettingsGeneralOperationalSendReloadHotkey,
     SettingsGeneralOperationalSendReloadHotkeyTooltip,
-    SettingsGeneralOperationalSendReloadHotkeyBleedCaption,
+    SettingsGeneralOperationalD3dxBulletAutosave,
+    SettingsGeneralOperationalD3dxBulletForeground,
+    SettingsGeneralOperationalD3dxBulletRestart,
+    SettingsGeneralOperationalD3dxBulletHotkeys,
+    SettingsGeneralOperationalPreserveLimited,
+    SettingsGeneralOperationalPreserveFull,
     SettingsGeneralOperationalReloadHotkeyTrigger,
     SettingsGeneralOperationalReloadTriggerEnablingMods,
     SettingsGeneralOperationalReloadTriggerDisablingMods,
@@ -3217,8 +3222,28 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralOperationalSendReloadHotkeyTooltip)
     }
 
-    fn send_reload_hotkey_bleed_caption(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralOperationalSendReloadHotkeyBleedCaption)
+    fn d3dx_bullet_autosave(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxBulletAutosave)
+    }
+
+    fn d3dx_bullet_foreground(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxBulletForeground)
+    }
+
+    fn d3dx_bullet_restart(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxBulletRestart)
+    }
+
+    fn d3dx_bullet_hotkeys(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxBulletHotkeys)
+    }
+
+    fn preserve_limited_caption(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalPreserveLimited)
+    }
+
+    fn preserve_full_caption(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalPreserveFull)
     }
 
     fn reload_hotkey_trigger(self) -> &'static str {

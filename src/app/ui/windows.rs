@@ -1,3 +1,62 @@
+/// Renders one indented, wrapping bullet line for the XXMI consent explainer.
+/// `runs` are laid out after a leading dot; each run carries its color and a
+/// `code` flag that switches it to a monospace, non-italic face so the two
+/// d3dx.ini identifiers read as literal config keys. The whole line hangs under
+/// `indent` (the checkbox icon width + spacing) so wrapped rows stay aligned.
+fn xxmi_consent_bullet(ui: &mut egui::Ui, indent: f32, runs: &[(&str, Color32, bool)]) {
+    let avail = ui.available_rect_before_wrap();
+    let gray = Color32::from_gray(150);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = (avail.width() - indent).max(1.0);
+    job.append(
+        "•  ",
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(11.0),
+            color: gray,
+            ..Default::default()
+        },
+    );
+    for (run, color, code) in runs {
+        job.append(
+            run,
+            0.0,
+            egui::TextFormat {
+                font_id: if *code {
+                    egui::FontId::monospace(11.0)
+                } else {
+                    egui::FontId::proportional(11.0)
+                },
+                color: *color,
+                italics: !*code,
+                ..Default::default()
+            },
+        );
+    }
+    let galley = ui.painter().layout_job(job);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(avail.width(), galley.size().y), Sense::hover());
+    ui.painter()
+        .galley(egui::pos2(rect.min.x + indent, rect.min.y), galley, gray);
+}
+
+/// Bullet whose body embeds a single colorized `code` identifier at the `{code}`
+/// placeholder in `template`. Falls back to a plain bullet if the placeholder is
+/// missing (e.g. an unexpected translation).
+fn xxmi_consent_code_bullet(ui: &mut egui::Ui, indent: f32, template: &str, code: &str) {
+    let gray = Color32::from_gray(150);
+    let brand = Color32::from_rgb(210, 189, 156);
+    if let Some((pre, post)) = template.split_once("{code}") {
+        xxmi_consent_bullet(
+            ui,
+            indent,
+            &[(pre, gray, false), (code, brand, true), (post, gray, false)],
+        );
+    } else {
+        xxmi_consent_bullet(ui, indent, &[(template, gray, false)]);
+    }
+}
+
 impl HestiaApp {
     fn render_whats_new_window(&mut self, ctx: &egui::Context) {
         if !self.state.show_whats_new {
@@ -2803,42 +2862,47 @@ impl HestiaApp {
                             let xxmi_settings_enabled =
                                 selected_game.as_ref().is_some_and(|game| game.is_xxmi());
                             let preserve_mod_settings = self.state.static_prefs.preserve_mod_settings;
-                            ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
-                                ui.checkbox(
-                                    &mut self.state.static_prefs.preserve_mod_settings,
-                                    text.preserve_mod_settings(),
-                                )
-                                .on_hover_text(text.preserve_mod_settings_tooltip());
-                            });
-                            if self.state.static_prefs.preserve_mod_settings != preserve_mod_settings {
-                                should_save = true;
-                            }
                             let send_reload_hotkey = selected_game.as_ref().is_some_and(|game| {
                                 game.is_xxmi() && game.apply_mod_changes_in_game
                             });
                             let mut desired_send_reload_hotkey = send_reload_hotkey;
+                            // Consent checkbox comes first: it gates the two d3dx.ini edits, so the
+                            // bulleted explainer directly beneath it names those edits (the two
+                            // identifiers highlighted in the brand color) and their consequences.
                             ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
                                 ui.checkbox(
                                     &mut desired_send_reload_hotkey,
                                     text.send_reload_hotkey(),
                                 )
                                 .on_hover_text(text.send_reload_hotkey_tooltip());
-                                // Muted caption spelling out the input-bleed side effect of the
-                                // foreground grant this toggle installs. Indented by the checkbox
-                                // icon width + spacing so it lines up under the checkbox's label.
-                                // Pull it up toward the checkbox; make this more negative to
-                                // tighten the vertical gap, less negative to loosen it.
-                                ui.add_space(-12.0);
                                 let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
-                                ui.horizontal(|ui| {
-                                    ui.add_space(label_indent);
-                                    ui.label(
-                                        RichText::new(text.send_reload_hotkey_bleed_caption())
-                                            .size(11.0)
-                                            .italics()
-                                            .color(Color32::from_gray(150)),
-                                    );
-                                });
+                                // Compact the explainer into a tight block. `item_spacing.y` is the
+                                // gap between bullets; the negative lead pulls the first bullet up
+                                // under the checkbox label. Nudge either to taste.
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                ui.add_space(-5.0);
+                                xxmi_consent_code_bullet(
+                                    ui,
+                                    label_indent,
+                                    text.d3dx_bullet_autosave(),
+                                    "settings_auto_save_interval",
+                                );
+                                xxmi_consent_code_bullet(
+                                    ui,
+                                    label_indent,
+                                    text.d3dx_bullet_foreground(),
+                                    "additional_foreground_window",
+                                );
+                                xxmi_consent_bullet(
+                                    ui,
+                                    label_indent,
+                                    &[(text.d3dx_bullet_restart(), Color32::from_gray(150), false)],
+                                );
+                                xxmi_consent_bullet(
+                                    ui,
+                                    label_indent,
+                                    &[(text.d3dx_bullet_hotkeys(), Color32::from_gray(150), false)],
+                                );
                             });
                             if desired_send_reload_hotkey != send_reload_hotkey {
                                 if let Some(game_id) = selected_game_id.as_deref() {
@@ -2847,6 +2911,32 @@ impl HestiaApp {
                                         desired_send_reload_hotkey,
                                     );
                                 }
+                                should_save = true;
+                            }
+                            // Preserve checkbox second, with a capability caption keyed to the
+                            // committed consent state: vivid green when Hestia may edit d3dx.ini
+                            // (fully functional), red when it may not (limited while the game runs).
+                            ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
+                                ui.checkbox(
+                                    &mut self.state.static_prefs.preserve_mod_settings,
+                                    text.preserve_mod_settings(),
+                                )
+                                .on_hover_text(text.preserve_mod_settings_tooltip());
+                                ui.add_space(-12.0);
+                                let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
+                                ui.horizontal(|ui| {
+                                    ui.add_space(label_indent);
+                                    let (caption, color) = if send_reload_hotkey {
+                                        (text.preserve_full_caption(), Color32::from_rgb(34, 197, 94))
+                                    } else {
+                                        (text.preserve_limited_caption(), Color32::from_rgb(218, 70, 70))
+                                    };
+                                    ui.label(
+                                        RichText::new(caption).size(11.0).italics().color(color),
+                                    );
+                                });
+                            });
+                            if self.state.static_prefs.preserve_mod_settings != preserve_mod_settings {
                                 should_save = true;
                             }
                             let trigger_controls_enabled = selected_game_id
@@ -3348,12 +3438,20 @@ impl HestiaApp {
                                             }
                                         });
                                         let mut desired_reload = game.apply_mod_changes_in_game;
-                                        ui.add_enabled_ui(game.is_xxmi(), |ui| {
-                                            ui.checkbox(
-                                                &mut desired_reload,
-                                                text.send_reload_hotkey(),
-                                            )
-                                            .on_hover_text(text.send_reload_hotkey_tooltip());
+                                        // Match the General section's checkbox roundness (radius 3).
+                                        ui.scope(|ui| {
+                                            let radius = egui::CornerRadius::same(3);
+                                            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                                            ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                                            ui.add_enabled_ui(game.is_xxmi(), |ui| {
+                                                ui.checkbox(
+                                                    &mut desired_reload,
+                                                    text.send_reload_hotkey(),
+                                                )
+                                                .on_hover_text(text.send_reload_hotkey_tooltip());
+                                            });
                                         });
                                         if desired_reload != game.apply_mod_changes_in_game {
                                             reload_setting_changes.push((

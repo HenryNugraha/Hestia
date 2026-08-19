@@ -3877,6 +3877,60 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(read_stash(&entry.root_path).is_none());
     }
 
+    #[test]
+    fn active_disable_enable_roundtrips_customization() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        let game = game(mods_root);
+
+        // 1. Active mod, game off: user customizes a hotkey value. It lands in d3dx_user.ini.
+        let mut entry = mod_entry(mod_root, ModStatus::Active);
+        assert!(set_mod_variable(&game, false, &entry, "mod.ini", "swap", "3").unwrap());
+        assert_eq!(
+            UserIniDoc::open(&importer_root)
+                .unwrap()
+                .unwrap()
+                .get("$\\mods\\arcane\\mod.ini\\swap")
+                .as_deref(),
+            Some("3")
+        );
+
+        // 2. Disable (mirrors persisted_xxmi_disable): capture to stash, then commit removes
+        //    the entry from d3dx_user.ini.
+        {
+            let mut tx = begin(&game, false).unwrap();
+            assert!(tx.capture(&entry, CaptureMode::Stash).unwrap());
+            tx.commit().unwrap();
+        }
+        entry.status = ModStatus::Disabled;
+        assert_eq!(
+            UserIniDoc::open(&importer_root)
+                .unwrap()
+                .unwrap()
+                .get("$\\mods\\arcane\\mod.ini\\swap"),
+            None
+        );
+
+        // 3. Enable (mirrors persisted_xxmi_enable): enable_mod sets Active before restore.
+        entry.status = ModStatus::Active;
+        {
+            let mut tx = begin(&game, false).unwrap();
+            assert!(tx.restore(&entry).unwrap());
+            tx.commit().unwrap();
+        }
+
+        // 4. The customization survived the round-trip.
+        assert_eq!(
+            UserIniDoc::open(&importer_root)
+                .unwrap()
+                .unwrap()
+                .get("$\\mods\\arcane\\mod.ini\\swap")
+                .as_deref(),
+            Some("3")
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn parses_simple_mod_hotkey_specs() {

@@ -627,9 +627,14 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "── ЭКСПЕРИМЕНТАЛЬНО / только XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
     "Сохранять настройки кастомизации модов", // SettingsGeneralOperationalPreserveModSettings
     "Сохраняет внутриигровую настройку модов (персистентные параметры XXMI) при переименовании, отключении, архивировании, обновлении и удалении модов, а также при переключении профилей", // SettingsGeneralOperationalPreserveModSettingsTooltip
-    "Разрешить Hestia нажимать клавиши перезагрузки XXMI и модов", // SettingsGeneralOperationalSendReloadHotkey
+    "Разрешить Hestia изменять конфигурацию d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
     "После изменения активных XXMI-модов при запущенной игре Hestia отправит клавишу перезагрузки XXMI, чтобы игра сразу их подхватила. Также позволяет списку горячих клавиш показывать текущее внутриигровое значение каждого мода и изменять его точными шагами, включая изменения, сделанные собственными клавишами мода", // SettingsGeneralOperationalSendReloadHotkeyTooltip
-    "ⓘ Клавиши модов, нажатые в Hestia, сработают в игре", // SettingsGeneralOperationalSendReloadHotkeyBleedCaption
+    "Hestia нужно изменить {code}, чтобы надёжно читать данные кастомизации модов", // SettingsGeneralOperationalD3dxBulletAutosave
+    "Hestia нужно изменить {code}, чтобы запускать перезагрузку XXMI и клавиши модов", // SettingsGeneralOperationalD3dxBulletForeground
+    "Изменение этого потребует ручного перезапуска игры", // SettingsGeneralOperationalD3dxBulletRestart
+    "Клавиши модов, нажатые в Hestia, сработают в игре", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "Ограниченные возможности при запущенной игре", // SettingsGeneralOperationalPreserveLimited
+    "Полностью работает во время игры", // SettingsGeneralOperationalPreserveFull
     "Автоперезагрузка XXMI при:", // SettingsGeneralOperationalReloadHotkeyTrigger
     "Включение модов", // SettingsGeneralOperationalReloadTriggerEnablingMods
     "Отключение модов", // SettingsGeneralOperationalReloadTriggerDisablingMods
