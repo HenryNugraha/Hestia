@@ -1875,10 +1875,19 @@ pub struct ReloadHotkeyReport {
     pub message: String,
 }
 
+/// One pre-existing `[System]` value Hestia would override on enable.
 #[derive(Clone, Debug)]
-pub struct D3dxForegroundConflict {
+pub struct D3dxConflictField {
+    pub key: String,
+    pub value: String,
+}
+
+/// The user-owned `[System]` values that enabling reload would stash and replace. Empty
+/// values and inert defaults are not reported, so a stock file never trips the prompt.
+#[derive(Clone, Debug)]
+pub struct D3dxReloadConflict {
     pub path: PathBuf,
-    pub current_value: String,
+    pub fields: Vec<D3dxConflictField>,
 }
 
 #[cfg(windows)]
@@ -1955,32 +1964,57 @@ pub fn ensure_reload_config(
 pub fn reload_config_conflict(
     game: &GameInstall,
     use_default: bool,
-) -> Result<Option<D3dxForegroundConflict>> {
+) -> Result<Option<D3dxReloadConflict>> {
     let Some(importer_root) = importer_root_for(game, use_default) else {
         return Ok(None);
     };
     let path = importer_root.join(D3DX_INI_FILE);
     let text = fs::read_to_string(&path).context(format!("reading {}", path.display()))?;
-    let body = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let fields = d3dx_reload_conflict_fields(&text);
+    if fields.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(D3dxReloadConflict { path, fields }))
+    }
+}
+
+/// The user-owned `[System]` values enabling reload would override, in the order Hestia
+/// lists them (foreground, then interval). Ignores anything Hestia owns (current or legacy
+/// block), empty values, Hestia's own canonical values, and the interval's inert `0`
+/// default — so a stock or already-managed file yields nothing.
+fn d3dx_reload_conflict_fields(text: &str) -> Vec<D3dxConflictField> {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = split_ini_lines(body);
-    // Ignore anything Hestia owns: a current or legacy managed block never counts as a
-    // user-owned conflict.
     if let SectionScan::One { start, end } = scan_hestia_section(&lines) {
         peel_hestia_section(&mut lines, start, end);
     }
     normalize_legacy_hestia_artifacts(&mut lines);
-    let Some((_, value)) = first_system_foreground_binding_entry(&lines) else {
-        return Ok(None);
-    };
-    let current_value = value.trim();
-    if current_value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE) {
-        Ok(None)
-    } else {
-        Ok(Some(D3dxForegroundConflict {
-            path,
-            current_value: current_value.to_string(),
-        }))
+
+    let mut fields = Vec::new();
+    // Foreground: any active non-empty value that isn't already Hestia's.
+    if let Some(value) = first_system_active_value(&lines, FOREGROUND_WINDOW_KEY)
+        && !value.is_empty()
+        && !value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE)
+    {
+        fields.push(D3dxConflictField {
+            key: FOREGROUND_WINDOW_KEY.to_string(),
+            value: value.to_string(),
+        });
     }
+    // Autosave interval: any active value that isn't Hestia's (`1`) or the inert
+    // default/disabled sentinels (empty or `0`).
+    if let Some(value) = first_system_active_value(&lines, AUTOSAVE_INTERVAL_KEY)
+        && !value.is_empty()
+        && value != HESTIA_AUTOSAVE_INTERVAL
+        && value != "0"
+    {
+        fields.push(D3dxConflictField {
+            key: AUTOSAVE_INTERVAL_KEY.to_string(),
+            value: value.to_string(),
+        });
+    }
+
+    fields
 }
 
 fn cleanup_legacy_helper_ini(mods_path: &Path) -> Result<()> {
@@ -2308,8 +2342,28 @@ fn d3dx_ini_hestia_foreground_binding_active(importer_root: &Path) -> bool {
     };
     let body = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let lines = split_ini_lines(body);
-    first_system_foreground_binding(&lines)
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(HESTIA_WINDOW_TITLE))
+    first_system_active_value(&lines, FOREGROUND_WINDOW_KEY)
+        .is_some_and(|value| value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE))
+}
+
+/// The first active value for `key` inside a `[System]` section, trimmed. Commented lines
+/// and keys in other sections are ignored.
+fn first_system_active_value<'a>(lines: &'a [String], key: &str) -> Option<&'a str> {
+    let mut in_system = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if let Some(section) = section_name(trimmed) {
+            in_system = section.eq_ignore_ascii_case("System");
+            continue;
+        }
+        if in_system
+            && let Some((line_key, value)) = active_kv(line)
+            && line_key.eq_ignore_ascii_case(key)
+        {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn detect_line_ending(text: &str) -> &'static str {
@@ -2347,34 +2401,6 @@ fn join_ini_lines(
         text.push_str(line_ending);
     }
     text
-}
-
-fn first_system_foreground_binding(lines: &[String]) -> Option<&str> {
-    first_system_foreground_binding_entry(lines).map(|(_, value)| value)
-}
-
-fn first_system_foreground_binding_entry(lines: &[String]) -> Option<(usize, &str)> {
-    let mut in_system = false;
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(section) = section_name(trimmed) {
-            in_system = section.eq_ignore_ascii_case("System");
-            continue;
-        }
-        if !in_system {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim().eq_ignore_ascii_case(FOREGROUND_WINDOW_KEY) {
-            return Some((idx, value.trim()));
-        }
-    }
-    None
 }
 
 fn section_name(line: &str) -> Option<&str> {
@@ -4788,6 +4814,72 @@ additional_foreground_window = Hestia\r\n\
             patch_d3dx_ini_text("[System]\r\nx = 1\r\n", false),
             D3dxPatch::Unchanged
         ));
+    }
+
+    fn conflict_pairs(text: &str) -> Vec<(String, String)> {
+        d3dx_reload_conflict_fields(text)
+            .into_iter()
+            .map(|field| (field.key, field.value))
+            .collect()
+    }
+
+    // The prompt fires only for genuine user-owned values — never for empties or defaults.
+    #[test]
+    fn conflict_ignores_empty_and_default_values() {
+        assert!(conflict_pairs("[System]\r\nx = 1\r\n").is_empty());
+        // Empty foreground (the shipped default) is not a conflict.
+        assert!(conflict_pairs("[System]\r\nadditional_foreground_window = \r\n").is_empty());
+        // Hestia's own values aren't conflicts.
+        assert!(
+            conflict_pairs(
+                "[System]\r\nadditional_foreground_window = Hestia\r\nsettings_auto_save_interval = 1\r\n"
+            )
+            .is_empty()
+        );
+        // The interval's inert `0` (disabled) and empty are not conflicts.
+        assert!(conflict_pairs("[System]\r\nsettings_auto_save_interval = 0\r\n").is_empty());
+        assert!(conflict_pairs("[System]\r\nsettings_auto_save_interval = \r\n").is_empty());
+        // Commented lines never count.
+        assert!(
+            conflict_pairs("[System]\r\n; additional_foreground_window = ReShade\r\n").is_empty()
+        );
+    }
+
+    // Both managed keys are reported, foreground first, when the user has set them.
+    #[test]
+    fn conflict_reports_both_foreground_and_interval() {
+        let text =
+            "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n";
+        assert_eq!(
+            conflict_pairs(text),
+            vec![
+                (
+                    "additional_foreground_window".to_string(),
+                    "ReShade".to_string()
+                ),
+                ("settings_auto_save_interval".to_string(), "30".to_string()),
+            ]
+        );
+    }
+
+    // A lone interval conflict is reported on its own.
+    #[test]
+    fn conflict_reports_interval_alone() {
+        assert_eq!(
+            conflict_pairs("[System]\r\nsettings_auto_save_interval = 30\r\n"),
+            vec![("settings_auto_save_interval".to_string(), "30".to_string())]
+        );
+    }
+
+    // An already-managed file (Hestia's block present) reports no conflict.
+    #[test]
+    fn conflict_ignores_hestia_managed_block() {
+        let (enabled, _) = expect_updated(patch_d3dx_ini_text(
+            "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n",
+            true,
+        ));
+        // The user's values are now stashed (commented) and Hestia owns the active ones.
+        assert!(conflict_pairs(&enabled).is_empty());
     }
 
     // Migration: a block written by an older build is replaced by the current one on enable.

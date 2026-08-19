@@ -2359,7 +2359,7 @@ impl HestiaApp {
                     ui.add_space(6.0);
                     static_label(
                         ui,
-                        RichText::new(text.d3dx_conflict_existing(&prompt.current_value))
+                        RichText::new(text.d3dx_conflict_existing(&prompt.fields))
                             .size(13.0)
                             .color(Color32::from_rgb(224, 185, 122)),
                     );

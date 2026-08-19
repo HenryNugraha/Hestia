@@ -99,7 +99,11 @@ impl HestiaApp {
                     game_id: game.definition.id.clone(),
                     game_name: game.definition.name.clone(),
                     path: conflict.path,
-                    current_value: conflict.current_value,
+                    fields: conflict
+                        .fields
+                        .into_iter()
+                        .map(|field| (field.key, field.value))
+                        .collect(),
                 });
                 return;
             }

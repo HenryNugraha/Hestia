@@ -536,7 +536,8 @@ struct D3dxForegroundConflictPrompt {
     game_id: String,
     game_name: String,
     path: PathBuf,
-    current_value: String,
+    /// The pre-existing `[System]` values (`key`, `value`) enabling would stash and replace.
+    fields: Vec<(String, String)>,
 }
 
 #[derive(Clone)]

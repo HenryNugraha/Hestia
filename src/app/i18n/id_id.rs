@@ -648,7 +648,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Beralih profil", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Ubah d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
     "Untuk memuat ulang mod dan membaca kustomisasinya saat gim berjalan, Hestia menambahkan dua baris di bawah [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
-    "d3dx.ini kamu sudah menyetel additional_foreground_window = {value}.", // SettingsGeneralOperationalD3dxConflictExisting
+    "d3dx.ini kamu sudah menyetel:", // SettingsGeneralOperationalD3dxConflictExisting
     "Ganti? Hestia akan mengomentari nilai yang bentrok (tetap ada, tapi nonaktif) dan menyimpan pengaturannya sendiri dalam blok bertanda di bawah [System]. Mematikan opsi ini akan mengembalikan nilai aslimu.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
     "Tidak ada bagian lain di d3dx.ini yang diubah. Cadangan disimpan sebelum setiap perubahan.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 

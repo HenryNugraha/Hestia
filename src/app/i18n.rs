@@ -3298,9 +3298,14 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralOperationalD3dxConflictIntro)
     }
 
-    fn d3dx_conflict_existing(self, value: &str) -> String {
-        self.get(TextKey::SettingsGeneralOperationalD3dxConflictExisting)
-            .replace("{value}", value)
+    fn d3dx_conflict_existing(self, fields: &[(String, String)]) -> String {
+        let mut text = self
+            .get(TextKey::SettingsGeneralOperationalD3dxConflictExisting)
+            .to_string();
+        for (key, value) in fields {
+            text.push_str(&format!("\n\t➔ {key} = {value}"));
+        }
+        text
     }
 
     fn d3dx_conflict_replace_details(self) -> &'static str {

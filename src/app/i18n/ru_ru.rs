@@ -648,7 +648,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Переключение профиля", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "Изменить d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
     "Чтобы перезагружать моды и читать их кастомизацию во время игры, Hestia добавляет две строки в [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
-    "В вашем d3dx.ini уже задано additional_foreground_window = {value}.", // SettingsGeneralOperationalD3dxConflictExisting
+    "В вашем d3dx.ini уже задано:", // SettingsGeneralOperationalD3dxConflictExisting
     "Заменить? Hestia закомментирует любое конфликтующее значение (останется, но не действует) и разместит свои настройки в помеченном блоке под [System]. Отключение параметра вернёт ваши исходные значения.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
     "Больше ничего в d3dx.ini не меняется. Перед каждым изменением сохраняется резервная копия.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 

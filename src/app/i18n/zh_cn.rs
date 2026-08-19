@@ -648,7 +648,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "切换配置文件", // SettingsGeneralOperationalReloadTriggerProfileSwitch
     "修改 d3dx.ini？", // SettingsGeneralOperationalD3dxConflictTitle
     "为在游戏运行时重新加载 Mod 并读取其自定义，Hestia 会在 [System] 下方添加两行：\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
-    "你的 d3dx.ini 已将 additional_foreground_window 设为 {value}。", // SettingsGeneralOperationalD3dxConflictExisting
+    "你的 d3dx.ini 已设置：", // SettingsGeneralOperationalD3dxConflictExisting
     "要替换吗？Hestia 会注释掉任何冲突的值（保留但不生效），并将自己的设置放入 [System] 下方的标记块中。关闭该选项会恢复你的原始值。", // SettingsGeneralOperationalD3dxConflictReplaceDetails
     "d3dx.ini 中的其他内容不会改动。每次编辑前都会保存备份。", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
 
