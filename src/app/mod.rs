@@ -148,6 +148,7 @@ impl eframe::App for HestiaApp {
         self.enforce_browse_request_timeouts();
         self.enforce_browse_image_timeouts();
         self.enforce_gif_work_timeouts();
+        self.poll_live_state_watch(ctx);
         if !self.profile_operation_locks_app() {
             self.detect_drag_and_drop(ctx);
             self.handle_shortcuts(ctx);

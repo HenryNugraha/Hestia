@@ -24,6 +24,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sysinfo::UpdateKind;
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     model::{GameBackend, GameInstall, MOD_META_DIR, ModEntry, ModStatus},
@@ -209,6 +210,19 @@ impl UserIniDoc {
             .into_iter()
             .map(|(key, value)| (format!("{prefix}{key}"), value))
             .collect()
+    }
+
+    /// Value of the single entry whose key case-insensitively equals `key`, or `None`.
+    /// Unlike `read_prefix`, this never matches a longer key that merely starts with `key`.
+    fn get(&self, key: &str) -> Option<String> {
+        for line in &self.lines {
+            if let Some((entry_key, value)) = parse_entry(line)
+                && keys_ci_equal(entry_key, key)
+            {
+                return Some(value.to_string());
+            }
+        }
+        None
     }
 
     /// Extract-and-remove: returns entries under `prefix` (keys relative to it) and deletes
@@ -761,6 +775,151 @@ fn collect_explicit_namespace_prefixes_from_ini(path: &Path, prefixes: &mut Vec<
 }
 
 // ---------------------------------------------------------------------------
+// Live-state mirror helper (`<mods>\⬢HESTIA\hestia.ini`)
+//
+// 3DMigoto only writes a variable to `d3dx_user.ini` when it is declared `persist`. Most
+// mod hotkey variables are not, so their live value is invisible on disk. The helper
+// declares a `persist` mirror for each shown non-persist variable and copies the live
+// value into it every frame from a `[Present]` command list; paired with a 1-second
+// `settings_auto_save_interval`, the mirror flushes within ~1s of any change — including
+// changes made with the mod's own in-game hotkey. Hestia then reads the mirror back and
+// un-maps it to `(mod, var)`.
+// ---------------------------------------------------------------------------
+
+/// The comment banner on the generated helper file.
+const HESTIA_HELPER_HEADER: &str =
+    "; HESTIA HELPER FILE - AUTOMATICALLY GENERATED - CHANGES WILL BE LOST";
+/// The generated helper file's name, under `<mods>\⬢HESTIA\`.
+pub const HESTIA_HELPER_FILE: &str = "hestia.ini";
+
+/// One variable to mirror into a persistable global for live readback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorVar {
+    /// The source variable's namespace prefix, lowercased with a trailing `\`,
+    /// e.g. `$\mods\foo\merged.ini\`.
+    pub namespace_prefix: String,
+    /// The source variable name, without the leading `$`.
+    pub var_name: String,
+}
+
+impl MirrorVar {
+    /// The mirror global's name (no `$`): `hestia_<16-hex xxh3_64(namespace)>_<var>`, all
+    /// lowercase. Legal per 3DMigoto's `valid_variable_name` (first body char `_` or a
+    /// lowercase letter; remaining chars `[a-z0-9_]`; no length cap). Hashing the whole
+    /// namespace prefix (not just a folder name) keeps multi-ini mods collision-free.
+    fn mirror_name(&self) -> String {
+        let hash = xxh3_64(self.namespace_prefix.to_ascii_lowercase().as_bytes());
+        format!("hestia_{hash:016x}_{}", self.var_name.to_ascii_lowercase())
+    }
+
+    /// The fully-qualified source reference for the `[Present]` right-hand side: `$\ns\var`.
+    fn source_ref(&self) -> String {
+        format!("{}{}", self.namespace_prefix, self.var_name)
+    }
+}
+
+/// Path of the live-state helper file for a given mods root.
+pub fn hestia_helper_path(mods_path: &Path) -> PathBuf {
+    mods_path.join(MOD_META_DIR).join(HESTIA_HELPER_FILE)
+}
+
+/// The helper ini's own namespace prefix (default namespace = its path relative to the
+/// importer root, lowercased), e.g. `$\mods\⬢hestia\hestia.ini\`. This is where the
+/// mirrored `global persist` values land in `d3dx_user.ini`.
+pub fn hestia_helper_namespace_prefix(importer_root: &Path, mods_path: &Path) -> Option<String> {
+    namespace_prefix_for_root(&hestia_helper_path(mods_path), importer_root)
+}
+
+/// Resolve an ini's namespace prefix: its explicit `namespace = …` if set, otherwise the
+/// default (the ini file's path relative to the importer root, lowercased, including the
+/// `.ini` filename). `ini_path` is the ini file's absolute path.
+pub fn namespace_prefix_for_ini(
+    importer_root: &Path,
+    ini_path: &Path,
+    explicit: Option<&str>,
+) -> Option<String> {
+    if let Some(explicit) = explicit
+        && let Some(prefix) = explicit_namespace_prefix(explicit)
+    {
+        return Some(prefix);
+    }
+    namespace_prefix_for_root(ini_path, importer_root)
+}
+
+/// The key under which a mirror's value lands in `d3dx_user.ini`: the helper's own
+/// namespace prefix followed by the mirror name.
+pub fn mirror_persist_key(helper_prefix: &str, mirror: &MirrorVar) -> String {
+    format!("{helper_prefix}{}", mirror.mirror_name())
+}
+
+/// Render the helper file text for a set of mirrors. Mirrors that resolve to the same
+/// mirror name (same namespace + var) are de-duplicated, and the output is sorted by
+/// mirror name so identical inputs produce byte-identical files (the caller hash-compares
+/// to avoid rewriting unchanged content).
+pub fn generate_hestia_ini(mirrors: &[MirrorVar]) -> String {
+    let mut unique: Vec<(String, String)> = Vec::new();
+    for mirror in mirrors {
+        let name = mirror.mirror_name();
+        if !unique.iter().any(|(existing, _)| existing == &name) {
+            unique.push((name, mirror.source_ref()));
+        }
+    }
+    unique.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut text = String::new();
+    text.push_str(HESTIA_HELPER_HEADER);
+    text.push_str("\r\n[Constants]\r\n");
+    for (name, _) in &unique {
+        text.push_str(&format!("global persist ${name} = 0\r\n"));
+    }
+    text.push_str("\r\n[Present]\r\n");
+    for (name, source) in &unique {
+        text.push_str(&format!("${name} = {source}\r\n"));
+    }
+    text
+}
+
+/// One mirrored value to un-map when reading `d3dx_user.ini`: the helper writes the live
+/// value under `persist_key` (the helper namespace + mirror name), and the app wants it back
+/// under `insert_key` — the mod-relative `<ini rel path>\<var>` form its lookup expects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorReadback {
+    /// Full key in `d3dx_user.ini` the mirror flushes to, e.g.
+    /// `$\mods\⬢hestia\hestia.ini\hestia_<hash>_<var>`.
+    pub persist_key: String,
+    /// Key to insert into the returned value map, matching the app's `hotkey_current_value`
+    /// lookup: the mod-relative `<ini rel path lowercased>\<var>` form.
+    pub insert_key: String,
+}
+
+/// Write (or remove) the live-state helper `Mods\⬢HESTIA\hestia.ini`. Returns whether disk
+/// changed. An empty mirror set removes the file so no dead helper keeps mirroring; otherwise
+/// the file is written only when its content differs (hash-compare) so a mod scan that finds
+/// no change touches nothing — and so 3DMigoto does not needlessly reload it.
+pub fn ensure_live_state_helper(mods_path: &Path, mirrors: &[MirrorVar]) -> Result<bool> {
+    let path = hestia_helper_path(mods_path);
+    if mirrors.is_empty() {
+        return match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err).context(format!("removing {}", path.display())),
+        };
+    }
+    let text = generate_hestia_ini(mirrors);
+    if let Ok(existing) = fs::read(&path)
+        && existing == text.as_bytes()
+    {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context(format!("creating {}", parent.display()))?;
+    }
+    persistence::write_atomic_text(&path, &text)
+        .context(format!("writing {}", path.display()))?;
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
 // PersistTx — one transaction per game/importer
 // ---------------------------------------------------------------------------
 
@@ -1197,6 +1356,14 @@ impl PersistTx {
 // Profile snapshot helpers
 // ---------------------------------------------------------------------------
 
+/// Cheap change signal for `d3dx_user.ini`: its `(mtime, len)`. The live-state watch polls
+/// this — a differing token means the DLL flushed new persist values and the shown hotkey
+/// values should be re-read. `None` when the file is missing or its metadata is unreadable.
+pub fn user_ini_change_token(importer_root: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = fs::metadata(importer_root.join(USER_INI_FILE)).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 /// Whole-file text of `d3dx_user.ini`, or `None` when missing or not UTF-8.
 pub fn snapshot_user_ini(importer_root: &Path) -> Option<String> {
     let bytes = fs::read(importer_root.join(USER_INI_FILE)).ok()?;
@@ -1225,6 +1392,7 @@ pub fn read_mod_variables(
     game: &GameInstall,
     use_default: bool,
     entry: &ModEntry,
+    mirrors: &[MirrorReadback],
 ) -> Result<HashMap<String, String>> {
     let Some(importer_root) = importer_root_for(game, use_default) else {
         return Ok(HashMap::new());
@@ -1258,6 +1426,16 @@ pub fn read_mod_variables(
     for prefix in prefixes {
         for (key, value) in doc.read_prefix(&prefix) {
             values.insert(key, value);
+        }
+    }
+    // Un-map any mirrored live values: the helper flushed each non-persist source variable
+    // into its own persist global, so read that back under the mod-relative key the app's
+    // lookup expects. Mirror values are the true runtime state, so they override the direct
+    // read above (a variable is mirrored only when it is not itself persist, so in practice
+    // there is no direct entry to override).
+    for mirror in mirrors {
+        if let Some(value) = doc.get(&mirror.persist_key) {
+            values.insert(mirror.insert_key.clone(), value);
         }
     }
     Ok(values)
@@ -1655,11 +1833,21 @@ namespace = hestia\\bridge\r\n\
 
 const HESTIA_D3DX_BEGIN: &str = "; --- Hestia begin ---";
 const HESTIA_D3DX_END: &str = "; --- Hestia end ---";
-const LEGACY_HESTIA_D3DX_COMMENT_1: &str = "; Hestia uses this experimental block to let XXMI receive reload hotkeys while Hestia is focused.";
-const LEGACY_HESTIA_D3DX_COMMENT_2: &str =
-    "; Safe to delete this whole block if you remove Hestia.";
 const FOREGROUND_WINDOW_KEY: &str = "additional_foreground_window";
 const HESTIA_WINDOW_TITLE: &str = "Hestia";
+/// `[System]` key whose value is the autosave cadence in seconds. Hestia forces it to
+/// `1` when live-state mirroring is enabled so mirrored variables flush within ~1s.
+const AUTOSAVE_INTERVAL_KEY: &str = "settings_auto_save_interval";
+/// The value Hestia writes for the autosave interval when live-state is enabled.
+const HESTIA_AUTOSAVE_INTERVAL: &str = "1";
+/// Prefix Hestia stamps onto a pre-existing active `settings_auto_save_interval` line it
+/// neutralizes, so the original value can be restored verbatim and duplicate-key
+/// precedence never decides the outcome.
+const HESTIA_DISABLED_PREFIX: &str = "; [Hestia disabled] ";
+/// Comment describing a combined Hestia block (one that manages the autosave interval
+/// alongside, or instead of, the foreground binding).
+const HESTIA_D3DX_COMBINED_COMMENT: &str =
+    "; Managed by Hestia. Safe to delete this marked block if you stop using Hestia.";
 const FOREGROUND_RELOAD_ATTEMPTS: u32 = 5;
 const FOREGROUND_RELOAD_RETRY_DELAY: Duration = Duration::from_millis(100);
 const FOREGROUND_SETTLE_TIMEOUT: Duration = Duration::from_millis(900);
@@ -1747,9 +1935,13 @@ pub fn ensure_reload_config(
     let bytes = fs::read(&d3dx_ini).context(format!("reading {}", d3dx_ini.display()))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| anyhow!("{} is not valid UTF-8", d3dx_ini.display()))?;
-    let enable = enable_reload && importer_dll_supports_foreground_window(&importer_root);
+    // One folded consent drives both d3dx.ini grants. The foreground reload binding needs a
+    // DLL that supports `additional_foreground_window`; the autosave interval works on every
+    // fork DLL, so it is gated only on the consent itself.
+    let foreground = enable_reload && importer_dll_supports_foreground_window(&importer_root);
+    let live_state = enable_reload;
 
-    match patch_d3dx_ini_text(&text, enable) {
+    match patch_d3dx_ini_text(&text, foreground, live_state) {
         D3dxPatch::Unchanged | D3dxPatch::BlockedByExistingBinding => Ok(()),
         D3dxPatch::Updated(updated) => {
             rotate_d3dx_backup(&d3dx_ini)?;
@@ -1819,7 +2011,33 @@ fn cleanup_legacy_helper_ini(mods_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn patch_d3dx_ini_text(text: &str, enable: bool) -> D3dxPatch {
+/// Manage Hestia's `d3dx.ini` grants: the `additional_foreground_window` reload binding
+/// (`foreground`) and the `settings_auto_save_interval = 1` live-state cadence
+/// (`live_state`). Both are folded into one consent, so a single call drives both.
+///
+/// The two concerns are applied as independent passes so the well-tested foreground
+/// algorithm stays byte-for-byte unchanged: with `live_state = false` the interval pass is
+/// a no-op and the result is identical to the historical foreground-only patcher.
+fn patch_d3dx_ini_text(text: &str, foreground: bool, live_state: bool) -> D3dxPatch {
+    // Pass 1: foreground binding (original algorithm, untouched).
+    let after_foreground = match patch_d3dx_ini_text_foreground(text, foreground) {
+        D3dxPatch::Updated(updated) => updated,
+        D3dxPatch::Unchanged => text.to_string(),
+        D3dxPatch::BlockedByExistingBinding => {
+            // A foreign tool owns the foreground key. If live-state is not also requested,
+            // preserve the historical "blocked, touch nothing" outcome.
+            if !live_state {
+                return D3dxPatch::BlockedByExistingBinding;
+            }
+            text.to_string()
+        }
+    };
+    // Pass 2: autosave interval, layered onto whatever pass 1 produced.
+    let after_interval = manage_hestia_interval(&after_foreground, live_state);
+    finish_d3dx_patch(text, after_interval)
+}
+
+fn patch_d3dx_ini_text_foreground(text: &str, enable: bool) -> D3dxPatch {
     let has_bom = text.starts_with('\u{feff}');
     let body = if has_bom {
         text.strip_prefix('\u{feff}').unwrap_or(text)
@@ -2015,37 +2233,186 @@ fn hestia_d3dx_block_range(lines: &[String]) -> Option<(usize, usize, usize)> {
     Some((begin, end, drain_end))
 }
 
-fn hestia_d3dx_exact_block_lines() -> Vec<String> {
-    let mut lines = hestia_foreground_binding_lines();
-    if lines.last().is_some_and(|line| line.is_empty()) {
-        lines.pop();
-    }
-    lines
-}
-
-fn legacy_hestia_d3dx_exact_block_lines() -> Vec<String> {
-    vec![
-        HESTIA_D3DX_BEGIN.to_string(),
-        LEGACY_HESTIA_D3DX_COMMENT_1.to_string(),
-        LEGACY_HESTIA_D3DX_COMMENT_2.to_string(),
-        "[System]".to_string(),
-        format!("{FOREGROUND_WINDOW_KEY} = {HESTIA_WINDOW_TITLE}"),
-        HESTIA_D3DX_END.to_string(),
-    ]
-}
-
+/// Remove a Hestia-generated `d3dx.ini` block, but only when its interior is entirely
+/// content Hestia itself writes (comments, blanks, a legacy embedded `[System]` header,
+/// and the foreground/interval settings). A block a user edited to hold other settings is
+/// refused, so manual edits between the markers are never silently discarded. This
+/// tolerant check subsumes the historical exact-match forms and also handles blocks that
+/// carry the live-state interval line.
 fn remove_exact_hestia_d3dx_block(lines: &mut Vec<String>) -> bool {
     let Some((begin, end, drain_end)) = hestia_d3dx_block_range(lines) else {
         return false;
     };
-    let block = &lines[begin..=end];
-    if block != hestia_d3dx_exact_block_lines().as_slice()
-        && block != legacy_hestia_d3dx_exact_block_lines().as_slice()
-    {
+    if !hestia_block_interior_is_recognized(&lines[begin + 1..end]) {
         return false;
     }
     lines.drain(begin..drain_end);
     true
+}
+
+fn hestia_block_interior_is_recognized(interior: &[String]) -> bool {
+    interior.iter().all(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+            return true;
+        }
+        if let Some(section) = section_name(trimmed) {
+            return section.eq_ignore_ascii_case("System");
+        }
+        if let Some((key, _)) = trimmed.split_once('=') {
+            let key = key.trim();
+            return key.eq_ignore_ascii_case(FOREGROUND_WINDOW_KEY)
+                || key.eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY);
+        }
+        false
+    })
+}
+
+/// Layer the live-state autosave grant onto text that pass 1 already produced. When
+/// enabling, any active user `settings_auto_save_interval` in `[System]` is neutralized
+/// (so 3DMigoto duplicate-key precedence can never override Hestia's value) and a
+/// `= 1` line is placed inside the Hestia block (reusing the foreground block if present,
+/// or creating an interval-only block otherwise). When disabling, the interval line is
+/// removed, an emptied block is dropped, and any neutralized user value is restored.
+fn manage_hestia_interval(text: &str, enable: bool) -> String {
+    let has_bom = text.starts_with('\u{feff}');
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let line_ending = detect_line_ending(body);
+    let trailing_newline = body.ends_with('\n');
+    let mut lines = split_ini_lines(body);
+
+    if enable {
+        comment_conflicting_system_interval(&mut lines);
+        ensure_hestia_interval_line(&mut lines);
+    } else {
+        remove_hestia_interval_line(&mut lines);
+        restore_commented_system_interval(&mut lines);
+    }
+
+    join_ini_lines(&lines, line_ending, trailing_newline, has_bom)
+}
+
+fn hestia_interval_block_lines() -> Vec<String> {
+    vec![
+        HESTIA_D3DX_BEGIN.to_string(),
+        HESTIA_D3DX_COMBINED_COMMENT.to_string(),
+        format!("{AUTOSAVE_INTERVAL_KEY} = {HESTIA_AUTOSAVE_INTERVAL}"),
+        HESTIA_D3DX_END.to_string(),
+        String::new(),
+    ]
+}
+
+fn insert_hestia_interval_block(lines: &mut Vec<String>) {
+    if let Some(system_idx) = lines.iter().position(|line| {
+        section_name(line.trim()).is_some_and(|section| section.eq_ignore_ascii_case("System"))
+    }) {
+        let mut block = hestia_interval_block_lines();
+        lines.splice(system_idx + 1..system_idx + 1, block.drain(..));
+        return;
+    }
+    if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
+        lines.push(String::new());
+    }
+    lines.push("[System]".to_string());
+    lines.extend(hestia_interval_block_lines());
+}
+
+/// Position of the interval line inside a Hestia block, if present.
+fn hestia_block_interval_index(lines: &[String], begin: usize, end: usize) -> Option<usize> {
+    (begin + 1..end).find(|&i| {
+        lines[i].trim().split_once('=').is_some_and(|(key, _)| {
+            key.trim().eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY)
+        })
+    })
+}
+
+/// Ensure exactly one `settings_auto_save_interval = 1` line inside the Hestia block,
+/// creating an interval-only block if none exists yet.
+fn ensure_hestia_interval_line(lines: &mut Vec<String>) {
+    let desired = format!("{AUTOSAVE_INTERVAL_KEY} = {HESTIA_AUTOSAVE_INTERVAL}");
+    if let Some((begin, end, _)) = hestia_d3dx_block_range(lines) {
+        if let Some(idx) = hestia_block_interval_index(lines, begin, end) {
+            if lines[idx].trim() != desired {
+                lines[idx] = desired;
+            }
+        } else {
+            lines.insert(end, desired);
+        }
+        return;
+    }
+    insert_hestia_interval_block(lines);
+}
+
+/// Remove the interval line from the Hestia block. If that leaves the block with no
+/// setting lines (only comments), remove the whole block so no empty marker pair lingers.
+fn remove_hestia_interval_line(lines: &mut Vec<String>) -> bool {
+    let Some((begin, end, _)) = hestia_d3dx_block_range(lines) else {
+        return false;
+    };
+    let Some(idx) = hestia_block_interval_index(lines, begin, end) else {
+        return false;
+    };
+    lines.remove(idx);
+    if let Some((begin, end, drain_end)) = hestia_d3dx_block_range(lines) {
+        let has_setting = lines[begin + 1..end].iter().any(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty()
+                && !trimmed.starts_with(';')
+                && !trimmed.starts_with('#')
+                && section_name(trimmed).is_none()
+        });
+        if !has_setting {
+            lines.drain(begin..drain_end);
+        }
+    }
+    true
+}
+
+/// Comment out any active `settings_auto_save_interval` in `[System]` that lives outside
+/// the Hestia block, stamping it with a restore marker. Returns whether anything changed.
+fn comment_conflicting_system_interval(lines: &mut [String]) -> bool {
+    let block = hestia_d3dx_block_range(lines);
+    let mut in_system = false;
+    let mut changed = false;
+    for (idx, line) in lines.iter_mut().enumerate() {
+        if let Some((begin, end, _)) = block
+            && idx >= begin
+            && idx <= end
+        {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(section) = section_name(trimmed) {
+            in_system = section.eq_ignore_ascii_case("System");
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+            continue;
+        }
+        if !in_system {
+            continue;
+        }
+        if trimmed
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case(AUTOSAVE_INTERVAL_KEY))
+        {
+            *line = format!("{HESTIA_DISABLED_PREFIX}{trimmed}");
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Restore any interval line Hestia previously neutralized, stripping the restore marker.
+fn restore_commented_system_interval(lines: &mut [String]) -> bool {
+    let mut changed = false;
+    for line in lines.iter_mut() {
+        if let Some(rest) = line.strip_prefix(HESTIA_DISABLED_PREFIX) {
+            *line = rest.to_string();
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn comment_hestia_foreground_binding_in_marked_block(lines: &mut [String]) -> bool {
@@ -3091,6 +3458,71 @@ pub fn send_reload_hotkey(_importer_root: &Path) -> Result<bool> {
 mod tests {
     use super::*;
 
+    fn mirror(namespace: &str, var: &str) -> MirrorVar {
+        MirrorVar {
+            namespace_prefix: namespace.to_string(),
+            var_name: var.to_string(),
+        }
+    }
+
+    /// 3DMigoto's `valid_variable_name`: first body char `_` or a lowercase letter,
+    /// remaining chars `[a-z0-9_]`.
+    fn is_valid_migoto_var(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if first != '_' && !first.is_ascii_lowercase() {
+            return false;
+        }
+        name.chars()
+            .all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())
+    }
+
+    #[test]
+    fn mirror_name_is_valid_deterministic_and_namespace_scoped() {
+        let a = mirror("$\\mods\\foo\\merged.ini\\", "swapVar");
+        // 16 hex digits, lowercased var, valid identifier.
+        let name = a.mirror_name();
+        assert!(name.starts_with("hestia_"));
+        assert!(name.ends_with("_swapvar"));
+        assert!(is_valid_migoto_var(&name));
+        let hex = &name["hestia_".len().."hestia_".len() + 16];
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+        // Deterministic.
+        assert_eq!(name, a.mirror_name());
+        // Same var, different namespace → different hash (multi-ini mods stay distinct).
+        let b = mirror("$\\mods\\foo\\other.ini\\", "swapVar");
+        assert_ne!(a.mirror_name(), b.mirror_name());
+    }
+
+    #[test]
+    fn generate_hestia_ini_dedupes_sorts_and_pairs_present() {
+        let mirrors = vec![
+            mirror("$\\mods\\foo\\merged.ini\\", "swapvar"),
+            mirror("$\\mods\\bar\\bar.ini\\", "tail"),
+            // Exact duplicate of the first.
+            mirror("$\\mods\\foo\\merged.ini\\", "swapvar"),
+        ];
+        let text = generate_hestia_ini(&mirrors);
+        assert!(text.starts_with(HESTIA_HELPER_HEADER));
+        // Two unique mirrors → two Constants decls and two Present copies.
+        assert_eq!(text.matches("global persist $hestia_").count(), 2);
+        let present = text.split("[Present]").nth(1).unwrap();
+        assert!(present.contains("= $\\mods\\foo\\merged.ini\\swapvar"));
+        assert!(present.contains("= $\\mods\\bar\\bar.ini\\tail"));
+        // Byte-stable for the same input regardless of order.
+        let reordered = vec![mirrors[1].clone(), mirrors[0].clone()];
+        assert_eq!(generate_hestia_ini(&mirrors), generate_hestia_ini(&reordered));
+    }
+
+    #[test]
+    fn mirror_persist_key_joins_helper_prefix_and_name() {
+        let m = mirror("$\\mods\\foo\\merged.ini\\", "swapvar");
+        let key = mirror_persist_key("$\\mods\\⬢hestia\\hestia.ini\\", &m);
+        assert_eq!(key, format!("$\\mods\\⬢hestia\\hestia.ini\\{}", m.mirror_name()));
+    }
+
     const SAMPLE: &str = "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT\r\n\
 ;\r\n\
 [Constants]\r\n\
@@ -3311,7 +3743,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let game = game(mods_root);
         let entry = mod_entry(mod_root, ModStatus::Active);
 
-        let values = read_mod_variables(&game, false, &entry).unwrap();
+        let values = read_mod_variables(&game, false, &entry, &[]).unwrap();
 
         assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("2"));
     }
@@ -3325,7 +3757,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let entry = mod_entry(mod_root, ModStatus::Disabled);
         set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
 
-        let values = read_mod_variables(&game, false, &entry).unwrap();
+        let values = read_mod_variables(&game, false, &entry, &[]).unwrap();
 
         assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("1"));
     }
@@ -3339,9 +3771,66 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let entry = mod_entry(archived_root, ModStatus::Archived);
         set_mod_variable(&game, false, &entry, "mod.ini", "swap", "1").unwrap();
 
-        let values = read_mod_variables(&game, false, &entry).unwrap();
+        let values = read_mod_variables(&game, false, &entry, &[]).unwrap();
 
         assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn read_mod_variables_unmaps_mirrored_live_values() {
+        let (_temp, importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
+        // The mod's own namespace has no `swap` line (it is a non-persist variable), but the
+        // helper flushed the live value into its mirror global.
+        let mirror = MirrorVar {
+            namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
+            var_name: "swap".to_string(),
+        };
+        let helper_prefix =
+            hestia_helper_namespace_prefix(&importer_root, &mods_root).unwrap();
+        let persist_key = mirror_persist_key(&helper_prefix, &mirror);
+        fs::write(
+            importer_root.join(USER_INI_FILE),
+            format!("[Constants]\r\n{persist_key} = 3\r\n"),
+        )
+        .unwrap();
+        let game = game(mods_root);
+        let entry = mod_entry(mod_root, ModStatus::Active);
+        let readback = MirrorReadback {
+            persist_key,
+            insert_key: "mod.ini\\swap".to_string(),
+        };
+
+        let values = read_mod_variables(&game, false, &entry, &[readback]).unwrap();
+
+        assert_eq!(values.get("mod.ini\\swap").map(String::as_str), Some("3"));
+    }
+
+    #[test]
+    fn ensure_live_state_helper_writes_and_removes() {
+        let (_temp, _importer_root, mods_root) = test_roots();
+        let mirror = MirrorVar {
+            namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
+            var_name: "swap".to_string(),
+        };
+        let path = hestia_helper_path(&mods_root);
+
+        // First write creates the file and reports a change.
+        assert!(ensure_live_state_helper(&mods_root, &[mirror.clone()]).unwrap());
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            generate_hestia_ini(&[mirror.clone()])
+        );
+
+        // Same content is a no-op (hash-compare), leaving the file in place.
+        assert!(!ensure_live_state_helper(&mods_root, &[mirror.clone()]).unwrap());
+        assert!(path.exists());
+
+        // An empty mirror set removes the helper and reports the change once.
+        assert!(ensure_live_state_helper(&mods_root, &[]).unwrap());
+        assert!(!path.exists());
+        assert!(!ensure_live_state_helper(&mods_root, &[]).unwrap());
     }
 
     #[test]
@@ -4128,7 +4617,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     fn d3dx_patch_merges_marked_binding_into_system_section() {
         let original =
             "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true) else {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true, false) else {
             panic!("expected d3dx.ini to be patched");
         };
         assert!(updated.starts_with("[Loader]\r\nTarget = Game.exe"));
@@ -4137,7 +4626,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(updated.contains("[Loader]\r\nTarget = Game.exe"));
         assert_eq!(updated.matches("[System]").count(), 1);
         assert!(matches!(
-            patch_d3dx_ini_text(&updated, true),
+            patch_d3dx_ini_text(&updated, true, false),
             D3dxPatch::Unchanged
         ));
     }
@@ -4146,17 +4635,18 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     fn d3dx_patch_leaves_existing_non_hestia_binding_alone() {
         let original = "[System]\r\nadditional_foreground_window = Other Tool\r\n";
         assert!(matches!(
-            patch_d3dx_ini_text(original, true),
+            patch_d3dx_ini_text(original, true, false),
             D3dxPatch::BlockedByExistingBinding
         ));
     }
 
     #[test]
     fn d3dx_patch_removes_hestia_block_when_support_is_disabled() {
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true) else {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, false)
+        else {
             panic!("expected initial insert");
         };
-        let D3dxPatch::Updated(cleaned) = patch_d3dx_ini_text(&updated, false) else {
+        let D3dxPatch::Updated(cleaned) = patch_d3dx_ini_text(&updated, false, false) else {
             panic!("expected generated block removal");
         };
         assert!(!cleaned.contains(HESTIA_D3DX_BEGIN));
@@ -4166,7 +4656,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     #[test]
     fn d3dx_patch_disables_loose_hestia_binding_when_support_is_disabled() {
         let original = "[System]\r\nadditional_foreground_window = hestia\r\nx = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false) else {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false, false) else {
             panic!("expected loose Hestia binding to be commented out");
         };
         assert!(updated.contains("; additional_foreground_window = hestia\r\n"));
@@ -4181,7 +4671,7 @@ additional_foreground_window = Hestia\r\n\
 custom_user_field = keep me\r\n\
 ; --- Hestia end ---\r\n\
 x = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false) else {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, false, false) else {
             panic!("expected Hestia binding inside modified block to be commented out");
         };
         assert!(updated.contains("; --- Hestia begin ---\r\n"));
@@ -4189,6 +4679,91 @@ x = 1\r\n";
         assert!(updated.contains("custom_user_field = keep me\r\n"));
         assert!(updated.contains("; --- Hestia end ---\r\n"));
         assert!(updated.contains("x = 1\r\n"));
+    }
+
+    #[test]
+    fn live_state_adds_interval_line_to_plain_system() {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", false, true)
+        else {
+            panic!("expected interval block insert");
+        };
+        assert!(updated.contains("[System]\r\n; --- Hestia begin ---\r\n"));
+        assert!(updated.contains("settings_auto_save_interval = 1\r\n"));
+        assert!(updated.contains("; --- Hestia end ---"));
+        assert!(updated.contains("x = 1\r\n"));
+        // Reapplying is a no-op.
+        assert!(matches!(
+            patch_d3dx_ini_text(&updated, false, true),
+            D3dxPatch::Unchanged
+        ));
+    }
+
+    #[test]
+    fn live_state_and_foreground_share_one_block() {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, true)
+        else {
+            panic!("expected combined block");
+        };
+        // One marked block carrying both grants.
+        assert_eq!(updated.matches(HESTIA_D3DX_BEGIN).count(), 1);
+        assert!(updated.contains("additional_foreground_window = Hestia\r\n"));
+        assert!(updated.contains("settings_auto_save_interval = 1\r\n"));
+    }
+
+    #[test]
+    fn live_state_neutralizes_and_restores_existing_interval() {
+        let original = "[System]\r\ncheck_foreground_window = 1\r\nsettings_auto_save_interval = 30\r\n";
+        let D3dxPatch::Updated(enabled) = patch_d3dx_ini_text(original, false, true) else {
+            panic!("expected user interval to be neutralized");
+        };
+        assert!(enabled.contains("; [Hestia disabled] settings_auto_save_interval = 30\r\n"));
+        // Exactly one active interval line (ours).
+        assert_eq!(
+            enabled
+                .lines()
+                .filter(|l| {
+                    let t = l.trim();
+                    !t.starts_with(';')
+                        && t.split_once('=').is_some_and(|(k, _)| {
+                            k.trim().eq_ignore_ascii_case("settings_auto_save_interval")
+                        })
+                })
+                .count(),
+            1
+        );
+        // Disabling restores the user's original value and removes our block.
+        let D3dxPatch::Updated(disabled) = patch_d3dx_ini_text(&enabled, false, false) else {
+            panic!("expected restore");
+        };
+        assert!(!disabled.contains(HESTIA_D3DX_BEGIN));
+        assert!(!disabled.contains("[Hestia disabled]"));
+        assert!(disabled.contains("settings_auto_save_interval = 30\r\n"));
+    }
+
+    #[test]
+    fn disabling_live_state_keeps_foreground_binding() {
+        let D3dxPatch::Updated(both) = patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true, true)
+        else {
+            panic!("expected combined block");
+        };
+        let D3dxPatch::Updated(fg_only) = patch_d3dx_ini_text(&both, true, false) else {
+            panic!("expected interval removed, foreground kept");
+        };
+        assert!(fg_only.contains("additional_foreground_window = Hestia\r\n"));
+        assert!(!fg_only.contains("settings_auto_save_interval"));
+        assert_eq!(fg_only.matches(HESTIA_D3DX_BEGIN).count(), 1);
+    }
+
+    #[test]
+    fn live_state_enable_then_disable_round_trips() {
+        let original = "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
+        let D3dxPatch::Updated(enabled) = patch_d3dx_ini_text(original, false, true) else {
+            panic!("expected enable");
+        };
+        let D3dxPatch::Updated(disabled) = patch_d3dx_ini_text(&enabled, false, false) else {
+            panic!("expected disable");
+        };
+        assert_eq!(disabled, original);
     }
 
     #[test]
@@ -4215,7 +4790,7 @@ additional_foreground_window = Hestia\r\n\
 ; --- Hestia end ---\r\n\
 \r\n\
 [Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\ncheck_foreground_window = 1\r\n";
-        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true) else {
+        let D3dxPatch::Updated(updated) = patch_d3dx_ini_text(original, true, false) else {
             panic!("expected legacy block to be replaced");
         };
         assert!(updated.starts_with("[Loader]\r\nTarget = Game.exe"));

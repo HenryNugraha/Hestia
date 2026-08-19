@@ -628,7 +628,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Simpan pengaturan kustomisasi mod", // SettingsGeneralOperationalPreserveModSettings
     "Menjaga kustomisasi mod dalam game yang tersimpan (pengaturan persisten XXMI) saat mengganti nama, menonaktifkan, mengarsipkan, memperbarui, atau menghapus mod, serta saat berganti profil", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "Terapkan perubahan mod dalam game", // SettingsGeneralOperationalSendReloadHotkey
-    "Setelah Hestia mengubah mod XXMI yang aktif saat game berjalan, kirim hotkey muat ulang XXMI agar game langsung memuatnya", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "Setelah Hestia mengubah mod XXMI yang aktif saat game berjalan, kirim hotkey muat ulang XXMI agar game langsung memuatnya. Juga membuat daftar Hotkey menampilkan nilai langsung tiap mod di dalam game dan mengubahnya secara tepat, termasuk perubahan yang kamu buat lewat tombol mod itu sendiri", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Pemicu:", // SettingsGeneralOperationalReloadHotkeyTrigger
     "Mengaktifkan mod", // SettingsGeneralOperationalReloadTriggerEnablingMods
     "Menonaktifkan mod", // SettingsGeneralOperationalReloadTriggerDisablingMods

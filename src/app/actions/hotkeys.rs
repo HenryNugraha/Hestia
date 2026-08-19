@@ -19,10 +19,28 @@ impl HestiaApp {
                 .insert(entry.id.clone(), (entry.ini_hash.clone(), HashMap::new()));
             return;
         };
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        // Live-state un-mappings only matter when the folded consent is on (otherwise the
+        // helper is not installed and there are no mirror keys to read back).
+        let mirrors = if game.apply_mod_changes_in_game {
+            xxmi_persist::importer_root_for(&game, use_default)
+                .map(|importer_root| {
+                    Self::mod_mirror_set(
+                        entry,
+                        &importer_root,
+                        game.mods_path(use_default).as_deref(),
+                    )
+                    .1
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let request = HotkeyCustomizationRequest::LoadValues {
             game,
-            use_default: self.state.static_prefs.use_default_mods_path,
+            use_default,
             entry: entry.clone(),
+            mirrors,
         };
         if self.hotkey_customization_tx.send(request).is_err() {
             self.mod_hotkey_values_loading.remove(&entry.id);
@@ -117,6 +135,184 @@ impl HestiaApp {
             return None;
         }
         Some(format!("{}\\{var_name}", rel_path.to_ascii_lowercase()))
+    }
+
+    /// Live-state mirror set for one mod: the `[Present]` mirrors its helper needs (for
+    /// generation) and the read-back un-mappings that turn helper persist keys in
+    /// `d3dx_user.ini` back into the value cache's keys (for reading).
+    ///
+    /// v1 resolves each shown cycle variable to a `[Constants]` declaration in the same ini
+    /// that binds it (the spec's stated limitation). A variable that ini does not declare
+    /// `global` and non-`persist` is left un-mirrored: `persist` globals already flush on
+    /// their own, and non-`global` vars are not cross-namespace addressable, so the helper
+    /// could neither read nor write them.
+    fn mod_mirror_set(
+        entry: &ModEntry,
+        importer_root: &Path,
+        mods_path: Option<&Path>,
+    ) -> (Vec<xxmi_persist::MirrorVar>, Vec<xxmi_persist::MirrorReadback>) {
+        let Some(mods_path) = mods_path else {
+            return (Vec::new(), Vec::new());
+        };
+        let Some(helper_prefix) =
+            xxmi_persist::hestia_helper_namespace_prefix(importer_root, mods_path)
+        else {
+            return (Vec::new(), Vec::new());
+        };
+        let inis = parse_mod_config_inis(&entry.root_path);
+        let rows = hotkeys_list_rows(&inis);
+        let mut mirrors = Vec::new();
+        let mut readbacks = Vec::new();
+        for row in &rows {
+            let Some(var_name) = row.var_name.as_deref() else {
+                continue;
+            };
+            let Some(ini) = inis.iter().find(|ini| ini.rel_path == row.ini_rel_path) else {
+                continue;
+            };
+            let Some(decl) = ini
+                .constants
+                .iter()
+                .find(|constant| constant.name.eq_ignore_ascii_case(var_name))
+            else {
+                continue;
+            };
+            if !decl.global || decl.persist {
+                continue;
+            }
+            let ini_abs = entry.root_path.join(&row.ini_rel_path);
+            let Some(namespace_prefix) = xxmi_persist::namespace_prefix_for_ini(
+                importer_root,
+                &ini_abs,
+                ini.namespace.as_deref(),
+            ) else {
+                continue;
+            };
+            let mirror = xxmi_persist::MirrorVar {
+                namespace_prefix,
+                var_name: var_name.to_string(),
+            };
+            let Some(insert_key) = Self::action_hotkey_rel_var_key(&row.ini_rel_path, var_name)
+            else {
+                continue;
+            };
+            readbacks.push(xxmi_persist::MirrorReadback {
+                persist_key: xxmi_persist::mirror_persist_key(&helper_prefix, &mirror),
+                insert_key,
+            });
+            mirrors.push(mirror);
+        }
+        (mirrors, readbacks)
+    }
+
+    /// Regenerate (or remove) the live-state helper `hestia.ini` for a game from the mirror
+    /// sets of all its active mods. With the folded consent off, an empty mirror set removes
+    /// the helper so no stale mirroring survives. Cheap when nothing changed (hash-compare).
+    fn refresh_live_state_helper_for_game(&mut self, game: &GameInstall) {
+        if !game.is_xxmi() {
+            return;
+        }
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let Some(mods_path) = game.mods_path(use_default) else {
+            return;
+        };
+        let mirrors = if game.apply_mod_changes_in_game {
+            let Some(importer_root) = xxmi_persist::importer_root_for(game, use_default) else {
+                return;
+            };
+            self.state
+                .mods
+                .iter()
+                .filter(|entry| {
+                    entry.game_id == game.definition.id
+                        && matches!(entry.status, ModStatus::Active)
+                })
+                .flat_map(|entry| {
+                    Self::mod_mirror_set(entry, &importer_root, Some(&mods_path)).0
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if let Err(err) = xxmi_persist::ensure_live_state_helper(&mods_path, &mirrors) {
+            self.report_warn(format!("XXMI live-state helper refresh failed: {err:#}"), None);
+        }
+    }
+
+    /// Poll `d3dx_user.ini` for the mod whose Hotkeys view is open and re-read its values when
+    /// the DLL flushes a change, so the shown live values self-correct within the autosave
+    /// cadence — including changes made with the mod's own in-game hotkeys. A no-op unless the
+    /// folded consent is on and the game is running (while closed the file is not flushed, and
+    /// editing it there would race the flush).
+    fn poll_live_state_watch(&mut self, ctx: &egui::Context) {
+        // Half the 1s autosave interval, so a flush is picked up within ~0.5s.
+        const POLL_INTERVAL: f64 = 0.5;
+
+        let Some(mod_id) = self.metadata_hotkeys_view.as_ref().map(|(id, _)| id.clone()) else {
+            self.live_state_watch = None;
+            return;
+        };
+        let Some(entry) = self.state.mods.iter().find(|m| m.id == mod_id).cloned() else {
+            self.live_state_watch = None;
+            return;
+        };
+        let Some(game) = self.game_for_mod(&entry) else {
+            self.live_state_watch = None;
+            return;
+        };
+        if !(game.is_xxmi()
+            && game.apply_mod_changes_in_game
+            && self.game_process_running(&game))
+        {
+            self.live_state_watch = None;
+            return;
+        }
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let Some(importer_root) = xxmi_persist::importer_root_for(&game, use_default) else {
+            self.live_state_watch = None;
+            return;
+        };
+
+        // Keep the frame loop alive so polling continues while the app is otherwise idle.
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+
+        let now = ctx.input(|input| input.time);
+        // (Re)arm the watch when it targets a different mod; the initial values were already
+        // loaded by `select_hotkeys_source`, so just seed the token and wait for the next flush.
+        if self
+            .live_state_watch
+            .as_ref()
+            .is_none_or(|watch| watch.mod_id != mod_id)
+        {
+            self.live_state_watch = Some(LiveStateWatch {
+                mod_id,
+                token: xxmi_persist::user_ini_change_token(&importer_root),
+                next_poll_at: now + POLL_INTERVAL,
+            });
+            return;
+        }
+        if self
+            .live_state_watch
+            .as_ref()
+            .is_some_and(|watch| now < watch.next_poll_at)
+        {
+            return;
+        }
+        let token = xxmi_persist::user_ini_change_token(&importer_root);
+        let changed = self
+            .live_state_watch
+            .as_ref()
+            .is_some_and(|watch| watch.token != token);
+        if let Some(watch) = self.live_state_watch.as_mut() {
+            watch.token = token;
+            watch.next_poll_at = now + POLL_INTERVAL;
+        }
+        if changed {
+            // Re-read even though the mod's `ini_hash` is unchanged — the flush is off-disk
+            // runtime state, not an edit to the mod's own files.
+            self.mod_hotkey_values_loading.remove(&entry.id);
+            self.refresh_hotkey_values_cache_for_entry(&entry);
+        }
     }
 
     fn action_hotkey_current_value<'a>(

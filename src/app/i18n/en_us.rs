@@ -628,7 +628,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Preserve in-game mod settings", // SettingsGeneralOperationalPreserveModSettings
     "Keeps saved in-game mod customization (XXMI persistent settings) when renaming, disabling, archiving, updating, or deleting mods, and across profile switches", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "Apply changes / reload mods in-game", // SettingsGeneralOperationalSendReloadHotkey
-    "After Hestia changes live XXMI mods while the game is running, send the XXMI reload hotkey so the game picks them up immediately", // SettingsGeneralOperationalSendReloadHotkeyTooltip
+    "After Hestia changes live XXMI mods while the game is running, send the XXMI reload hotkey so the game picks them up immediately. Also lets the Hotkeys list show each mod's live in-game value and update it in exact steps, including changes you make with the mod's own keys", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Trigger:", // SettingsGeneralOperationalReloadHotkeyTrigger
     "Enabling mods", // SettingsGeneralOperationalReloadTriggerEnablingMods
     "Disabling mods", // SettingsGeneralOperationalReloadTriggerDisablingMods

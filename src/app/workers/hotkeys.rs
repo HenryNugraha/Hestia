@@ -33,7 +33,8 @@ fn process_hotkey_customization_request(
             game,
             use_default,
             entry,
-        } => match xxmi_persist::read_mod_variables(&game, use_default, &entry) {
+            mirrors,
+        } => match xxmi_persist::read_mod_variables(&game, use_default, &entry, &mirrors) {
             Ok(values) => HotkeyCustomizationEvent::ValuesLoaded {
                 mod_id: entry.id,
                 ini_hash: entry.ini_hash,

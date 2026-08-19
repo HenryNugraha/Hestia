@@ -40,11 +40,26 @@ enum XxmiReloadEvent {
     Failed { game_id: String, message: String },
 }
 
+/// Tracks the `d3dx_user.ini` change signal for the mod whose Hotkeys view is open, so the
+/// shown live values self-correct within the autosave cadence without re-reading every frame.
+struct LiveStateWatch {
+    mod_id: String,
+    /// Last observed `(mtime, len)` of `d3dx_user.ini`; `None` until the first poll (or when
+    /// the file is absent). A different token means the DLL flushed new persist values.
+    token: Option<(std::time::SystemTime, u64)>,
+    /// Next `ctx` time (seconds) at which to poll, throttling stat calls to the cadence below.
+    next_poll_at: f64,
+}
+
 enum HotkeyCustomizationRequest {
     LoadValues {
         game: GameInstall,
         use_default: bool,
         entry: ModEntry,
+        /// Live-state mirror un-mappings for this mod: each maps a helper persist key in
+        /// `d3dx_user.ini` back to the mod-relative key the value cache expects. Empty when
+        /// live-state is off or the mod has no mirrorable shown variables.
+        mirrors: Vec<xxmi_persist::MirrorReadback>,
     },
     SetValue {
         game: GameInstall,
@@ -268,6 +283,9 @@ pub struct HestiaApp {
     // mod id -> (ini_hash when read, persisted customization values from d3dx_user.ini)
     mod_hotkey_values_cache: HashMap<String, (Option<String>, HashMap<String, String>)>,
     mod_hotkey_values_loading: HashSet<String>,
+    // Live-state watch: while the Hotkeys view is open for a mod whose game has the folded
+    // consent on and is running, poll `d3dx_user.ini` for changes and re-read on flush.
+    live_state_watch: Option<LiveStateWatch>,
     hotkey_customization_tx: WorkerTx<HotkeyCustomizationRequest>,
     hotkey_customization_rx: WorkerRx<HotkeyCustomizationEvent>,
     hotkey_clear_inflight: HashSet<String>,

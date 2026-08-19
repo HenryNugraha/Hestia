@@ -39,6 +39,9 @@ impl HestiaApp {
         ) {
             self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
         }
+        // The folded consent also governs the live-state helper: install it (mirroring the
+        // active mods' shown variables) when on, remove it when off.
+        self.refresh_live_state_helper_for_game(game);
     }
 
     fn set_game_reload_preference(&mut self, game_id: &str, enabled: bool) {
@@ -760,6 +763,9 @@ impl HestiaApp {
         ) {
             self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
         }
+        // Regenerate the live-state helper from the freshly-scanned active mod set, so a
+        // changed mod roster (enable/disable/update) is reflected in what gets mirrored.
+        self.refresh_live_state_helper_for_game(&game);
         if !self.state.static_prefs.preserve_mod_settings {
             return;
         }
