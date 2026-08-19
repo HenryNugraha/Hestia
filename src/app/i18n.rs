@@ -622,6 +622,7 @@ enum TextKey {
     SettingsGeneralOperationalPreserveModSettingsTooltip,
     SettingsGeneralOperationalSendReloadHotkey,
     SettingsGeneralOperationalSendReloadHotkeyTooltip,
+    SettingsGeneralOperationalSendReloadHotkeyBleedCaption,
     SettingsGeneralOperationalReloadHotkeyTrigger,
     SettingsGeneralOperationalReloadTriggerEnablingMods,
     SettingsGeneralOperationalReloadTriggerDisablingMods,
@@ -3224,6 +3225,10 @@ impl TextCatalog {
 
     fn send_reload_hotkey_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGeneralOperationalSendReloadHotkeyTooltip)
+    }
+
+    fn send_reload_hotkey_bleed_caption(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalSendReloadHotkeyBleedCaption)
     }
 
     fn reload_hotkey_trigger(self) -> &'static str {

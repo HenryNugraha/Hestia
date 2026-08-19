@@ -2823,6 +2823,13 @@ impl HestiaApp {
                                     text.send_reload_hotkey(),
                                 )
                                 .on_hover_text(text.send_reload_hotkey_tooltip());
+                                // Muted caption spelling out the input-bleed side effect of the
+                                // foreground grant this toggle installs.
+                                ui.label(
+                                    RichText::new(text.send_reload_hotkey_bleed_caption())
+                                        .size(11.0)
+                                        .color(Color32::from_gray(150)),
+                                );
                             });
                             if desired_send_reload_hotkey != send_reload_hotkey {
                                 if let Some(game_id) = selected_game_id.as_deref() {

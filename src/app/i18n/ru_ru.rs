@@ -627,9 +627,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "── ЭКСПЕРИМЕНТАЛЬНО / только XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
     "Сохранять настройки кастомизации модов", // SettingsGeneralOperationalPreserveModSettings
     "Сохраняет внутриигровую настройку модов (персистентные параметры XXMI) при переименовании, отключении, архивировании, обновлении и удалении модов, а также при переключении профилей", // SettingsGeneralOperationalPreserveModSettingsTooltip
-    "Применять изменения модов в игре", // SettingsGeneralOperationalSendReloadHotkey
+    "Разрешить Hestia нажимать клавиши перезагрузки XXMI и модов", // SettingsGeneralOperationalSendReloadHotkey
     "После изменения активных XXMI-модов при запущенной игре Hestia отправит клавишу перезагрузки XXMI, чтобы игра сразу их подхватила. Также позволяет списку горячих клавиш показывать текущее внутриигровое значение каждого мода и изменять его точными шагами, включая изменения, сделанные собственными клавишами мода", // SettingsGeneralOperationalSendReloadHotkeyTooltip
-    "Триггер:", // SettingsGeneralOperationalReloadHotkeyTrigger
+    "ⓘ Клавиши модов, нажатые в Hestia, сработают в игре", // SettingsGeneralOperationalSendReloadHotkeyBleedCaption
+    "Автоперезагрузка XXMI при:", // SettingsGeneralOperationalReloadHotkeyTrigger
     "Включение модов", // SettingsGeneralOperationalReloadTriggerEnablingMods
     "Отключение модов", // SettingsGeneralOperationalReloadTriggerDisablingMods
     "Установка модов", // SettingsGeneralOperationalReloadTriggerInstallingMods
