@@ -25,12 +25,7 @@ impl HestiaApp {
         let mirrors = if game.apply_mod_changes_in_game {
             xxmi_persist::importer_root_for(&game, use_default)
                 .map(|importer_root| {
-                    Self::mod_mirror_set(
-                        entry,
-                        &importer_root,
-                        game.mods_path(use_default).as_deref(),
-                    )
-                    .1
+                    Self::mod_mirror_set(entry, &importer_root).1
                 })
                 .unwrap_or_default()
         } else {
@@ -180,13 +175,9 @@ impl HestiaApp {
     fn mod_mirror_set(
         entry: &ModEntry,
         importer_root: &Path,
-        mods_path: Option<&Path>,
     ) -> (Vec<xxmi_persist::MirrorVar>, Vec<xxmi_persist::MirrorReadback>) {
-        let Some(mods_path) = mods_path else {
-            return (Vec::new(), Vec::new());
-        };
         let Some(helper_prefix) =
-            xxmi_persist::hestia_helper_namespace_prefix(importer_root, mods_path)
+            xxmi_persist::hestia_helper_namespace_prefix(importer_root, &entry.root_path)
         else {
             return (Vec::new(), Vec::new());
         };
@@ -236,37 +227,44 @@ impl HestiaApp {
         (mirrors, readbacks)
     }
 
-    /// Regenerate (or remove) the live-state helper `hestia.ini` for a game from the mirror
-    /// sets of all its active mods. With the folded consent off, an empty mirror set removes
-    /// the helper so no stale mirroring survives. Cheap when nothing changed (hash-compare).
+    /// Regenerate (or remove) each mod-local live-state helper `hestia.ini` for a game.
+    /// With the folded consent off, or when a mod is inactive, an empty mirror set removes
+    /// that mod's helper so no stale mirroring survives. Cheap when nothing changed
+    /// (hash-compare).
     fn refresh_live_state_helper_for_game(&mut self, game: &GameInstall) {
         if !game.is_xxmi() {
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
-        let Some(mods_path) = game.mods_path(use_default) else {
-            return;
-        };
-        let mirrors = if game.apply_mod_changes_in_game {
-            let Some(importer_root) = xxmi_persist::importer_root_for(game, use_default) else {
-                return;
+        let importer_root = game
+            .apply_mod_changes_in_game
+            .then(|| xxmi_persist::importer_root_for(game, use_default))
+            .flatten();
+        let entries = self
+            .state
+            .mods
+            .iter()
+            .filter(|entry| entry.game_id == game.definition.id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in entries {
+            let mirrors = if entry.status == ModStatus::Active {
+                importer_root
+                    .as_deref()
+                    .map(|root| Self::mod_mirror_set(&entry, root).0)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
             };
-            self.state
-                .mods
-                .iter()
-                .filter(|entry| {
-                    entry.game_id == game.definition.id
-                        && matches!(entry.status, ModStatus::Active)
-                })
-                .flat_map(|entry| {
-                    Self::mod_mirror_set(entry, &importer_root, Some(&mods_path)).0
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        if let Err(err) = xxmi_persist::ensure_live_state_helper(&mods_path, &mirrors) {
-            self.report_warn(format!("XXMI live-state helper refresh failed: {err:#}"), None);
+            if let Err(err) = xxmi_persist::ensure_live_state_helper(&entry.root_path, &mirrors) {
+                self.report_warn(
+                    format!(
+                        "XXMI live-state helper refresh failed for {}: {err:#}",
+                        entry.folder_name
+                    ),
+                    None,
+                );
+            }
         }
     }
 

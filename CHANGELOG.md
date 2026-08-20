@@ -1,9 +1,26 @@
 # Changelog
 
-## [1.9.0-alpha] - 2026-08-xx
+## [1.9.0] - 2026-08-20
 
 ### Added
-- (mod config operations)
+- Added a new metadata section that lists mod hotkeys.
+- Added support for modifying mod in-game settings directly in Hestia.
+- Added support for preserving mod in-game settings when disabling/enabling mods and changing profiles.
+- Added Ctrl+Shift+Tab as a counterpart to Ctrl+Tab.
+
+### Changed
+- Reworked the mod description and metadata dropdown.
+- Consolidated the operational menu inside the ellipsis (...) button at the top of the mod window.
+- Improved thumbnail rendering for mods with manually added images.
+- Enabled resizing for the mod window.
+- Improved handling of situations where Hestia does not have write access to a folder.
+- Changed hotkey for Settings menu from F10 to CTRL+P
+
+### Fixed
+- Fixed various minor visual interface issues.
+- Fixed thumbnails not showing in Browse when filtering by character.
+- Fixed mods incorrectly showing an unlinked state when an update scan is pending cooldown.
+- Fixed a bug where Hestia tried to reiterate mod profiles for all existing games.
 
 ## [1.8.1] - 2026-08-09
 

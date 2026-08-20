@@ -948,7 +948,9 @@ pub struct GameInstall {
     pub modded_exe_path_override: Option<PathBuf>,
     #[serde(default)]
     pub vanilla_exe_path_override: Option<PathBuf>,
-    #[serde(default = "serde_default_true")]
+    /// Consent for Hestia to edit d3dx.ini (auto-save interval / foreground window) so
+    /// mod changes can be applied in-game. Off by default; the user opts in per game.
+    #[serde(default)]
     pub apply_mod_changes_in_game: bool,
     pub enabled: bool,
 }
@@ -2528,7 +2530,7 @@ pub fn seeded_games() -> Vec<GameInstall> {
         mods_path_override: None,
         modded_exe_path_override: None,
         vanilla_exe_path_override: None,
-        apply_mod_changes_in_game: true,
+        apply_mod_changes_in_game: false,
         enabled: true,
     })
     .collect()
@@ -2550,7 +2552,6 @@ mod dir_creation_probe_tests {
         let missing = temp.path().join("Content").join("Paks").join("~mods");
         assert!(path_allows_dir_creation(&missing));
     }
-
 }
 
 #[cfg(test)]

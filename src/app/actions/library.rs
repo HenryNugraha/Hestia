@@ -389,6 +389,7 @@ impl HestiaApp {
         {
             return;
         }
+        self.refresh_live_state_helper_for_game(game);
         self.send_xxmi_reload_hotkey_if_supported(game);
     }
 

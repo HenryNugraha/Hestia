@@ -13,6 +13,7 @@
 
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
+    ffi::OsStr,
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -732,6 +733,9 @@ fn collect_explicit_namespace_prefixes(path: &Path, prefixes: &mut Vec<String>) 
             continue;
         };
         if file_type.is_dir() {
+            if entry.file_name() == OsStr::new(MOD_META_DIR) {
+                continue;
+            }
             collect_explicit_namespace_prefixes(&path, prefixes);
         } else if path
             .extension()
@@ -775,7 +779,7 @@ fn collect_explicit_namespace_prefixes_from_ini(path: &Path, prefixes: &mut Vec<
 }
 
 // ---------------------------------------------------------------------------
-// Live-state mirror helper (`<mods>\⬢HESTIA\hestia.ini`)
+// Live-state mirror helper (`<mod root>\⬢HESTIA\hestia.ini`)
 //
 // 3DMigoto only writes a variable to `d3dx_user.ini` when it is declared `persist`. Most
 // mod hotkey variables are not, so their live value is invisible on disk. The helper
@@ -789,7 +793,7 @@ fn collect_explicit_namespace_prefixes_from_ini(path: &Path, prefixes: &mut Vec<
 /// The comment banner on the generated helper file.
 const HESTIA_HELPER_HEADER: &str =
     "; HESTIA HELPER FILE - AUTOMATICALLY GENERATED - CHANGES WILL BE LOST";
-/// The generated helper file's name, under `<mods>\⬢HESTIA\`.
+/// The generated helper file's name, under `<mod root>\⬢HESTIA\`.
 pub const HESTIA_HELPER_FILE: &str = "hestia.ini";
 
 /// One variable to mirror into a persistable global for live readback.
@@ -818,16 +822,16 @@ impl MirrorVar {
     }
 }
 
-/// Path of the live-state helper file for a given mods root.
-pub fn hestia_helper_path(mods_path: &Path) -> PathBuf {
-    mods_path.join(MOD_META_DIR).join(HESTIA_HELPER_FILE)
+/// Path of the live-state helper file for a given mod root.
+pub fn hestia_helper_path(mod_root: &Path) -> PathBuf {
+    mod_root.join(MOD_META_DIR).join(HESTIA_HELPER_FILE)
 }
 
 /// The helper ini's own namespace prefix (default namespace = its path relative to the
-/// importer root, lowercased), e.g. `$\mods\⬢hestia\hestia.ini\`. This is where the
-/// mirrored `global persist` values land in `d3dx_user.ini`.
-pub fn hestia_helper_namespace_prefix(importer_root: &Path, mods_path: &Path) -> Option<String> {
-    namespace_prefix_for_root(&hestia_helper_path(mods_path), importer_root)
+/// importer root, lowercased), e.g. `$\mods\example\⬢hestia\hestia.ini\`. This is where
+/// the mirrored `global persist` values land in `d3dx_user.ini`.
+pub fn hestia_helper_namespace_prefix(importer_root: &Path, mod_root: &Path) -> Option<String> {
+    namespace_prefix_for_root(&hestia_helper_path(mod_root), importer_root)
 }
 
 /// Resolve an ini's namespace prefix: its explicit `namespace = …` if set, otherwise the
@@ -885,19 +889,19 @@ pub fn generate_hestia_ini(mirrors: &[MirrorVar]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorReadback {
     /// Full key in `d3dx_user.ini` the mirror flushes to, e.g.
-    /// `$\mods\⬢hestia\hestia.ini\hestia_<hash>_<var>`.
+    /// `$\mods\example\⬢hestia\hestia.ini\hestia_<hash>_<var>`.
     pub persist_key: String,
     /// Key to insert into the returned value map, matching the app's `hotkey_current_value`
     /// lookup: the mod-relative `<ini rel path lowercased>\<var>` form.
     pub insert_key: String,
 }
 
-/// Write (or remove) the live-state helper `Mods\⬢HESTIA\hestia.ini`. Returns whether disk
-/// changed. An empty mirror set removes the file so no dead helper keeps mirroring; otherwise
-/// the file is written only when its content differs (hash-compare) so a mod scan that finds
-/// no change touches nothing — and so 3DMigoto does not needlessly reload it.
-pub fn ensure_live_state_helper(mods_path: &Path, mirrors: &[MirrorVar]) -> Result<bool> {
-    let path = hestia_helper_path(mods_path);
+/// Write (or remove) the live-state helper `<mod root>\⬢HESTIA\hestia.ini`. Returns whether
+/// disk changed. An empty mirror set removes the file so no dead helper keeps mirroring;
+/// otherwise the file is written only when its content differs (hash-compare) so a mod scan
+/// that finds no change touches nothing — and so 3DMigoto does not needlessly reload it.
+pub fn ensure_live_state_helper(mod_root: &Path, mirrors: &[MirrorVar]) -> Result<bool> {
+    let path = hestia_helper_path(mod_root);
     if mirrors.is_empty() {
         return match fs::remove_file(&path) {
             Ok(()) => Ok(true),
@@ -1924,8 +1928,8 @@ pub fn reload_hotkey_supported(importer_root: &Path) -> bool {
 /// Install or refresh Hestia's reload helper binding in root `d3dx.ini`.
 ///
 /// `additional_foreground_window` is a root `d3dx.ini` option, not a mod ini option. Older
-/// builds wrote `Mods\hestia.ini`; this function removes that legacy file only when its bytes
-/// exactly match Hestia's generated content.
+/// builds wrote `Mods\hestia.ini` or `Mods\⬢HESTIA\hestia.ini`; this function removes those
+/// legacy files only when their bytes match Hestia-generated content.
 ///
 /// Returns any non-fatal notices the caller should surface (e.g. a refusal to touch a file
 /// with malformed markers, or a stash left commented because an active value won). An empty
@@ -2020,11 +2024,23 @@ fn d3dx_reload_conflict_fields(text: &str) -> Vec<D3dxConflictField> {
 fn cleanup_legacy_helper_ini(mods_path: &Path) -> Result<()> {
     let path = mods_path.join(LEGACY_HELPER_INI_FILE);
     let Ok(existing) = fs::read(&path) else {
-        return Ok(());
+        return cleanup_legacy_top_level_live_state_helper(mods_path);
     };
     if existing == LEGACY_HELPER_INI_SUPPORTED.as_bytes()
         || existing == LEGACY_HELPER_INI_NEUTRAL.as_bytes()
     {
+        fs::remove_file(&path).context(format!("removing {}", path.display()))?;
+    }
+    cleanup_legacy_top_level_live_state_helper(mods_path)?;
+    Ok(())
+}
+
+fn cleanup_legacy_top_level_live_state_helper(mods_path: &Path) -> Result<()> {
+    let path = mods_path.join(MOD_META_DIR).join(HESTIA_HELPER_FILE);
+    let Ok(existing) = fs::read(&path) else {
+        return Ok(());
+    };
+    if existing.starts_with(HESTIA_HELPER_HEADER.as_bytes()) {
         fs::remove_file(&path).context(format!("removing {}", path.display()))?;
     }
     Ok(())
@@ -3427,8 +3443,11 @@ mod tests {
     #[test]
     fn mirror_persist_key_joins_helper_prefix_and_name() {
         let m = mirror("$\\mods\\foo\\merged.ini\\", "swapvar");
-        let key = mirror_persist_key("$\\mods\\⬢hestia\\hestia.ini\\", &m);
-        assert_eq!(key, format!("$\\mods\\⬢hestia\\hestia.ini\\{}", m.mirror_name()));
+        let key = mirror_persist_key("$\\mods\\foo\\⬢hestia\\hestia.ini\\", &m);
+        assert_eq!(
+            key,
+            format!("$\\mods\\foo\\⬢hestia\\hestia.ini\\{}", m.mirror_name())
+        );
     }
 
     const SAMPLE: &str = "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT\r\n\
@@ -3696,7 +3715,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             var_name: "swap".to_string(),
         };
         let helper_prefix =
-            hestia_helper_namespace_prefix(&importer_root, &mods_root).unwrap();
+            hestia_helper_namespace_prefix(&importer_root, &mod_root).unwrap();
         let persist_key = mirror_persist_key(&helper_prefix, &mirror);
         fs::write(
             importer_root.join(USER_INI_FILE),
@@ -3718,27 +3737,51 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     #[test]
     fn ensure_live_state_helper_writes_and_removes() {
         let (_temp, _importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        fs::create_dir_all(&mod_root).unwrap();
         let mirror = MirrorVar {
             namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
             var_name: "swap".to_string(),
         };
-        let path = hestia_helper_path(&mods_root);
+        let path = hestia_helper_path(&mod_root);
 
         // First write creates the file and reports a change.
-        assert!(ensure_live_state_helper(&mods_root, &[mirror.clone()]).unwrap());
+        assert!(ensure_live_state_helper(&mod_root, &[mirror.clone()]).unwrap());
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             generate_hestia_ini(&[mirror.clone()])
         );
 
         // Same content is a no-op (hash-compare), leaving the file in place.
-        assert!(!ensure_live_state_helper(&mods_root, &[mirror.clone()]).unwrap());
+        assert!(!ensure_live_state_helper(&mod_root, &[mirror.clone()]).unwrap());
         assert!(path.exists());
 
         // An empty mirror set removes the helper and reports the change once.
-        assert!(ensure_live_state_helper(&mods_root, &[]).unwrap());
+        assert!(ensure_live_state_helper(&mod_root, &[]).unwrap());
         assert!(!path.exists());
-        assert!(!ensure_live_state_helper(&mods_root, &[]).unwrap());
+        assert!(!ensure_live_state_helper(&mod_root, &[]).unwrap());
+    }
+
+    #[test]
+    fn explicit_namespace_scan_ignores_hestia_metadata_dir() {
+        let (_temp, _importer_root, mods_root) = test_roots();
+        let mod_root = mods_root.join("Arcane");
+        let meta_dir = mod_root.join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(HESTIA_HELPER_FILE),
+            "namespace = hestiahelper\r\n",
+        )
+        .unwrap();
+        fs::write(
+            mod_root.join("mod.ini"),
+            "namespace = realmod\r\n[Constants]\r\n",
+        )
+        .unwrap();
+
+        let prefixes = explicit_namespace_prefixes_for_mod_root(&mod_root);
+
+        assert_eq!(prefixes, vec!["$\\realmod\\".to_string()]);
     }
 
     #[test]
@@ -4946,6 +4989,31 @@ additional_foreground_window = Hestia\r\n\
         assert_eq!(
             std::fs::read_to_string(&helper).unwrap(),
             "[System]\r\nadditional_foreground_window = User\r\n"
+        );
+    }
+
+    #[test]
+    fn legacy_helper_cleanup_removes_generated_top_level_live_state_helper() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let helper_dir = mods.join(MOD_META_DIR);
+        std::fs::create_dir_all(&helper_dir).unwrap();
+        let helper = helper_dir.join(HESTIA_HELPER_FILE);
+        std::fs::write(
+            &helper,
+            format!("{HESTIA_HELPER_HEADER}\r\n[Constants]\r\n").as_bytes(),
+        )
+        .unwrap();
+
+        cleanup_legacy_helper_ini(&mods).unwrap();
+
+        assert!(!helper.exists());
+
+        std::fs::write(&helper, b"[Constants]\r\n$user = 1\r\n").unwrap();
+        cleanup_legacy_helper_ini(&mods).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&helper).unwrap(),
+            "[Constants]\r\n$user = 1\r\n"
         );
     }
 

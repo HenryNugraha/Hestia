@@ -2778,15 +2778,17 @@ impl HestiaApp {
 
         // Ctrl+Tab cycles forward through the primary tabs, Ctrl+Shift+Tab
         // cycles backward (same convention as browser tab switching).
-        let tab_cycle = ctx.input(|input| {
-            if input.modifiers.ctrl && !input.modifiers.alt && input.key_pressed(egui::Key::Tab) {
-                Some(!input.modifiers.shift)
-            } else {
-                None
+        if !text_input_active {
+            let tab_cycle = ctx.input(|input| {
+                if input.modifiers.ctrl && !input.modifiers.alt && input.key_pressed(egui::Key::Tab) {
+                    Some(!input.modifiers.shift)
+                } else {
+                    None
+                }
+            });
+            if let Some(forward) = tab_cycle {
+                self.cycle_primary_view(forward);
             }
-        });
-        if let Some(forward) = tab_cycle {
-            self.cycle_primary_view(forward);
         }
         // Ctrl+P — the settings/preferences shortcut. Deliberately NOT a bare
         // function key like F10: while the XXMI foreground grant is active, any bare key

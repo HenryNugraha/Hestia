@@ -836,6 +836,12 @@ fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
         if !path.is_dir() {
             continue;
         }
+        if path
+            .file_name()
+            .is_some_and(|name| name == OsStr::new(MOD_META_DIR))
+        {
+            continue;
+        }
         match install_scratch_kind(&path) {
             Some(InstallScratch::Retired) => {
                 let _ = fs::remove_dir_all(&path);
@@ -1527,6 +1533,20 @@ mod tests {
 
         assert!(mod_dirs.is_empty());
         assert!(!orphan.exists());
+    }
+
+    #[test]
+    fn scan_collection_ignores_top_level_hestia_helper_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods_root = temp.path();
+        let helper = mods_root.join(MOD_META_DIR);
+        fs::create_dir_all(&helper).unwrap();
+        fs::write(helper.join("hestia.ini"), "[Constants]\n").unwrap();
+
+        let mod_dirs = collect_scannable_mod_dirs(mods_root).unwrap();
+
+        assert!(mod_dirs.is_empty());
+        assert!(helper.exists());
     }
 
     #[test]

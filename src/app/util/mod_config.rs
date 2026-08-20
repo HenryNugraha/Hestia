@@ -407,8 +407,7 @@ $saved = 0,1
         .unwrap();
         let entry = mirror_test_entry(mod_root);
 
-        let (mirrors, readbacks) =
-            HestiaApp::mod_mirror_set(&entry, importer.path(), Some(&mods_path));
+        let (mirrors, readbacks) = HestiaApp::mod_mirror_set(&entry, importer.path());
 
         let expected = xxmi_persist::MirrorVar {
             namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
@@ -418,7 +417,8 @@ $saved = 0,1
         assert_eq!(readbacks.len(), 1);
         assert_eq!(readbacks[0].insert_key, "mod.ini\\swapvar");
         let helper_prefix =
-            xxmi_persist::hestia_helper_namespace_prefix(importer.path(), &mods_path).unwrap();
+            xxmi_persist::hestia_helper_namespace_prefix(importer.path(), &entry.root_path)
+                .unwrap();
         assert_eq!(
             readbacks[0].persist_key,
             xxmi_persist::mirror_persist_key(&helper_prefix, &expected)
