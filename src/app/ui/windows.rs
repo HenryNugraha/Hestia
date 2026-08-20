@@ -3439,27 +3439,29 @@ impl HestiaApp {
                                                 }
                                             }
                                         });
-                                        let mut desired_reload = game.apply_mod_changes_in_game;
-                                        // Match the General section's checkbox roundness (radius 3).
-                                        ui.scope(|ui| {
-                                            let radius = egui::CornerRadius::same(3);
-                                            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
-                                            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
-                                            ui.style_mut().visuals.widgets.active.corner_radius = radius;
-                                            ui.style_mut().visuals.widgets.open.corner_radius = radius;
-                                            ui.add_enabled_ui(game.is_xxmi(), |ui| {
+                                        // Only XXMI games let Hestia edit d3dx.ini, so the consent
+                                        // checkbox is hidden entirely for other backends.
+                                        if game.is_xxmi() {
+                                            let mut desired_reload = game.apply_mod_changes_in_game;
+                                            // Match the General section's checkbox roundness (radius 3).
+                                            ui.scope(|ui| {
+                                                let radius = egui::CornerRadius::same(3);
+                                                ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+                                                ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+                                                ui.style_mut().visuals.widgets.active.corner_radius = radius;
+                                                ui.style_mut().visuals.widgets.open.corner_radius = radius;
                                                 ui.checkbox(
                                                     &mut desired_reload,
                                                     text.send_reload_hotkey(),
                                                 )
                                                 .on_hover_text(text.send_reload_hotkey_tooltip());
                                             });
-                                        });
-                                        if desired_reload != game.apply_mod_changes_in_game {
-                                            reload_setting_changes.push((
-                                                game.definition.id.clone(),
-                                                desired_reload,
-                                            ));
+                                            if desired_reload != game.apply_mod_changes_in_game {
+                                                reload_setting_changes.push((
+                                                    game.definition.id.clone(),
+                                                    desired_reload,
+                                                ));
+                                            }
                                         }
                                         let browse_width = 28.0;
                                         let input_width = 200.0;

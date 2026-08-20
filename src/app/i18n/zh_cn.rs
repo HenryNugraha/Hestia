@@ -501,7 +501,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "• 上次同步：{age}", // LibraryLastSynced
     "重新同步", // LibraryResync
     "取消链接", // LibraryUnlink
-    "GameBanana 页面", // LibraryGameBananaPage
+    "在 GameBanana 上查看", // LibraryGameBananaPage
     "链接到 GameBanana 以启用更新跟踪和元数据同步。", // LibraryLinkGameBananaPrompt
     "GameBanana URL 或 ID", // LibraryUrlOrId
     "同步 Mod", // LibrarySyncMod

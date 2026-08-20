@@ -501,7 +501,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "• Terakhir disinkronkan: {age}", // LibraryLastSynced
     "Perbarui", // LibraryResync
     "Putus", // LibraryUnlink
-    "Halaman GameBanana", // LibraryGameBananaPage
+    "Lihat di GameBanana", // LibraryGameBananaPage
     "Tautkan ke GameBanana agar bisa melacak pembaruan dan sinkronisasi metadata.", // LibraryLinkGameBananaPrompt
     "URL atau ID GameBanana", // LibraryUrlOrId
     "Sinkronkan Mod", // LibrarySyncMod

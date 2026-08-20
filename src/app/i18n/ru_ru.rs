@@ -501,7 +501,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "• Последняя синхронизация: {age}", // LibraryLastSynced
     "Ресинхр.", // LibraryResync
     "Отвязать", // LibraryUnlink
-    "Страница GameBanana", // LibraryGameBananaPage
+    "Открыть на GameBanana", // LibraryGameBananaPage
     "Привяжите мод к GameBanana, чтобы включить отслеживание обновлений и синхронизацию метаданных.", // LibraryLinkGameBananaPrompt
     "URL или ID GameBanana", // LibraryUrlOrId
     "Синхронизировать мод", // LibrarySyncMod

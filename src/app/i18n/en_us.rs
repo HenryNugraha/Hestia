@@ -501,7 +501,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "• Last synced: {age}", // LibraryLastSynced
     "Resync", // LibraryResync
     "Unlink", // LibraryUnlink
-    "GameBanana Page", // LibraryGameBananaPage
+    "View on GameBanana", // LibraryGameBananaPage
     "Link to GameBanana to enable update tracking and metadata sync.", // LibraryLinkGameBananaPrompt
     "GameBanana URL or ID", // LibraryUrlOrId
     "Sync Mod", // LibrarySyncMod

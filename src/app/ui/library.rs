@@ -8469,7 +8469,7 @@ impl HestiaApp {
                         if ui
                             .button(icon_text_sized(
                                 Icon::Compass,
-                                "Hestia's Browse tab",
+                                "Browse in Hestia",
                                 13.0,
                                 13.0,
                             ))
@@ -8686,7 +8686,18 @@ impl HestiaApp {
             .movable(true)
             .constrain_to(details_rect)
             .frame(
-                egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(18)),
+                egui::Frame::window(ui.style())
+                    // Trim the bottom inner margin so the pinned LOCAL/SOURCE handle sits
+                    // close to the window's bottom edge when collapsed; keep 18 on the other
+                    // sides. The expanded section restores its breathing room with its own
+                    // trailing pad (see the footer body) rather than a taller margin, so
+                    // toggling doesn't reflow the whole window.
+                    .inner_margin(egui::Margin {
+                        left: 18,
+                        right: 18,
+                        top: 18,
+                        bottom: 4,
+                    }),
             )
             .show(ui.ctx(), |ui| {
                 let title = selected
@@ -9022,6 +9033,419 @@ impl HestiaApp {
                     );
                 });
                 self.mod_detail_tab = ModDetailTab::Overview;
+                let handle_row_rect = egui::Panel::bottom("mod_detail_source_footer")
+                    .frame(egui::Frame::NONE)
+                    .show_separator_line(false)
+                    .show(ui, |ui| {
+                    // Drives the animated height reveal of the section above the toggle row.
+                    let collapse_id = ui.make_persistent_id(("my_mod_source_body", &selected.id));
+                    let mut collapse_state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        collapse_id,
+                        self.my_mod_source_expanded,
+                    );
+                    collapse_state.set_open(self.my_mod_source_expanded);
+
+                    // Reserve the handle row at the very TOP of the footer. Its graphics — the
+                    // divider line and the chevron tab — are painted LATER, after the scroll area
+                    // (see below), so they sit on top of the scrolling content above. The chevron
+                    // hangs BELOW the line (top edge on the line); the line marks the section's top
+                    // edge and the body reveals beneath it. The row is as tall as the tab so that,
+                    // fully collapsed (`show_body_unindented` allocates nothing), the tab rests
+                    // flush at the bottom instead of dropping into the window's bottom margin.
+                    let row_height = 18.0;
+                    let (row_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), row_height),
+                        Sense::hover(),
+                    );
+
+                    // Animated height reveal: the body is clipped to `openness * full_height`,
+                    // and the bottom panel auto-sizes to it, so the whole footer slides open/shut.
+                    collapse_state.show_body_unindented(ui, |ui| {
+                        // Small gap below the divider before the columns begin. The divider sits
+                        // on the section's top edge and is painted separately over the scroll area.
+                        ui.add_space(4.0);
+                        let mut source_group_rect: Option<egui::Rect> = None;
+                        let column_spacing = ui.spacing().item_spacing.x;
+                        let column_width = ((ui.available_width() - column_spacing) / 2.0).max(0.0);
+                        ui.horizontal_top(|ui| {
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(column_width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                static_label(ui, bold(text.local(), Some(14.0)).underline().color(Color32::from_gray(195)));
+                                ui.group(|ui| {
+                                    let path_text = selected.root_path.display().to_string();
+                                    egui::Frame::new()
+                                        .fill(Color32::from_rgba_premultiplied(28, 30, 34, 230))
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(egui::CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::ZERO)
+                                        .show(ui, |ui| {
+                                            let mut path_value = path_text.clone();
+                                            let path_width = ui
+                                                .painter()
+                                                .layout_no_wrap(
+                                                    path_text.clone(),
+                                                    egui::FontId::new(12.0, FontFamily::Proportional),
+                                                    Color32::from_gray(150),
+                                                )
+                                                .size()
+                                                .x
+                                                + 20.0;
+                                            ScrollArea::horizontal()
+                                                .id_salt(("mod_local_path_scroll", &selected.id))
+                                                .max_height(24.0)
+                                                .show(ui, |ui| {
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut path_value)
+                                                            .desired_width(path_width.max(ui.available_width()))
+                                                            .font(egui::TextStyle::Small)
+                                                            .margin(egui::Margin::ZERO)
+                                                    );
+                                                });
+                                        });
+                                    ui.add_space(6.0);
+                                    ui.horizontal_centered(|ui| {
+                                        if ui
+                                            .button(icon_text_sized(Icon::FolderOpen, text.open_in_file_explorer(), 12.0, 12.0))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            let _ = open_in_explorer(&selected.root_path);
+                                        }
+                                    });
+                                });
+                            },
+                            );
+
+                            ui.add_space(column_spacing);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(column_width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
+                                let source_group_response = ui.group(|ui| {
+                                    let mut changed = false;
+                                    let mut link_and_sync_id: Option<(u64, bool)> = None;
+                                    let mut unlink_requested = false;
+                                    let mut open_in_browse_id: Option<(u64, bool)> = None;
+                                    let mut copy_gb_id: Option<u64> = None;
+                                    if let Some(mod_entry) = self.selected_mod_mut() {
+                                        let input_id = ui.make_persistent_id(("gb_link_input", &mod_entry.id));
+                                        let mut input_str = ui.data_mut(|d| d.get_temp::<String>(input_id).unwrap_or_default());
+
+                                        let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
+                                        let gb_id = source.gamebanana.as_ref().map(|g| g.mod_id).unwrap_or(0);
+                                        let gb_is_tool = source
+                                            .gamebanana
+                                            .as_ref()
+                                            .is_some_and(|g| gamebanana::is_tool_url(&g.url));
+                                        let is_linked = gb_id > 0;
+
+                                        if is_linked {
+                                            let gb_id_response = ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(format!("GameBanana ID: {gb_id}"))
+                                                        .size(13.0)
+                                                        .strong(),
+                                                )
+                                                .selectable(false)
+                                                .sense(Sense::click()),
+                                            );
+                                            if gb_id_response
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .on_hover_text(text.copy_gamebanana_id())
+                                                .clicked()
+                                            {
+                                                copy_gb_id = Some(gb_id);
+                                            }
+                                            if let Some(ts) = source.history.updated_at {
+                                                ui.add_space(-8.0);
+                                                static_label(
+                                                    ui,
+                                                    RichText::new(text.last_synced(&mod_age_label(ts, text)))
+                                                        .size(11.0)
+                                                        .color(Color32::from_gray(145))
+                                                );
+                                            }
+                                            ui.add_space(2.0);
+                                            let resync_job = icon_text_sized(Icon::RefreshCw, text.resync(), 12.0, 12.0);
+                                            let unlink_job = icon_text_sized(Icon::Link2Off, text.unlink(), 12.0, 12.0);
+                                            let browse_job = icon_text_sized(Icon::Globe, text.gamebanana_page(), 12.0, 12.0);
+                                            let button_padding = ui.spacing().button_padding.x * 2.0;
+                                            let min_button_width = ui.spacing().interact_size.x;
+                                            let inter_button_spacing = (ui.spacing().item_spacing.x - 2.0).max(0.0);
+                                            let resync_width = ui.ctx().fonts_mut(|fonts| {
+                                                fonts
+                                                    .layout_job(resync_job.clone())
+                                                    .size()
+                                                    .x
+                                            });
+                                            let unlink_width = ui.ctx().fonts_mut(|fonts| {
+                                                fonts
+                                                    .layout_job(unlink_job.clone())
+                                                    .size()
+                                                    .x
+                                            });
+                                            let combined_button_width = resync_width
+                                                .max(min_button_width - button_padding)
+                                                + unlink_width.max(min_button_width - button_padding)
+                                                + button_padding * 2.0
+                                                + inter_button_spacing;
+                                            ui.horizontal_centered(|ui| {
+                                                if ui
+                                                    .add_sized(
+                                                        [combined_button_width, ui.spacing().interact_size.y],
+                                                        egui::Button::new(browse_job),
+                                                    )
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    open_in_browse_id = Some((gb_id, gb_is_tool));
+                                                }
+                                            });
+                                            ui.add_space(-3.0);
+                                            ui.horizontal(|ui| {
+                                                if ui
+                                                    .button(resync_job)
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    link_and_sync_id = Some((gb_id, gb_is_tool));
+                                                }
+                                                ui.add_space(-2.0);
+                                                if ui
+                                                    .button(unlink_job)
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                {
+                                                    unlink_requested = true;
+                                                }
+                                            });
+                                            ui.add_space(2.0);
+                                        } else {
+                                            static_label(ui, RichText::new(text.link_gamebanana_prompt()).small().color(Color32::from_gray(160)));
+                                            ui.add_space(4.0);
+                                            // Fill the section's fixed-width column. Clamp with plain
+                                            // literals so egui's sizing pass (which can report an
+                                            // unbounded available width) can't feed desired_width back
+                                            // into itself and grow the field without bound.
+                                            let input_w = (ui.available_width() - 12.0).clamp(80.0, 320.0);
+                                            ui.add(
+                                                TextEdit::singleline(&mut input_str)
+                                                    .hint_text(RichText::new(text.url_or_id()).color(Color32::from_gray(120)))
+                                                    .desired_width(input_w)
+                                                    .margin(egui::Margin::same(6))
+                                            );
+                                            ui.add_space(6.0);
+                                            let parsed_link = parse_gb_link(&input_str);
+                                            if ui
+                                                .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                if let Some(link) = parsed_link {
+                                                    link_and_sync_id = Some(link);
+                                                    input_str.clear();
+                                                }
+                                            }
+                                        }
+
+                                        let show_prefs = is_linked;
+                                        if show_prefs {
+                                            ui.add_space(8.0);
+                                            static_label(ui, RichText::new(text.update_preferences()).size(12.0).color(Color32::from_gray(170)));
+                                            let mut ignore_current_update = selected
+                                                .source
+                                                .as_ref()
+                                                .and_then(|source| source.ignored_update_signature.as_ref())
+                                                .is_some();
+                                            let mut ignore_update_always = source.ignore_update_always;
+                                            if ignore_current_update && ignore_update_always {
+                                                ignore_current_update = false;
+                                                source.ignored_update_signature = None;
+                                                changed = true;
+                                            }
+                                            let can_use_ignore_once = ignore_current_update
+                                                || ignore_once_signature_for_mod(&selected).is_some();
+                                            ui.add_space(-6.0);
+                                            let ignore_once_response = ui.add_enabled(
+                                                can_use_ignore_once,
+                                                egui::Checkbox::new(&mut ignore_current_update, text.ignore_update_once()),
+                                            );
+                                            ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
+                                                text.ignore_update_once_tooltip()
+                                            } else {
+                                                text.ignore_update_once_disabled_tooltip()
+                                            });
+                                            ui.add_space(-6.0);
+                                            let ignore_always_response = ui.checkbox(&mut ignore_update_always, text.ignore_update_always());
+                                            ignore_always_response.clone().on_hover_text(
+                                                text.ignore_update_always_tooltip()
+                                            );
+                                            if ignore_once_response.changed() || ignore_always_response.changed() {
+                                                let selected_id = selected.id.clone();
+                                                if ignore_update_always {
+                                                    source.ignore_update_always = true;
+                                                    source.ignored_update_signature = None;
+                                                    mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
+                                                    let cloned = mod_entry.clone();
+                                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                                    self.cancel_update_process_for_mod(&cloned);
+                                                } else if ignore_current_update {
+                                                    if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
+                                                        let current_signature = ignore_once_signature_for_mod(mod_entry);
+                                                        if let Some(signature) = current_signature {
+                                                            let prearmed_next_update = signature.prearmed_next_update;
+                                                            if let Some(source) = mod_entry.source.as_mut() {
+                                                                source.ignore_update_always = false;
+                                                                source.ignored_update_signature = Some(signature);
+                                                            }
+                                                            if prearmed_next_update {
+                                                                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                    mod_entry.update_state = raw_state;
+                                                                }
+                                                            } else {
+                                                                mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
+                                                            }
+                                                        } else {
+                                                            if let Some(source) = mod_entry.source.as_mut() {
+                                                                source.ignore_update_always = false;
+                                                                source.ignored_update_signature = None;
+                                                            }
+                                                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                mod_entry.update_state = raw_state;
+                                                            }
+                                                        }
+                                                        let cloned = mod_entry.clone();
+                                                        let _ = xxmi::save_mod_metadata(mod_entry);
+                                                        self.cancel_update_process_for_mod(&cloned);
+                                                    }
+                                                } else if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
+                                                    if let Some(source) = mod_entry.source.as_mut() {
+                                                        source.ignore_update_always = false;
+                                                        source.ignored_update_signature = None;
+                                                    }
+                                                    if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                        mod_entry.update_state = raw_state;
+                                                    }
+                                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                                }
+                                                self.save_state();
+                                            }
+                                        }
+
+                                        ui.data_mut(|d| d.insert_temp(input_id, input_str));
+                                    }
+
+                                    if let Some((id, is_tool)) = open_in_browse_id {
+                                        if is_tool {
+                                            // The in-app browse detail only understands the Mod
+                                            // namespace; tool pages open in the system browser.
+                                            ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                                gamebanana::browser_url_typed(id, true),
+                                            ));
+                                        } else {
+                                            self.open_linked_mod_in_browse(id);
+                                        }
+                                    }
+                                    if let Some(id) = copy_gb_id {
+                                        ui.ctx().copy_text(id.to_string());
+                                        self.set_message_ok(text.gamebanana_id_copied());
+                                    }
+                                    if unlink_requested {
+                                        if let Some(mod_entry) = self.selected_mod_mut() {
+                                            if let Some(source) = mod_entry.source.as_mut() {
+                                                source.gamebanana = None;
+                                                mod_entry.update_state = ModUpdateState::Unlinked;
+                                                let _ = xxmi::save_mod_metadata(mod_entry);
+                                            }
+                                        }
+                                        self.save_state();
+                                    }
+
+                                    if let Some((id, is_tool)) = link_and_sync_id {
+                                        let mut mod_entry_id = None;
+                                        if let Some(mod_entry) = self.selected_mod_mut() {
+                                            let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
+                                            source.gamebanana = Some(GameBananaLink {
+                                                mod_id: id,
+                                                url: gamebanana::browser_url_typed(id, is_tool),
+                                            });
+                                            source.history.updated_at = Some(Utc::now());
+
+                                            mod_entry_id = Some(mod_entry.id.clone());
+                                            let _ = xxmi::save_mod_metadata(mod_entry);
+                                        }
+
+                                        if let Some(m_id) = mod_entry_id {
+                                            self.queue_update_check_for_mod(&m_id);
+                                            self.set_message_ok(text.syncing_gamebanana());
+                                        }
+                                        self.save_state();
+                                    }
+
+                                    if changed {
+                                        if let Some(mod_entry) = self.selected_mod_mut() {
+                                            let _ = xxmi::save_mod_metadata(mod_entry);
+                                        }
+                                        self.save_state();
+                                    }
+                                });
+                                source_group_rect = Some(source_group_response.response.rect);
+                            },
+                            );
+                        });
+
+                        if let Some(source_rect) = source_group_rect {
+                            // "Link Mod" asked us to bring this section into view: animate the
+                            // scroll first, then glow the box briefly once we've arrived.
+                            if self.mod_detail_source_focus_pending {
+                                self.mod_detail_source_focus_pending = false;
+                                ui.scroll_to_rect_animation(
+                                    source_rect.expand(8.0),
+                                    Some(egui::Align::Center),
+                                    egui::style::ScrollAnimation::duration(0.28),
+                                );
+                                self.mod_detail_source_glow_start = Some(ui.input(|i| i.time));
+                                ui.ctx().request_repaint();
+                            }
+                            if let Some(start) = self.mod_detail_source_glow_start {
+                                let elapsed = ui.input(|i| i.time) - start;
+                                let glow = source_focus_glow_alpha(elapsed);
+                                if glow > 0.0 {
+                                    // The halo expands ~12px past the box, and the SOURCE column
+                                    // reaches the content's right edge, so widen the clip rightward
+                                    // into the window's right margin to keep the halo from being
+                                    // clipped on that side.
+                                    let restore_clip = ui.clip_rect();
+                                    ui.set_clip_rect({
+                                        let mut c = restore_clip;
+                                        c.max.x += 16.0;
+                                        c
+                                    });
+                                    paint_source_focus_glow(ui.painter(), source_rect, glow);
+                                    ui.set_clip_rect(restore_clip);
+                                    ui.ctx().request_repaint();
+                                } else if elapsed >= SOURCE_FOCUS_GLOW_TOTAL {
+                                    self.mod_detail_source_glow_start = None;
+                                } else {
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
+
+                        // Restore the expanded section's breathing room above the window's bottom
+                        // edge. The window keeps a slim fixed 4px bottom margin so the collapsed
+                        // handle tucks in tight; this trailing pad — part of the animated body, so
+                        // it reveals and hides with it — gives the expanded columns a comfortable
+                        // gap without a taller margin that would reflow the window on every toggle.
+                        ui.add_space(6.0);
+                    });
+
+                    row_rect
+                }).inner;
                 let scroll_id_salt = egui::Id::new("my_mod_detail_scroll");
                 let scroll_rect = ui.available_rect_before_wrap();
                 let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
@@ -9058,7 +9482,13 @@ impl HestiaApp {
                             .min_scrolled_width(rail_width)
                             .auto_shrink([false, true])
                             .scroll_bar_visibility(
-                                egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                                // Hidden: the rail scrolls via the on-image chevron buttons (and
+                                // wheel/drag). A visible non-floating scrollbar reserves a solid
+                                // strip under the images that, once the LOCAL/SOURCE section is
+                                // expanded and the scroll viewport shrinks, lands right on the
+                                // divider as a dark bar over the images. The chevrons make it
+                                // redundant here, so drop it.
+                                egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             );
 
                         if let Some((start_time, start_val, target_val)) =
@@ -10079,428 +10509,94 @@ impl HestiaApp {
                             };
                         }
                     }
-                    ui.add_space(10.0);
-                    let row_height = 20.0;
-                    let (row_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), row_height),
-                        Sense::hover(),
-                    );
+                    apply_vertical_scroll_navigation(ui, scroll_navigation, true);
+                });
+
+                // Paint the LOCAL/SOURCE handle (divider line + chevron tab) AFTER the scroll area
+                // so it sits on top: the tab's top edge meets the line (the section's top edge) and
+                // hangs below it, and the divider isn't covered by the scrolling content above.
+                // Geometry comes from the row reserved at the top of the footer panel.
+                {
+                    let line_color = Color32::from_gray(98);
                     let toggle_size = egui::vec2(22.0, 18.0);
+                    // The tab hangs BELOW the line: its top edge sits on the divider, so shift the
+                    // centre down by half its height. `min.y` is the reserved row's top = the line.
                     let toggle_rect = egui::Rect::from_center_size(
                         egui::pos2(
-                            row_rect.max.x - (toggle_size.x * 0.5) - 12.0,
-                            row_rect.center().y,
+                            // Right edge flush with the content edge; the divider ends here too.
+                            handle_row_rect.max.x - (toggle_size.x * 0.5),
+                            handle_row_rect.min.y + toggle_size.y * 0.5,
                         ),
                         toggle_size,
                     );
-                    let line_color = Color32::from_gray(98);
-                    let line_y = row_rect.center().y;
+                    // Nudge the clip a hair right and down so the tab's 1px border isn't shaved at
+                    // the content edge, nor clipped when the collapsed handle rests in the window's
+                    // bottom-right corner.
+                    let restore_clip = ui.clip_rect();
+                    ui.set_clip_rect({
+                        let mut c = restore_clip;
+                        c.max.x += 2.0;
+                        c.max.y += 6.0;
+                        c
+                    });
+                    // Interact first so the frame (drawn only while hot) lands UNDER the chevron and
+                    // the icon colour can react to hover/press.
+                    let toggle_response = ui.interact(
+                        toggle_rect,
+                        ui.id().with("mod_detail_source_toggle"),
+                        Sense::click(),
+                    );
+                    let hot =
+                        toggle_response.hovered() || toggle_response.is_pointer_button_down_on();
+                    // Divider runs the full width, passing under the tab.
+                    let line_y = handle_row_rect.min.y;
                     ui.painter().line_segment(
                         [
-                            egui::pos2(row_rect.min.x, line_y),
-                            egui::pos2(toggle_rect.min.x - 6.0, line_y),
+                            egui::pos2(handle_row_rect.min.x, line_y),
+                            egui::pos2(toggle_rect.max.x, line_y),
                         ],
                         egui::Stroke::new(1.0, line_color),
                     );
-                    let toggle_icon = if self.my_mod_source_expanded {
-                        Icon::ChevronsUp
-                    } else {
-                        Icon::ChevronsDown
-                    };
-                    let toggle_response = ui.put(
-                        toggle_rect,
-                        egui::Button::new(icon_rich(
-                            toggle_icon,
-                            14.0,
-                            Color32::from_gray(188),
-                        ))
-                        .frame(false),
-                    );
-                    if toggle_response.hovered() {
-                        let stroke = egui::Stroke {
-                            width: 1.0,
-                            color: line_color,
-                        };
-                        ui.painter().circle_stroke(
-                            toggle_response.rect.center(),
-                            toggle_response.rect.width() / 2.0,
-                            stroke,
+                    // A near-square tab (1px corner radius). No frame at rest — just the bare
+                    // chevron; the fill and border appear only while hovered or pressed. Painted
+                    // before the icon so the glyph lands on top of the fill.
+                    if hot {
+                        ui.painter().rect(
+                            toggle_rect,
+                            egui::CornerRadius::same(1),
+                            Color32::from_rgb(38, 41, 46),
+                            egui::Stroke::new(1.0, Color32::from_gray(150)),
+                            egui::StrokeKind::Inside,
                         );
                     }
+                    // The handle rides up to expand and drops back to collapse, so a collapsed
+                    // section shows "up" and an open one shows "down".
+                    let toggle_icon = if self.my_mod_source_expanded {
+                        Icon::ChevronsDown
+                    } else {
+                        Icon::ChevronsUp
+                    };
+                    // Subtle at rest; brighten once the frame appears so the glyph reads on the fill.
+                    let icon_color = if hot {
+                        Color32::from_gray(205)
+                    } else {
+                        Color32::from_gray(145)
+                    };
+                    ui.painter().text(
+                        toggle_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        icon_char(toggle_icon).to_string(),
+                        egui::FontId::new(14.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                        icon_color,
+                    );
+                    ui.set_clip_rect(restore_clip);
                     if toggle_response
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         self.my_mod_source_expanded = !self.my_mod_source_expanded;
                     }
-
-                    if self.my_mod_source_expanded {
-                        ui.add_space(8.0);
-                        let mut source_group_rect: Option<egui::Rect> = None;
-                        let column_spacing = ui.spacing().item_spacing.x;
-                        let column_width = ((ui.available_width() - column_spacing) / 2.0).max(0.0);
-                        ui.horizontal_top(|ui| {
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(column_width, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                static_label(ui, bold(text.local(), Some(14.0)).underline().color(Color32::from_gray(195)));
-                                ui.group(|ui| {
-                                    let path_text = selected.root_path.display().to_string();
-                                    egui::Frame::new()
-                                        .fill(Color32::from_rgba_premultiplied(28, 30, 34, 230))
-                                        .stroke(egui::Stroke::NONE)
-                                        .corner_radius(egui::CornerRadius::same(6))
-                                        .inner_margin(egui::Margin::ZERO)
-                                        .show(ui, |ui| {
-                                            let mut path_value = path_text.clone();
-                                            let path_width = ui
-                                                .painter()
-                                                .layout_no_wrap(
-                                                    path_text.clone(),
-                                                    egui::FontId::new(12.0, FontFamily::Proportional),
-                                                    Color32::from_gray(150),
-                                                )
-                                                .size()
-                                                .x
-                                                + 20.0;
-                                            ScrollArea::horizontal()
-                                                .id_salt(("mod_local_path_scroll", &selected.id))
-                                                .max_height(24.0)
-                                                .show(ui, |ui| {
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut path_value)
-                                                            .desired_width(path_width.max(ui.available_width()))
-                                                            .font(egui::TextStyle::Small)
-                                                            .margin(egui::Margin::ZERO)
-                                                    );
-                                                });
-                                        });
-                                    ui.add_space(6.0);
-                                    ui.horizontal_centered(|ui| {
-                                        if ui
-                                            .button(icon_text_sized(Icon::FolderOpen, text.open_in_file_explorer(), 12.0, 12.0))
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
-                                            let _ = open_in_explorer(&selected.root_path);
-                                        }
-                                    });
-                                });
-                            },
-                            );
-
-                            ui.add_space(column_spacing);
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(column_width, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
-                                let source_group_response = ui.group(|ui| {
-                                    let mut changed = false;
-                                    let mut link_and_sync_id: Option<(u64, bool)> = None;
-                                    let mut unlink_requested = false;
-                                    let mut open_in_browse_id: Option<(u64, bool)> = None;
-                                    let mut copy_gb_id: Option<u64> = None;
-                                    if let Some(mod_entry) = self.selected_mod_mut() {
-                                        let input_id = ui.make_persistent_id(("gb_link_input", &mod_entry.id));
-                                        let mut input_str = ui.data_mut(|d| d.get_temp::<String>(input_id).unwrap_or_default());
-
-                                        let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
-                                        let gb_id = source.gamebanana.as_ref().map(|g| g.mod_id).unwrap_or(0);
-                                        let gb_is_tool = source
-                                            .gamebanana
-                                            .as_ref()
-                                            .is_some_and(|g| gamebanana::is_tool_url(&g.url));
-                                        let is_linked = gb_id > 0;
-
-                                        if is_linked {
-                                            let gb_id_response = ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(format!("GameBanana ID: {gb_id}"))
-                                                        .size(13.0)
-                                                        .strong(),
-                                                )
-                                                .selectable(false)
-                                                .sense(Sense::click()),
-                                            );
-                                            if gb_id_response
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .on_hover_text(text.copy_gamebanana_id())
-                                                .clicked()
-                                            {
-                                                copy_gb_id = Some(gb_id);
-                                            }
-                                            if let Some(ts) = source.history.updated_at {
-                                                ui.add_space(-8.0);
-                                                static_label(
-                                                    ui,
-                                                    RichText::new(text.last_synced(&mod_age_label(ts, text)))
-                                                        .size(11.0)
-                                                        .color(Color32::from_gray(145))
-                                                );
-                                            }
-                                            ui.add_space(2.0);
-                                            let resync_job = icon_text_sized(Icon::RefreshCw, text.resync(), 12.0, 12.0);
-                                            let unlink_job = icon_text_sized(Icon::Link2Off, text.unlink(), 12.0, 12.0);
-                                            let browse_job = icon_text_sized(Icon::Globe, text.gamebanana_page(), 12.0, 12.0);
-                                            let button_padding = ui.spacing().button_padding.x * 2.0;
-                                            let min_button_width = ui.spacing().interact_size.x;
-                                            let inter_button_spacing = (ui.spacing().item_spacing.x - 2.0).max(0.0);
-                                            let resync_width = ui.ctx().fonts_mut(|fonts| {
-                                                fonts
-                                                    .layout_job(resync_job.clone())
-                                                    .size()
-                                                    .x
-                                            });
-                                            let unlink_width = ui.ctx().fonts_mut(|fonts| {
-                                                fonts
-                                                    .layout_job(unlink_job.clone())
-                                                    .size()
-                                                    .x
-                                            });
-                                            let combined_button_width = resync_width
-                                                .max(min_button_width - button_padding)
-                                                + unlink_width.max(min_button_width - button_padding)
-                                                + button_padding * 2.0
-                                                + inter_button_spacing;
-                                            ui.horizontal_centered(|ui| {
-                                                if ui
-                                                    .add_sized(
-                                                        [combined_button_width, ui.spacing().interact_size.y],
-                                                        egui::Button::new(browse_job),
-                                                    )
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .clicked()
-                                                {
-                                                    open_in_browse_id = Some((gb_id, gb_is_tool));
-                                                }
-                                            });
-                                            ui.add_space(-3.0);
-                                            ui.horizontal(|ui| {
-                                                if ui
-                                                    .button(resync_job)
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .clicked()
-                                                {
-                                                    link_and_sync_id = Some((gb_id, gb_is_tool));
-                                                }
-                                                ui.add_space(-2.0);
-                                                if ui
-                                                    .button(unlink_job)
-                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    .clicked()
-                                                {
-                                                    unlink_requested = true;
-                                                }
-                                            });
-                                            ui.add_space(2.0);
-                                        } else {
-                                            static_label(ui, RichText::new(text.link_gamebanana_prompt()).small().color(Color32::from_gray(160)));
-                                            ui.add_space(4.0);
-                                            // Fill the section's fixed-width column. Clamp with plain
-                                            // literals so egui's sizing pass (which can report an
-                                            // unbounded available width) can't feed desired_width back
-                                            // into itself and grow the field without bound.
-                                            let input_w = (ui.available_width() - 12.0).clamp(80.0, 320.0);
-                                            ui.add(
-                                                TextEdit::singleline(&mut input_str)
-                                                    .hint_text(RichText::new(text.url_or_id()).color(Color32::from_gray(120)))
-                                                    .desired_width(input_w)
-                                                    .margin(egui::Margin::same(6))
-                                            );
-                                            ui.add_space(6.0);
-                                            let parsed_link = parse_gb_link(&input_str);
-                                            if ui
-                                                .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
-                                            {
-                                                if let Some(link) = parsed_link {
-                                                    link_and_sync_id = Some(link);
-                                                    input_str.clear();
-                                                }
-                                            }
-                                        }
-
-                                        let show_prefs = is_linked;
-                                        if show_prefs {
-                                            ui.add_space(8.0);
-                                            static_label(ui, RichText::new(text.update_preferences()).size(12.0).color(Color32::from_gray(170)));
-                                            let mut ignore_current_update = selected
-                                                .source
-                                                .as_ref()
-                                                .and_then(|source| source.ignored_update_signature.as_ref())
-                                                .is_some();
-                                            let mut ignore_update_always = source.ignore_update_always;
-                                            if ignore_current_update && ignore_update_always {
-                                                ignore_current_update = false;
-                                                source.ignored_update_signature = None;
-                                                changed = true;
-                                            }
-                                            let can_use_ignore_once = ignore_current_update
-                                                || ignore_once_signature_for_mod(&selected).is_some();
-                                            ui.add_space(-6.0);
-                                            let ignore_once_response = ui.add_enabled(
-                                                can_use_ignore_once,
-                                                egui::Checkbox::new(&mut ignore_current_update, text.ignore_update_once()),
-                                            );
-                                            ignore_once_response.clone().on_hover_text(if can_use_ignore_once {
-                                                text.ignore_update_once_tooltip()
-                                            } else {
-                                                text.ignore_update_once_disabled_tooltip()
-                                            });
-                                            ui.add_space(-6.0);
-                                            let ignore_always_response = ui.checkbox(&mut ignore_update_always, text.ignore_update_always());
-                                            ignore_always_response.clone().on_hover_text(
-                                                text.ignore_update_always_tooltip()
-                                            );
-                                            if ignore_once_response.changed() || ignore_always_response.changed() {
-                                                let selected_id = selected.id.clone();
-                                                if ignore_update_always {
-                                                    source.ignore_update_always = true;
-                                                    source.ignored_update_signature = None;
-                                                    mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
-                                                    let cloned = mod_entry.clone();
-                                                    let _ = xxmi::save_mod_metadata(mod_entry);
-                                                    self.cancel_update_process_for_mod(&cloned);
-                                                } else if ignore_current_update {
-                                                    if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                        let current_signature = ignore_once_signature_for_mod(mod_entry);
-                                                        if let Some(signature) = current_signature {
-                                                            let prearmed_next_update = signature.prearmed_next_update;
-                                                            if let Some(source) = mod_entry.source.as_mut() {
-                                                                source.ignore_update_always = false;
-                                                                source.ignored_update_signature = Some(signature);
-                                                            }
-                                                            if prearmed_next_update {
-                                                                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
-                                                                    mod_entry.update_state = raw_state;
-                                                                }
-                                                            } else {
-                                                                mod_entry.update_state = ModUpdateState::IgnoringUpdateOnce;
-                                                            }
-                                                        } else {
-                                                            if let Some(source) = mod_entry.source.as_mut() {
-                                                                source.ignore_update_always = false;
-                                                                source.ignored_update_signature = None;
-                                                            }
-                                                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
-                                                                mod_entry.update_state = raw_state;
-                                                            }
-                                                        }
-                                                        let cloned = mod_entry.clone();
-                                                        let _ = xxmi::save_mod_metadata(mod_entry);
-                                                        self.cancel_update_process_for_mod(&cloned);
-                                                    }
-                                                } else if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                    if let Some(source) = mod_entry.source.as_mut() {
-                                                        source.ignore_update_always = false;
-                                                        source.ignored_update_signature = None;
-                                                    }
-                                                    if let Some(raw_state) = compute_raw_update_state(mod_entry) {
-                                                        mod_entry.update_state = raw_state;
-                                                    }
-                                                    let _ = xxmi::save_mod_metadata(mod_entry);
-                                                }
-                                                self.save_state();
-                                            }
-                                        }
-
-                                        ui.data_mut(|d| d.insert_temp(input_id, input_str));
-                                    }
-
-                                    if let Some((id, is_tool)) = open_in_browse_id {
-                                        if is_tool {
-                                            // The in-app browse detail only understands the Mod
-                                            // namespace; tool pages open in the system browser.
-                                            ui.ctx().open_url(egui::OpenUrl::new_tab(
-                                                gamebanana::browser_url_typed(id, true),
-                                            ));
-                                        } else {
-                                            self.open_linked_mod_in_browse(id);
-                                        }
-                                    }
-                                    if let Some(id) = copy_gb_id {
-                                        ui.ctx().copy_text(id.to_string());
-                                        self.set_message_ok(text.gamebanana_id_copied());
-                                    }
-                                    if unlink_requested {
-                                        if let Some(mod_entry) = self.selected_mod_mut() {
-                                            if let Some(source) = mod_entry.source.as_mut() {
-                                                source.gamebanana = None;
-                                                mod_entry.update_state = ModUpdateState::Unlinked;
-                                                let _ = xxmi::save_mod_metadata(mod_entry);
-                                            }
-                                        }
-                                        self.save_state();
-                                    }
-
-                                    if let Some((id, is_tool)) = link_and_sync_id {
-                                        let mut mod_entry_id = None;
-                                        if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
-                                            source.gamebanana = Some(GameBananaLink {
-                                                mod_id: id,
-                                                url: gamebanana::browser_url_typed(id, is_tool),
-                                            });
-                                            source.history.updated_at = Some(Utc::now());
-
-                                            mod_entry_id = Some(mod_entry.id.clone());
-                                            let _ = xxmi::save_mod_metadata(mod_entry);
-                                        }
-
-                                        if let Some(m_id) = mod_entry_id {
-                                            self.queue_update_check_for_mod(&m_id);
-                                            self.set_message_ok(text.syncing_gamebanana());
-                                        }
-                                        self.save_state();
-                                    }
-
-                                    if changed {
-                                        if let Some(mod_entry) = self.selected_mod_mut() {
-                                            let _ = xxmi::save_mod_metadata(mod_entry);
-                                        }
-                                        self.save_state();
-                                    }
-                                });
-                                source_group_rect = Some(source_group_response.response.rect);
-                            },
-                            );
-                        });
-
-                        if let Some(source_rect) = source_group_rect {
-                            // "Link Mod" asked us to bring this section into view: animate the
-                            // scroll first, then glow the box briefly once we've arrived.
-                            if self.mod_detail_source_focus_pending {
-                                self.mod_detail_source_focus_pending = false;
-                                ui.scroll_to_rect_animation(
-                                    source_rect.expand(8.0),
-                                    Some(egui::Align::Center),
-                                    egui::style::ScrollAnimation::duration(0.28),
-                                );
-                                self.mod_detail_source_glow_start = Some(ui.input(|i| i.time));
-                                ui.ctx().request_repaint();
-                            }
-                            if let Some(start) = self.mod_detail_source_glow_start {
-                                let elapsed = ui.input(|i| i.time) - start;
-                                let glow = source_focus_glow_alpha(elapsed);
-                                if glow > 0.0 {
-                                    paint_source_focus_glow(ui.painter(), source_rect, glow);
-                                    ui.ctx().request_repaint();
-                                } else if elapsed >= SOURCE_FOCUS_GLOW_TOTAL {
-                                    self.mod_detail_source_glow_start = None;
-                                } else {
-                                    ui.ctx().request_repaint();
-                                }
-                            }
-                        }
-                    }
-                    // Breathing room below the section so the "Link Mod" glow halo clears the
-                    // scroll viewport's bottom edge and the scroll-to-center has room to land.
-                    ui.add_space(24.0);
-                    apply_vertical_scroll_navigation(ui, scroll_navigation, true);
-                });
+                }
 
             });
 
