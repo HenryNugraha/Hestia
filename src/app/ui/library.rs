@@ -297,6 +297,11 @@ fn clamp_metadata_source_label(text: &str) -> String {
 /// deleted readme, not-yet-wired Mod Data) degrades gracefully instead of showing
 /// an empty or broken view. `Description` is always available (it renders the
 /// "No description" + add-note state when empty), so it is the terminal fallback.
+///
+/// Auto-pick priority when there is no honored saved pick:
+/// legacy readme -> description -> readme -> keybinds -> empty description. Keybinds
+/// rank last so they only surface when the mod has nothing else worth showing (the
+/// common case being an unlinked mod with no description or readme but live hotkeys).
 fn effective_metadata_source(
     want: Option<MetadataSourceKind>,
     personal_note_editing: bool,
@@ -325,6 +330,12 @@ fn effective_metadata_source(
         Description
     } else if textfile_available {
         TextFile
+    } else if hotkeys_available {
+        // No description and no readme, but the mod has parsed keybinds: land on
+        // them instead of dead-ending on the empty "No description" pane. Ranked
+        // below TextFile so a bundled readme (usually the "read me first" note)
+        // stays the preferred default when both exist.
+        Hotkeys
     } else {
         Description
     }
@@ -483,6 +494,130 @@ fn toggle_mod_card_selection(
         selected_mods.insert(current_id.to_string());
     } else {
         selected_mods.remove(current_id);
+    }
+}
+
+#[cfg(test)]
+mod metadata_source_resolver_tests {
+    use super::*;
+    use MetadataSourceKind::*;
+
+    /// Named wrapper so each case reads as fields instead of a wall of bools.
+    struct Env {
+        want: Option<MetadataSourceKind>,
+        note_editing: bool,
+        has_description: bool,
+        hotkeys: bool,
+        textfile: bool,
+        legacy_readme: bool,
+    }
+
+    impl Env {
+        /// Bare mod: nothing available, no saved pick, not editing a note.
+        fn empty() -> Self {
+            Self {
+                want: None,
+                note_editing: false,
+                has_description: false,
+                hotkeys: false,
+                textfile: false,
+                legacy_readme: false,
+            }
+        }
+
+        fn resolve(&self) -> MetadataSourceKind {
+            effective_metadata_source(
+                self.want,
+                self.note_editing,
+                self.has_description,
+                self.hotkeys,
+                self.textfile,
+                self.legacy_readme,
+            )
+        }
+    }
+
+    #[test]
+    fn no_description_no_readme_with_hotkeys_lands_on_hotkeys() {
+        // The fix: an unlinked mod whose only content is its keybinds opens on
+        // Hotkeys instead of dead-ending on the empty "No description" pane.
+        let env = Env {
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), Hotkeys);
+    }
+
+    #[test]
+    fn description_outranks_hotkeys() {
+        // A real write-up (including a persisted description on a mod detached from
+        // GameBanana) still wins over keybinds.
+        let env = Env {
+            has_description: true,
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), Description);
+    }
+
+    #[test]
+    fn readme_outranks_hotkeys() {
+        let env = Env {
+            textfile: true,
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), TextFile);
+    }
+
+    #[test]
+    fn legacy_readme_outranks_hotkeys() {
+        let env = Env {
+            legacy_readme: true,
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), TextFile);
+    }
+
+    #[test]
+    fn nothing_available_falls_back_to_empty_description() {
+        assert_eq!(Env::empty().resolve(), Description);
+    }
+
+    #[test]
+    fn saved_hotkeys_pick_is_honored_when_available() {
+        let env = Env {
+            want: Some(Hotkeys),
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), Hotkeys);
+    }
+
+    #[test]
+    fn stale_hotkeys_pick_falls_through_to_auto_priority() {
+        // Saved Hotkeys but the mod no longer has keybinds: don't get stuck on an
+        // empty Hotkeys view, fall through to the next available source.
+        let env = Env {
+            want: Some(Hotkeys),
+            hotkeys: false,
+            textfile: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), TextFile);
+    }
+
+    #[test]
+    fn active_note_edit_owns_the_view() {
+        // An in-progress note edit forces TextFile even over a saved Hotkeys pick.
+        let env = Env {
+            want: Some(Hotkeys),
+            note_editing: true,
+            hotkeys: true,
+            ..Env::empty()
+        };
+        assert_eq!(env.resolve(), TextFile);
     }
 }
 
