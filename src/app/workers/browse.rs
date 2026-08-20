@@ -261,6 +261,31 @@ fn spawn_browse_worker(
                         }
                     });
                 }
+                BrowseRequest::FetchMyModUpdates { nonce, mod_id } => {
+                    let updates_tx = tx.clone();
+                    let updates_portable = portable.clone();
+                    let updates_client = runtime_services.http_client();
+                    let updates_limiter = Arc::clone(&json_limiter);
+                    tokio::spawn(async move {
+                        let _permit = updates_limiter.acquire().await.ok();
+                        match load_my_mod_updates(&updates_portable, &updates_client, mod_id).await {
+                            Ok(updates) => {
+                                let _ = updates_tx.send(BrowseEvent::MyModUpdatesLoaded {
+                                    _nonce: nonce,
+                                    mod_id,
+                                    updates,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = updates_tx.send(BrowseEvent::MyModUpdatesFailed {
+                                    _nonce: nonce,
+                                    mod_id,
+                                    error: format!("{err:#}"),
+                                });
+                            }
+                        }
+                    });
+                }
             }
         }
     });
@@ -319,6 +344,18 @@ where
 #[cfg(test)]
 mod browse_worker_tests {
     use super::*;
+
+    #[test]
+    fn my_mod_updates_freshness_window_bounds() {
+        // Fresh: from the moment it was fetched up to (but not including) the TTL.
+        assert!(my_mod_updates_cache_fresh(0));
+        assert!(my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS - 1));
+        // Stale: at and beyond the 30-minute window -> triggers a refresh.
+        assert!(!my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS));
+        assert!(!my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS + 1));
+        // Clock skew (future timestamp) -> treated as stale, never pinned open.
+        assert!(!my_mod_updates_cache_fresh(-1));
+    }
 
     #[tokio::test]
     async fn forced_interactive_json_race_starts_with_cache_busting_request() {
@@ -605,6 +642,59 @@ async fn load_updates_with_cache(
             Err(err)
         }
         Err(err) => Err(err),
+    }
+}
+
+/// MY MODS freshness window: within this many seconds of the last successful fetch,
+/// the cached update log is served without touching the network.
+const MY_MOD_UPDATES_TTL_SECS: i64 = 30 * 60;
+
+/// Whether a MY MODS update-log cache fetched `age_secs` ago is still fresh. A negative
+/// age (a future `fetched_at` from clock skew) is treated as stale, so a bad clock can't
+/// pin a cache open indefinitely.
+fn my_mod_updates_cache_fresh(age_secs: i64) -> bool {
+    (0..MY_MOD_UPDATES_TTL_SECS).contains(&age_secs)
+}
+
+/// Load a MY MODS update log with a persisted 30-minute freshness window.
+///
+/// A cache newer than [`MY_MOD_UPDATES_TTL_SECS`] is returned as-is (no network). A
+/// stale or missing cache triggers a fresh fetch; on success the timestamped envelope
+/// is rewritten, and on a fetch failure the last cached copy is returned as a
+/// transparent fallback — only a failure with no cache at all surfaces as an error.
+async fn load_my_mod_updates(
+    portable: &PortablePaths,
+    client: &ClientWithMiddleware,
+    mod_id: u64,
+) -> Result<gamebanana::ApiEnvelope<gamebanana::UpdateRecord>> {
+    let cache_key = gamebanana::my_mod_updates_cache_key(mod_id);
+    let cached = match cache_get_blocking(portable.clone(), cache_key.clone()).await? {
+        Some(bytes) => serde_json::from_slice::<gamebanana::CachedModUpdates>(&bytes).ok(),
+        None => None,
+    };
+
+    if let Some(envelope) = &cached {
+        let age = chrono::Utc::now().timestamp() - envelope.fetched_at;
+        if my_mod_updates_cache_fresh(age) {
+            return Ok(envelope.payload.clone());
+        }
+    }
+
+    match gamebanana::fetch_updates_async(client, mod_id).await {
+        Ok(payload) => {
+            let envelope = gamebanana::CachedModUpdates {
+                fetched_at: chrono::Utc::now().timestamp(),
+                payload: payload.clone(),
+            };
+            if let Ok(bytes) = serde_json::to_vec(&envelope) {
+                cache_put_blocking_detached(portable, &cache_key, "browse-json", bytes, 0);
+            }
+            Ok(payload)
+        }
+        Err(err) => match cached {
+            Some(envelope) => Ok(envelope.payload),
+            None => Err(err),
+        },
     }
 }
 

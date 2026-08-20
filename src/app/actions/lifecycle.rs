@@ -518,6 +518,8 @@ impl HestiaApp {
             translation_request_nonce: 0,
             cancelled_translation_requests: HashSet::new(),
             my_mods_translation_state: HashMap::new(),
+            my_mod_updates: HashMap::new(),
+            my_mod_updates_inflight: HashSet::new(),
             update_check_tx,
             update_check_rx,
             update_check_inflight: false,
@@ -2600,11 +2602,23 @@ impl HestiaApp {
         self.feedback_survey_force_default_pos = true;
     }
 
-    fn toggle_primary_view(&mut self) {
-        self.current_view = match self.current_view {
-            ViewMode::Library => ViewMode::Browse,
-            ViewMode::Browse => ViewMode::Library,
+    /// Ctrl+Tab / Ctrl+Shift+Tab: move to the next / previous primary tab,
+    /// wrapping at both ends. Tab order is `ViewMode::TAB_ORDER`; add new
+    /// views there and this picks them up automatically.
+    fn cycle_primary_view(&mut self, forward: bool) {
+        let order = ViewMode::TAB_ORDER;
+        let Some(idx) = order.iter().position(|&v| v == self.current_view) else {
+            return;
         };
+        let next = if forward {
+            (idx + 1) % order.len()
+        } else {
+            (idx + order.len() - 1) % order.len()
+        };
+        if order[next] == self.current_view {
+            return;
+        }
+        self.current_view = order[next];
         self.clear_mod_detail_rename();
     }
 
@@ -2762,13 +2776,17 @@ impl HestiaApp {
         };
         let text_input_active = self.shortcuts_blocked_by_text_input(ctx);
 
-        if ctx.input(|input| {
-            input.modifiers.ctrl
-                && input.key_pressed(egui::Key::Tab)
-                && !input.modifiers.shift
-                && !input.modifiers.alt
-        }) {
-            self.toggle_primary_view();
+        // Ctrl+Tab cycles forward through the primary tabs, Ctrl+Shift+Tab
+        // cycles backward (same convention as browser tab switching).
+        let tab_cycle = ctx.input(|input| {
+            if input.modifiers.ctrl && !input.modifiers.alt && input.key_pressed(egui::Key::Tab) {
+                Some(!input.modifiers.shift)
+            } else {
+                None
+            }
+        });
+        if let Some(forward) = tab_cycle {
+            self.cycle_primary_view(forward);
         }
         // Ctrl+P — the settings/preferences shortcut. Deliberately NOT a bare
         // function key like F10: while the XXMI foreground grant is active, any bare key

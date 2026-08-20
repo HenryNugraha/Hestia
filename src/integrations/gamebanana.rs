@@ -932,6 +932,26 @@ pub fn updates_cache_key(mod_id: u64) -> String {
     json_cache_key_v2(&[("kind", "updates".to_string()), ("mod", mod_id.to_string())])
 }
 
+/// MY MODS caches the update log under its own key (a timestamped envelope, see
+/// `CachedModUpdates`) so its 30-minute freshness window can be enforced across
+/// restarts. Kept separate from `updates_cache_key` because that payload is a bare
+/// `ApiEnvelope` with no fetch timestamp.
+pub fn my_mod_updates_cache_key(mod_id: u64) -> String {
+    json_cache_key_v2(&[
+        ("kind", "mymod-updates".to_string()),
+        ("mod", mod_id.to_string()),
+    ])
+}
+
+/// Disk-cache envelope for MY MODS update logs: the fetched payload plus the unix
+/// timestamp it was fetched at, so the loader can honor the freshness window and
+/// still fall back to a stale copy when a refresh fails.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CachedModUpdates {
+    pub fetched_at: i64,
+    pub payload: ApiEnvelope<UpdateRecord>,
+}
+
 /// Cache identity must be deterministic. Serializing `HashMap` values made the key depend on
 /// randomized iteration order, creating duplicate files instead of replacing cached responses.
 fn json_cache_key_v2(tags: &[(&str, String)]) -> String {

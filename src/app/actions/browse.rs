@@ -670,6 +670,101 @@ impl HestiaApp {
         }
     }
 
+    /// Convert a fetched GameBanana update envelope into display entries, dropping
+    /// private/trashed/withheld records. Shared by the Browse Updates section and the
+    /// ported MY MODS one so both format identically.
+    fn updates_to_entries(
+        &self,
+        updates: gamebanana::ApiEnvelope<gamebanana::UpdateRecord>,
+        mod_id: u64,
+    ) -> Vec<BrowseUpdateEntry> {
+        updates
+            .records
+            .into_iter()
+            .filter(|record| !record.is_private && !record.is_trashed && !record.is_withheld)
+            .map(|record| {
+                let update_time = if record.date_modified > 0 {
+                    record.date_modified
+                } else {
+                    record.date_added
+                };
+                BrowseUpdateEntry {
+                    name: record.name.clone(),
+                    version: record
+                        .version
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(|v| v.to_string()),
+                    updated_at: timestamp_to_utc(update_time),
+                    markdown: prepare_markdown_for_display(
+                        record.html_text.as_deref().unwrap_or_default(),
+                        None,
+                        Some(mod_id),
+                        &self.portable,
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    /// Freshness/retry gate for the MY MODS update log. Called each frame the Updates
+    /// section is visible for a GameBanana-linked mod; fires a fetch only when the mod
+    /// is unseen, its in-memory copy aged past the 30-minute window, or a prior
+    /// failure's retry cooldown elapsed. `my_mod_updates_inflight` blocks duplicate
+    /// concurrent fetches (e.g. a refresh that would otherwise fire every frame).
+    fn ensure_my_mod_updates(&mut self, mod_id: u64) {
+        if mod_id == 0 {
+            return;
+        }
+        let now = Utc::now();
+        let should_fetch = match self.my_mod_updates.get(&mod_id) {
+            None => true,
+            Some(MyModUpdatesState::Loading) => false,
+            Some(MyModUpdatesState::Ready { fetched_at, .. })
+            | Some(MyModUpdatesState::Empty { fetched_at }) => {
+                now.signed_duration_since(*fetched_at) >= chrono::Duration::minutes(30)
+            }
+            Some(MyModUpdatesState::Failed { attempted_at, .. }) => {
+                now.signed_duration_since(*attempted_at) >= chrono::Duration::seconds(60)
+            }
+        };
+        if !should_fetch {
+            return;
+        }
+        if !self.my_mod_updates_inflight.insert(mod_id) {
+            return;
+        }
+        // Only show a bare Loading state on the first fetch; a refresh keeps the
+        // current entries visible until the new ones arrive.
+        if !matches!(
+            self.my_mod_updates.get(&mod_id),
+            Some(MyModUpdatesState::Ready { .. }) | Some(MyModUpdatesState::Empty { .. })
+        ) {
+            self.my_mod_updates
+                .insert(mod_id, MyModUpdatesState::Loading);
+        }
+        self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
+        if self
+            .browse_request_tx
+            .send(BrowseRequest::FetchMyModUpdates {
+                nonce: self.browse_request_nonce,
+                mod_id,
+            })
+            .is_err()
+        {
+            self.my_mod_updates_inflight.remove(&mod_id);
+            let message = self.text().could_not_load_updates().to_string();
+            self.my_mod_updates.insert(
+                mod_id,
+                MyModUpdatesState::Failed {
+                    message,
+                    attempted_at: now,
+                },
+            );
+        }
+    }
+
     fn reset_browse_detail_render_state(&mut self) {
         self.browse_commonmark_cache = CommonMarkCache::default();
         self.gif_rewritten_markdown_cache.clear();
@@ -1333,43 +1428,31 @@ impl HestiaApp {
                 BrowseEvent::UpdatesLoaded {
                     mod_id, updates, ..
                 } => {
+                    let entries = self.updates_to_entries(updates, mod_id);
                     if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
-                        let entries = updates
-                            .records
-                            .into_iter()
-                            .filter(|record| {
-                                !record.is_private && !record.is_trashed && !record.is_withheld
-                            })
-                            .map(|record| {
-                                let update_time = if record.date_modified > 0 {
-                                    record.date_modified
-                                } else {
-                                    record.date_added
-                                };
-                                BrowseUpdateEntry {
-                                    name: record.name.clone(),
-                                    version: record
-                                        .version
-                                        .as_deref()
-                                        .map(str::trim)
-                                        .filter(|v| !v.is_empty())
-                                        .map(|v| v.to_string()),
-                                    updated_at: timestamp_to_utc(update_time),
-                                    markdown: prepare_markdown_for_display(
-                                        record.html_text.as_deref().unwrap_or_default(),
-                                        None,
-                                        Some(mod_id),
-                                        &self.portable,
-                                    ),
-                                }
-                            })
-                            .collect::<Vec<_>>();
                         detail.updates = if entries.is_empty() {
                             BrowseUpdatesState::Empty
                         } else {
                             BrowseUpdatesState::Loaded(entries)
                         };
                     }
+                }
+                BrowseEvent::MyModUpdatesLoaded {
+                    mod_id, updates, ..
+                } => {
+                    self.my_mod_updates_inflight.remove(&mod_id);
+                    let entries = self.updates_to_entries(updates, mod_id);
+                    let state = if entries.is_empty() {
+                        MyModUpdatesState::Empty {
+                            fetched_at: Utc::now(),
+                        }
+                    } else {
+                        MyModUpdatesState::Ready {
+                            entries,
+                            fetched_at: Utc::now(),
+                        }
+                    };
+                    self.my_mod_updates.insert(mod_id, state);
                 }
                 BrowseEvent::UpdatesWarning {
                     mod_id, warning, ..
@@ -1385,6 +1468,45 @@ impl HestiaApp {
                         self.text().browse_updates_failed_message(mod_id, &error),
                         None,
                     );
+                }
+                BrowseEvent::MyModUpdatesFailed { mod_id, error, .. } => {
+                    self.my_mod_updates_inflight.remove(&mod_id);
+                    // Reaching here means the fetch failed with no disk cache to fall
+                    // back to. Keep any entries already on screen (resetting their window
+                    // so we retry in 30 min, not every frame); otherwise show the inline
+                    // "couldn't load" state. No toast: MY MODS updates are a passive read.
+                    match self.my_mod_updates.remove(&mod_id) {
+                        Some(MyModUpdatesState::Ready { entries, .. }) => {
+                            self.my_mod_updates.insert(
+                                mod_id,
+                                MyModUpdatesState::Ready {
+                                    entries,
+                                    fetched_at: Utc::now(),
+                                },
+                            );
+                        }
+                        Some(MyModUpdatesState::Empty { .. }) => {
+                            self.my_mod_updates.insert(
+                                mod_id,
+                                MyModUpdatesState::Empty {
+                                    fetched_at: Utc::now(),
+                                },
+                            );
+                        }
+                        _ => {
+                            let message = self.text().could_not_load_updates().to_string();
+                            self.my_mod_updates.insert(
+                                mod_id,
+                                MyModUpdatesState::Failed {
+                                    message,
+                                    attempted_at: Utc::now(),
+                                },
+                            );
+                        }
+                    }
+                    self.log_warn(format!(
+                        "MY MODS updates fetch failed for mod {mod_id}: {error}"
+                    ));
                 }
             }
         }

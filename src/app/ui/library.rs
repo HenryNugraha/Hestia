@@ -3735,6 +3735,105 @@ impl HestiaApp {
         self.personal_note_edit_text = initial_text;
     }
 
+    /// Render the ported "Updates" section for a GameBanana-linked MY MOD, shown inside
+    /// the Description source view. Mirrors the Browse Updates section: the collapsible
+    /// header appears only when there are update entries or a hard failure; the loading,
+    /// empty, and never-requested states render nothing. [`Self::ensure_my_mod_updates`]
+    /// drives the fetch and the 30-minute cache; a cache fallback after a failed refresh
+    /// lands transparently as `Ready`.
+    fn render_my_mod_updates_section(&mut self, ui: &mut Ui, mod_id: u64) {
+        self.ensure_my_mod_updates(mod_id);
+        let Some(state) = self.my_mod_updates.get(&mod_id).cloned() else {
+            return;
+        };
+        let text = self.text();
+        let now = Local::now();
+        match state {
+            MyModUpdatesState::Ready { entries, .. } if !entries.is_empty() => {
+                ui.add_space(10.0);
+                egui::CollapsingHeader::new(
+                    bold(text.browse_updates(), Some(13.0))
+                        .underline()
+                        .color(Color32::from_gray(220)),
+                )
+                .id_salt(("my_mod_updates_section", mod_id))
+                .default_open(false)
+                .show(ui, |ui| {
+                    for (idx, entry) in entries.iter().enumerate() {
+                        if idx > 0 {
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                        }
+                        ui.horizontal_wrapped(|ui| {
+                            static_label(
+                                ui,
+                                RichText::new(&entry.name)
+                                    .strong()
+                                    .color(Color32::from_gray(228)),
+                            );
+                            if let Some(version) = &entry.version {
+                                static_label(
+                                    ui,
+                                    RichText::new(version)
+                                        .size(11.0)
+                                        .color(Color32::from_gray(160)),
+                                );
+                            }
+                            static_label(
+                                ui,
+                                RichText::new(format!(
+                                    "/ {}",
+                                    relative_time_label_at(entry.updated_at, now, false, text)
+                                ))
+                                .size(11.0)
+                                .color(Color32::from_gray(145)),
+                            );
+                        });
+                        if !entry.markdown.trim().is_empty() {
+                            self.queue_gif_previews_for_markdown(
+                                ui.ctx(),
+                                &entry.markdown,
+                                None,
+                                ui.available_width(),
+                            );
+                            let markdown =
+                                self.cached_rewrite_markdown_gif_images(&entry.markdown, None);
+                            self.prewarm_markdown_images(&markdown);
+                            self.render_markdown_with_inline_images(ui, &markdown, None);
+                        }
+                    }
+                    ui.add_space(1.0);
+                });
+                // Trailing gap so the description markdown that follows this section
+                // (see the Description arm in the detail pane) is not cramped against
+                // the collapsible. Mirrors Browse's post-Updates spacing.
+                ui.add_space(10.0);
+            }
+            MyModUpdatesState::Failed { message, .. } => {
+                ui.add_space(10.0);
+                egui::CollapsingHeader::new(
+                    RichText::new(text.browse_updates())
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_gray(220)),
+                )
+                .id_salt(("my_mod_updates_section", mod_id))
+                .default_open(false)
+                .show(ui, |ui| {
+                    static_label(
+                        ui,
+                        RichText::new(&message)
+                            .size(12.0)
+                            .color(Color32::from_rgb(220, 120, 120)),
+                    );
+                });
+                ui.add_space(10.0);
+            }
+            _ => {}
+        }
+    }
+
     fn render_personal_note_editor(&mut self, ui: &mut Ui, mod_id: &str) {
         // Corner radius of the note input box. Raise this to round it more; the global
         // input radius (12) lives in platform.rs `widgets.*.corner_radius`.
@@ -9393,7 +9492,7 @@ impl HestiaApp {
                                             // unbounded available width) can't feed desired_width back
                                             // into itself and grow the field without bound.
                                             let input_w = (ui.available_width() - 12.0).clamp(80.0, 320.0);
-                                            ui.add(
+                                            let input_response = ui.add(
                                                 TextEdit::singleline(&mut input_str)
                                                     .hint_text(RichText::new(text.url_or_id()).color(Color32::from_gray(120)))
                                                     .desired_width(input_w)
@@ -9401,11 +9500,17 @@ impl HestiaApp {
                                             );
                                             ui.add_space(6.0);
                                             let parsed_link = parse_gb_link(&input_str);
-                                            if ui
+                                            // Enter in the field submits just like clicking Sync Mod. The
+                                            // inner `if let Some(link)` gates on a valid parse, so a blank
+                                            // or unparseable entry does nothing (matching the button's
+                                            // disabled state).
+                                            let submit_via_enter = input_response.lost_focus()
+                                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                            let submit_via_button = ui
                                                 .add_enabled(parsed_link.is_some(), egui::Button::new(icon_text_sized(Icon::Link, text.sync_mod(), 12.0, 12.0)))
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
-                                            {
+                                                .clicked();
+                                            if submit_via_button || submit_via_enter {
                                                 if let Some(link) = parsed_link {
                                                     link_and_sync_id = Some(link);
                                                     input_str.clear();
@@ -10523,6 +10628,15 @@ impl HestiaApp {
 
                     match effective_source {
                         MetadataSourceKind::Description => {
+                            // Ported from the Browse detail: show the GameBanana update
+                            // log for linked mods, cached ~30 min (see
+                            // `ensure_my_mod_updates`). Unlinked mods have no id to fetch.
+                            // Rendered above the description markdown to match Browse's
+                            // layout, where Updates sits ahead of the description body.
+                            let gb_mod_id = parse_gb_id_from_entry(&selected);
+                            if gb_mod_id > 0 {
+                                self.render_my_mod_updates_section(ui, gb_mod_id);
+                            }
                             self.queue_gif_previews_for_markdown(
                                 ui.ctx(),
                                 &markdown,
@@ -10539,6 +10653,10 @@ impl HestiaApp {
                                 &markdown,
                                 Some(&selected.root_path),
                             );
+                            // Breathing room so the last line of the description does not
+                            // butt against the footer's divider line (painted just below
+                            // the scroll area) when scrolled to the bottom.
+                            ui.add_space(12.0);
                         }
                         MetadataSourceKind::TextFile => {
                             if personal_note_editing {

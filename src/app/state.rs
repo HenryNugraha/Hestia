@@ -186,6 +186,12 @@ enum ViewMode {
     Browse,
 }
 
+impl ViewMode {
+    /// Left-to-right order of the primary tabs, used by Ctrl+Tab /
+    /// Ctrl+Shift+Tab cycling. Keep in sync with the tab bar layout.
+    const TAB_ORDER: &'static [ViewMode] = &[ViewMode::Library, ViewMode::Browse];
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     General,
@@ -446,6 +452,10 @@ pub struct HestiaApp {
     translation_request_nonce: u64,
     cancelled_translation_requests: HashSet<u64>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
+    // MY MODS update log (ported from Browse's Updates section), keyed by GameBanana
+    // mod id. `my_mod_updates_inflight` de-dupes concurrent fetches for the same mod.
+    my_mod_updates: HashMap<u64, MyModUpdatesState>,
+    my_mod_updates_inflight: HashSet<u64>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
@@ -663,6 +673,27 @@ enum BrowseUpdatesState {
     Failed(String),
 }
 
+/// MY MODS update-log state, keyed by GameBanana mod id. Absence from the map means
+/// "never requested". `fetched_at` drives the in-memory 30-minute refresh window;
+/// `attempted_at` throttles retries after a hard failure. Entries reuse
+/// [`BrowseUpdateEntry`]. A cache fallback after a failed refresh is transparent —
+/// it lands as `Ready` with the cached entries, so the UI mirrors Browse exactly.
+#[derive(Clone)]
+enum MyModUpdatesState {
+    Loading,
+    Ready {
+        entries: Vec<BrowseUpdateEntry>,
+        fetched_at: DateTime<Utc>,
+    },
+    Empty {
+        fetched_at: DateTime<Utc>,
+    },
+    Failed {
+        message: String,
+        attempted_at: DateTime<Utc>,
+    },
+}
+
 struct PendingBrowseInstall {
     task_id: u64,
     mod_id: u64,
@@ -854,6 +885,12 @@ enum BrowseRequest {
         mod_id: u64,
         force_refresh: bool,
     },
+    /// MY MODS update log fetch. The worker owns the 30-minute freshness window and
+    /// the stale-fallback (via `CachedModUpdates`), so no `force_refresh` here.
+    FetchMyModUpdates {
+        nonce: u64,
+        mod_id: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -1002,6 +1039,16 @@ enum BrowseEvent {
         warning: String,
     },
     UpdatesFailed {
+        _nonce: u64,
+        mod_id: u64,
+        error: String,
+    },
+    MyModUpdatesLoaded {
+        _nonce: u64,
+        mod_id: u64,
+        updates: gamebanana::ApiEnvelope<gamebanana::UpdateRecord>,
+    },
+    MyModUpdatesFailed {
         _nonce: u64,
         mod_id: u64,
         error: String,
