@@ -609,7 +609,11 @@ impl HestiaApp {
 
     fn resolve_mod_thumb_path(mod_root: &Path, profile: ThumbnailProfile) -> PathBuf {
         let file_name = match profile {
-            ThumbnailProfile::Card => "card_thumb.png",
+            // `_v2` busts caches from before card thumbs were baked cover-cropped
+            // to the card aspect; the old letterboxed `card_thumb.png` files are
+            // valid by source-identity, so a filename change is what forces the
+            // one-time regeneration.
+            ThumbnailProfile::Card => "card_thumb_v2.png",
             ThumbnailProfile::Rail => "rail_thumb.png",
             ThumbnailProfile::Icon => "icon_thumb.png",
         };

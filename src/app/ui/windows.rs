@@ -76,7 +76,12 @@ impl HestiaApp {
                 .open(&mut whats_new_open)
                 .order(egui::Order::Foreground)
                 .title_bar(true)
-                .resizable(false)
+                .resizable(true)
+                // Body is a short fixed bullet list with no scroll area, so keep a
+                // floor that comfortably fits it; growing just adds empty space,
+                // and this stops a shrink from clipping the highlights.
+                .min_width(360.0)
+                .min_height(180.0)
                 .collapsible(true)
                 .frame(window_frame);
 
@@ -86,7 +91,9 @@ impl HestiaApp {
             let window_size = egui::vec2(460.0, 220.0);
             window = window
                 .movable(true)
-                .fixed_size(window_size)
+                // `default_size` (not `fixed_size`) so `resizable` actually takes
+                // effect — `fixed_size` hard-locks the window and makes it inert.
+                .default_size(window_size)
                 .constrain_to(inset_rect);
             if force_default_pos {
                 let top_right = egui::pos2(inset_rect.max.x, inset_rect.min.y);

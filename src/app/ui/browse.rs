@@ -1386,10 +1386,14 @@ impl HestiaApp {
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
             .default_size(BROWSE_DETAIL_SIZE)
-            .max_width(BROWSE_DETAIL_SIZE.x)
+            .min_width(360.0)
+            .min_height(320.0)
             .open(&mut browse_detail_open)
             .title_bar(true)
-            .resizable(false)
+            // Mirrors the MY MOD detail window: resizable with the old `max_width`
+            // cap dropped so it can widen; the body scrolls vertically and its
+            // rail keys off live `available_width()`, so it reflows cleanly.
+            .resizable(true)
             .collapsible(true)
             .movable(true)
             .constrain_to(details_rect)

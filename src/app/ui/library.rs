@@ -8700,12 +8700,16 @@ impl HestiaApp {
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
             .default_size(details_size)
-            .max_width(details_size.x)
+            .min_width(360.0)
+            .min_height(320.0)
             .open(&mut mod_detail_open)
             .title_bar(true)
-            .resizable(false)
+            .resizable(true)
             .collapsible(true)
             .movable(true)
+            // Bounds the window to the workspace pane, which also caps how large
+            // it can be dragged; `min_width`/`min_height` keep it usable at the
+            // low end. The old `max_width` cap is dropped so it can widen.
             .constrain_to(details_rect)
             .frame(
                 egui::Frame::window(ui.style())
