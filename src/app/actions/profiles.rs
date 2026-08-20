@@ -36,6 +36,24 @@ impl HestiaApp {
         if kind == ProfileOperationKind::Recover {
             return None;
         }
+        // Recovery could not vouch for this game's storage (an interrupted switch may still
+        // be half-applied), so mutating operations stay off until a recovery pass succeeds.
+        // Recover itself is exempt above, and re-queueing one clears the game from this set.
+        if self
+            .selected_game()
+            .is_some_and(|game| self.profile_recovery_failed_games.contains(&game.definition.id))
+        {
+            return Some("profile recovery failed for this game");
+        }
+        if self
+            .selected_game()
+            .map(|game| self.game_readiness_for(game))
+            .is_some_and(|readiness| {
+                readiness.primary_issue == Some(GameSetupIssue::NoGameDirAccess)
+            })
+        {
+            return Some("Hestia has no write access to the game folder");
+        }
         if self.startup_scan_loading {
             return Some("a game refresh is running");
         }
@@ -1385,8 +1403,17 @@ impl HestiaApp {
     }
 
     fn dispatch_profile_recovery(&mut self) {
-        self.profile_recovery_failed = false;
-        self.profile_recovery_queue = self.state.games.clone().into();
+        self.profile_recovery_failed_games.clear();
+        // Disabled games are skipped: recovery reads the game's own directories, and a game
+        // the user turned off must not be touched at startup. Re-enabling it in the settings
+        // queues its recovery again.
+        self.profile_recovery_queue = self
+            .state
+            .games
+            .iter()
+            .filter(|game| game.enabled)
+            .cloned()
+            .collect();
         self.dispatch_next_profile_recovery();
     }
 
@@ -1400,7 +1427,7 @@ impl HestiaApp {
         else {
             return;
         };
-        self.profile_recovery_failed = false;
+        self.profile_recovery_failed_games.remove(game_id);
         if self
             .profile_recovery_queue
             .iter()
@@ -1459,8 +1486,9 @@ impl HestiaApp {
         let Some(game) = self.profile_recovery_queue.pop_front() else {
             return;
         };
+        let game_id = game.definition.id.clone();
         if let Err(error) = self.begin_profile_operation(
-            game.definition.id.clone(),
+            game_id.clone(),
             game,
             ProfileOperationKind::Recover,
             None,
@@ -1476,11 +1504,14 @@ impl HestiaApp {
             None,
             None,
         ) {
-            self.profile_recovery_failed = true;
+            self.profile_recovery_failed_games.insert(game_id);
             self.report_error_message(
                 format!("profile recovery could not start: {error:#}"),
                 Some("Profile recovery failed"),
             );
+            // One game failing to even start must not strand the rest of the queue; the
+            // startup launch waits for the queue to drain.
+            self.dispatch_next_profile_recovery();
         }
     }
 
@@ -1989,23 +2020,21 @@ impl HestiaApp {
                         continue;
                     };
                     let was_recovery = inflight.kind == ProfileOperationKind::Recover;
-                    let recovery_blocking = was_recovery
-                        && matches!(
-                            &event,
-                            ProfileEvent::Failed {
-                                recovery_blocking: true,
-                                ..
-                            }
-                        );
+                    let recovery_blocked_game = match &event {
+                        ProfileEvent::Failed {
+                            recovery_blocking: true,
+                            game_id,
+                            ..
+                        } if was_recovery => Some(game_id.clone()),
+                        _ => None,
+                    };
                     self.consume_foreground_profile_event(event, inflight);
-                    if was_recovery {
-                        if recovery_blocking {
-                            self.profile_recovery_failed = true;
-                        }
-                        self.dispatch_next_profile_recovery();
-                    } else {
-                        self.dispatch_next_profile_recovery();
+                    // The failure only blocks profile operations for this game; startup and
+                    // every other game continue normally.
+                    if let Some(game_id) = recovery_blocked_game {
+                        self.profile_recovery_failed_games.insert(game_id);
                     }
+                    self.dispatch_next_profile_recovery();
                 }
             }
         }

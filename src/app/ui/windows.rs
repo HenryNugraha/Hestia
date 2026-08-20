@@ -3379,6 +3379,8 @@ impl HestiaApp {
                     let mut selected_game_was_disabled = false;
                     let mut enabled_game_ids = Vec::new();
                     let mut reload_setting_changes = Vec::new();
+                    let grant_access_inflight = self.grant_access_inflight;
+                    let mut grant_access_request: Option<(String, PathBuf)> = None;
                     for (index, game) in self.state.games.iter_mut().enumerate() {
                         ui.group(|ui| {
                                 ui.set_min_width(360.0);
@@ -3607,6 +3609,15 @@ impl HestiaApp {
                                                     .mods_path(self.state.static_prefs.use_default_mods_path)
                                                     .map(|path| !path.is_dir())
                                                     .unwrap_or(true);
+                                                // Denied creation on an existing ancestor means the path is
+                                                // protected, even if the mods dir itself is missing (it may be
+                                                // missing precisely because Hestia could not create it).
+                                                let mods_protected = game
+                                                    .mods_path(self.state.static_prefs.use_default_mods_path)
+                                                    .is_some_and(|path| {
+                                                        path.ancestors().any(|ancestor| ancestor.is_dir())
+                                                            && !path_allows_dir_creation(&path)
+                                                    });
                                                 ui.horizontal(|ui| {
                                                     let mods_label = if game.is_unreal_engine() {
                                                         text.games_unreal_mod_folder().to_string()
@@ -3618,7 +3629,58 @@ impl HestiaApp {
                                                             .small()
                                                             .color(Color32::from_gray(165)),
                                                     ).on_hover_cursor(egui::CursorIcon::Default);
-                                                    if mods_invalid {
+                                                    if mods_protected {
+                                                        ui.label(icon_rich(Icon::AlertTriangle, 13.0, warn_color))
+                                                        .on_hover_cursor(egui::CursorIcon::Default);
+                                                        ui.add_space(-8.0);
+                                                        ui.label(
+                                                            RichText::new(text.games_protected_path())
+                                                                .small()
+                                                                .color(warn_color),
+                                                        ).on_hover_cursor(egui::CursorIcon::Default);
+                                                        let scope_dir = profiles::profile_roots(
+                                                            game,
+                                                            self.state.static_prefs.use_default_mods_path,
+                                                        )
+                                                        .ok()
+                                                        .and_then(|roots| {
+                                                            roots.profiles_dir.parent().map(Path::to_path_buf)
+                                                        })
+                                                        .or_else(|| {
+                                                            game.mods_path(
+                                                                self.state.static_prefs.use_default_mods_path,
+                                                            )
+                                                            .and_then(|path| {
+                                                                path.parent().map(Path::to_path_buf)
+                                                            })
+                                                        });
+                                                        if let Some(scope_dir) = scope_dir {
+                                                            ui.add_space(-4.0);
+                                                            let grant = ui
+                                                                .scope(|ui| {
+                                                                    ui.spacing_mut().button_padding =
+                                                                        Vec2::new(6.0, 2.0);
+                                                                    ui.add_enabled(
+                                                                        !grant_access_inflight,
+                                                                        egui::Button::new(
+                                                                            RichText::new(text.grant_access())
+                                                                                .small(),
+                                                                        ),
+                                                                    )
+                                                                })
+                                                                .inner
+                                                                .on_hover_text(text.protected_path_description(
+                                                                    &scope_dir.display().to_string(),
+                                                                ))
+                                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                            if grant.clicked() {
+                                                                grant_access_request = Some((
+                                                                    game.definition.id.clone(),
+                                                                    scope_dir,
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else if mods_invalid {
                                                         ui.label(icon_rich(Icon::AlertTriangle, 13.0, warn_color))
                                                         .on_hover_cursor(egui::CursorIcon::Default);
                                                         ui.add_space(-8.0);
@@ -3724,11 +3786,17 @@ impl HestiaApp {
                                 );
                             });
                         }
+                        // Startup recovery skips disabled games, so a re-enabled game owes
+                        // one recovery pass before its profiles are trusted again.
+                        self.queue_profile_recovery_for_game(&game_id);
                         self.queue_game_refresh(game_id);
                     }
                     for (game_id, enabled) in reload_setting_changes {
                         self.request_xxmi_reload_setting_change(&game_id, enabled);
                         should_save = true;
+                    }
+                    if let Some((game_id, dir)) = grant_access_request {
+                        self.start_grant_game_dir_access(&game_id, dir);
                     }
                     }
                     SettingsTab::Advanced => {

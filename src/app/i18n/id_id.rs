@@ -313,6 +313,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mod NTE tidak akan dimuat sampai AyakaNTEModLoader.asi atau UniversalSigBypasser.asi terpasang.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
     "UniversalSigBypasser", // LibraryNteBypasserUniversal
+    "Hestia tidak dapat mengubah folder game ini", // LibraryProtectedPathTitle
+    "Game ini terpasang di lokasi yang dilindungi ({path}), sehingga Windows memblokir Hestia untuk memasang, menonaktifkan, atau mengganti mod di sini. Klik Beri akses agar akun Windows kamu dapat mengubah folder game, ini hanya memerlukan persetujuan administrator satu kali. Menjalankan ulang sebagai admin juga bisa, tetapi harus diulang setiap kali dibuka dan drag-and-drop dari Explorer tidak akan berfungsi selama berjalan sebagai admin.", // LibraryProtectedPathDescription
+    "Beri akses", // LibraryGrantAccess
+    "Mulai ulang sebagai admin", // LibraryRestartAsAdmin
     "Filter nama mod...", // LibrarySearchHint
     "Mod Terpasang", // LibraryInstalledMods
     "{count} dipilih", // LibrarySelectedCount
@@ -685,6 +689,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "XXMI", // SettingsGamesXxmiSection
     "XXMI Launcher:", // SettingsGamesXxmiLauncher
     "Path tidak ditemukan", // SettingsGamesPathNotFound
+    "Path dilindungi", // SettingsGamesProtectedPath
     "Gunakan path mod XXMI default untuk game", // SettingsGamesUseDefaultXxmiModPath
     "Game", // SettingsGamesGamesSection
     "File EXE game:", // SettingsGamesGameExeFile

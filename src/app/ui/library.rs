@@ -3960,6 +3960,7 @@ impl HestiaApp {
 
     fn render_selected_game_setup_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
         match self.selected_game_mod_setup_issue()? {
+            GameSetupIssue::NoGameDirAccess => self.render_protected_path_warning(ui),
             GameSetupIssue::MissingXxmiLauncher => self.render_xxmi_launcher_warning(ui),
             GameSetupIssue::MissingNteBypasser => self.render_nte_bypasser_warning(ui),
             GameSetupIssue::MissingModFolder | GameSetupIssue::MissingUnrealRequirement => {
@@ -4164,6 +4165,89 @@ impl HestiaApp {
                                     self.report_error(err, Some(text.could_not_open_location()));
                                 }
                             }
+                        }
+                    });
+                });
+            });
+        Some(frame.response.rect)
+    }
+
+    fn render_protected_path_warning(&mut self, ui: &mut Ui) -> Option<egui::Rect> {
+        let (game_id, scope_dir) = {
+            let game = self.selected_game()?;
+            let scope_dir = self.game_write_scope_dir(game)?;
+            (game.definition.id.clone(), scope_dir)
+        };
+        let grant_inflight = self.grant_access_inflight;
+        let text = self.text();
+        let description = text.protected_path_description(&scope_dir.display().to_string());
+        let warn_color = Color32::from_rgb(203, 104, 59);
+        let frame = egui::Frame::new()
+            .fill(Color32::from_rgb(43, 38, 36))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(113, 70, 48)))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .outer_margin(egui::Margin::symmetric(12, 0))
+            .corner_radius(egui::CornerRadius::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        static_label(ui, icon_rich(Icon::AlertTriangle, 18.0, warn_color));
+                        ui.add_space(4.0);
+                        ui.vertical(|ui| {
+                            static_label(
+                                ui,
+                                RichText::new(text.protected_path_title())
+                                    .size(13.5)
+                                    .strong()
+                                    .color(Color32::from_rgb(238, 220, 207)),
+                            );
+                            ui.add_space(-2.0);
+                            static_label(
+                                ui,
+                                RichText::new(&description)
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(198, 176, 162)),
+                            );
+                        });
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(26.0);
+                        let grant = ui
+                            .add_enabled(
+                                !grant_inflight,
+                                egui::Button::new(icon_text_sized(
+                                    Icon::LockOpen,
+                                    text.grant_access(),
+                                    13.0,
+                                    13.0,
+                                ))
+                                .min_size(egui::vec2(150.0, 30.0))
+                                .fill(Color32::from_rgb(180, 78, 35))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(203, 104, 59))),
+                            )
+                            .on_hover_text(scope_dir.display().to_string())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if grant.clicked() {
+                            self.start_grant_game_dir_access(&game_id, scope_dir.clone());
+                        }
+
+                        let restart = ui
+                            .add(
+                                egui::Button::new(icon_text_sized(
+                                    Icon::RotateCw,
+                                    text.restart_as_admin(),
+                                    13.0,
+                                    13.0,
+                                ))
+                                .min_size(egui::vec2(170.0, 30.0))
+                                .fill(Color32::from_rgb(54, 50, 48))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(96, 78, 68))),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if restart.clicked() {
+                            self.restart_as_administrator();
                         }
                     });
                 });

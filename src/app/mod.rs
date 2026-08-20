@@ -49,7 +49,7 @@ use crate::{
         UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
         default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
         default_unreal_pak_mods_path_from_exe, default_vanilla_exe_candidates, feedback_survey,
-        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        path_allows_dir_creation, registry_modded_exe_candidates, registry_vanilla_exe_candidates,
         shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
     },
     persistence::{self, PortablePaths},
@@ -132,6 +132,7 @@ impl eframe::App for HestiaApp {
             self.consume_install_events();
             self.consume_refresh_events();
             self.consume_xxmi_reload_events();
+            self.consume_grant_access_events();
             self.consume_hotkey_customization_events();
             self.consume_profile_events();
         }

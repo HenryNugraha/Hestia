@@ -311,6 +311,10 @@ enum TextKey {
     LibraryNteBypasserMissingDescription,
     LibraryNteBypasserAyaka,
     LibraryNteBypasserUniversal,
+    LibraryProtectedPathTitle,
+    LibraryProtectedPathDescription,
+    LibraryGrantAccess,
+    LibraryRestartAsAdmin,
     LibrarySearchHint,
     LibraryInstalledMods,
     LibrarySelectedCount,
@@ -675,6 +679,7 @@ enum TextKey {
     SettingsGamesXxmiSection,
     SettingsGamesXxmiLauncher,
     SettingsGamesPathNotFound,
+    SettingsGamesProtectedPath,
     SettingsGamesUseDefaultXxmiModPath,
     SettingsGamesGamesSection,
     SettingsGamesGameExeFile,
@@ -1992,6 +1997,23 @@ impl TextCatalog {
 
     fn nte_bypasser_missing_description(self) -> &'static str {
         self.get(TextKey::LibraryNteBypasserMissingDescription)
+    }
+
+    fn protected_path_title(self) -> &'static str {
+        self.get(TextKey::LibraryProtectedPathTitle)
+    }
+
+    fn protected_path_description(self, path: &str) -> String {
+        self.get(TextKey::LibraryProtectedPathDescription)
+            .replace("{path}", path)
+    }
+
+    fn grant_access(self) -> &'static str {
+        self.get(TextKey::LibraryGrantAccess)
+    }
+
+    fn restart_as_admin(self) -> &'static str {
+        self.get(TextKey::LibraryRestartAsAdmin)
     }
 
     fn nte_bypasser_ayaka(self) -> &'static str {
@@ -3435,6 +3457,10 @@ impl TextCatalog {
         self.get(TextKey::SettingsGamesPathNotFound)
     }
 
+    fn games_protected_path(self) -> &'static str {
+        self.get(TextKey::SettingsGamesProtectedPath)
+    }
+
     fn games_use_default_xxmi_mod_path(self) -> &'static str {
         self.get(TextKey::SettingsGamesUseDefaultXxmiModPath)
     }
@@ -3856,6 +3882,46 @@ mod tests {
                 assert_eq!(
                     actual, expected,
                     "{language} catalog key mismatch at index {index}"
+                );
+            }
+        }
+    }
+
+    fn placeholder_set(value: &str) -> Vec<&str> {
+        let mut placeholders: Vec<&str> = Vec::new();
+        let mut rest = value;
+        while let Some(start) = rest.find('{') {
+            let Some(len) = rest[start + 1..].find('}') else {
+                break;
+            };
+            let token = &rest[start + 1..start + 1 + len];
+            if !token.is_empty()
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !placeholders.contains(&token)
+            {
+                placeholders.push(token);
+            }
+            rest = &rest[start + 1 + len + 1..];
+        }
+        placeholders.sort_unstable();
+        placeholders
+    }
+
+    #[test]
+    fn translations_keep_the_placeholders_used_by_the_english_catalog() {
+        let keys = text_key_names();
+        let catalogs = [("id_id", &ID_ID), ("zh_cn", &ZH_CN), ("ru_ru", &RU_RU)];
+
+        for index in 0..TEXT_KEY_COUNT {
+            let expected = placeholder_set(EN_US[index]);
+            for (language, catalog) in catalogs {
+                assert_eq!(
+                    placeholder_set(catalog[index]),
+                    expected,
+                    "{language} placeholder mismatch for {}",
+                    keys.get(index).copied().unwrap_or("<unknown key>")
                 );
             }
         }

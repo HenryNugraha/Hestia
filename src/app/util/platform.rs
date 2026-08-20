@@ -715,6 +715,132 @@ fn open_in_explorer(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// SID of the account running this process. Must be read from the unelevated process:
+/// the UAC prompt may authenticate a different (admin) account, while it is this user
+/// who needs the grant.
+#[cfg(windows)]
+fn current_user_sid() -> Result<String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|err| anyhow!("failed to run whoami: {err}"))?;
+    if !output.status.success() {
+        bail!("whoami exited with {}", output.status);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .rsplit(',')
+        .next()
+        .map(|field| field.trim().trim_matches('"').to_string())
+        .filter(|sid| sid.starts_with("S-1-"))
+        .ok_or_else(|| anyhow!("unexpected whoami output: {}", stdout.trim()))
+}
+
+/// Grant the current user's account Modify rights on `dir` (inherited by its subtree) through
+/// an elevated icacls run. Blocks until icacls exits; call from a worker thread.
+#[cfg(windows)]
+fn elevated_grant_dir_access(dir: &Path) -> Result<()> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
+    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let sid = current_user_sid()?;
+    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(Some(0)).collect();
+    let file: Vec<u16> = OsStr::new("icacls.exe")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // A trailing backslash (drive roots like C:\) would escape the closing quote in the
+    // argument line; doubling it keeps the path intact after unquoting.
+    let mut dir_str = dir.display().to_string();
+    if dir_str.ends_with('\\') {
+        dir_str.push('\\');
+    }
+    // (OI)(CI)M: Modify, inherited by existing and future children. icacls applies the
+    // inheritable ACE through SetNamedSecurityInfo, which propagates across the subtree
+    // without an explicit /T sweep.
+    let params_str = format!("\"{dir_str}\" /grant *{sid}:(OI)(CI)M");
+    let params: Vec<u16> = OsStr::new(&params_str)
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    unsafe { ShellExecuteExW(&mut info) }
+        .map_err(|err| anyhow!("administrator approval was declined or icacls could not start: {err}"))?;
+    if info.hProcess.is_invalid() {
+        bail!("icacls did not start");
+    }
+    let exit_code = unsafe {
+        let _ = WaitForSingleObject(info.hProcess, INFINITE);
+        let mut code = 0u32;
+        let result = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+        result.map_err(|err| anyhow!("failed to read icacls exit code: {err}"))?;
+        code
+    };
+    if exit_code != 0 {
+        bail!("icacls failed with exit code {exit_code}");
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn elevated_grant_dir_access(_dir: &Path) -> Result<()> {
+    bail!("granting folder access is only supported on Windows");
+}
+
+/// Relaunch this executable elevated (UAC prompt) with `arg`, without waiting. The caller
+/// exits the current process on success.
+#[cfg(windows)]
+fn launch_self_elevated(arg: &str) -> Result<()> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let exe = std::env::current_exe()
+        .map_err(|err| anyhow!("failed to locate current executable: {err}"))?;
+    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(Some(0)).collect();
+    let file: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
+    let params: Vec<u16> = OsStr::new(arg).encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR(params.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize <= 32 {
+        bail!("administrator approval was declined");
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn launch_self_elevated(_arg: &str) -> Result<()> {
+    bail!("elevated restart is only supported on Windows");
+}
+
 fn status_color(status: &ModStatus) -> Color32 {
     match status {
         ModStatus::Active => Color32::from_rgb(102, 196, 132),

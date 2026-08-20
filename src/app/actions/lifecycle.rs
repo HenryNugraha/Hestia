@@ -187,6 +187,7 @@ impl HestiaApp {
             refresh_result_tx,
         );
         let (xxmi_reload_event_tx, xxmi_reload_event_rx) = worker_channel::<XxmiReloadEvent>();
+        let (grant_access_event_tx, grant_access_event_rx) = worker_channel::<GrantAccessEvent>();
         let (hotkey_customization_tx, hotkey_customization_request_rx) =
             worker_channel::<HotkeyCustomizationRequest>();
         let (hotkey_customization_event_tx, hotkey_customization_rx) =
@@ -502,6 +503,7 @@ impl HestiaApp {
             markdown_dependency_signature_cache: HashMap::new(),
             render_safe_markdown_cache: HashMap::new(),
             path_file_status_cache: Mutex::new(HashMap::new()),
+            path_write_status_cache: Mutex::new(HashMap::new()),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,
             browse_page_generation: 0,
@@ -529,6 +531,9 @@ impl HestiaApp {
             refresh_pending_selected_game: None,
             xxmi_reload_event_tx,
             xxmi_reload_event_rx,
+            grant_access_event_tx,
+            grant_access_event_rx,
+            grant_access_inflight: false,
             xxmi_reload_inflight: HashSet::new(),
             xxmi_reload_pending: HashSet::new(),
             xxmi_namespace_cache: HashMap::new(),
@@ -539,7 +544,7 @@ impl HestiaApp {
             profile_compression_states: HashMap::new(),
             profile_next_operation_id: 1,
             profile_recovery_queue: VecDeque::new(),
-            profile_recovery_failed: false,
+            profile_recovery_failed_games: HashSet::new(),
             profile_reconcile_inflight: HashSet::new(),
             profile_selector_popup_open_last_frame: false,
             profile_name_prompt: None,
@@ -599,12 +604,16 @@ impl HestiaApp {
     }
 
     fn complete_startup_launch(&mut self, ctx: &egui::Context) {
+        // Only wait while recovery is still *running*. A recovery that failed must not hold
+        // the launch: the failure is per-game (tracked in `profile_recovery_failed_games`,
+        // which blocks profile operations for that game alone), and keeping the whole app in
+        // the startup-loading state would freeze every other game's library over one
+        // inaccessible install.
         let profile_recovery_pending = self
             .profile_operation_inflight
             .as_ref()
             .is_some_and(|operation| operation.kind == ProfileOperationKind::Recover)
-            || !self.profile_recovery_queue.is_empty()
-            || self.profile_recovery_failed;
+            || !self.profile_recovery_queue.is_empty();
         if !self.startup_launch_pending || self.proxy_apply_inflight || profile_recovery_pending {
             return;
         }
@@ -838,6 +847,85 @@ impl HestiaApp {
                 .spawn();
         }
         std::process::exit(0);
+    }
+
+    /// Relaunches the app elevated via a UAC prompt. Session-only: elevation is not
+    /// remembered across launches, and Explorer drag-and-drop cannot reach an elevated
+    /// window (UIPI), which the warning copy tells the user about.
+    fn restart_as_administrator(&mut self) {
+        if self.has_active_mod_tasks() {
+            self.report_warn(
+                "elevated restart blocked while tasks are active",
+                Some(self.text().app_update_wait_for_active_tasks()),
+            );
+            return;
+        }
+        self.save_state();
+        match launch_self_elevated("--after-elevated-restart") {
+            Ok(()) => std::process::exit(0),
+            Err(err) => self.report_error(err, Some(self.text().restart_as_admin())),
+        }
+    }
+
+    /// The directory whose ACL governs every mod operation for this game: the parent of the
+    /// profile storage dir, which contains the mods dir, the disabled-mods dir, and profile
+    /// archives. Granting access here (with inheritance) unblocks all of them.
+    fn game_write_scope_dir(&self, game: &GameInstall) -> Option<PathBuf> {
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        if let Ok(roots) = profiles::profile_roots(game, use_default) {
+            if let Some(parent) = roots.profiles_dir.parent() {
+                return Some(parent.to_path_buf());
+            }
+        }
+        game.mods_path(use_default)
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+    }
+
+    fn start_grant_game_dir_access(&mut self, game_id: &str, dir: PathBuf) {
+        if self.grant_access_inflight {
+            return;
+        }
+        self.grant_access_inflight = true;
+        let event_tx = self.grant_access_event_tx.clone();
+        let event_game_id = game_id.to_string();
+        let spawned = std::thread::Builder::new()
+            .name(format!("hestia-grant-access-{game_id}"))
+            .spawn(move || {
+                let error = elevated_grant_dir_access(&dir)
+                    .err()
+                    .map(|err| format!("{err:#}"));
+                let _ = event_tx.send(GrantAccessEvent {
+                    game_id: event_game_id,
+                    error,
+                });
+            });
+        if let Err(err) = spawned {
+            self.grant_access_inflight = false;
+            self.report_error(
+                anyhow!("failed to start access grant thread: {err}"),
+                Some(self.text().grant_access()),
+            );
+        }
+    }
+
+    fn consume_grant_access_events(&mut self) {
+        while let Ok(event) = self.grant_access_event_rx.try_recv() {
+            self.grant_access_inflight = false;
+            match event.error {
+                None => {
+                    let game_id = event.game_id;
+                    self.push_log(format!("granted write access to the game folder ({game_id})"));
+                    self.invalidate_path_write_status_cache();
+                    // Storage recovery and the mod scan were skipped or degraded while the
+                    // directory was read-only; rerun both now that writes work.
+                    self.queue_profile_recovery_for_game(&game_id);
+                    self.queue_game_refresh(game_id);
+                }
+                Some(error) => {
+                    self.report_error_message(error, Some(self.text().grant_access()));
+                }
+            }
+        }
     }
 
     fn restart_network_work_for_proxy_change(&mut self) {
@@ -1831,6 +1919,7 @@ impl HestiaApp {
         match issue {
             GameSetupIssue::MissingGamePath => text.game_not_installed().to_string(),
             GameSetupIssue::MissingModFolder => text.games_path_not_found().to_string(),
+            GameSetupIssue::NoGameDirAccess => text.protected_path_title().to_string(),
             GameSetupIssue::MissingXxmiLauncher => text.install_xxmi_description().to_string(),
             GameSetupIssue::MissingNteBypasser => text.nte_bypasser_missing_description().to_string(),
             GameSetupIssue::MissingUnrealRequirement => text.install_unavailable().to_string(),
@@ -1846,6 +1935,10 @@ impl HestiaApp {
                 .is_some_and(|path| self.cached_path_is_file(path, PATH_STATUS_TTL));
         let mods_path = game.mods_path(self.state.static_prefs.use_default_mods_path);
         let mod_root_ready = game_present && mods_path.is_some();
+        let mods_dir_writable = mod_root_ready
+            && mods_path
+                .as_deref()
+                .is_some_and(|path| self.cached_path_allows_creation(path, PATH_STATUS_TTL));
         let mut mod_loader_ready = false;
         let mut primary_issue = None;
 
@@ -1853,6 +1946,10 @@ impl HestiaApp {
             primary_issue = Some(GameSetupIssue::MissingGamePath);
         } else if !mod_root_ready {
             primary_issue = Some(GameSetupIssue::MissingModFolder);
+        } else if !mods_dir_writable {
+            // Windows blocks unelevated writes into the game directory (e.g. Program Files
+            // installs).  This outranks loader issues: installing a loader would fail too.
+            primary_issue = Some(GameSetupIssue::NoGameDirAccess);
         }
 
         if game_present && mod_root_ready {
@@ -1866,7 +1963,7 @@ impl HestiaApp {
                         .or_else(|| game.modded_exe_path_override.as_deref())
                         .is_some_and(|path| self.cached_path_is_file(path, PATH_STATUS_TTL));
                     mod_loader_ready = launcher_exists;
-                    if !launcher_exists {
+                    if !launcher_exists && primary_issue.is_none() {
                         primary_issue = Some(GameSetupIssue::MissingXxmiLauncher);
                     }
                 }
@@ -1884,7 +1981,7 @@ impl HestiaApp {
                             }),
                         _ => false,
                     };
-                    if !mod_loader_ready {
+                    if !mod_loader_ready && primary_issue.is_none() {
                         primary_issue = match game.definition.id.as_str() {
                             "nte" => Some(GameSetupIssue::MissingNteBypasser),
                             _ => Some(GameSetupIssue::MissingUnrealRequirement),
@@ -1894,7 +1991,7 @@ impl HestiaApp {
             }
         }
 
-        let can_install_mods = game_present && mod_root_ready && mod_loader_ready;
+        let can_install_mods = game_present && mod_root_ready && mods_dir_writable && mod_loader_ready;
         GameReadiness {
             game_present,
             can_launch_vanilla: game_present,
@@ -1927,15 +2024,46 @@ impl HestiaApp {
         path.is_file()
     }
 
+    fn cached_path_allows_creation(&self, path: &Path, ttl: Duration) -> bool {
+        let now = Instant::now();
+        if let Ok(mut cache) = self.path_write_status_cache.lock() {
+            if let Some((writable, checked_at)) = cache.get(path) {
+                if now.duration_since(*checked_at) < ttl {
+                    return *writable;
+                }
+            }
+            if cache.len() >= 512 {
+                cache.retain(|_, (_, checked_at)| now.duration_since(*checked_at) < ttl);
+                if cache.len() >= 512 {
+                    cache.clear();
+                }
+            }
+            let writable = path_allows_dir_creation(path);
+            cache.insert(path.to_path_buf(), (writable, now));
+            return writable;
+        }
+        path_allows_dir_creation(path)
+    }
+
+    /// Drop cached write-probe results so the next readiness pass re-checks ACLs, e.g. right
+    /// after a grant-access elevation finishes.
+    fn invalidate_path_write_status_cache(&self) {
+        if let Ok(mut cache) = self.path_write_status_cache.lock() {
+            cache.clear();
+        }
+    }
+
     #[cfg(test)]
     fn compute_game_readiness(
         game: &GameInstall,
         use_default_mods_path: bool,
         global_modded_launcher: Option<&Path>,
+        mods_dir_writable: bool,
     ) -> GameReadiness {
         let game_present = Self::game_install_is_configured(game);
         let mods_path = game.mods_path(use_default_mods_path);
         let mod_root_ready = game_present && mods_path.is_some();
+        let mods_dir_writable = mod_root_ready && mods_dir_writable;
         let mut mod_loader_ready = false;
         let mut primary_issue = None;
 
@@ -1943,6 +2071,8 @@ impl HestiaApp {
             primary_issue = Some(GameSetupIssue::MissingGamePath);
         } else if !mod_root_ready {
             primary_issue = Some(GameSetupIssue::MissingModFolder);
+        } else if !mods_dir_writable {
+            primary_issue = Some(GameSetupIssue::NoGameDirAccess);
         }
 
         if game_present && mod_root_ready {
@@ -1952,13 +2082,13 @@ impl HestiaApp {
                         .or_else(|| game.modded_exe_path_override.as_deref())
                         .is_some_and(|path| path.is_file());
                     mod_loader_ready = launcher_exists;
-                    if !launcher_exists {
+                    if !launcher_exists && primary_issue.is_none() {
                         primary_issue = Some(GameSetupIssue::MissingXxmiLauncher);
                     }
                 }
                 GameBackend::UnrealEngine => {
                     mod_loader_ready = Self::unreal_game_mod_loader_ready(game);
-                    if !mod_loader_ready {
+                    if !mod_loader_ready && primary_issue.is_none() {
                         primary_issue = match game.definition.id.as_str() {
                             "nte" => Some(GameSetupIssue::MissingNteBypasser),
                             _ => Some(GameSetupIssue::MissingUnrealRequirement),
@@ -1968,7 +2098,8 @@ impl HestiaApp {
             }
         }
 
-        let can_install_mods = game_present && mod_root_ready && mod_loader_ready;
+        let can_install_mods =
+            game_present && mod_root_ready && mods_dir_writable && mod_loader_ready;
         GameReadiness {
             game_present,
             can_launch_vanilla: game_present,
@@ -3316,6 +3447,7 @@ impl HestiaApp {
             || !self.install_event_rx.is_empty()
             || !self.refresh_result_rx.is_empty()
             || !self.xxmi_reload_event_rx.is_empty()
+            || !self.grant_access_event_rx.is_empty()
             || !self.hotkey_customization_rx.is_empty()
             || !self.profile_event_rx.is_empty();
 
@@ -3377,7 +3509,7 @@ mod readiness_tests {
         let mut game = game_install("xxmi-test", GameBackend::Xxmi, exe);
         game.mods_path_override = Some(mods);
 
-        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None, true);
 
         assert!(readiness.game_present);
         assert!(readiness.can_launch_vanilla);
@@ -3402,7 +3534,7 @@ mod readiness_tests {
         let mut game = game_install("xxmi-test", GameBackend::Xxmi, exe);
         game.mods_path_override = Some(mods);
 
-        let readiness = HestiaApp::compute_game_readiness(&game, false, Some(&launcher));
+        let readiness = HestiaApp::compute_game_readiness(&game, false, Some(&launcher), true);
 
         assert!(readiness.game_present);
         assert!(readiness.can_launch_vanilla);
@@ -3428,7 +3560,7 @@ mod readiness_tests {
         std::fs::write(&exe, []).unwrap();
         let game = game_install("nte", GameBackend::UnrealEngine, exe);
 
-        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None, true);
 
         assert!(readiness.game_present);
         assert!(readiness.can_launch_vanilla);
@@ -3437,6 +3569,36 @@ mod readiness_tests {
         assert_eq!(
             readiness.primary_issue,
             Some(GameSetupIssue::MissingNteBypasser)
+        );
+    }
+
+    #[test]
+    fn unwritable_game_dir_blocks_mod_actions_and_outranks_loader_issues() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp
+            .path()
+            .join("Neverness To Everness")
+            .join("Client")
+            .join("WindowsNoEditor")
+            .join("HT")
+            .join("Binaries")
+            .join("Win64")
+            .join("HTGame.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, []).unwrap();
+        let game = game_install("nte", GameBackend::UnrealEngine, exe);
+
+        // No bypasser installed either; the access issue must still win.
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None, false);
+
+        assert!(readiness.game_present);
+        assert!(readiness.can_launch_vanilla);
+        assert!(readiness.can_open_mods_folder);
+        assert!(!readiness.can_install_mods);
+        assert!(!readiness.can_download_mods);
+        assert_eq!(
+            readiness.primary_issue,
+            Some(GameSetupIssue::NoGameDirAccess)
         );
     }
 
@@ -3457,7 +3619,7 @@ mod readiness_tests {
         std::fs::write(exe.parent().unwrap().join("UniversalSigBypasser.asi"), []).unwrap();
         let game = game_install("nte", GameBackend::UnrealEngine, exe);
 
-        let readiness = HestiaApp::compute_game_readiness(&game, false, None);
+        let readiness = HestiaApp::compute_game_readiness(&game, false, None, true);
 
         assert!(readiness.game_present);
         assert!(readiness.can_launch_vanilla);

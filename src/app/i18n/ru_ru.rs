@@ -313,6 +313,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Моды NTE не будут загружаться, пока не установлен AyakaNTEModLoader.asi или UniversalSigBypasser.asi.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
     "UniversalSigBypasser", // LibraryNteBypasserUniversal
+    "Hestia не может вносить изменения в папку этой игры", // LibraryProtectedPathTitle
+    "Игра установлена в защищённом расположении ({path}), поэтому Windows не даёт Hestia устанавливать, отключать и переключать моды здесь. Нажмите «Выдать доступ», чтобы ваша учётная запись Windows могла изменять папку игры, для этого потребуется одноразовое подтверждение администратора. Перезапуск от имени администратора тоже работает, но его придётся повторять при каждом запуске, а перетаскивание из Проводника в этом режиме работать не будет.", // LibraryProtectedPathDescription
+    "Выдать доступ", // LibraryGrantAccess
+    "Перезапустить от имени администратора", // LibraryRestartAsAdmin
     "Фильтр по названию мода...", // LibrarySearchHint
     "Установленные моды", // LibraryInstalledMods
     "Выбрано: {count}", // LibrarySelectedCount
@@ -685,6 +689,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "XXMI", // SettingsGamesXxmiSection
     "Лаунчер XXMI:", // SettingsGamesXxmiLauncher
     "Путь не найден", // SettingsGamesPathNotFound
+    "Защищённый путь", // SettingsGamesProtectedPath
     "Использовать путь к модам XXMI по умолчанию для игр", // SettingsGamesUseDefaultXxmiModPath
     "Игры", // SettingsGamesGamesSection
     "EXE-файл игры:", // SettingsGamesGameExeFile

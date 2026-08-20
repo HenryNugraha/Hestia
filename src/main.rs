@@ -47,6 +47,8 @@ fn main() -> anyhow::Result<()> {
     }
     let after_update_launch = std::env::args_os().any(|arg| arg == "--after-update");
     let after_proxy_restart = std::env::args_os().any(|arg| arg == "--after-proxy-restart");
+    let after_elevated_restart = std::env::args_os().any(|arg| arg == "--after-elevated-restart");
+    let skip_instance_guard = after_update_launch || after_proxy_restart || after_elevated_restart;
 
     let portable =
         persistence::PortablePaths::discover().context("failed to discover portable paths")?;
@@ -58,12 +60,12 @@ fn main() -> anyhow::Result<()> {
     if app::apply_staged_app_update_before_gui(&portable, &mut state).unwrap_or(false) {
         return Ok(());
     }
-    let _single_instance_guard = if after_update_launch || after_proxy_restart {
+    let _single_instance_guard = if skip_instance_guard {
         None
     } else {
         acquire_single_instance_guard()?
     };
-    if _single_instance_guard.is_none() && !after_update_launch && !after_proxy_restart {
+    if _single_instance_guard.is_none() && !skip_instance_guard {
         return Ok(());
     }
     let feedback_survey_changed = state.prepare_feedback_survey_on_launch(model::feedback_survey());

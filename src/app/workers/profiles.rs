@@ -61,7 +61,9 @@ fn spawn_profile_worker(
                             let _ = tx.send(ProfileEvent::Failed {
                                 operation_id,
                                 game_id,
-                                error: err.to_string(),
+                                // Alternate formatting keeps the io cause ("Access is
+                                // denied") that plain Display drops with the context.
+                                error: format!("{err:#}"),
                                 recovery_blocking: err.recovery_blocking(),
                             });
                         }
@@ -105,7 +107,7 @@ fn spawn_profile_reconcile_worker(
                 Ok(Err(error)) => {
                     let _ = tx.send(ProfileEvent::ReconcileFailed {
                         game_id,
-                        error: error.to_string(),
+                        error: format!("{error:#}"),
                     });
                 }
                 Err(error) => {
@@ -127,7 +129,17 @@ fn execute_profile_reconcile(
 > {
     let roots = profiles::profile_roots(&spec.game, spec.use_default_mods_path)
         .map_err(ProfileWorkerError::Other)?;
-    profiles::ensure_profile_storage_layout(&roots).map_err(ProfileWorkerError::RecoveryBlocked)?;
+    // No storage directory means nothing to reconcile — and creating one here would write
+    // into the game install, which fails on ACL-protected paths (e.g. Program Files).
+    if !roots.profiles_dir.is_dir() {
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
+    }
+    let mut warnings = Vec::new();
+    // Reconciliation only reads; a readme refresh failing on a read-only directory must
+    // not block it.
+    if let Err(error) = profiles::ensure_profile_storage_layout(&roots) {
+        warnings.push(format!("{error:#}"));
+    }
     let operation_spec = ProfileOperationSpec {
         operation_id: 0,
         game_id: spec.game_id,
@@ -155,7 +167,6 @@ fn execute_profile_reconcile(
         progress: Arc::new(AtomicU64::new(0)),
         stage: Arc::new(RwLock::new("Reconciling profile storage".to_string())),
     };
-    let mut warnings = Vec::new();
     let (orphaned, renamed) = discover_orphaned_profiles(&roots, &operation_spec, &mut warnings)
         .map_err(ProfileWorkerError::into_recovery_blocking)?;
     Ok((orphaned, renamed, warnings))
@@ -216,7 +227,7 @@ fn spawn_profile_archive_worker(
                         let _ = tx.send(ProfileEvent::ArchiveFailed {
                             game_id: job.game_id.clone(),
                             profile_id: job.profile_id,
-                            error: error.to_string(),
+                            error: format!("{error:#}"),
                         });
                         break;
                     }
@@ -479,9 +490,31 @@ fn execute_profile_operation(
     let _staging_cleanup = ProfileStagingCleanup::new(&roots, &spec);
     match spec.kind {
         ProfileOperationKind::Recover => {
-            profiles::ensure_profile_storage_layout(&roots)
-                .map_err(ProfileWorkerError::RecoveryBlocked)?;
+            // A game that never used profiles has no storage directory, and recovery must
+            // not create one: that writes into the game install at startup, which fails on
+            // ACL-protected paths (e.g. Program Files) for a game the user may not even
+            // mod. There is also nothing to recover from an absent directory. The layout is
+            // created by user-initiated operations below instead.
+            if !roots.profiles_dir.is_dir() {
+                return Ok(ProfileWorkerOutput {
+                    kind: spec.kind,
+                    profile_id: None,
+                    target_profile_id: None,
+                    display_name: None,
+                    archive: None,
+                    active_profile_marker: None,
+                    background_archives: Vec::new(),
+                    orphaned_profiles: Vec::new(),
+                    renamed_profiles: Vec::new(),
+                    warnings: Vec::new(),
+                });
+            }
             let mut warnings = Vec::new();
+            // Recovery only needs to read and repair what already exists; a readme refresh
+            // failing on a read-only directory must not block it.
+            if let Err(error) = profiles::ensure_profile_storage_layout(&roots) {
+                warnings.push(format!("{error:#}"));
+            }
             let recovered_active = recover_profile_staging(&roots, &spec, &mut warnings)
                 .map_err(ProfileWorkerError::into_recovery_blocking)?;
             let (background_archives, archive_warnings) =

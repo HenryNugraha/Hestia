@@ -431,6 +431,7 @@ pub struct HestiaApp {
     markdown_dependency_signature_cache: HashMap<String, (String, Instant)>,
     render_safe_markdown_cache: HashMap<String, String>,
     path_file_status_cache: Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path_write_status_cache: Mutex<HashMap<PathBuf, (bool, Instant)>>,
     browse_commonmark_cache: CommonMarkCache,
     browse_request_nonce: u64,
     browse_page_generation: u64,
@@ -459,6 +460,9 @@ pub struct HestiaApp {
     xxmi_reload_event_tx: WorkerTx<XxmiReloadEvent>,
     xxmi_reload_event_rx: WorkerRx<XxmiReloadEvent>,
     xxmi_reload_inflight: HashSet<String>,
+    grant_access_event_tx: WorkerTx<GrantAccessEvent>,
+    grant_access_event_rx: WorkerRx<GrantAccessEvent>,
+    grant_access_inflight: bool,
     xxmi_reload_pending: HashSet<String>,
     xxmi_namespace_cache: HashMap<String, XxmiNamespaceCacheEntry>,
     profile_request_tx: WorkerTx<ProfileRequest>,
@@ -468,7 +472,7 @@ pub struct HestiaApp {
     profile_compression_states: HashMap<(String, ProfileId), ProfileCompressionUiState>,
     profile_next_operation_id: u64,
     profile_recovery_queue: VecDeque<GameInstall>,
-    profile_recovery_failed: bool,
+    profile_recovery_failed_games: HashSet<String>,
     profile_reconcile_inflight: HashSet<String>,
     profile_selector_popup_open_last_frame: bool,
     profile_name_prompt: Option<ProfileOperationKind>,
@@ -1412,6 +1416,7 @@ enum StartupPathScanEvent {
 enum GameSetupIssue {
     MissingGamePath,
     MissingModFolder,
+    NoGameDirAccess,
     MissingXxmiLauncher,
     MissingNteBypasser,
     MissingUnrealRequirement,
@@ -1445,6 +1450,11 @@ enum RefreshEvent {
         game_id: String,
         error: String,
     },
+}
+
+struct GrantAccessEvent {
+    game_id: String,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

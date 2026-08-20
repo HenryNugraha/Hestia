@@ -1526,6 +1526,7 @@ impl HestiaApp {
                 }
             }
             StartupPathTargetKind::Game(game_id) => {
+                let mut enabled_game_id = None;
                 if let Some(game) = self
                     .state
                     .games
@@ -1546,6 +1547,9 @@ impl HestiaApp {
                                 .as_ref()
                                 .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
                         }
+                        if !game.enabled {
+                            enabled_game_id = Some(game.definition.id.clone());
+                        }
                         game.enabled = true;
                         changed = true;
                         ctx.data_mut(|data| {
@@ -1555,6 +1559,11 @@ impl HestiaApp {
                             )));
                         });
                     }
+                }
+                // Startup recovery skips disabled games, so a game enabled by the path
+                // scan still owes one recovery pass.
+                if let Some(game_id) = enabled_game_id {
+                    self.queue_profile_recovery_for_game(&game_id);
                 }
             }
         }
@@ -1643,6 +1652,7 @@ impl HestiaApp {
                     }
                 }
                 StartupPathTargetKind::Game(game_id) => {
+                    let mut enabled_game_id = None;
                     if let Some(game) = self
                         .state
                         .games
@@ -1658,6 +1668,9 @@ impl HestiaApp {
                                 .as_ref()
                                 .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
                         }
+                        if !game.enabled {
+                            enabled_game_id = Some(game.definition.id.clone());
+                        }
                         game.enabled = true;
                         ctx.data_mut(|data| {
                             data.remove::<String>(egui::Id::new((
@@ -1665,6 +1678,11 @@ impl HestiaApp {
                                 game.definition.id.as_str(),
                             )));
                         });
+                    }
+                    // Startup recovery skips disabled games, so a game enabled by the path
+                    // scan still owes one recovery pass.
+                    if let Some(game_id) = enabled_game_id {
+                        self.queue_profile_recovery_for_game(&game_id);
                     }
                 }
             }

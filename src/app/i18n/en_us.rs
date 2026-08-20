@@ -313,6 +313,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "NTE mods will not load until AyakaNTEModLoader.asi or UniversalSigBypasser.asi is installed.", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
     "UniversalSigBypasser", // LibraryNteBypasserUniversal
+    "Hestia can't make changes in this game's folder", // LibraryProtectedPathTitle
+    "The game is installed in a protected location ({path}), so Windows blocks Hestia from installing, disabling, or switching mods here. Click Grant access to let your Windows account modify the game folder, this needs a one-time administrator approval. Restarting as admin also works, but must be repeated every launch and drag-and-drop from Explorer won't work while elevated.", // LibraryProtectedPathDescription
+    "Grant access", // LibraryGrantAccess
+    "Restart as admin", // LibraryRestartAsAdmin
     "Filter mod's name...", // LibrarySearchHint
     "Installed Mods", // LibraryInstalledMods
     "{count} selected", // LibrarySelectedCount
@@ -685,6 +689,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "XXMI", // SettingsGamesXxmiSection
     "XXMI Launcher:", // SettingsGamesXxmiLauncher
     "Path not found", // SettingsGamesPathNotFound
+    "Protected path", // SettingsGamesProtectedPath
     "Use default XXMI mod path for games", // SettingsGamesUseDefaultXxmiModPath
     "Games", // SettingsGamesGamesSection
     "Game EXE file:", // SettingsGamesGameExeFile

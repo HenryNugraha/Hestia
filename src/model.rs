@@ -1862,6 +1862,42 @@ fn default_nte_bypasser_paths_from_exe(game_exe: &Path) -> Vec<PathBuf> {
     ]
 }
 
+/// Whether the process may create files or subdirectories inside `path`, walking up to the
+/// deepest existing ancestor when `path` itself does not exist yet (e.g. `~mods` before the
+/// first install).  Side-effect free: nothing is created on disk.
+pub fn path_allows_dir_creation(path: &Path) -> bool {
+    for ancestor in path.ancestors() {
+        if ancestor.is_dir() {
+            return dir_allows_creation(ancestor);
+        }
+    }
+    false
+}
+
+#[cfg(windows)]
+fn dir_allows_creation(dir: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY ask only for create rights, and with no create
+    // disposition set the open maps to OPEN_EXISTING, so this evaluates the directory's ACL
+    // without touching its contents.  FILE_FLAG_BACKUP_SEMANTICS is required to open a
+    // directory handle at all.
+    const FILE_ADD_FILE: u32 = 0x0002;
+    const FILE_ADD_SUBDIRECTORY: u32 = 0x0004;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(dir)
+        .is_ok()
+}
+
+#[cfg(not(windows))]
+fn dir_allows_creation(_dir: &Path) -> bool {
+    true
+}
+
 pub fn xxmi_launcher_file_names() -> &'static [&'static str] {
     &["XXMI Launcher.exe", "XXMI-Launcher.exe"]
 }
@@ -2496,6 +2532,25 @@ pub fn seeded_games() -> Vec<GameInstall> {
         enabled: true,
     })
     .collect()
+}
+
+#[cfg(test)]
+mod dir_creation_probe_tests {
+    use super::*;
+
+    #[test]
+    fn writable_dir_allows_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(path_allows_dir_creation(temp.path()));
+    }
+
+    #[test]
+    fn missing_path_probes_deepest_existing_ancestor() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("Content").join("Paks").join("~mods");
+        assert!(path_allows_dir_creation(&missing));
+    }
+
 }
 
 #[cfg(test)]

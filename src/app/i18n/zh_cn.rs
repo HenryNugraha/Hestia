@@ -313,6 +313,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "安装 AyakaNTEModLoader.asi 或 UniversalSigBypasser.asi 之前，NTE Mod 不会加载。", // LibraryNteBypasserMissingDescription
     "AyakaNTEBypasser", // LibraryNteBypasserAyaka
     "UniversalSigBypasser", // LibraryNteBypasserUniversal
+    "Hestia 无法修改此游戏的文件夹", // LibraryProtectedPathTitle
+    "游戏安装在受保护的位置（{path}），Windows 会阻止 Hestia 在此安装、停用或切换 Mod。点击“授予访问权限”让你的 Windows 账户可以修改游戏文件夹，这只需要一次管理员批准。以管理员身份重启也可以，但每次启动都要重复操作，并且提权运行期间无法从资源管理器拖放文件。", // LibraryProtectedPathDescription
+    "授予访问权限", // LibraryGrantAccess
+    "以管理员身份重启", // LibraryRestartAsAdmin
     "筛选 Mod 名称…", // LibrarySearchHint
     "已安装 Mod", // LibraryInstalledMods
     "{count} 个已选", // LibrarySelectedCount
@@ -685,6 +689,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "XXMI", // SettingsGamesXxmiSection
     "XXMI 启动器：", // SettingsGamesXxmiLauncher
     "路径未找到", // SettingsGamesPathNotFound
+    "受保护的路径", // SettingsGamesProtectedPath
     "为游戏使用默认 XXMI Mod 路径", // SettingsGamesUseDefaultXxmiModPath
     "游戏", // SettingsGamesGamesSection
     "游戏 EXE 文件：", // SettingsGamesGameExeFile
