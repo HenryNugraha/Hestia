@@ -1623,6 +1623,19 @@ impl HestiaApp {
     }
 
     fn mod_update_badge(text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
+        // A linked mod with no reconciled verdict yet (no cached snapshot to
+        // compare against -- never successfully checked, or awaiting the
+        // throttled network check) must never read as "Unlinked": the GameBanana
+        // source is right there. Show a neutral pending badge instead.
+        if mod_entry.update_state == ModUpdateState::Unlinked
+            && mod_entry
+                .source
+                .as_ref()
+                .and_then(|source| source.gamebanana.as_ref())
+                .is_some()
+        {
+            return (text.checking(), Color32::from_rgb(142, 153, 168));
+        }
         if mod_has_local_changes_for_update_check(mod_entry) {
             if let Some(ignoring_kind) = Self::ignored_update_kind(mod_entry) {
                 return (
@@ -1645,6 +1658,15 @@ impl HestiaApp {
     }
 
     fn mod_update_badge_tooltip(mod_entry: &ModEntry) -> &'static str {
+        if mod_entry.update_state == ModUpdateState::Unlinked
+            && mod_entry
+                .source
+                .as_ref()
+                .and_then(|source| source.gamebanana.as_ref())
+                .is_some()
+        {
+            return "Linked to GameBanana; checking for updates.";
+        }
         if mod_has_local_changes_for_update_check(mod_entry) {
             if let Some(ignoring_kind) = Self::ignored_update_kind(mod_entry) {
                 return match ignoring_kind {

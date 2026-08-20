@@ -772,10 +772,11 @@ enum TextKey {
     OverlayCouldNotCopyImage,
     LibraryHotkeyClearCustomization,
     LibraryLinkMod,
+    LibraryChecking,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::LibraryLinkMod as usize + 1;
+    const COUNT: usize = Self::LibraryChecking as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2223,6 +2224,10 @@ impl TextCatalog {
 
     fn up_to_date(self) -> &'static str {
         self.get(TextKey::LibraryUpToDate)
+    }
+
+    fn checking(self) -> &'static str {
+        self.get(TextKey::LibraryChecking)
     }
 
     fn update_available(self) -> &'static str {

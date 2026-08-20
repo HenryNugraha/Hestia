@@ -788,4 +788,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Не удалось скопировать изображение", // OverlayCouldNotCopyImage
     "Сбросить настройки мода", // LibraryHotkeyClearCustomization
     "Связать мод", // LibraryLinkMod
+    "Проверка…", // LibraryChecking
 ];

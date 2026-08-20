@@ -789,4 +789,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tidak dapat menyalin gambar", // OverlayCouldNotCopyImage
     "Hapus pengaturan mod", // LibraryHotkeyClearCustomization
     "Tautkan Mod", // LibraryLinkMod
+    "Memeriksa…", // LibraryChecking
 ];

@@ -789,4 +789,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Could not copy image", // OverlayCouldNotCopyImage
     "Clear mod's customization", // LibraryHotkeyClearCustomization
     "Link Mod", // LibraryLinkMod
+    "Checking…", // LibraryChecking
 ];

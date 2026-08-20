@@ -966,16 +966,24 @@ impl HestiaApp {
         const UPDATE_CHECK_COOLDOWN_SECS: i64 = 1800;
         let now = chrono::Utc::now();
 
-        // Automatic checks are throttled per game. The schedule is persisted so
-        // app startup cannot bypass the cooldown.
-        if !force {
+        // The *network* refetch is throttled per game (the schedule is persisted
+        // so app restarts can't bypass it and hammer GameBanana). The reconcile
+        // pass in the loop below is free -- it reads the cached snapshot already
+        // on disk -- so it runs on every call regardless of the cooldown. Without
+        // that, a restart inside the cooldown window leaves every linked mod stuck
+        // at the load-time `Unlinked` default (blank card, "unlinked" badge) even
+        // though the source is right there. Only the fetch itself waits.
+        let allow_network = force || {
             let schedule_key = target_game_id.unwrap_or_default();
-            if self.state.last_update_check_time_by_game.get(schedule_key).is_some_and(|last_check| {
-                now.signed_duration_since(*last_check).num_seconds() < UPDATE_CHECK_COOLDOWN_SECS
-            }) {
-                return;
-            }
-        }
+            !self
+                .state
+                .last_update_check_time_by_game
+                .get(schedule_key)
+                .is_some_and(|last_check| {
+                    now.signed_duration_since(*last_check).num_seconds()
+                        < UPDATE_CHECK_COOLDOWN_SECS
+                })
+        };
         let mut items = Vec::with_capacity(self.state.mods.len());
         let update_check_statuses = self.state.static_prefs.update_check_statuses;
         let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
@@ -984,14 +992,16 @@ impl HestiaApp {
             if let Some(id) = target_game_id {
                 if mod_entry.game_id != id { continue; }
             }
-            if mod_entry
+            // Only mods with a GameBanana link participate.
+            let Some((linked_mod_id, is_tool)) = mod_entry
                 .source
                 .as_ref()
                 .and_then(|source| source.gamebanana.as_ref())
-                .is_none()
-            {
+                .map(|link| (link.mod_id, gamebanana::is_tool_url(&link.url)))
+            else {
                 continue;
-            }
+            };
+            // Terminal, non-network states take precedence and short-circuit.
             if !Self::status_target_enabled(&mod_entry.status, update_check_statuses) {
                 if mod_entry.update_state != ModUpdateState::CheckSkipped {
                     mod_entry.update_state = ModUpdateState::CheckSkipped;
@@ -1000,22 +1010,11 @@ impl HestiaApp {
                 }
                 continue;
             }
-            let Some(source) = &mod_entry.source else {
-                continue;
-            };
-            let Some(link) = &source.gamebanana else {
-                continue;
-            };
-            // Automatic checks leave MissingSource mods alone (a genuinely deleted
-            // mod would fail the same way forever), but an explicit Reload must be
-            // able to recover mods that were marked Missing by a bad API response.
-            if !force && !should_check_update_state(mod_entry.update_state) {
-                continue;
-            }
-            if !force && source.update_check_retry_after.is_some_and(|retry_after| retry_after > now) {
-                continue;
-            }
-            if source.ignore_update_always {
+            if mod_entry
+                .source
+                .as_ref()
+                .is_some_and(|source| source.ignore_update_always)
+            {
                 if mod_entry.update_state != ModUpdateState::IgnoringUpdateAlways {
                     mod_entry.update_state = ModUpdateState::IgnoringUpdateAlways;
                     let _ = xxmi::save_mod_metadata(mod_entry);
@@ -1033,6 +1032,52 @@ impl HestiaApp {
                 }
                 continue;
             }
+
+            // Reconcile the live verdict from the cached snapshot so a linked mod
+            // shows its real last-known state immediately, independent of the
+            // network throttle below. The ignore overlay mirrors the
+            // network-result path (consume_update_check_results) so an
+            // ignored-once update keeps its state across restarts. A mod that has
+            // never been fetched has no snapshot to compare against, so it stays
+            // at whatever it loaded as (see the badge's linked-but-unchecked case).
+            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                let cached_profile =
+                    mod_entry.source.as_ref().and_then(source_profile_for_compare);
+                let reconciled = mod_entry.source.as_mut().map(|source| {
+                    apply_ignored_update_override(source, raw_state, cached_profile.as_ref())
+                });
+                if let Some(reconciled) = reconciled {
+                    if mod_entry.update_state != reconciled {
+                        mod_entry.update_state = reconciled;
+                        let _ = xxmi::save_mod_metadata(mod_entry);
+                        state_changed_without_fetch = true;
+                    }
+                }
+            }
+
+            // Everything above is free (local + cached). The network refetch is
+            // the throttled part, so it is the only thing gated by the cooldown.
+            if !allow_network {
+                continue;
+            }
+            // Automatic checks leave MissingSource mods alone (a genuinely deleted
+            // mod would fail the same way forever), but an explicit Reload must be
+            // able to recover mods that were marked Missing by a bad API response.
+            if !force && !should_check_update_state(mod_entry.update_state) {
+                continue;
+            }
+            if !force
+                && mod_entry
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.update_check_retry_after)
+                    .is_some_and(|retry_after| retry_after > now)
+            {
+                continue;
+            }
+            let Some(source) = mod_entry.source.as_ref() else {
+                continue;
+            };
             // Prefer the exact GameBanana file(s) this mod was installed from.
             // Fall back to the profile snapshot timestamp for older metadata.
             let local_sync_ts = selected_file_baseline_ts(&source.file_set)
@@ -1042,10 +1087,10 @@ impl HestiaApp {
             items.push((
                 mod_entry.id.clone(),
                 mod_entry.game_id.clone(),
-                link.mod_id,
+                linked_mod_id,
                 local_sync_ts,
                 source.file_set.clone(),
-                gamebanana::is_tool_url(&link.url),
+                is_tool,
             ));
         }
         if state_changed_without_fetch {

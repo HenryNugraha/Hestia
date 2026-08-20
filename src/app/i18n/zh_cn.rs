@@ -789,4 +789,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "无法复制图片", // OverlayCouldNotCopyImage
     "清除 Mod 设置", // LibraryHotkeyClearCustomization
     "关联模组", // LibraryLinkMod
+    "正在检查…", // LibraryChecking
 ];
