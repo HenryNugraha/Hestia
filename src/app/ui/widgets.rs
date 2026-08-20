@@ -406,6 +406,11 @@ fn youtube_icon_bytes() -> &'static [u8] {
 #[derive(Clone, Copy)]
 enum ThumbnailFit {
     Cover,
+    /// Like `Cover`, but portrait sources (taller than wide) are cropped from
+    /// near the top instead of the center, so the subject's face/upper body
+    /// shows rather than the middle of the body. Non-portrait sources behave
+    /// exactly like `Cover`.
+    CoverTop,
     Contain,
 }
 
@@ -425,15 +430,23 @@ fn paint_thumbnail_image(
     let texture_aspect = texture_size.x / texture_size.y;
     let rect_aspect = rect.width() / rect.height();
     let (uv, draw_rect) = match fit {
-        ThumbnailFit::Cover => {
+        ThumbnailFit::Cover | ThumbnailFit::CoverTop => {
             if rect_aspect > texture_aspect {
                 let scaled_height = rect.width() / texture_aspect;
                 let uv_height_fraction = rect.height() / scaled_height;
-                let uv_y_offset = (1.0 - uv_height_fraction) * 0.5;
+                let vertical_slack = 1.0 - uv_height_fraction;
+                // Portrait sources under `CoverTop` are cropped from near the top
+                // (skipping ~8% of headroom) so the face/upper body shows instead
+                // of the centered torso. Everything else keeps the centered crop.
+                let uv_top = if matches!(fit, ThumbnailFit::CoverTop) && texture_aspect < 1.0 {
+                    vertical_slack.min(0.08)
+                } else {
+                    vertical_slack * 0.5
+                };
                 (
                     egui::Rect::from_min_max(
-                        egui::pos2(0.0, uv_y_offset),
-                        egui::pos2(1.0, 1.0 - uv_y_offset),
+                        egui::pos2(0.0, uv_top),
+                        egui::pos2(1.0, uv_top + uv_height_fraction),
                     ),
                     rect,
                 )

@@ -5883,7 +5883,7 @@ impl HestiaApp {
                                                             ui,
                                                             rect,
                                                             texture,
-                                                            ThumbnailFit::Cover,
+                                                            ThumbnailFit::CoverTop,
                                                             Color32::WHITE,
                                                             egui::CornerRadius::same(8),
                                                         );
@@ -6711,7 +6711,7 @@ impl HestiaApp {
                                         ui,
                                         thumb_rect,
                                         texture,
-                                        ThumbnailFit::Cover,
+                                        ThumbnailFit::CoverTop,
                                         Color32::from_white_alpha(205),
                                         egui::CornerRadius {
                                             nw: 8,
