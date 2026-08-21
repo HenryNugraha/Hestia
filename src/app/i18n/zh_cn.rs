@@ -523,6 +523,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "为此配置文件选择一个新名称。", // ProfilesRenameDescription
     "删除配置文件", // ProfilesDelete
     "配置文件名称", // ProfilesName
+    "请输入配置文件名称。", // ProfilesNameEmpty
+    "已存在名为“{name}”的配置文件。", // ProfilesNameTaken
     "切换配置文件", // ProfilesSwitch
     "正在切换配置文件…", // ProfilesSwitching
     "正在创建配置文件…", // ProfilesCreating
@@ -544,6 +546,9 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "上次归档大小", // ProfilesPreviousArchiveSize
     "尚无归档", // ProfilesNoArchiveYet
     "配置文件操作失败", // ProfilesOperationFailed
+    "{folder} 中的文件正被 {apps} 占用，请关闭后重试。", // ProfilesFilesInUse
+    "{folder} 中的文件正被其他程序占用，请关闭后重试。", // ProfilesFilesInUseUnknown
+    " 及另外 {count} 个", // ProfilesFilesInUseMore
     "配置文件操作已暂停：", // ProfilesActionsPausedLabel
     "另一项任务正在运行", // ProfilesActionsPausedFallback
     "配置文件操作正在运行", // ProfilesActionsPausedProfileOperation

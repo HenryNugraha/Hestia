@@ -358,6 +358,30 @@ fn profile_progress_footer_rects(
     (note_rect, cancel_rect)
 }
 
+/// The validation line under the name field. Always takes its row, so the dialog does not jump
+/// when a hint appears or goes away.
+fn profile_name_hint_row(ui: &mut Ui, hint: Option<&str>) {
+    const HINT_ROW_HEIGHT: f32 = 18.0;
+    ui.add_space(3.0);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), HINT_ROW_HEIGHT),
+        Sense::hover(),
+    );
+    if let Some(hint) = hint {
+        let mut row = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        static_label(
+            &mut row,
+            RichText::new(hint)
+                .size(12.5)
+                .color(Color32::from_rgb(226, 126, 112)),
+        );
+    }
+}
+
 fn profile_name_action_footer<R>(
     ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
@@ -895,6 +919,9 @@ impl HestiaApp {
         };
         let mut submit = false;
         let mut cancel = false;
+        // Validated every frame against the in-memory catalog, so a taken name is pointed out
+        // while the user types and can never be submitted.
+        let mut can_submit = false;
         let constrain_rect = self
             .last_right_pane_rect
             .unwrap_or_else(|| ctx.viewport_rect());
@@ -933,8 +960,23 @@ impl HestiaApp {
                         if edit.gained_focus() {
                             edit.request_focus();
                         }
-                        submit = edit.lost_focus()
+                        let validation =
+                            self.profile_name_draft_validation(kind, &self.profile_name_draft);
+                        can_submit = validation.is_ok();
+                        let hint = match &validation {
+                            Err(ProfileNameError::Taken(existing)) => {
+                                Some(text.profile_name_taken(&text.profile_display_name(existing)))
+                            }
+                            Err(ProfileNameError::Empty) | Ok(_) => None,
+                        };
+                        profile_name_hint_row(ui, hint.as_deref());
+                        let enter_pressed = edit.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        submit = can_submit && enter_pressed;
+                        if enter_pressed && !can_submit {
+                            // Enter on a taken name keeps the caret where the fix goes.
+                            edit.request_focus();
+                        }
                         cancel = ui.input(|input| input.key_pressed(egui::Key::Escape));
                     });
                     ui.add_space(4.0);
@@ -953,7 +995,7 @@ impl HestiaApp {
                     };
                     if ui
                         .add_enabled(
-                            !self.profile_name_draft.trim().is_empty(),
+                            can_submit,
                             egui::Button::new(action_label).fill(Color32::from_rgb(180, 78, 35)),
                         )
                         .clicked()
@@ -980,9 +1022,18 @@ impl HestiaApp {
                 Ok(()) => self.clear_profile_name_prompt(),
                 Err(error) => {
                     let close_prompt = Self::profile_error_is_storage_out_of_date(&error);
+                    // A name problem (the catalog changed under the dialog) gets the same
+                    // localized reason the inline hint shows, not the generic failure.
+                    let toast = match error.downcast_ref::<ProfileNameError>() {
+                        Some(ProfileNameError::Empty) => text.profile_name_empty().to_string(),
+                        Some(ProfileNameError::Taken(existing)) => {
+                            text.profile_name_taken(&text.profile_display_name(existing))
+                        }
+                        None => text.profile_operation_failed().to_string(),
+                    };
                     self.report_error_message(
                         format!("profile operation failed: {error:#}"),
-                        Some(text.profile_operation_failed()),
+                        Some(&toast),
                     );
                     if close_prompt {
                         self.clear_profile_name_prompt();
@@ -1751,5 +1802,21 @@ mod profile_switcher_geometry_tests {
         assert!(!profile_operation_reports_progress(
             ProfileOperationKind::Recover
         ));
+    }
+
+    #[test]
+    fn profile_name_hint_row_keeps_its_height_with_and_without_a_hint() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(346.0);
+            let before = ui.cursor().top();
+            profile_name_hint_row(ui, None);
+            let without = ui.cursor().top() - before;
+            let mid = ui.cursor().top();
+            profile_name_hint_row(ui, Some("A profile named \"Beta\" already exists."));
+            let with = ui.cursor().top() - mid;
+            assert_eq!(without, with);
+            assert!(without >= 18.0);
+        });
     }
 }

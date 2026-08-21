@@ -1122,6 +1122,12 @@ impl HestiaApp {
         if self.pending_mod_image_queue.is_empty() {
             return;
         }
+        // A foreground profile operation renames the live mod roots wholesale, and on Windows
+        // any open handle below them, including this worker's own image reads, makes that rename
+        // fail. Hold the queue until the operation is over; nothing is dropped.
+        if self.profile_operation_locks_app() {
+            return;
+        }
 
         let pointer_motion_throttle = Self::pointer_motion_image_throttle_active(ctx);
         let dispatch_limit = if pointer_motion_throttle {

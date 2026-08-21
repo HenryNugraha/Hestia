@@ -523,6 +523,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Выберите новое имя для этого профиля.", // ProfilesRenameDescription
     "Удалить профиль", // ProfilesDelete
     "Имя профиля", // ProfilesName
+    "Введите имя профиля.", // ProfilesNameEmpty
+    "Профиль с именем «{name}» уже существует.", // ProfilesNameTaken
     "Переключить профиль", // ProfilesSwitch
     "Переключение профиля…", // ProfilesSwitching
     "Создание профиля…", // ProfilesCreating
@@ -544,6 +546,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Размер предыдущего архива", // ProfilesPreviousArchiveSize
     "Архив ещё не создан", // ProfilesNoArchiveYet
     "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
+    "Файлы в {folder} открыты в {apps}, закройте их и повторите попытку.", // ProfilesFilesInUse
+    "Файлы в {folder} открыты в другой программе, закройте её и повторите попытку.", // ProfilesFilesInUseUnknown
+    " и ещё {count}", // ProfilesFilesInUseMore
     "Действия приостановлены:", // ProfilesActionsPausedLabel
     "выполняется другая задача", // ProfilesActionsPausedFallback
     "выполняется операция с профилем", // ProfilesActionsPausedProfileOperation

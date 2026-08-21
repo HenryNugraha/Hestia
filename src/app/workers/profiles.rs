@@ -65,6 +65,7 @@ fn spawn_profile_worker(
                                 // denied") that plain Display drops with the context.
                                 error: format!("{err:#}"),
                                 recovery_blocking: err.recovery_blocking(),
+                                files_in_use: err.files_in_use().cloned(),
                             });
                         }
                         Err(err) => {
@@ -73,6 +74,7 @@ fn spawn_profile_worker(
                                 game_id,
                                 error: format!("profile worker join failed: {err}"),
                                 recovery_blocking: kind == ProfileOperationKind::Recover,
+                                files_in_use: None,
                             });
                         }
                     }
@@ -281,6 +283,9 @@ enum ProfileWorkerError {
     Canceled,
     Other(anyhow::Error),
     RecoveryBlocked(anyhow::Error),
+    /// Another program holds files below a live mod root open, so the roots cannot be renamed.
+    /// Nothing was changed (or everything was rolled back); the user has to close the holder.
+    FilesInUse(OpenHandleReport),
 }
 
 impl std::fmt::Display for ProfileWorkerError {
@@ -288,6 +293,7 @@ impl std::fmt::Display for ProfileWorkerError {
         match self {
             Self::Canceled => f.write_str("profile operation canceled"),
             Self::Other(err) | Self::RecoveryBlocked(err) => err.fmt(f),
+            Self::FilesInUse(report) => report.fmt(f),
         }
     }
 }
@@ -302,6 +308,13 @@ impl ProfileWorkerError {
 
     fn recovery_blocking(&self) -> bool {
         matches!(self, Self::RecoveryBlocked(_))
+    }
+
+    fn files_in_use(&self) -> Option<&OpenHandleReport> {
+        match self {
+            Self::FilesInUse(report) => Some(report),
+            _ => None,
+        }
     }
 }
 
@@ -550,6 +563,19 @@ fn execute_profile_operation(
     let mut background_archives = Vec::new();
     let mut warnings = Vec::new();
     let snapshot_enabled = spec.preserve_mod_settings && spec.game.is_xxmi();
+    if matches!(
+        spec.kind,
+        ProfileOperationKind::Create
+            | ProfileOperationKind::Duplicate
+            | ProfileOperationKind::Switch
+    ) {
+        // Before preparing the target (which can mean extracting a large archive): the live
+        // roots are renamed wholesale at commit time, and on Windows that fails while any file
+        // below them is open. Finding the holder now costs a read-only walk and leaves nothing
+        // to roll back, where failing at commit would have wasted the whole preparation.
+        update_profile_progress(&spec.progress, &spec.stage, 5, "Checking for files in use");
+        ensure_live_roots_not_in_use(&roots, &spec.cancel)?;
+    }
     match spec.kind {
         ProfileOperationKind::Create => {
             prepare_empty_profile_target(&roots, &staging, &spec.cancel)?;
@@ -1687,6 +1713,75 @@ fn create_empty_roots(
     Ok(())
 }
 
+/// Backoff between attempts to rename a live root. Short handles (an antivirus scan, a shell
+/// thumbnail extraction, one of Hestia's own image reads) release within a few hundred
+/// milliseconds; a handle still open after the whole schedule belongs to something the user has
+/// to close, and the caller reports it as such.
+const ROOT_RENAME_RETRY_DELAYS: [Duration; 6] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(600),
+    Duration::from_millis(650),
+];
+
+/// `std::fs::rename` that rides out transient open handles below `from`: every in-use failure is
+/// retried on [`ROOT_RENAME_RETRY_DELAYS`] before the last error is returned. Any other error
+/// returns immediately.
+fn rename_root_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    rename_root_with_retry_schedule(from, to, &ROOT_RENAME_RETRY_DELAYS)
+}
+
+fn rename_root_with_retry_schedule(
+    from: &Path,
+    to: &Path,
+    delays: &[Duration],
+) -> std::io::Result<()> {
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(error) if io_error_is_file_in_use(&error) && attempt < delays.len() => {
+                std::thread::sleep(delays[attempt]);
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Fails with [`ProfileWorkerError::FilesInUse`] when another program holds anything below one of
+/// the live roots open. Roots that do not exist have nothing to rename and are skipped.
+fn ensure_live_roots_not_in_use(
+    roots: &crate::integrations::profiles::ProfileRoots,
+    cancel: &Arc<AtomicBool>,
+) -> std::result::Result<(), ProfileWorkerError> {
+    for (_, root) in root_locations(roots) {
+        check_profile_cancel(cancel)?;
+        if !root.exists() {
+            continue;
+        }
+        if let Some(report) = detect_open_handles(&root, cancel) {
+            check_profile_cancel(cancel)?;
+            return Err(ProfileWorkerError::FilesInUse(report));
+        }
+    }
+    check_profile_cancel(cancel)
+}
+
+/// The error a failed root rename becomes once the swap has been rolled back: an in-use failure
+/// is diagnosed into the paths and processes holding `renamed_root`, anything else is returned
+/// as the io error it was.
+fn root_rename_failure(renamed_root: &Path, error: std::io::Error) -> ProfileWorkerError {
+    if io_error_is_file_in_use(&error)
+        && let Some(report) = detect_open_handles(renamed_root, &AtomicBool::new(false))
+    {
+        return ProfileWorkerError::FilesInUse(report);
+    }
+    error.into()
+}
+
 fn swap_roots(
     roots: &crate::integrations::profiles::ProfileRoots,
     target_source: &Path,
@@ -1726,7 +1821,7 @@ fn swap_roots(
         .or_else(|| outgoing.exists().then(|| outgoing.clone()))
     {
         let conflict = next_profile_conflict_path(&existing, operation_id);
-        std::fs::rename(&existing, &conflict)?;
+        rename_root_with_retry(&existing, &conflict)?;
         warnings.push(format!(
             "Existing profile data was preserved at {}",
             conflict.display()
@@ -1754,7 +1849,7 @@ fn swap_roots(
                 .into_iter()
                 .find_map(|(candidate, path)| (candidate == *name).then_some(path))
                 .ok_or_else(|| anyhow::anyhow!("profile root mapping is incomplete"))?;
-            if let Err(error) = std::fs::rename(root, outgoing_root) {
+            if let Err(error) = rename_root_with_retry(root, &outgoing_root) {
                 rollback_profile_swap(roots, &outgoing, target_source, false).map_err(
                     |rollback| {
                         anyhow::anyhow!(
@@ -1763,7 +1858,7 @@ fn swap_roots(
                     },
                 )?;
                 let _ = std::fs::remove_file(&journal);
-                return Err(error.into());
+                return Err(root_rename_failure(root, error));
             }
         }
     }
@@ -1783,7 +1878,7 @@ fn swap_roots(
             .find_map(|(candidate, path)| (candidate == *name).then_some(path))
             .ok_or_else(|| anyhow::anyhow!("profile root mapping is incomplete"))?;
         if source.exists() {
-            if let Err(error) = std::fs::rename(source, destination) {
+            if let Err(error) = rename_root_with_retry(&source, destination) {
                 rollback_profile_swap(roots, &outgoing, target_source, true).map_err(
                     |rollback| {
                         anyhow::anyhow!(
@@ -1792,7 +1887,7 @@ fn swap_roots(
                     },
                 )?;
                 let _ = std::fs::remove_file(&journal);
-                return Err(error.into());
+                return Err(root_rename_failure(&source, error));
             }
         }
     }
@@ -1913,7 +2008,7 @@ fn rollback_profile_swap(
                 if let Some(parent) = target_root.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::rename(live_root, target_root)?;
+                rename_root_with_retry(live_root, &target_root)?;
             }
         }
     }
@@ -1926,7 +2021,7 @@ fn rollback_profile_swap(
             if live_root.exists() {
                 std::fs::remove_dir_all(live_root)?;
             }
-            std::fs::rename(outgoing_root, live_root)?;
+            rename_root_with_retry(&outgoing_root, live_root)?;
         }
     }
     let _ = std::fs::remove_dir_all(outgoing);
@@ -4402,5 +4497,183 @@ mod profile_worker_tests {
             !profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE).exists(),
             "rollback should not restore the removed active marker format"
         );
+    }
+
+    #[cfg(windows)]
+    fn held_open(path: &Path) -> std::fs::File {
+        // A plain read handle with every share flag set, the kind any viewer or editor holds.
+        std::fs::File::open(path).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn root_rename_rides_out_a_transient_handle() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        std::fs::create_dir_all(mods.join("Skin")).unwrap();
+        let held_path = mods.join("Skin").join("held.ini");
+        std::fs::write(&held_path, b"x").unwrap();
+        let handle = held_open(&held_path);
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(handle);
+        });
+
+        let moved = temp.path().join("Mods.moved");
+        let started = std::time::Instant::now();
+        rename_root_with_retry(&mods, &moved).expect("rename succeeds once the handle closes");
+        releaser.join().unwrap();
+
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(moved.join("Skin").join("held.ini").is_file());
+        assert!(!mods.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn root_rename_gives_up_on_a_persistent_handle_and_names_the_held_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        std::fs::create_dir_all(mods.join("Skin")).unwrap();
+        let held_path = mods.join("Skin").join("held.ini");
+        std::fs::write(&held_path, b"x").unwrap();
+        std::fs::write(mods.join("Skin").join("free.ini"), b"y").unwrap();
+        let handle = held_open(&held_path);
+
+        let moved = temp.path().join("Mods.moved");
+        let short = [Duration::from_millis(10), Duration::from_millis(10)];
+        let error = rename_root_with_retry_schedule(&mods, &moved, &short).unwrap_err();
+        assert!(io_error_is_file_in_use(&error), "{error}");
+        assert!(mods.is_dir() && !moved.exists());
+
+        let failure = root_rename_failure(&mods, error);
+        let report = failure
+            .files_in_use()
+            .expect("an in-use rename failure is diagnosed");
+        assert_eq!(report.root, mods);
+        assert_eq!(report.paths, vec![held_path.clone()]);
+        assert!(failure.to_string().contains("held.ini"), "{failure}");
+
+        // Anything other than an in-use code is passed through untouched.
+        let other = root_rename_failure(&mods, std::io::Error::from_raw_os_error(2));
+        assert!(other.files_in_use().is_none());
+        drop(handle);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn switch_stops_before_preparing_the_target_when_a_live_root_is_in_use() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let game = xxmi_game(&mods);
+        let roots = profiles::profile_roots(&game, false).unwrap();
+        profiles::ensure_profile_storage_layout(&roots).unwrap();
+        std::fs::create_dir_all(mods.join("Skin")).unwrap();
+        let held_path = mods.join("Skin").join("held.ini");
+        std::fs::write(&held_path, b"x").unwrap();
+        let current_id = ProfileId::random();
+        let target_id = ProfileId::random();
+        // Deliberately not a valid archive: had preparation run, this would have been renamed to
+        // a conflict path. Its survival proves the check happened first.
+        let archive = roots.archive_path(target_id);
+        std::fs::write(&archive, b"not an archive").unwrap();
+        let handle = held_open(&held_path);
+        let spec = ProfileOperationSpec {
+            operation_id: 12,
+            game_id: game.definition.id.clone(),
+            game,
+            use_default_mods_path: false,
+            kind: ProfileOperationKind::Switch,
+            profile_id: Some(current_id),
+            source_profile_id: None,
+            target_profile_id: Some(target_id),
+            display_name: None,
+            target_display_name: Some("Target".to_string()),
+            source_profile: None,
+            target_profile: None,
+            source_archive: None,
+            target_archive: Some(archive.clone()),
+            target_categories: None,
+            target_tools: None,
+            target_tool_blacklist: None,
+            known_profile_ids: Vec::new(),
+            known_profile_storage_file_names: Vec::new(),
+            metadata: Some(metadata(current_id, "Current")),
+            preserve_mod_settings: false,
+            send_reload_hotkey: false,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(AtomicU64::new(0)),
+            stage: Arc::new(RwLock::new(String::new())),
+        };
+        let stage = Arc::clone(&spec.stage);
+
+        let error = execute_profile_operation(
+            spec,
+            Arc::new(ProfileArchiveCoordinator::default()),
+            profile_event_sink(),
+        )
+        .err()
+        .expect("held file stops the switch");
+
+        let report = error.files_in_use().expect("reported as files in use");
+        assert_eq!(report.root, mods);
+        assert_eq!(report.paths, vec![held_path.clone()]);
+        assert_eq!(std::fs::read(&archive).unwrap(), b"not an archive");
+        assert!(held_path.is_file());
+        assert!(!roots.profile_path(current_id).exists(), "nothing was moved out");
+        assert!(!roots.staging_dir().join("switch.extracting").exists());
+        assert_eq!(stage.read().unwrap().as_str(), "Checking for files in use");
+        drop(handle);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn swap_roots_rolls_back_and_reports_files_in_use_when_a_handle_opens_late() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let game = xxmi_game(&mods);
+        let roots = profiles::profile_roots(&game, false).unwrap();
+        profiles::ensure_profile_storage_layout(&roots).unwrap();
+        std::fs::create_dir_all(mods.join("Skin")).unwrap();
+        let held_path = mods.join("Skin").join("held.ini");
+        std::fs::write(&held_path, b"current").unwrap();
+        let target_source = roots.staging_dir().join("switch.extracting");
+        std::fs::create_dir_all(target_source.join("Mods")).unwrap();
+        std::fs::write(target_source.join("Mods").join("incoming.ini"), b"target").unwrap();
+        let outgoing_id = ProfileId::random();
+        let marker = ActiveProfileMarker {
+            profile_id: ProfileId::random(),
+            display_name: "Target".to_string(),
+            categories: Some(Vec::new()),
+            tools: None,
+            tool_blacklist: None,
+        };
+        // The handle opens after the preflight would have passed, mid-operation.
+        let handle = held_open(&held_path);
+        let mut warnings = Vec::new();
+
+        let error = swap_roots(
+            &roots,
+            &target_source,
+            None,
+            7,
+            Some((outgoing_id, metadata(outgoing_id, "Current"))),
+            &marker,
+            false,
+            &mut warnings,
+        )
+        .unwrap_err();
+
+        let report = error.files_in_use().expect("reported as files in use");
+        assert_eq!(report.paths, vec![held_path.clone()]);
+        assert_eq!(std::fs::read(&held_path).unwrap(), b"current");
+        assert_eq!(
+            std::fs::read(target_source.join("Mods").join("incoming.ini")).unwrap(),
+            b"target",
+            "the prepared target is left for cleanup, not consumed"
+        );
+        assert!(!roots.profile_path(outgoing_id).exists(), "rollback removed the outgoing container");
+        assert!(!profile_journal_path(&roots, &marker).exists());
+        drop(handle);
     }
 }

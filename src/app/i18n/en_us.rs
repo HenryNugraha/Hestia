@@ -523,6 +523,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Choose a new name for this profile.", // ProfilesRenameDescription
     "Delete profile", // ProfilesDelete
     "Profile name", // ProfilesName
+    "Enter a profile name.", // ProfilesNameEmpty
+    "A profile named \"{name}\" already exists.", // ProfilesNameTaken
     "Switch profile", // ProfilesSwitch
     "Switching profile…", // ProfilesSwitching
     "Creating profile…", // ProfilesCreating
@@ -544,6 +546,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Previous archive size", // ProfilesPreviousArchiveSize
     "No archive yet", // ProfilesNoArchiveYet
     "Profile operation failed", // ProfilesOperationFailed
+    "Files in {folder} are open in {apps}, close them and try again.", // ProfilesFilesInUse
+    "Files in {folder} are open in another program, close it and try again.", // ProfilesFilesInUseUnknown
+    " and {count} more", // ProfilesFilesInUseMore
     "Actions paused:", // ProfilesActionsPausedLabel
     "another task is running", // ProfilesActionsPausedFallback
     "profile operation running", // ProfilesActionsPausedProfileOperation

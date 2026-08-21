@@ -520,6 +520,8 @@ enum TextKey {
     ProfilesRenameDescription,
     ProfilesDelete,
     ProfilesName,
+    ProfilesNameEmpty,
+    ProfilesNameTaken,
     ProfilesSwitch,
     ProfilesSwitching,
     ProfilesCreating,
@@ -541,6 +543,9 @@ enum TextKey {
     ProfilesPreviousArchiveSize,
     ProfilesNoArchiveYet,
     ProfilesOperationFailed,
+    ProfilesFilesInUse,
+    ProfilesFilesInUseUnknown,
+    ProfilesFilesInUseMore,
     ProfilesActionsPausedLabel,
     ProfilesActionsPausedFallback,
     ProfilesActionsPausedProfileOperation,
@@ -2876,6 +2881,14 @@ impl TextCatalog {
         self.get(TextKey::ProfilesName)
     }
 
+    fn profile_name_empty(self) -> &'static str {
+        self.get(TextKey::ProfilesNameEmpty)
+    }
+
+    fn profile_name_taken(self, name: &str) -> String {
+        self.get(TextKey::ProfilesNameTaken).replace("{name}", name)
+    }
+
     fn switch_profile(self) -> &'static str {
         self.get(TextKey::ProfilesSwitch)
     }
@@ -2958,6 +2971,20 @@ impl TextCatalog {
 
     fn profile_operation_failed(self) -> &'static str {
         self.get(TextKey::ProfilesOperationFailed)
+    }
+
+    fn profile_files_in_use(self, folder: &str, apps: &str) -> String {
+        self.get(TextKey::ProfilesFilesInUse)
+            .replace("{folder}", folder)
+            .replace("{apps}", apps)
+    }
+
+    fn profile_files_in_use_unknown(self, folder: &str) -> String {
+        self.get(TextKey::ProfilesFilesInUseUnknown).replace("{folder}", folder)
+    }
+
+    fn profile_files_in_use_more(self, count: usize) -> String {
+        self.get(TextKey::ProfilesFilesInUseMore).replace("{count}", &count.to_string())
     }
 
     fn profile_actions_paused_label(self) -> &'static str {

@@ -1675,6 +1675,9 @@ enum ProfileEvent {
         game_id: String,
         error: String,
         recovery_blocking: bool,
+        /// Set when the operation stopped because another program holds files below a live mod
+        /// root open; the action layer turns it into a toast that names what to close.
+        files_in_use: Option<OpenHandleReport>,
     },
     Canceled {
         operation_id: u64,

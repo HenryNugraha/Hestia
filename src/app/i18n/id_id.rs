@@ -523,6 +523,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Pilih nama baru untuk profil ini.", // ProfilesRenameDescription
     "Hapus profil", // ProfilesDelete
     "Nama profil", // ProfilesName
+    "Masukkan nama profil.", // ProfilesNameEmpty
+    "Profil bernama \"{name}\" sudah ada.", // ProfilesNameTaken
     "Ganti profil", // ProfilesSwitch
     "Mengganti profil…", // ProfilesSwitching
     "Membuat profil…", // ProfilesCreating
@@ -544,6 +546,9 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ukuran arsip sebelumnya", // ProfilesPreviousArchiveSize
     "Belum ada arsip", // ProfilesNoArchiveYet
     "Operasi profil gagal", // ProfilesOperationFailed
+    "File di {folder} sedang dibuka oleh {apps}, tutup dulu lalu coba lagi.", // ProfilesFilesInUse
+    "File di {folder} sedang dibuka oleh program lain, tutup dulu lalu coba lagi.", // ProfilesFilesInUseUnknown
+    " dan {count} lainnya", // ProfilesFilesInUseMore
     "Aksi dijeda:", // ProfilesActionsPausedLabel
     "tugas lain sedang berjalan", // ProfilesActionsPausedFallback
     "operasi profil sedang berjalan", // ProfilesActionsPausedProfileOperation

@@ -2,31 +2,88 @@ const PROFILE_STORAGE_FILE_NAME_METADATA_KEY: &str = "profile_storage_file_name"
 const MODS_LOCKED_BLOCK_REASON: &str = "mods are currently locked";
 const PROFILE_STORAGE_OUT_OF_DATE_ERROR: &str = "profile storage is out of date";
 
+/// Why a profile name cannot be used. Travels inside `anyhow::Error` so the name dialog can
+/// downcast it and show the localized reason instead of a generic failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProfileNameError {
+    Empty,
+    /// The stored display name of the profile that already uses the name (which may differ in
+    /// case or be the Default profile under its localized label).
+    Taken(String),
+}
+
+impl std::fmt::Display for ProfileNameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("profile name cannot be empty"),
+            Self::Taken(existing) => {
+                write!(f, "a profile with that name already exists ({existing})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProfileNameError {}
+
+/// The stored display name of the profile in `catalog` that already uses `normalized`, ignoring
+/// `except` (the profile being renamed). Comparison is the same case-insensitive, Default-aware
+/// rule the selector uses to tell profiles apart.
+fn profile_name_conflict(
+    catalog: Option<&ProfileCatalog>,
+    normalized: &str,
+    except: Option<ProfileId>,
+) -> Option<String> {
+    catalog?
+        .profiles
+        .iter()
+        .find(|profile| {
+            Some(profile.id) != except
+                && TextCatalog::profile_names_equal(&profile.display_name, normalized)
+        })
+        .map(|profile| profile.display_name.clone())
+}
+
 impl HestiaApp {
     fn validate_profile_name(
         &self,
         game_id: &str,
         name: &str,
         except: Option<ProfileId>,
-    ) -> Result<String> {
+    ) -> std::result::Result<String, ProfileNameError> {
         let normalized = name.trim();
         if normalized.is_empty() {
-            bail!("profile name cannot be empty");
+            return Err(ProfileNameError::Empty);
         }
-        if self
-            .state
-            .profiles_by_game
-            .get(game_id)
-            .is_some_and(|catalog| {
-                catalog.profiles.iter().any(|profile| {
-                    Some(profile.id) != except
-                        && TextCatalog::profile_names_equal(&profile.display_name, normalized)
-                })
-            })
-        {
-            bail!("a profile with that name already exists");
+        if let Some(existing) = profile_name_conflict(
+            self.state.profiles_by_game.get(game_id),
+            normalized,
+            except,
+        ) {
+            return Err(ProfileNameError::Taken(existing));
         }
         Ok(normalized.to_string())
+    }
+
+    /// Validation of the name dialog's draft for the selected game, evaluated while the user
+    /// types so a taken name is shown inline and cannot be submitted. `kind` decides which
+    /// profile is exempt: a rename may keep its own name.
+    fn profile_name_draft_validation(
+        &self,
+        kind: ProfileOperationKind,
+        draft: &str,
+    ) -> std::result::Result<String, ProfileNameError> {
+        let Some(game_id) = self.selected_game().map(|game| game.definition.id.as_str()) else {
+            let normalized = draft.trim();
+            return if normalized.is_empty() {
+                Err(ProfileNameError::Empty)
+            } else {
+                Ok(normalized.to_string())
+            };
+        };
+        let except = (kind == ProfileOperationKind::Rename)
+            .then_some(self.profile_name_target_id)
+            .flatten();
+        self.validate_profile_name(game_id, draft, except)
     }
 
     fn profile_operation_block_reason(&self, kind: ProfileOperationKind) -> Option<&'static str> {
@@ -808,6 +865,27 @@ impl HestiaApp {
             .and_then(|reason| Self::profile_actions_paused_reason_text(text, reason))
     }
 
+    /// Localized toast for a profile operation stopped by open files: the folder the user knows
+    /// (`Mods`) and up to three programs to close, or a generic hint when nothing was attributed.
+    fn profile_files_in_use_message(text: TextCatalog, report: &OpenHandleReport) -> String {
+        const LISTED_HOLDERS: usize = 3;
+        let folder = report.root_label();
+        let names = report.holder_names();
+        if names.is_empty() {
+            return text.profile_files_in_use_unknown(&folder);
+        }
+        let mut apps = names
+            .iter()
+            .take(LISTED_HOLDERS)
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if names.len() > LISTED_HOLDERS {
+            apps.push_str(&text.profile_files_in_use_more(names.len() - LISTED_HOLDERS));
+        }
+        text.profile_files_in_use(&folder, &apps)
+    }
+
     fn profile_actions_paused_reason_text(
         text: TextCatalog,
         reason: &str,
@@ -1224,10 +1302,8 @@ impl HestiaApp {
         profile_id: ProfileId,
         display_name: String,
     ) -> Result<()> {
-        let normalized = display_name.trim();
-        if normalized.is_empty() {
-            bail!("profile name cannot be empty");
-        }
+        let normalized = self.validate_profile_name(game_id, &display_name, Some(profile_id))?;
+        let normalized = normalized.as_str();
         let catalog = self
             .state
             .profiles_by_game
@@ -1271,12 +1347,6 @@ impl HestiaApp {
                 self.queue_profile_recovery_for_game(game_id);
                 bail!("could not rename profile because {PROFILE_STORAGE_OUT_OF_DATE_ERROR}");
             }
-        }
-        if catalog.profiles.iter().any(|other| {
-            other.id != profile_id
-                && TextCatalog::profile_names_equal(&other.display_name, normalized)
-        }) {
-            bail!("a profile with that name already exists");
         }
         let mut renamed_storage_file_name = None;
         // Inactive profile storage is labelled with the profile name. The active profile lives in
@@ -2317,11 +2387,30 @@ impl HestiaApp {
                 }
                 let _ = inflight;
             }
-            ProfileEvent::Failed { game_id, error, .. } => {
-                self.report_error_message(
-                    format!("profile operation failed for {game_id}: {error}"),
-                    Some("Profile operation failed"),
-                );
+            ProfileEvent::Failed {
+                game_id,
+                error,
+                files_in_use,
+                ..
+            } => {
+                let text = self.text();
+                match files_in_use {
+                    Some(report) => {
+                        // The toast names what to close; the log keeps the exact paths for
+                        // the user who wants to know which file it was.
+                        let toast = Self::profile_files_in_use_message(text, &report);
+                        self.report_error_message(
+                            format!("profile operation failed for {game_id}: {error}"),
+                            Some(&toast),
+                        );
+                    }
+                    None => {
+                        self.report_error_message(
+                            format!("profile operation failed for {game_id}: {error}"),
+                            Some(text.profile_operation_failed()),
+                        );
+                    }
+                }
             }
             ProfileEvent::Canceled { .. } => {
                 self.set_message_ok(self.text().profile_canceled());
@@ -2629,6 +2718,76 @@ mod profile_process_guard_tests {
         assert!(
             own.exe().is_some_and(|exe| exe.components().count() > 1),
             "refreshing without `with_exe` leaves exe() empty and disables the tool guard"
+        );
+    }
+}
+
+#[cfg(test)]
+mod profile_name_validation_tests {
+    use super::*;
+
+    fn record(display_name: &str) -> ProfileRecord {
+        ProfileRecord {
+            id: ProfileId::random(),
+            display_name: display_name.to_string(),
+            archive_size: None,
+            uncompressed_size: None,
+            file_count: None,
+            created_at: Some(Utc::now()),
+            updated_at: Some(Utc::now()),
+            portable_metadata: HashMap::new(),
+            categories: Some(Vec::new()),
+            tools: Some(Vec::new()),
+            tool_blacklist: Some(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn taken_names_are_found_case_insensitively_and_report_the_stored_name() {
+        let catalog = ProfileCatalog {
+            active_profile_id: None,
+            profiles: vec![record("Default"), record("Patch 1.4")],
+        };
+
+        assert_eq!(
+            profile_name_conflict(Some(&catalog), "patch 1.4", None).as_deref(),
+            Some("Patch 1.4")
+        );
+        assert_eq!(
+            profile_name_conflict(Some(&catalog), "  DEFAULT ", None).as_deref(),
+            Some("Default")
+        );
+        assert_eq!(profile_name_conflict(Some(&catalog), "Patch 1.5", None), None);
+        assert_eq!(profile_name_conflict(None, "Default", None), None);
+    }
+
+    #[test]
+    fn a_rename_may_keep_its_own_name_but_not_take_another() {
+        let catalog = ProfileCatalog {
+            active_profile_id: None,
+            profiles: vec![record("Alpha"), record("Beta")],
+        };
+        let alpha = catalog.profiles[0].id;
+
+        assert_eq!(profile_name_conflict(Some(&catalog), "alpha", Some(alpha)), None);
+        assert_eq!(
+            profile_name_conflict(Some(&catalog), "beta", Some(alpha)).as_deref(),
+            Some("Beta")
+        );
+    }
+
+    #[test]
+    fn name_errors_survive_the_anyhow_boundary() {
+        let error: anyhow::Error = ProfileNameError::Taken("Beta".to_string()).into();
+        assert_eq!(
+            error.downcast_ref::<ProfileNameError>(),
+            Some(&ProfileNameError::Taken("Beta".to_string()))
+        );
+        assert!(error.to_string().contains("already exists"));
+        let empty: anyhow::Error = ProfileNameError::Empty.into();
+        assert_eq!(
+            empty.downcast_ref::<ProfileNameError>(),
+            Some(&ProfileNameError::Empty)
         );
     }
 }
