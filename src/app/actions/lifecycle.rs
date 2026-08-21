@@ -338,6 +338,9 @@ impl HestiaApp {
             dragging_mod_ids: Vec::new(),
             current_view: ViewMode::Library,
             settings_open: false,
+            settings_window_nonce: 0,
+            mod_detail_window_nonce: 0,
+            browse_detail_window_nonce: 0,
             active_renderer_label,
             auto_renderer_label,
             boot_renderer_pref,
@@ -569,6 +572,7 @@ impl HestiaApp {
             usage_counters_dirty: true,
             window_state_cache,
             window_state_last_save: 0.0,
+            floating_window_save_due: None,
             window_was_maximized,
             selection_empty_at: None,
             startup_scan_loading: true,
@@ -3088,6 +3092,39 @@ impl HestiaApp {
             }
             self.window_state_cache = Some(snapshot);
         }
+        self.flush_floating_window_layouts(ctx, now);
+    }
+
+    /// Applies a change to the remembered floating-window geometry and arms the
+    /// trailing debounce if anything actually changed. Call every frame a window is
+    /// shown; identical geometry is a no-op so this never writes while idle.
+    fn remember_floating_window_layout(
+        &mut self,
+        ctx: &egui::Context,
+        apply: impl FnOnce(&mut FloatingWindowLayouts),
+    ) {
+        let layouts = &mut self.state.static_prefs.floating_windows;
+        let before = layouts.clone();
+        apply(layouts);
+        if *layouts != before {
+            let now = ctx.input(|input| input.time);
+            self.floating_window_save_due = Some(now + FLOATING_WINDOW_SAVE_DEBOUNCE_SECS);
+        }
+    }
+
+    /// Writes pending floating-window geometry once the user has stopped dragging
+    /// for `FLOATING_WINDOW_SAVE_DEBOUNCE_SECS`; keeps a repaint scheduled so the
+    /// write happens even if the app goes idle right after the drag.
+    fn flush_floating_window_layouts(&mut self, ctx: &egui::Context, now: f64) {
+        let Some(due) = self.floating_window_save_due else {
+            return;
+        };
+        if now >= due {
+            self.floating_window_save_due = None;
+            self.save_state();
+        } else {
+            ctx.request_repaint_after(Duration::from_secs_f64(due - now));
+        }
     }
 
     fn refresh(&mut self) {
@@ -3497,6 +3534,380 @@ impl HestiaApp {
 
         self.pending_events.has_process_work = has_work;
         has_work
+    }
+}
+
+/// The floating windows whose geometry is remembered; see `FloatingWindowLayouts`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FloatingWindow {
+    Log,
+    Tasks,
+    Tools,
+    Settings,
+    LibraryDetail,
+    BrowseDetail,
+}
+
+impl FloatingWindow {
+    fn id_salt(self) -> &'static str {
+        match self {
+            Self::Log => "log",
+            Self::Tasks => "tasks",
+            Self::Tools => "tools",
+            Self::Settings => "settings",
+            Self::LibraryDetail => "library_detail",
+            Self::BrowseDetail => "browse_detail",
+        }
+    }
+}
+
+impl HestiaApp {
+    /// Puts a floating window back at its default size and position and forgets
+    /// the saved layout. Works by bumping the window's id nonce so egui starts a
+    /// fresh area (the same trick the corner-anchored windows use on every open);
+    /// the recorder then stores the default rect again on the next frame.
+    fn reset_floating_window_layout(&mut self, ctx: &egui::Context, window: FloatingWindow) {
+        let layouts = &mut self.state.static_prefs.floating_windows;
+        match window {
+            FloatingWindow::Log => {
+                layouts.log_size = None;
+                self.log_window_nonce = self.log_window_nonce.wrapping_add(1);
+                self.log_force_default_pos = true;
+            }
+            FloatingWindow::Tasks => {
+                layouts.tasks_size = None;
+                self.tasks_window_nonce = self.tasks_window_nonce.wrapping_add(1);
+                self.tasks_force_default_pos = true;
+            }
+            FloatingWindow::Tools => {
+                layouts.tools_size = None;
+                self.tools_window_nonce = self.tools_window_nonce.wrapping_add(1);
+                self.tools_force_default_pos = true;
+            }
+            FloatingWindow::Settings => {
+                layouts.settings = None;
+                self.settings_window_nonce = self.settings_window_nonce.wrapping_add(1);
+            }
+            FloatingWindow::LibraryDetail => {
+                layouts.library_detail = None;
+                self.mod_detail_window_nonce = self.mod_detail_window_nonce.wrapping_add(1);
+            }
+            FloatingWindow::BrowseDetail => {
+                layouts.browse_detail = None;
+                self.browse_detail_window_nonce = self.browse_detail_window_nonce.wrapping_add(1);
+            }
+        }
+        let now = ctx.input(|input| input.time);
+        self.floating_window_save_due = Some(now + FLOATING_WINDOW_SAVE_DEBOUNCE_SECS);
+        ctx.request_repaint();
+    }
+
+    /// Title-bar layout controls shared by the resizable floating windows: a
+    /// "reset size and position" icon just left of the close button, visible only
+    /// while the window differs from `default_rect`, plus a right-click menu on the
+    /// title bar offering the same action. The icon is drawn in a sublayer of the
+    /// window so it stacks with it and never floats over other windows.
+    /// `inner_margin` is the window frame's inner margin (the title bar inherits it).
+    /// Returns true when a reset was requested; the caller applies it after its own
+    /// post-show bookkeeping so `force_default_pos` flags aren't cleared again.
+    fn floating_window_layout_controls<R>(
+        &self,
+        ctx: &egui::Context,
+        window: FloatingWindow,
+        response: &Option<egui::InnerResponse<Option<R>>>,
+        default_rect: egui::Rect,
+        inner_margin: f32,
+    ) -> bool {
+        let Some(inner) = response else {
+            return false;
+        };
+        let window_rect = inner.response.rect;
+        let window_layer = inner.response.layer_id;
+        let text = self.text();
+        let style = ctx.style_of(ctx.theme());
+        let stroke_width = style.visuals.window_stroke.width;
+        // The title bar's row height: egui allocates its buttons at the heading row
+        // height and our 14pt titles fit inside that.
+        let row_height =
+            ctx.fonts_mut(|fonts| fonts.row_height(&egui::TextStyle::Heading.resolve(&style)));
+        let title_rect = egui::Rect::from_min_size(
+            window_rect.min,
+            egui::vec2(
+                window_rect.width(),
+                stroke_width + 2.0 * inner_margin + row_height,
+            ),
+        );
+        let title_center_y = window_rect.min.y + stroke_width + inner_margin + row_height / 2.0;
+        // egui allocates the close button a heading-row-high square and paints the
+        // "X" at `icon_width` in its middle; sit one icon plus a small gap to its left,
+        // with a hit box just a touch larger than the glyph so it can't steal the
+        // close button's edge.
+        let icon_width = style.spacing.icon_width;
+        let close_button_center_x =
+            window_rect.max.x - stroke_width - inner_margin - row_height / 2.0;
+        let button_size = egui::Vec2::splat(icon_width + 4.0);
+        let button_rect = egui::Rect::from_center_size(
+            egui::pos2(close_button_center_x - icon_width - 6.0, title_center_y),
+            button_size,
+        );
+
+        let overlay_id = egui::Id::new(("floating_window_layout_controls", window.id_salt()));
+        let overlay_layer = egui::LayerId::new(egui::Order::Foreground, overlay_id);
+        ctx.set_sublayer(window_layer, overlay_layer);
+
+        let at_default = shown_floating_window_rect(response).is_none_or(|shown| {
+            const TOLERANCE: f32 = 1.5;
+            (shown.min - default_rect.min).abs().max_elem() <= TOLERANCE
+                && (shown.size() - default_rect.size()).abs().max_elem() <= TOLERANCE
+        });
+
+        let mut reset_requested = false;
+        if !at_default {
+            egui::Area::new(overlay_id)
+                .order(egui::Order::Foreground)
+                .fixed_pos(button_rect.min)
+                .interactable(true)
+                .show(ctx, |ui| {
+                    let (rect, button) = ui.allocate_exact_size(button_size, Sense::click());
+                    let visuals = ui.style().interact(&button);
+                    // Same nominal size and hover growth as egui's close "X" next door
+                    // (icon_width, expanded by the interact visuals when hovered).
+                    let icon_size = icon_width + 2.0 * visuals.expansion;
+                    paint_lucide_icon_centered(
+                        ui.painter(),
+                        rect.center(),
+                        Icon::PictureInPicture2,
+                        icon_size,
+                        visuals.fg_stroke.color,
+                    );
+                    let button = button
+                        .on_hover_text(text.reset_window_layout())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if button.clicked() {
+                        reset_requested = true;
+                    }
+                });
+        }
+
+        // Right-click on the title bar (including the control above) opens a small
+        // menu with the same action, so there is a way in even while the window is
+        // collapsed or already at its default layout.
+        let title_bar_right_clicked = ctx.input(|input| {
+            input.pointer.secondary_clicked()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pos| title_rect.contains(pos))
+        }) && ctx
+            .input(|input| input.pointer.interact_pos())
+            .and_then(|pos| ctx.layer_id_at(pos))
+            .is_some_and(|layer| layer == window_layer || layer == overlay_layer);
+        let popup_id = overlay_id.with("context_menu");
+        egui::Popup::new(
+            popup_id,
+            ctx.clone(),
+            egui::PopupAnchor::PointerFixed,
+            window_layer,
+        )
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .gap(0.0)
+        .frame(egui::Frame::menu(&style).inner_margin(egui::Margin::same(8)))
+        .open_memory(title_bar_right_clicked.then_some(egui::SetOpenCommand::Bool(true)))
+        .show(|ui| {
+            let radius = egui::CornerRadius::same(3);
+            ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
+            ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
+            ui.style_mut().visuals.widgets.active.corner_radius = radius;
+            if ui
+                .add(
+                    egui::Button::new(icon_text_sized(
+                        Icon::PictureInPicture2,
+                        text.reset_window_layout(),
+                        13.0,
+                        13.0,
+                    ))
+                    .corner_radius(radius),
+                )
+                .clicked()
+            {
+                reset_requested = true;
+                ui.close();
+            }
+        });
+
+        reset_requested
+    }
+}
+
+const FLOATING_WINDOW_SAVE_DEBOUNCE_SECS: f64 = 0.5;
+
+/// Paints a lucide glyph with its ink box centered on `center`. Painting text with
+/// `Align2::CENTER_CENTER` centers the font row, and icon fonts don't sit centered
+/// in their row, so the glyph would drift a pixel or two against egui's
+/// geometrically painted close "X" that this is meant to line up with.
+fn paint_lucide_icon_centered(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    icon: Icon,
+    size: f32,
+    color: Color32,
+) {
+    let font_id = egui::FontId::new(size, FontFamily::Name(LUCIDE_FAMILY.into()));
+    let galley = painter.layout_no_wrap(icon_char(icon).to_string(), font_id, color);
+    let ink_center = galley
+        .rows
+        .first()
+        .and_then(|row| {
+            let glyph = row.glyphs.first()?;
+            let min = row.pos + glyph.pos.to_vec2() + glyph.uv_rect.offset;
+            Some(egui::Rect::from_min_size(min, glyph.uv_rect.size).center())
+        })
+        .unwrap_or_else(|| galley.rect.center());
+    painter.galley(center - ink_center.to_vec2(), galley, color);
+}
+
+/// Outer size of a floating window after `show()`, rounded to whole points so the
+/// frame-stroke half-pixel doesn't drift across save/restore cycles. `None` when the
+/// window is collapsed (its rect is just the title bar then) or wasn't drawn at all.
+fn shown_floating_window_rect<R>(
+    response: &Option<egui::InnerResponse<Option<R>>>,
+) -> Option<egui::Rect> {
+    let inner = response.as_ref()?;
+    inner.inner.as_ref()?;
+    let rect = inner.response.rect;
+    let finite = rect.min.x.is_finite()
+        && rect.min.y.is_finite()
+        && rect.max.x.is_finite()
+        && rect.max.y.is_finite();
+    (finite && rect.width() > 0.0 && rect.height() > 0.0).then(|| {
+        egui::Rect::from_min_size(rect.min.round(), rect.size().round())
+    })
+}
+
+/// Converts a shown window rect into the pane-relative form we persist.
+fn floating_window_rect_relative_to(
+    rect: egui::Rect,
+    inset_rect: egui::Rect,
+) -> FloatingWindowRect {
+    let offset = rect.min - inset_rect.min;
+    FloatingWindowRect {
+        offset: [offset.x, offset.y],
+        size: [rect.width(), rect.height()],
+    }
+}
+
+/// A remembered size that is safe to feed back into `default_size`: finite and
+/// positive, capped to the pane it has to fit in. Falls back to `default` otherwise.
+fn restore_floating_window_size(
+    saved: Option<[f32; 2]>,
+    default: egui::Vec2,
+    inset_rect: egui::Rect,
+) -> egui::Vec2 {
+    let size = saved
+        .map(|[w, h]| egui::vec2(w, h))
+        .filter(|size| size.x.is_finite() && size.y.is_finite() && size.x > 0.0 && size.y > 0.0)
+        .unwrap_or(default);
+    size.min(inset_rect.size()).max(egui::Vec2::ZERO)
+}
+
+/// Resolves a remembered pane-relative rect against the current pane: the size is
+/// capped to the pane and the top-left is pulled back inside it, so a layout saved
+/// on a bigger window (or another monitor) never restores half off-pane. Falls back
+/// to `default_pos`/`default_size` when nothing usable is saved.
+fn restore_floating_window_rect(
+    saved: Option<FloatingWindowRect>,
+    default_pos: egui::Pos2,
+    default_size: egui::Vec2,
+    inset_rect: egui::Rect,
+) -> (egui::Pos2, egui::Vec2) {
+    let size = restore_floating_window_size(saved.map(|rect| rect.size), default_size, inset_rect);
+    let pos = saved
+        .map(|rect| inset_rect.min + egui::vec2(rect.offset[0], rect.offset[1]))
+        .filter(|pos| pos.x.is_finite() && pos.y.is_finite())
+        .unwrap_or(default_pos);
+    let max_pos = (inset_rect.max - size).max(inset_rect.min);
+    let pos = egui::pos2(
+        pos.x.clamp(inset_rect.min.x, max_pos.x),
+        pos.y.clamp(inset_rect.min.y, max_pos.y),
+    );
+    (pos, size)
+}
+
+#[cfg(test)]
+mod floating_window_layout_tests {
+    use super::*;
+
+    fn pane() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(800.0, 600.0))
+    }
+
+    #[test]
+    fn size_falls_back_to_default_when_unsaved_or_invalid() {
+        let default = egui::vec2(460.0, 420.0);
+        assert_eq!(restore_floating_window_size(None, default, pane()), default);
+        assert_eq!(
+            restore_floating_window_size(Some([f32::NAN, 10.0]), default, pane()),
+            default
+        );
+        assert_eq!(
+            restore_floating_window_size(Some([0.0, 10.0]), default, pane()),
+            default
+        );
+    }
+
+    #[test]
+    fn size_is_capped_to_the_pane() {
+        let size = restore_floating_window_size(
+            Some([2000.0, 300.0]),
+            egui::vec2(460.0, 420.0),
+            pane(),
+        );
+        assert_eq!(size, egui::vec2(800.0, 300.0));
+    }
+
+    #[test]
+    fn rect_restores_pane_relative_and_round_trips() {
+        let pane = pane();
+        let shown = egui::Rect::from_min_size(egui::pos2(140.0, 90.0), egui::vec2(420.0, 560.0));
+        let saved = floating_window_rect_relative_to(shown, pane);
+        assert_eq!(saved.offset, [40.0, 40.0]);
+        assert_eq!(saved.size, [420.0, 560.0]);
+
+        // Same offset, different pane origin: the window follows the pane.
+        let moved_pane = pane.translate(egui::vec2(-50.0, 200.0));
+        let (pos, size) = restore_floating_window_rect(
+            Some(saved),
+            moved_pane.min,
+            egui::vec2(1.0, 1.0),
+            moved_pane,
+        );
+        assert_eq!(pos, moved_pane.min + egui::vec2(40.0, 40.0));
+        assert_eq!(size, egui::vec2(420.0, 560.0));
+    }
+
+    #[test]
+    fn rect_is_pulled_back_inside_a_smaller_pane() {
+        let pane = pane();
+        let saved = FloatingWindowRect {
+            offset: [700.0, 500.0],
+            size: [400.0, 900.0],
+        };
+        let (pos, size) =
+            restore_floating_window_rect(Some(saved), pane.min, egui::vec2(1.0, 1.0), pane);
+        // Height capped to the pane, then position clamped so the rect fits.
+        assert_eq!(size, egui::vec2(400.0, 600.0));
+        assert_eq!(pos, egui::pos2(pane.max.x - 400.0, pane.min.y));
+    }
+
+    #[test]
+    fn rect_falls_back_to_defaults_when_unsaved() {
+        let pane = pane();
+        let default_pos = pane.min + egui::vec2(0.0, 32.0);
+        let (pos, size) =
+            restore_floating_window_rect(None, default_pos, egui::vec2(420.0, 560.0), pane);
+        assert_eq!(pos, default_pos);
+        assert_eq!(size, egui::vec2(420.0, 560.0));
     }
 }
 

@@ -778,10 +778,11 @@ enum TextKey {
     LibraryHotkeyClearCustomization,
     LibraryLinkMod,
     LibraryChecking,
+    ResetWindowLayout,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::LibraryChecking as usize + 1;
+    const COUNT: usize = Self::ResetWindowLayout as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -875,6 +876,10 @@ impl TextCatalog {
 
     fn log_copied(self) -> &'static str {
         self.get(TextKey::LogCopied)
+    }
+
+    fn reset_window_layout(self) -> &'static str {
+        self.get(TextKey::ResetWindowLayout)
     }
 
     fn tasks_window(self) -> &'static str {

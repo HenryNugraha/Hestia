@@ -795,4 +795,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Clear mod's customization", // LibraryHotkeyClearCustomization
     "Link Mod", // LibraryLinkMod
     "Checking…", // LibraryChecking
+    "Reset size and position", // ResetWindowLayout
 ];

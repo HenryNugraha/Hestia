@@ -795,4 +795,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Hapus pengaturan mod", // LibraryHotkeyClearCustomization
     "Tautkan Mod", // LibraryLinkMod
     "Memeriksa…", // LibraryChecking
+    "Atur ulang ukuran dan posisi", // ResetWindowLayout
 ];

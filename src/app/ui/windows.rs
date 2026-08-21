@@ -495,8 +495,9 @@ impl HestiaApp {
             return;
         }
         let mut log_open = self.state.show_log;
-        let just_opened = self.log_scroll_to_bottom;
         let force_default_pos = self.log_force_default_pos;
+        // A layout reset bumps the nonce too, so the fresh area needs its default size.
+        let just_opened = self.log_scroll_to_bottom || force_default_pos;
         let text = self.text();
         let use_24h = system_uses_24h_time();
         self.rebuild_log_display_cache_if_needed(use_24h);
@@ -509,10 +510,23 @@ impl HestiaApp {
             .title_bar(true)
             .frame(log_frame);
 
+        let mut log_default_rect = None;
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
             let log_offset = egui::vec2(4.0, 4.0);
-            let log_size = egui::vec2(460.0, 420.0);
+            // Size is remembered across opens and restarts; position still snaps to
+            // the default corner so the window stays docked out of the way.
+            let log_size = restore_floating_window_size(
+                self.state.static_prefs.floating_windows.log_size,
+                egui::vec2(460.0, 420.0),
+                inset_rect,
+            );
+            let log_default_size =
+                restore_floating_window_size(None, egui::vec2(460.0, 420.0), inset_rect);
+            log_default_rect = Some(egui::Rect::from_min_size(
+                inset_rect.max - log_default_size - log_offset,
+                log_default_size,
+            ));
             window = window
                 .movable(true)
                 .resizable(true)
@@ -591,6 +605,20 @@ impl HestiaApp {
                 });
         });
 
+        if let Some(shown) = shown_floating_window_rect(&log_response) {
+            let size = [shown.width(), shown.height()];
+            self.remember_floating_window_layout(ctx, |layouts| layouts.log_size = Some(size));
+        }
+        let reset_log_layout = log_default_rect.is_some_and(|default_rect| {
+            self.floating_window_layout_controls(
+                ctx,
+                FloatingWindow::Log,
+                &log_response,
+                default_rect,
+                12.0,
+            )
+        });
+
         if let Some(inner) = log_response {
             let copy_size = egui::vec2(26.0, 26.0);
             let window_rect = inner.response.rect;
@@ -624,6 +652,9 @@ impl HestiaApp {
             self.state.show_log = log_open;
             self.save_state();
         }
+        if reset_log_layout {
+            self.reset_floating_window_layout(ctx, FloatingWindow::Log);
+        }
     }
 
     fn render_tasks_window(&mut self, ctx: &egui::Context) {
@@ -648,10 +679,23 @@ impl HestiaApp {
         .title_bar(true)
         .frame(tasks_frame);
 
+        let mut tasks_default_rect = None;
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
             let tasks_offset = egui::vec2(4.0, 4.0);
-            let tasks_size = egui::vec2(460.0, 420.0);
+            let tasks_size = restore_floating_window_size(
+                self.state.static_prefs.floating_windows.tasks_size,
+                egui::vec2(460.0, 420.0),
+                inset_rect,
+            );
+            let tasks_default_size =
+                restore_floating_window_size(None, egui::vec2(460.0, 420.0), inset_rect);
+            tasks_default_rect = Some(egui::Rect::from_min_size(
+                egui::pos2(inset_rect.max.x, inset_rect.min.y)
+                    - egui::vec2(tasks_default_size.x, 0.0)
+                    - tasks_offset,
+                tasks_default_size,
+            ));
             window = window
                 .movable(true)
                 .resizable(true)
@@ -668,7 +712,7 @@ impl HestiaApp {
             window = window.default_width(460.0).default_height(420.0);
         }
 
-        window.show(ctx, |ui| match self.state.tasks_layout {
+        let tasks_response = window.show(ctx, |ui| match self.state.tasks_layout {
             TasksLayout::Sections => {
                 let ongoing = self.sorted_tasks(|task| {
                     matches!(
@@ -938,12 +982,28 @@ impl HestiaApp {
             }
         });
 
+        if let Some(shown) = shown_floating_window_rect(&tasks_response) {
+            let size = [shown.width(), shown.height()];
+            self.remember_floating_window_layout(ctx, |layouts| layouts.tasks_size = Some(size));
+        }
+        let reset_tasks_layout = tasks_default_rect.is_some_and(|default_rect| {
+            self.floating_window_layout_controls(
+                ctx,
+                FloatingWindow::Tasks,
+                &tasks_response,
+                default_rect,
+                12.0,
+            )
+        });
         if force_default_pos {
             self.tasks_force_default_pos = false;
         }
         if tasks_open != self.state.show_tasks {
             self.state.show_tasks = tasks_open;
             self.save_state();
+        }
+        if reset_tasks_layout {
+            self.reset_floating_window_layout(ctx, FloatingWindow::Tasks);
         }
     }
 
@@ -965,10 +1025,23 @@ impl HestiaApp {
                 .title_bar(true)
                 .frame(tools_frame);
 
+        let mut tools_default_rect = None;
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
             let tools_offset = egui::vec2(20.0, 4.0);
-            let tools_size = egui::vec2(560.0, 460.0);
+            let tools_size = restore_floating_window_size(
+                self.state.static_prefs.floating_windows.tools_size,
+                egui::vec2(560.0, 460.0),
+                inset_rect,
+            );
+            let tools_default_size =
+                restore_floating_window_size(None, egui::vec2(560.0, 460.0), inset_rect);
+            tools_default_rect = Some(egui::Rect::from_min_size(
+                egui::pos2(inset_rect.max.x, inset_rect.min.y)
+                    - egui::vec2(tools_default_size.x, 0.0)
+                    - tools_offset,
+                tools_default_size,
+            ));
             window = window
                 .movable(true)
                 .resizable(true)
@@ -996,7 +1069,7 @@ impl HestiaApp {
         let mut tool_card_rects: Vec<egui::Rect> = Vec::new();
         let mut add_card_rect: Option<egui::Rect> = None;
 
-        window.show(ctx, |ui| {
+        let tools_response = window.show(ctx, |ui| {
             let Some(_game) = self.selected_game().filter(|game| game.enabled).cloned() else {
                 static_label(
                     ui,
@@ -1505,6 +1578,20 @@ impl HestiaApp {
                 });
         });
 
+        if let Some(shown) = shown_floating_window_rect(&tools_response) {
+            let size = [shown.width(), shown.height()];
+            self.remember_floating_window_layout(ctx, |layouts| layouts.tools_size = Some(size));
+        }
+        let reset_tools_layout = tools_default_rect.is_some_and(|default_rect| {
+            self.floating_window_layout_controls(
+                ctx,
+                FloatingWindow::Tools,
+                &tools_response,
+                default_rect,
+                12.0,
+            )
+        });
+
         if let Some((_, label, is_missing, source_rect)) = dragged_window_preview {
             if let Some(pointer_pos) = ctx.pointer_latest_pos() {
                 let size = source_rect.size();
@@ -1566,6 +1653,9 @@ impl HestiaApp {
         if tools_open != self.state.show_tools {
             self.state.show_tools = tools_open;
             self.save_state();
+        }
+        if reset_tools_layout {
+            self.reset_floating_window_layout(ctx, FloatingWindow::Tools);
         }
     }
 
@@ -2443,18 +2533,39 @@ impl HestiaApp {
             14.0,
             14.0,
         ))
-        .id(egui::Id::new("settings_window"))
+        .id(egui::Id::new(("settings_window", self.settings_window_nonce)))
         .open(&mut settings_open)
         .order(egui::Order::Foreground)
         .title_bar(true)
         .frame(settings_frame);
 
-        if let Some(rect) = self.last_right_pane_rect {
-            let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
+        let settings_inset_rect = self
+            .last_right_pane_rect
+            .map(|rect| rect.shrink2(egui::vec2(12.0, 12.0)));
+        let mut settings_default_rect = None;
+        if let Some(inset_rect) = settings_inset_rect {
             let settings_offset = egui::vec2(32.0, 0.0);
+            settings_default_rect = Some({
+                let (pos, size) = restore_floating_window_rect(
+                    None,
+                    inset_rect.min + settings_offset,
+                    egui::vec2(400.0, 600.0),
+                    inset_rect,
+                );
+                egui::Rect::from_min_size(pos, size)
+            });
+            // Defaults only apply until egui has a rect for this id, so the saved
+            // layout lands on the first open after a restart and egui memory keeps
+            // it in sync for the rest of the session.
+            let (settings_pos, settings_size) = restore_floating_window_rect(
+                self.state.static_prefs.floating_windows.settings,
+                inset_rect.min + settings_offset,
+                egui::vec2(400.0, 600.0),
+                inset_rect,
+            );
             window = window
-                .default_pos(inset_rect.min + settings_offset)
-                .default_size(egui::vec2(400.0, 600.0))
+                .default_pos(settings_pos)
+                .default_size(settings_size)
                 .movable(true)
                 .resizable(true)
                 .constrain_to(inset_rect)
@@ -2463,7 +2574,7 @@ impl HestiaApp {
             window = window.default_width(400.0).default_height(400.0);
         }
 
-        let _ = window.show(ctx, |ui| {
+        let settings_response = window.show(ctx, |ui| {
             ui.set_max_width(ui.available_width().min(480.0));
             ui.horizontal(|ui| {
                 let radius = egui::CornerRadius::same(3);
@@ -4307,6 +4418,25 @@ impl HestiaApp {
                 apply_vertical_scroll_navigation(ui, scroll_navigation, true);
             });
         });
+        if let (Some(inset_rect), Some(shown)) = (
+            settings_inset_rect,
+            shown_floating_window_rect(&settings_response),
+        ) {
+            let saved = floating_window_rect_relative_to(shown, inset_rect);
+            self.remember_floating_window_layout(ctx, |layouts| layouts.settings = Some(saved));
+        }
+        let reset_settings_layout = settings_default_rect.is_some_and(|default_rect| {
+            self.floating_window_layout_controls(
+                ctx,
+                FloatingWindow::Settings,
+                &settings_response,
+                default_rect,
+                16.0,
+            )
+        });
+        if reset_settings_layout {
+            self.reset_floating_window_layout(ctx, FloatingWindow::Settings);
+        }
         self.settings_open = settings_open;
         if should_save {
             self.save_state();

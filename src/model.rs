@@ -93,6 +93,36 @@ impl ReloadHotkeyTriggers {
     }
 }
 
+/// Remembered outer size and position of one floating window inside the workspace
+/// pane. `size` is the outer window size in egui points. `offset` is measured from
+/// the top-left of the pane's inset rect rather than the screen, so the window lands
+/// in the same spot relative to the workspace after the main window moves, resizes,
+/// or changes monitor; both are clamped to the pane again on restore.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FloatingWindowRect {
+    pub offset: [f32; 2],
+    pub size: [f32; 2],
+}
+
+/// Floating-window geometry that survives restarts. Corner-anchored windows (Log,
+/// Tasks, Tools) only remember their size and keep snapping to their default
+/// corner; the "arranged" windows (Settings, mod detail) remember size and position.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FloatingWindowLayouts {
+    #[serde(default)]
+    pub log_size: Option<[f32; 2]>,
+    #[serde(default)]
+    pub tasks_size: Option<[f32; 2]>,
+    #[serde(default)]
+    pub tools_size: Option<[f32; 2]>,
+    #[serde(default)]
+    pub settings: Option<FloatingWindowRect>,
+    #[serde(default)]
+    pub library_detail: Option<FloatingWindowRect>,
+    #[serde(default)]
+    pub browse_detail: Option<FloatingWindowRect>,
+}
+
 /// Static preferences that rarely change during runtime.
 /// Deserializing these separately reduces overhead when loading AppState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +177,8 @@ pub struct StaticPreferences {
     pub window_size: Option<[f32; 2]>,
     #[serde(default)]
     pub window_maximized: bool,
+    #[serde(default)]
+    pub floating_windows: FloatingWindowLayouts,
     #[serde(default)]
     pub browse_sort: BrowseSort,
     #[serde(default)]
@@ -218,6 +250,7 @@ impl Default for StaticPreferences {
             window_pos: None,
             window_size: None,
             window_maximized: false,
+            floating_windows: FloatingWindowLayouts::default(),
             browse_sort: BrowseSort::default(),
             search_sort: SearchSort::default(),
             library_sort: LibrarySort::default(),

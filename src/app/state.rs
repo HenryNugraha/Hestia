@@ -250,6 +250,11 @@ pub struct HestiaApp {
     dragging_mod_ids: Vec<String>,
     current_view: ViewMode,
     settings_open: bool,
+    /// Bumped to give the Settings window a fresh egui area (and so its default
+    /// rect) when the user resets its layout; same for the two detail windows.
+    settings_window_nonce: u64,
+    mod_detail_window_nonce: u64,
+    browse_detail_window_nonce: u64,
     /// API name of the renderer actually in use this session ("DirectX 12",
     /// "Vulkan", "Metal", "OpenGL"), shown in settings next to the preference.
     active_renderer_label: &'static str,
@@ -503,6 +508,9 @@ pub struct HestiaApp {
     window_state_cache: Option<WindowStateSnapshot>,
     window_state_last_save: f64,
     window_was_maximized: bool,
+    /// Trailing-debounce deadline (egui input time) for writing changed
+    /// `static_prefs.floating_windows` to disk; `None` when nothing is pending.
+    floating_window_save_due: Option<f64>,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
     startup_launch_pending: bool,

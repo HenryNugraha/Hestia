@@ -8983,8 +8983,24 @@ impl HestiaApp {
         };
 
         let details_offset = egui::vec2(0.0, 32.0);
-        let details_pos = details_rect.min + details_offset;
-        let details_size = BROWSE_DETAIL_SIZE;
+        // Defaults only apply until egui has a rect for this id, so the saved layout
+        // lands on the first open after a restart; egui memory keeps the rect for the
+        // rest of the session and the recorder below keeps the saved copy in sync.
+        let (details_pos, details_size) = restore_floating_window_rect(
+            self.state.static_prefs.floating_windows.library_detail,
+            details_rect.min + details_offset,
+            BROWSE_DETAIL_SIZE,
+            details_rect,
+        );
+        let details_default_rect = {
+            let (pos, size) = restore_floating_window_rect(
+                None,
+                details_rect.min + details_offset,
+                BROWSE_DETAIL_SIZE,
+                details_rect,
+            );
+            egui::Rect::from_min_size(pos, size)
+        };
         let mut mod_detail_open = self.mod_detail_open;
         let mod_detail_response = egui::Window::new(icon_text_sized(
             Icon::PackageSearch,
@@ -8992,7 +9008,7 @@ impl HestiaApp {
             14.0,
             14.0,
         )) // MY MOD view's mod detail GUI
-            .id(egui::Id::new("mod_detail_window"))
+            .id(egui::Id::new(("mod_detail_window", self.mod_detail_window_nonce)))
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
             .default_size(details_size)
@@ -10947,6 +10963,21 @@ impl HestiaApp {
 
             });
 
+        if let Some(shown) = shown_floating_window_rect(&mod_detail_response) {
+            let saved = floating_window_rect_relative_to(shown, details_rect);
+            self.remember_floating_window_layout(ui.ctx(), |layouts| {
+                layouts.library_detail = Some(saved);
+            });
+        }
+        if self.floating_window_layout_controls(
+            ui.ctx(),
+            FloatingWindow::LibraryDetail,
+            &mod_detail_response,
+            details_default_rect,
+            18.0,
+        ) {
+            self.reset_floating_window_layout(ui.ctx(), FloatingWindow::LibraryDetail);
+        }
         if self.mod_detail_focus_requested {
             if let Some(inner) = mod_detail_response {
                 ui.ctx().move_to_top(inner.response.layer_id);

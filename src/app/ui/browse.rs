@@ -1379,13 +1379,29 @@ impl HestiaApp {
 
         let details_rect = pane_rect.shrink2(egui::vec2(12.0, 12.0));
         let details_offset = egui::vec2(0.0, 32.0);
-        let details_pos = details_rect.min + details_offset;
+        // Same restore/record scheme as the MY MODS detail window; each keeps its
+        // own saved rect because egui also keeps their in-session rects apart.
+        let (details_pos, details_size) = restore_floating_window_rect(
+            self.state.static_prefs.floating_windows.browse_detail,
+            details_rect.min + details_offset,
+            BROWSE_DETAIL_SIZE,
+            details_rect,
+        );
+        let details_default_rect = {
+            let (pos, size) = restore_floating_window_rect(
+                None,
+                details_rect.min + details_offset,
+                BROWSE_DETAIL_SIZE,
+                details_rect,
+            );
+            egui::Rect::from_min_size(pos, size)
+        };
         let mut browse_detail_open = self.browse_detail_open;
         let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, text.browse_mod_detail(), 14.0, 14.0)) // BROWSE view's mod detail GUI
-            .id(egui::Id::new(BROWSE_DETAIL_WINDOW_ID))
+            .id(egui::Id::new((BROWSE_DETAIL_WINDOW_ID, self.browse_detail_window_nonce)))
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
-            .default_size(BROWSE_DETAIL_SIZE)
+            .default_size(details_size)
             .min_width(360.0)
             .min_height(320.0)
             .open(&mut browse_detail_open)
@@ -2236,6 +2252,21 @@ impl HestiaApp {
                 }
             });
 
+        if let Some(shown) = shown_floating_window_rect(&response) {
+            let saved = floating_window_rect_relative_to(shown, details_rect);
+            self.remember_floating_window_layout(ctx, |layouts| {
+                layouts.browse_detail = Some(saved);
+            });
+        }
+        if self.floating_window_layout_controls(
+            ctx,
+            FloatingWindow::BrowseDetail,
+            &response,
+            details_default_rect,
+            18.0,
+        ) {
+            self.reset_floating_window_layout(ctx, FloatingWindow::BrowseDetail);
+        }
         self.browse_detail_open = browse_detail_open;
         if !self.browse_detail_open {
             self.browse_state.selected_mod_id = None;

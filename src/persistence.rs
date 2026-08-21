@@ -1528,6 +1528,33 @@ mod tests {
     }
 
     #[test]
+    fn floating_window_layouts_default_empty_and_roundtrip() {
+        let old_config: AppPreferences = toml::from_str("version = 7
+games = []
+").unwrap();
+        assert_eq!(
+            old_config.static_prefs.floating_windows,
+            crate::model::FloatingWindowLayouts::default()
+        );
+
+        let mut state = AppState::default();
+        state.static_prefs.floating_windows.log_size = Some([520.0, 380.0]);
+        state.static_prefs.floating_windows.settings = Some(crate::model::FloatingWindowRect {
+            offset: [32.0, 0.0],
+            size: [440.0, 620.0],
+        });
+        // `static_prefs` is flattened into the top level and `floating_windows` is a
+        // nested table, so the pretty serializer must order it after the scalars.
+        let raw = toml::to_string_pretty(&AppPreferences::from(&state)).unwrap();
+        let saved: AppPreferences = toml::from_str(&raw).unwrap();
+        assert_eq!(
+            saved.static_prefs.floating_windows,
+            state.static_prefs.floating_windows
+        );
+        assert!(saved.static_prefs.floating_windows.tasks_size.is_none());
+    }
+
+    #[test]
     fn profile_catalog_defaults_and_roundtrips() {
         let old_config: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
         assert!(old_config.profiles_by_game.is_empty());

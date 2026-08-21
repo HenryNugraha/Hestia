@@ -38,18 +38,19 @@ use crate::{
     model::{
         AfterInstallBehavior, AppFontStyle, AppLanguage, AppState, BrowseDownloadTaskFile,
         BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier, ConflictChoice, CustomProxyConfig,
-        DeleteBehavior, FileSetRecipe, GameBackend, GameBananaFileMeta, GameBananaLink,
-        GameBananaSnapshot, GameInstall, IgnoredUpdateSignature, ImportInspection,
-        ImportResolution, ImportSource, LaunchBehavior, LibraryCategoryDisplayMode,
-        LibraryGroupMode, LibrarySort, MOD_META_DIR, MetadataSourceKind, ModCategory,
-        ModCategorySortMode, ModEntry, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
-        ModifiedUpdateBehavior, OperationLogEntry, ProfileCatalog, ProfileId, ProfileRecord,
-        ReloadHotkeyTrigger, RendererPreference, SearchSort, StagedAppUpdate, TaskEntry, TaskKind,
-        TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta,
-        UnsafeContentMode, default_modded_exe_candidates, default_mods_path,
-        default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
-        default_unreal_pak_mods_path_from_exe, default_vanilla_exe_candidates, feedback_survey,
-        path_allows_dir_creation, registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        DeleteBehavior, FileSetRecipe, FloatingWindowLayouts, FloatingWindowRect, GameBackend,
+        GameBananaFileMeta, GameBananaLink, GameBananaSnapshot, GameInstall,
+        IgnoredUpdateSignature, ImportInspection, ImportResolution, ImportSource, LaunchBehavior,
+        LibraryCategoryDisplayMode, LibraryGroupMode, LibrarySort, MOD_META_DIR,
+        MetadataSourceKind, ModCategory, ModCategorySortMode, ModEntry, ModSourceData, ModStatus,
+        ModStatusTargets, ModUpdateState, ModifiedUpdateBehavior, OperationLogEntry,
+        ProfileCatalog, ProfileId, ProfileRecord, ReloadHotkeyTrigger, RendererPreference,
+        SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus,
+        TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode,
+        default_modded_exe_candidates, default_mods_path, default_mods_path_from_launcher,
+        default_unreal_bypasser_paths_from_exe, default_unreal_pak_mods_path_from_exe,
+        default_vanilla_exe_candidates, feedback_survey, path_allows_dir_creation,
+        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
         shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
     },
     persistence::{self, PortablePaths},
@@ -328,6 +329,11 @@ impl eframe::App for HestiaApp {
         // pressed outlives the process.
         crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
         self.cancel_all_gif_work();
+        // A window resized right before closing the app would otherwise lose its
+        // geometry to the save debounce.
+        if self.floating_window_save_due.take().is_some() {
+            self.save_state();
+        }
     }
 }
 
@@ -445,10 +451,14 @@ impl HestiaApp {
             }
         }
 
-        if id == egui::Id::new("mod_detail_window") && self.mod_detail_open {
+        if id == egui::Id::new(("mod_detail_window", self.mod_detail_window_nonce))
+            && self.mod_detail_open
+        {
             self.set_selected_mod_id(None);
             true
-        } else if id == egui::Id::new(BROWSE_DETAIL_WINDOW_ID) && self.browse_detail_open {
+        } else if id == egui::Id::new((BROWSE_DETAIL_WINDOW_ID, self.browse_detail_window_nonce))
+            && self.browse_detail_open
+        {
             self.browse_detail_open = false;
             self.browse_state.selected_mod_id = None;
             true
@@ -475,7 +485,9 @@ impl HestiaApp {
             self.state.show_tools = false;
             self.save_state();
             true
-        } else if id == egui::Id::new("settings_window") && self.settings_open {
+        } else if id == egui::Id::new(("settings_window", self.settings_window_nonce))
+            && self.settings_open
+        {
             self.settings_open = false;
             true
         } else if id == egui::Id::new(("log_window", self.log_window_nonce)) && self.state.show_log

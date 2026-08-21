@@ -795,4 +795,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "清除 Mod 设置", // LibraryHotkeyClearCustomization
     "关联模组", // LibraryLinkMod
     "正在检查…", // LibraryChecking
+    "重置大小和位置", // ResetWindowLayout
 ];

@@ -794,4 +794,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Сбросить настройки мода", // LibraryHotkeyClearCustomization
     "Связать мод", // LibraryLinkMod
     "Проверка…", // LibraryChecking
+    "Сбросить размер и положение", // ResetWindowLayout
 ];
