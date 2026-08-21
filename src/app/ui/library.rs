@@ -9999,37 +9999,43 @@ impl HestiaApp {
                                             Color32::from_gray(210),
                                         );
                                     }
-                                    for (line_idx, line) in
-                                        [text.click_here_to(), text.manually_add_images()].iter().enumerate()
-                                    {
-                                        ui.painter().text(
-                                            egui::pos2(
-                                                rect.center().x,
-                                                rect.min.y + 84.0 + line_idx as f32 * 18.0,
+                                    let wrap_width = rect.width() - 24.0;
+                                    let mut text_y = rect.min.y + 76.0;
+                                    for (content, size, color) in [
+                                        (
+                                            format!(
+                                                "{} {}",
+                                                text.click_here_to(),
+                                                text.manually_add_images()
                                             ),
-                                            egui::Align2::CENTER_CENTER,
-                                            *line,
-                                            egui::FontId::proportional(14.0),
+                                            14.0,
                                             Color32::from_gray(225),
-                                        );
-                                    }
-                                    for (line_idx, line) in [
-                                        text.drop_images_here(),
-                                        text.paste_from_clipboard(),
-                                    ]
-                                    .iter()
-                                    .enumerate()
-                                    {
-                                        ui.painter().text(
-                                            egui::pos2(
-                                                rect.center().x,
-                                                rect.min.y + 132.0 + line_idx as f32 * 16.0,
+                                        ),
+                                        (
+                                            format!(
+                                                "{} {}",
+                                                text.drop_images_here(),
+                                                text.paste_from_clipboard()
                                             ),
-                                            egui::Align2::CENTER_CENTER,
-                                            *line,
-                                            egui::FontId::proportional(12.0),
+                                            12.0,
                                             Color32::from_gray(165),
+                                        ),
+                                    ] {
+                                        let mut job = egui::text::LayoutJob::simple(
+                                            content,
+                                            egui::FontId::proportional(size),
+                                            color,
+                                            wrap_width,
                                         );
+                                        job.halign = egui::Align::Center;
+                                        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                                        let height = galley.size().y;
+                                        ui.painter().galley(
+                                            egui::pos2(rect.center().x, text_y),
+                                            galley,
+                                            color,
+                                        );
+                                        text_y += height + 14.0;
                                     }
                                     if response
                                         .on_hover_text(if import_pending {
