@@ -106,6 +106,63 @@ fn apply_vertical_scroll_navigation(
     }
 }
 
+/// Keep the library grid scrollable while a mod (or folder tile) drag is in progress.
+///
+/// egui's `ScrollArea` deliberately ignores the mouse wheel whenever something is being
+/// dragged (`dragged_id().is_some()` guard in `ScrollArea::end`), so without this a drop
+/// target that sits outside the viewport is unreachable. Two remedies, both only while
+/// `active` and the primary button is held: the wheel is forwarded by hand, and hovering
+/// within `EDGE_ZONE` of the viewport's top or bottom edge auto-scrolls, faster the
+/// closer the pointer is to the edge. The pointer only has to be inside the viewport
+/// horizontally, so dragging slightly past the edge keeps scrolling at full speed.
+fn apply_library_drag_auto_scroll(ui: &mut Ui, viewport_rect: egui::Rect, active: bool) {
+    const EDGE_ZONE: f32 = 56.0;
+    const MAX_SPEED: f32 = 1100.0; // points per second when the pointer is at the edge
+
+    if !active {
+        return;
+    }
+    let (pointer_pos, primary_down, wheel_delta, dt) = ui.input(|input| {
+        (
+            input.pointer.latest_pos(),
+            input.pointer.primary_down(),
+            input.smooth_scroll_delta,
+            input.stable_dt,
+        )
+    });
+    let Some(pointer_pos) = pointer_pos else {
+        return;
+    };
+    if !primary_down || !viewport_rect.x_range().contains(pointer_pos.x) {
+        return;
+    }
+
+    // Apply deltas immediately: `scroll_with_delta` would otherwise route every per-frame
+    // nudge through the style's eased ScrollAnimation, and a chain of tiny 0.1s ease-in/outs
+    // restarting each frame reads as pulsing instead of a steady glide.
+    let instant = egui::style::ScrollAnimation::none();
+    if wheel_delta.y != 0.0 {
+        ui.scroll_with_delta_animation(egui::vec2(0.0, wheel_delta.y), instant);
+        ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+    }
+
+    // Positive delta scrolls toward the top (matches egui's wheel convention).
+    let top_proximity = ((viewport_rect.top() + EDGE_ZONE - pointer_pos.y) / EDGE_ZONE).clamp(0.0, 1.0);
+    let bottom_proximity =
+        ((pointer_pos.y - (viewport_rect.bottom() - EDGE_ZONE)) / EDGE_ZONE).clamp(0.0, 1.0);
+    let direction = top_proximity - bottom_proximity;
+    if direction != 0.0 {
+        // Ease in so the first few points of the zone nudge gently instead of lurching.
+        let speed = direction.abs().powi(2) * MAX_SPEED;
+        let dt = dt.clamp(1.0 / 240.0, 1.0 / 30.0);
+        ui.scroll_with_delta_animation(
+            egui::vec2(0.0, direction.signum() * speed * dt),
+            instant,
+        );
+        ui.ctx().request_repaint();
+    }
+}
+
 struct CategoryFolderTile {
     id: String,
     name: String,
@@ -5589,6 +5646,11 @@ impl HestiaApp {
                             let scroll_viewport_rect = egui::Rect::from_min_max(
                                 ui.max_rect().min + viewport.min.to_vec2(),
                                 ui.max_rect().min + viewport.max.to_vec2(),
+                            );
+                            apply_library_drag_auto_scroll(
+                                ui,
+                                scroll_viewport_rect,
+                                !self.dragging_mod_ids.is_empty() || self.dragging_category_id.is_some(),
                             );
                         ui.spacing_mut().item_spacing.x = card_spacing; // Gap between cards horizontally
                         ui.add_space(0.0);

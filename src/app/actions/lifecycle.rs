@@ -596,6 +596,7 @@ impl HestiaApp {
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
+        app.release_stuck_xxmi_reload_hotkeys();
         app.dispatch_profile_recovery();
         if app.state.static_prefs.use_custom_proxy
             && !app.state.static_prefs.custom_proxy_url.trim().is_empty()
@@ -843,6 +844,7 @@ impl HestiaApp {
             return;
         }
         self.save_state();
+        crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
         if let Ok(exe) = std::env::current_exe() {
             let _ = std::process::Command::new(exe)
                 .arg("--after-proxy-restart")
@@ -864,7 +866,10 @@ impl HestiaApp {
         }
         self.save_state();
         match launch_self_elevated("--after-elevated-restart") {
-            Ok(()) => std::process::exit(0),
+            Ok(()) => {
+                crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
+                std::process::exit(0)
+            }
             Err(err) => self.report_error(err, Some(self.text().restart_as_admin())),
         }
     }

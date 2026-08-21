@@ -45,6 +45,19 @@ fn main() -> anyhow::Result<()> {
     if manifest_cli::try_run()? {
         return Ok(());
     }
+    // A main-thread panic takes the process down without `on_exit`, which must not leave a
+    // synthetic XXMI reload/hotkey press stuck (3DMigoto would keep reloading every frame).
+    // Worker-thread panics unwind through the sender's own drop guard, so only the main
+    // thread flips the shutdown flag here.
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().name() == Some("main") {
+                integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
+            }
+            default_hook(info);
+        }));
+    }
     let after_update_launch = std::env::args_os().any(|arg| arg == "--after-update");
     let after_proxy_restart = std::env::args_os().any(|arg| arg == "--after-proxy-restart");
     let after_elevated_restart = std::env::args_os().any(|arg| arg == "--after-elevated-restart");

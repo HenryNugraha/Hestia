@@ -2836,6 +2836,156 @@ fn set_foreground_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
             .is_some_and(|(foreground, _, _)| foreground == hwnd || foreground == HWND(hwnd.0))
 }
 
+// ---------------------------------------------------------------------------
+// Synthetic key-press bookkeeping
+//
+// `SendInput` key state outlives the sender: a key-down whose key-up never arrives stays
+// "down" in the OS async key table until the next real event for that key, across process
+// exit. 3DMigoto re-registers every key binding with fresh state on each config reload, so
+// a stuck `reload_config` key (F10) makes it reload every single frame, indefinitely, and a
+// stuck Ctrl/Alt turns the next F10 into `wipe_user_config`. Every synthetic key-down
+// therefore goes through `HeldKey`: it releases on drop (error or panic), it is tracked in
+// a process-wide registry so exit paths can release whatever is still held, and it is
+// refused once shutdown has begun. The registry lock is held across the key-down send so a
+// concurrent shutdown can never drain the registry between "checked" and "pressed".
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+struct SyntheticKeyRegistry {
+    held: Vec<u16>,
+    shutting_down: bool,
+}
+
+#[cfg(windows)]
+static SYNTHETIC_KEYS: std::sync::Mutex<SyntheticKeyRegistry> =
+    std::sync::Mutex::new(SyntheticKeyRegistry {
+        held: Vec::new(),
+        shutting_down: false,
+    });
+
+#[cfg(windows)]
+fn synthetic_keys() -> std::sync::MutexGuard<'static, SyntheticKeyRegistry> {
+    SYNTHETIC_KEYS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
+fn send_keyboard_input(vk: u16, key_up: bool, label: &str) -> Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+        SendInput, VIRTUAL_KEY,
+    };
+
+    let inputs = [INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if key_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(anyhow!("SendInput delivered {sent} of 1 {label} input"));
+    }
+    Ok(())
+}
+
+/// A synthetic key currently held down. Dropping it without `release` still sends the
+/// key-up (best effort), so no error or panic path can leave the key stuck.
+#[cfg(windows)]
+#[must_use = "dropping a HeldKey releases it immediately"]
+struct HeldKey {
+    vk: u16,
+    released: bool,
+}
+
+#[cfg(windows)]
+impl HeldKey {
+    fn press(vk: u16, label: &str) -> Result<Self> {
+        let mut registry = synthetic_keys();
+        if registry.shutting_down {
+            return Err(anyhow!("{label}: skipped, Hestia is shutting down"));
+        }
+        send_keyboard_input(vk, false, label)?;
+        registry.held.push(vk);
+        Ok(Self {
+            vk,
+            released: false,
+        })
+    }
+
+    fn release(mut self, label: &str) -> Result<()> {
+        self.released = true;
+        let result = send_keyboard_input(self.vk, true, label);
+        Self::unregister(self.vk);
+        result
+    }
+
+    fn unregister(vk: u16) {
+        let mut registry = synthetic_keys();
+        if let Some(index) = registry.held.iter().position(|held| *held == vk) {
+            registry.held.swap_remove(index);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for HeldKey {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        let _ = send_keyboard_input(self.vk, true, "held key drop release");
+        Self::unregister(self.vk);
+    }
+}
+
+/// Release every synthetic key Hestia still holds and refuse new presses. Call from every
+/// exit path (window close, in-app restarts) before the process goes away: the sender
+/// threads are detached, and `process::exit` kills them mid-hold without running drops.
+#[cfg(windows)]
+pub fn release_synthetic_keys_for_shutdown() {
+    let mut registry = synthetic_keys();
+    registry.shutting_down = true;
+    for vk in std::mem::take(&mut registry.held) {
+        let _ = send_keyboard_input(vk, true, "shutdown release");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn release_synthetic_keys_for_shutdown() {}
+
+/// Launch-time self-heal: if the importer's `reload_config` key is still reported down
+/// (a previous Hestia that died mid-press, or any other source), send its key-up so
+/// 3DMigoto stops re-firing the reload every frame. Returns the key's F-number when a
+/// release was sent.
+#[cfg(windows)]
+pub fn release_stuck_reload_hotkey(importer_root: &Path) -> Result<Option<u16>> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    let vk = reload_hotkey_vk(importer_root);
+    if unsafe { GetAsyncKeyState(i32::from(vk)) } >= 0 {
+        return Ok(None);
+    }
+    send_keyboard_input(vk, true, "stuck reload key release")?;
+    Ok(Some(vk - 0x70 + 1))
+}
+
+#[cfg(not(windows))]
+pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>> {
+    Ok(None)
+}
+
 #[cfg(windows)]
 fn send_alt_foreground_unlock_tap() -> Result<bool> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -3170,8 +3320,7 @@ pub fn send_reload_hotkey_foreground_aware(
 #[cfg(windows)]
 fn send_key_spec(spec: KeySpec) -> Result<bool> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
+        GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
 
     let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
@@ -3181,28 +3330,7 @@ fn send_key_spec(spec: KeySpec) -> Result<bool> {
         return Ok(false);
     }
 
-    let key_input = |vk: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(vk),
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-    let send_one = |input: INPUT, label: &str| -> Result<()> {
-        let inputs = [input];
-        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-        if sent != inputs.len() as u32 {
-            return Err(anyhow!("SendInput delivered {sent} of 1 {label} input"));
-        }
-        Ok(())
-    };
-
-    send_one(key_input(spec.key, KEYEVENTF_KEYUP), "hotkey settle-up")?;
+    send_keyboard_input(spec.key, true, "hotkey settle-up")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
 
     let mut modifiers = Vec::new();
@@ -3215,17 +3343,17 @@ fn send_key_spec(spec: KeySpec) -> Result<bool> {
     if spec.shift {
         modifiers.push(VK_SHIFT.0);
     }
-    for modifier in &modifiers {
-        send_one(
-            key_input(*modifier, KEYBD_EVENT_FLAGS(0)),
-            "hotkey modifier down",
-        )?;
+    // Every `?` below drops whatever is already held, which releases it: a failed key-down
+    // can no longer leave Ctrl/Alt/Shift stuck.
+    let mut held_modifiers = Vec::with_capacity(modifiers.len());
+    for modifier in modifiers {
+        held_modifiers.push(HeldKey::press(modifier, "hotkey modifier down")?);
     }
-    send_one(key_input(spec.key, KEYBD_EVENT_FLAGS(0)), "hotkey key down")?;
+    let held_key = HeldKey::press(spec.key, "hotkey key down")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_HOLD_MS));
-    let key_up_result = send_one(key_input(spec.key, KEYEVENTF_KEYUP), "hotkey key up");
-    for modifier in modifiers.iter().rev() {
-        let _ = send_one(key_input(*modifier, KEYEVENTF_KEYUP), "hotkey modifier up");
+    let key_up_result = held_key.release("hotkey key up");
+    for modifier in held_modifiers.into_iter().rev() {
+        let _ = modifier.release("hotkey modifier up");
     }
     key_up_result?;
     Ok(true)
@@ -3317,40 +3445,16 @@ pub fn send_mod_hotkey_foreground_aware(
 /// is benign — the next launch reads the file anyway.
 #[cfg(windows)]
 pub fn send_reload_hotkey(importer_root: &Path) -> Result<bool> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU,
-    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU};
 
     let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
     let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
     if ctrl_down || alt_down {
         return Ok(false);
     }
-    let vk = VIRTUAL_KEY(reload_hotkey_vk(importer_root));
-    let key_input = |flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
+    let vk = reload_hotkey_vk(importer_root);
 
-    let send_one = |input: INPUT, label: &str| -> Result<()> {
-        let inputs = [input];
-        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-        if sent != inputs.len() as u32 {
-            return Err(anyhow!("SendInput delivered {sent} of 1 {label} input"));
-        }
-        Ok(())
-    };
-
-    send_one(key_input(KEYEVENTF_KEYUP), "reload key settle-up")?;
+    send_keyboard_input(vk, true, "reload key settle-up")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
 
     let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
@@ -3359,13 +3463,10 @@ pub fn send_reload_hotkey(importer_root: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    send_one(key_input(KEYBD_EVENT_FLAGS(0)), "reload key down")?;
+    let held = HeldKey::press(vk, "reload key down")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_HOLD_MS));
-    if let Err(err) = send_one(key_input(KEYEVENTF_KEYUP), "reload key up") {
-        return Err(anyhow!(
-            "reload key was pressed but release failed: {err:#}"
-        ));
-    }
+    held.release("reload key up")
+        .map_err(|err| anyhow!("reload key was pressed but release failed: {err:#}"))?;
     Ok(true)
 }
 

@@ -313,6 +313,7 @@ impl HestiaApp {
                 clear_staged_app_update_folder(&path);
                 self.state.staged_app_update = None;
                 self.save_state();
+                crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
                 if let Ok(exe) = std::env::current_exe() {
                     let _ = std::process::Command::new(exe)
                         .arg("--after-update")

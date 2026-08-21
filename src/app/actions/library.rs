@@ -28,6 +28,37 @@ impl HestiaApp {
             && self.state.static_prefs.reload_hotkey_triggers.enabled(trigger)
     }
 
+    /// Launch-time self-heal. A synthetic reload key (F10) whose key-up never arrived (for
+    /// example a previous Hestia that exited mid-press) stays down in the OS key table, and
+    /// 3DMigoto then re-fires the reload every frame for as long as the game runs. Release
+    /// it once here so the importer settles, and log it so the cause is visible.
+    fn release_stuck_xxmi_reload_hotkeys(&mut self) {
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let mut importer_roots = Vec::new();
+        for game in self.state.games.iter().filter(|game| game.is_xxmi()) {
+            if let Some(importer_root) = xxmi_persist::importer_root_for(game, use_default)
+                && !importer_roots.contains(&importer_root)
+            {
+                importer_roots.push(importer_root);
+            }
+        }
+        let mut released = Vec::new();
+        for importer_root in importer_roots {
+            match xxmi_persist::release_stuck_reload_hotkey(&importer_root) {
+                Ok(Some(f_number)) if !released.contains(&f_number) => released.push(f_number),
+                Ok(_) => {}
+                Err(err) => {
+                    self.push_log(format!("XXMI reload key release failed: {err:#}"));
+                }
+            }
+        }
+        for f_number in released {
+            self.push_log(format!(
+                "XXMI reload key F{f_number} was still held down at launch, released it"
+            ));
+        }
+    }
+
     fn refresh_xxmi_reload_config_for_game(&mut self, game: &GameInstall) {
         if !game.is_xxmi() {
             return;
