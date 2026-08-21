@@ -399,6 +399,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Синхронизируйте хотя бы один выбранный мод с GameBanana перед разовым игнорированием обновления", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Игнорировать обновление всегда", // LibraryIgnoreUpdateAlways
     "Бессрочно задаёт для мода статус «Игнорировать обновления всегда», пока опция не будет снята", // LibraryIgnoreUpdateAlwaysTooltip
+    "Отметить как неизменённый", // LibraryMarkAsNotModified
+    "Считает текущие файлы мода неизменёнными. Исходная база установки сохраняется, а правки файлов после этого момента снова будут отмечены как изменения. Обновления будут установлены поверх этих изменений.", // LibraryMarkAsNotModifiedTooltip
+    "Вернуть статус изменения", // LibraryRestoreModificationStatus
+    "Возвращает статус «Изменён», снова сравнивая файлы мода с исходной базой установки", // LibraryRestoreModificationStatusTooltip
     "Изменён", // LibraryModified
     "\n(Изменён)", // LibraryModifiedSuffix
     "…и ещё {count}", // LibraryAndMore
@@ -549,6 +553,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Размер архива", // ProfilesArchiveSize
     "Размер предыдущего архива", // ProfilesPreviousArchiveSize
     "Архив ещё не создан", // ProfilesNoArchiveYet
+    "Размер", // ProfilesUncompressedSize
+    "{size} (без сжатия)", // ProfilesUncompressedSizeValue
     "Не удалось выполнить операцию с профилем", // ProfilesOperationFailed
     "Файлы в {folder} открыты в {apps}, закройте их и повторите попытку.", // ProfilesFilesInUse
     "Файлы в {folder} открыты в другой программе, закройте её и повторите попытку.", // ProfilesFilesInUseUnknown

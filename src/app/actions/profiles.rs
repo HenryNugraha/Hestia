@@ -1202,6 +1202,19 @@ impl HestiaApp {
         )
     }
 
+    /// Total on-disk size of the live mods for `game_id`, summed from the library's per-mod
+    /// fingerprints. `None` when the library has mods but none of them carry a size yet, so a
+    /// stale zero never reads as an empty profile.
+    pub(crate) fn library_uncompressed_size(&self, game_id: &str) -> Option<u64> {
+        let mut total = 0_u64;
+        let mut count = 0_usize;
+        for mod_entry in self.state.mods.iter().filter(|m| m.game_id == game_id) {
+            total = total.saturating_add(mod_entry.content_size_bytes);
+            count += 1;
+        }
+        (count == 0 || total > 0).then_some(total)
+    }
+
     pub(crate) fn switch_profile(&mut self, game_id: &str, target_id: ProfileId) -> Result<()> {
         let game = self
             .state
@@ -1254,6 +1267,19 @@ impl HestiaApp {
         });
         let active_archive =
             active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok());
+        // The outgoing profile's loose payload is what the library is showing right now; remember
+        // it so the storage tooltip has a size to report while the profile waits to compress. The
+        // archive metadata replaces it once compression finishes.
+        if let Some((id, size)) = active_id.zip(self.library_uncompressed_size(game_id)) {
+            if let Some(profile) = self
+                .state
+                .profiles_by_game
+                .get_mut(game_id)
+                .and_then(|catalog| catalog.profiles.iter_mut().find(|profile| profile.id == id))
+            {
+                profile.uncompressed_size = Some(size);
+            }
+        }
         let target_display_name = self
             .state
             .profiles_by_game

@@ -214,10 +214,16 @@ fn paint_profile_selector_dot(painter: &egui::Painter, center: egui::Pos2, activ
     }
 }
 
+/// Storage tooltip body. `archive_size` is the on-disk archive (or the last known one when the
+/// profile is live again); `uncompressed_size` is the loose payload, summed from the library for
+/// the active profile and remembered on the catalog record for the others. While the profile is
+/// not sitting in its archive the uncompressed size is the number that matters, so it leads and
+/// "No archive yet" only appears when neither size is known.
 fn profile_storage_tooltip_text(
     text: TextCatalog,
     state: ProfileStorageTooltipState,
     archive_size: Option<u64>,
+    uncompressed_size: Option<u64>,
 ) -> String {
     let state_label = match state {
         ProfileStorageTooltipState::Active => text.profile_status_active(),
@@ -227,22 +233,38 @@ fn profile_storage_tooltip_text(
         ProfileStorageTooltipState::Failed => text.profile_status_failed(),
         ProfileStorageTooltipState::Unavailable => text.profile_status_unavailable(),
     };
-    let size_label = if archive_size.is_some()
-        && !matches!(
-            state,
-            ProfileStorageTooltipState::Compressed | ProfileStorageTooltipState::Unavailable
-        ) {
-        text.profile_previous_archive_size()
-    } else {
-        text.profile_archive_size()
-    };
-    let size = archive_size
-        .map(format_file_size)
-        .unwrap_or_else(|| text.profile_no_archive_yet().to_string());
-    format!(
-        "{}: {state_label}\n{size_label}: {size}",
-        text.profile_status_label()
-    )
+    let archive_is_current = matches!(
+        state,
+        ProfileStorageTooltipState::Compressed | ProfileStorageTooltipState::Unavailable
+    );
+    let mut lines = vec![format!("{}: {state_label}", text.profile_status_label())];
+    let uncompressed_size = uncompressed_size.filter(|_| !archive_is_current);
+    if let Some(size) = uncompressed_size {
+        lines.push(format!(
+            "{}: {}",
+            text.profile_uncompressed_size(),
+            text.profile_uncompressed_size_value(&format_file_size(size))
+        ));
+    }
+    match archive_size {
+        Some(size) if archive_is_current => lines.push(format!(
+            "{}: {}",
+            text.profile_archive_size(),
+            format_file_size(size)
+        )),
+        Some(size) => lines.push(format!(
+            "{}: {}",
+            text.profile_previous_archive_size(),
+            format_file_size(size)
+        )),
+        None if uncompressed_size.is_none() => lines.push(format!(
+            "{}: {}",
+            text.profile_archive_size(),
+            text.profile_no_archive_yet()
+        )),
+        None => {}
+    }
+    lines.join("\n")
 }
 
 fn profile_selector_action_row(
@@ -742,8 +764,17 @@ impl HestiaApp {
                             archive_exists,
                             archive_part_exists,
                         );
-                        let storage_details =
-                            profile_storage_tooltip_text(text, storage_state, archive_size);
+                        let uncompressed_size = if active {
+                            self.library_uncompressed_size(&game_id)
+                        } else {
+                            profile.uncompressed_size
+                        };
+                        let storage_details = profile_storage_tooltip_text(
+                            text,
+                            storage_state,
+                            archive_size,
+                            uncompressed_size,
+                        );
                         let mut tooltip = if visible_name != profile_name {
                             format!("{profile_name}\n\n{storage_details}")
                         } else {
@@ -1674,12 +1705,62 @@ mod profile_switcher_geometry_tests {
 
         let text = TextCatalog::new(AppLanguage::English);
         assert_eq!(
-            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Running, None),
+            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Running, None, None),
             "Status: Compressing\nArchive size: No archive yet"
         );
         assert_eq!(
-            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Compressed, Some(1024)),
+            profile_storage_tooltip_text(
+                text,
+                ProfileStorageTooltipState::Compressed,
+                Some(1024),
+                Some(4096),
+            ),
             "Status: Compressed\nArchive size: 1.0 KB"
+        );
+    }
+
+    #[test]
+    fn profile_storage_tooltip_leads_with_the_uncompressed_size_while_loose() {
+        let text = TextCatalog::new(AppLanguage::English);
+        assert_eq!(
+            profile_storage_tooltip_text(
+                text,
+                ProfileStorageTooltipState::Active,
+                None,
+                Some(3 * 1024 * 1024),
+            ),
+            "Status: Active profile\nSize: 3.00 MB (uncompressed)"
+        );
+        assert_eq!(
+            profile_storage_tooltip_text(
+                text,
+                ProfileStorageTooltipState::Active,
+                Some(1024),
+                Some(3 * 1024 * 1024),
+            ),
+            "Status: Active profile\nSize: 3.00 MB (uncompressed)\nPrevious archive size: 1.0 KB"
+        );
+        assert_eq!(
+            profile_storage_tooltip_text(
+                text,
+                ProfileStorageTooltipState::Queued,
+                None,
+                Some(2048),
+            ),
+            "Status: Waiting to compress\nSize: 2.0 KB (uncompressed)"
+        );
+        assert_eq!(
+            profile_storage_tooltip_text(text, ProfileStorageTooltipState::Active, None, None),
+            "Status: Active profile\nArchive size: No archive yet"
+        );
+        assert_eq!(
+            profile_storage_tooltip_text(
+                text,
+                ProfileStorageTooltipState::Unavailable,
+                None,
+                Some(2048),
+            ),
+            "Status: Not compressed\nArchive size: No archive yet"
         );
     }
 

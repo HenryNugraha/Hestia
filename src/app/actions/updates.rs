@@ -636,10 +636,7 @@ fn source_profile_for_compare(source: &ModSourceData) -> Option<gamebanana::Prof
 fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
     let source = mod_entry.source.as_ref()?;
     let profile = source_profile_for_compare(source)?;
-    let has_local_changes = source.baseline_content_mtime.map(|t| t.timestamp())
-        != mod_entry.content_mtime.map(|t| t.timestamp())
-        || source.baseline_ini_hash != mod_entry.ini_hash;
-    if has_local_changes {
+    if mod_has_local_changes_for_update_check(mod_entry) {
         Some(ModUpdateState::ModifiedLocally)
     } else {
         let local_sync_ts = selected_file_baseline_ts(&source.file_set)
@@ -648,13 +645,124 @@ fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
     }
 }
 
+/// Whether the mod's on-disk fingerprint diverges from the fingerprint the
+/// user last accepted via "Ignore local changes". Returns true when nothing
+/// was accepted, so callers can `&&` it with the baseline comparison.
+fn local_changes_diverge_from_accepted(source: &ModSourceData, mod_entry: &ModEntry) -> bool {
+    let Some(accepted) = source.accepted_local_changes.as_ref() else {
+        return true;
+    };
+    accepted.content_mtime.map(|t| t.timestamp()) != mod_entry.content_mtime.map(|t| t.timestamp())
+        || accepted.ini_hash != mod_entry.ini_hash
+}
+
+/// True when the mod's files differ from the install baseline and the user has
+/// not accepted the current files via "Ignore local changes". The baseline is
+/// never rewritten by that acceptance, so clearing `accepted_local_changes`
+/// restores the original verdict.
 fn mod_has_local_changes_for_update_check(mod_entry: &ModEntry) -> bool {
     let Some(source) = mod_entry.source.as_ref() else {
         return false;
     };
-    source.baseline_content_mtime.map(|t| t.timestamp())
+    let diverges_from_baseline = source.baseline_content_mtime.map(|t| t.timestamp())
         != mod_entry.content_mtime.map(|t| t.timestamp())
-        || source.baseline_ini_hash != mod_entry.ini_hash
+        || source.baseline_ini_hash != mod_entry.ini_hash;
+    diverges_from_baseline && local_changes_diverge_from_accepted(source, mod_entry)
+}
+
+/// Whether the mod carries an "Ignore local changes" acceptance that still
+/// matches its files. Once the files drift past the accepted fingerprint the
+/// acceptance is spent: the mod reads Modified again and the checkbox shows
+/// unchecked, so re-checking it accepts the new state.
+fn mod_ignores_local_changes(mod_entry: &ModEntry) -> bool {
+    mod_entry.source.as_ref().is_some_and(|source| {
+        source.accepted_local_changes.is_some()
+            && !local_changes_diverge_from_accepted(source, mod_entry)
+    })
+}
+
+/// Drops a spent acceptance (files drifted past the accepted fingerprint).
+/// Returns true when something was cleared so the caller can persist.
+fn clear_spent_local_changes_acceptance(mod_entry: &mut ModEntry) -> bool {
+    let spent = mod_entry.source.as_ref().is_some_and(|source| {
+        source.accepted_local_changes.is_some()
+            && local_changes_diverge_from_accepted(source, mod_entry)
+    });
+    if !spent {
+        return false;
+    }
+    if let Some(source) = mod_entry.source.as_mut() {
+        source.accepted_local_changes = None;
+    }
+    true
+}
+
+/// Re-derives `update_state` from the cached snapshot plus the ignore overlays,
+/// without touching the network. Returns true when the state changed.
+fn reconcile_update_state_from_cache(mod_entry: &mut ModEntry) -> bool {
+    let Some(raw_state) = compute_raw_update_state(mod_entry) else {
+        return false;
+    };
+    let cached_profile = mod_entry.source.as_ref().and_then(source_profile_for_compare);
+    let Some(reconciled) = mod_entry
+        .source
+        .as_mut()
+        .map(|source| apply_ignored_update_override(source, raw_state, cached_profile.as_ref()))
+    else {
+        return false;
+    };
+    if mod_entry.update_state == reconciled {
+        return false;
+    }
+    mod_entry.update_state = reconciled;
+    true
+}
+
+/// Toggles "Ignore local changes" for a linked mod. Enabling snapshots the
+/// current on-disk fingerprint as accepted (the install baseline is kept, so
+/// this is reversible); disabling drops the acceptance so the baseline
+/// comparison takes over again. Returns true when anything changed; the
+/// caller persists the mod and the app state.
+fn set_mod_ignore_local_changes(mod_entry: &mut ModEntry, ignore: bool) -> bool {
+    let content_mtime = mod_entry.content_mtime;
+    let ini_hash = mod_entry.ini_hash.clone();
+    let Some(source) = mod_entry.source.as_mut() else {
+        return false;
+    };
+    let next = ignore.then(|| AcceptedLocalChanges {
+        content_mtime,
+        ini_hash,
+        accepted_at: Some(chrono::Utc::now()),
+    });
+    let record_changed = match (source.accepted_local_changes.as_ref(), next.as_ref()) {
+        (None, None) => false,
+        (Some(current), Some(next)) => {
+            current.content_mtime.map(|t| t.timestamp()) != next.content_mtime.map(|t| t.timestamp())
+                || current.ini_hash != next.ini_hash
+        }
+        _ => true,
+    };
+    if !record_changed {
+        return false;
+    }
+    source.accepted_local_changes = next;
+    if !reconcile_update_state_from_cache(mod_entry)
+        && mod_entry
+            .source
+            .as_ref()
+            .is_some_and(|source| source_profile_for_compare(source).is_none())
+    {
+        // Linked but never fetched: there is no snapshot to derive a verdict
+        // from, so flip the Modified label directly and let the next check
+        // settle the rest. `Unlinked` is the linked-but-unchecked state.
+        let has_local_changes = mod_has_local_changes_for_update_check(mod_entry);
+        if has_local_changes && mod_entry.update_state != ModUpdateState::ModifiedLocally {
+            mod_entry.update_state = ModUpdateState::ModifiedLocally;
+        } else if !has_local_changes && mod_entry.update_state == ModUpdateState::ModifiedLocally {
+            mod_entry.update_state = ModUpdateState::Unlinked;
+        }
+    }
+    true
 }
 
 fn apply_ignored_update_override(
@@ -1040,6 +1148,11 @@ impl HestiaApp {
             // ignored-once update keeps its state across restarts. A mod that has
             // never been fetched has no snapshot to compare against, so it stays
             // at whatever it loaded as (see the badge's linked-but-unchecked case).
+            // A spent "Ignore local changes" acceptance (files drifted past the
+            // accepted fingerprint) is dropped here so the checkbox and the
+            // Modified label agree.
+            let acceptance_cleared = clear_spent_local_changes_acceptance(mod_entry);
+            let mut reconciled_changed = false;
             if let Some(raw_state) = compute_raw_update_state(mod_entry) {
                 let cached_profile =
                     mod_entry.source.as_ref().and_then(source_profile_for_compare);
@@ -1049,10 +1162,13 @@ impl HestiaApp {
                 if let Some(reconciled) = reconciled {
                     if mod_entry.update_state != reconciled {
                         mod_entry.update_state = reconciled;
-                        let _ = xxmi::save_mod_metadata(mod_entry);
-                        state_changed_without_fetch = true;
+                        reconciled_changed = true;
                     }
                 }
+            }
+            if acceptance_cleared || reconciled_changed {
+                let _ = xxmi::save_mod_metadata(mod_entry);
+                state_changed_without_fetch = true;
             }
 
             // Everything above is free (local + cached). The network refetch is
@@ -1150,13 +1266,7 @@ impl HestiaApp {
                         .and_then(|s| s.snapshot.as_ref())
                         .map(|s| s.preview_urls.clone())
                         .unwrap_or_default();
-                    let has_local_changes = mod_entry
-                        .source
-                        .as_ref()
-                        .is_some_and(|source| {
-                            source.baseline_content_mtime.map(|t| t.timestamp()) != mod_entry.content_mtime.map(|t| t.timestamp())
-                                || source.baseline_ini_hash != mod_entry.ini_hash
-                        });
+                    let has_local_changes = mod_has_local_changes_for_update_check(mod_entry);
                     if fetch_failed && !has_local_changes {
                         warn_lines.push(format!(
                             "{} (update check failed; keeping previous state: {})",
@@ -2472,6 +2582,8 @@ impl HestiaApp {
             source.ignored_update_signature = None;
             source.baseline_content_mtime = mod_entry.content_mtime;
             source.baseline_ini_hash = mod_entry.ini_hash.clone();
+            // A fresh baseline supersedes any "Ignore local changes" acceptance.
+            source.accepted_local_changes = None;
             
             let profile_compare = if let Some(p) = gb_profile.as_ref() {
                 (**p).clone()
@@ -2554,6 +2666,8 @@ impl HestiaApp {
             mod_entry.unsafe_content = !profile.content_ratings.is_empty();
             source.baseline_content_mtime = mod_entry.content_mtime;
             source.baseline_ini_hash = mod_entry.ini_hash.clone();
+            // A fresh baseline supersedes any "Ignore local changes" acceptance.
+            source.accepted_local_changes = None;
             let local_sync_ts = profile.date_updated.or(Some(profile.date_modified));
             mod_entry.update_state = determine_update_state(local_sync_ts, &profile);
             let _ = xxmi::save_mod_metadata(mod_entry);
@@ -3267,5 +3381,102 @@ mod update_signature_tests {
 
         assert_eq!(state, ModUpdateState::UpdateAvailable);
         assert!(source.ignored_update_signature.is_none());
+    }
+}
+
+#[cfg(test)]
+mod ignore_local_changes_tests {
+    use super::*;
+
+    fn mod_entry_with_baseline() -> ModEntry {
+        let baseline_mtime = chrono::Utc::now() - chrono::Duration::hours(1);
+        let current_mtime = chrono::Utc::now();
+        let profile = gamebanana::ProfileResponse {
+            id: 1,
+            date_modified: 100,
+            date_updated: Some(100),
+            ..Default::default()
+        };
+        let source = ModSourceData {
+            gamebanana: Some(GameBananaLink {
+                mod_id: 1,
+                url: "https://gamebanana.com/mods/1".to_string(),
+            }),
+            raw_profile_json: serde_json::to_string(&profile).ok(),
+            baseline_content_mtime: Some(baseline_mtime),
+            baseline_ini_hash: Some("baseline".to_string()),
+            ..Default::default()
+        };
+        ModEntry {
+            id: "mod".to_string(),
+            game_id: "test".to_string(),
+            folder_name: "Arcane".to_string(),
+            root_path: std::path::PathBuf::from("Arcane"),
+            status: ModStatus::Active,
+            metadata: crate::model::ModMetadata::default(),
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            content_mtime: Some(current_mtime),
+            ini_hash: Some("edited".to_string()),
+            content_size_bytes: 0,
+            unsafe_content: false,
+            source: Some(source),
+            update_state: ModUpdateState::ModifiedLocally,
+        }
+    }
+
+    #[test]
+    fn accepting_hides_modified_without_touching_the_baseline_and_is_reversible() {
+        let mut mod_entry = mod_entry_with_baseline();
+        let baseline_mtime = mod_entry.source.as_ref().unwrap().baseline_content_mtime;
+        assert!(mod_has_local_changes_for_update_check(&mod_entry));
+        assert!(!mod_ignores_local_changes(&mod_entry));
+
+        assert!(set_mod_ignore_local_changes(&mut mod_entry, true));
+        assert!(mod_ignores_local_changes(&mod_entry));
+        assert!(!mod_has_local_changes_for_update_check(&mod_entry));
+        assert_ne!(mod_entry.update_state, ModUpdateState::ModifiedLocally);
+        let source = mod_entry.source.as_ref().unwrap();
+        assert_eq!(source.baseline_content_mtime, baseline_mtime);
+        assert_eq!(source.baseline_ini_hash.as_deref(), Some("baseline"));
+
+        // Re-applying the same acceptance is a no-op.
+        assert!(!set_mod_ignore_local_changes(&mut mod_entry, true));
+
+        assert!(set_mod_ignore_local_changes(&mut mod_entry, false));
+        assert!(!mod_ignores_local_changes(&mod_entry));
+        assert!(mod_has_local_changes_for_update_check(&mod_entry));
+        assert_eq!(mod_entry.update_state, ModUpdateState::ModifiedLocally);
+    }
+
+    #[test]
+    fn later_edits_surface_as_modified_again_while_accepted() {
+        let mut mod_entry = mod_entry_with_baseline();
+        assert!(set_mod_ignore_local_changes(&mut mod_entry, true));
+        assert!(!mod_has_local_changes_for_update_check(&mod_entry));
+
+        mod_entry.ini_hash = Some("edited again".to_string());
+        assert!(mod_has_local_changes_for_update_check(&mod_entry));
+        assert!(!mod_ignores_local_changes(&mod_entry));
+        // The spent acceptance is dropped by the next check pass.
+        assert!(clear_spent_local_changes_acceptance(&mut mod_entry));
+        assert!(mod_entry.source.as_ref().unwrap().accepted_local_changes.is_none());
+        assert!(!clear_spent_local_changes_acceptance(&mut mod_entry));
+
+        // Accepting again snapshots the newer fingerprint.
+        assert!(set_mod_ignore_local_changes(&mut mod_entry, true));
+        assert!(!mod_has_local_changes_for_update_check(&mod_entry));
+    }
+
+    #[test]
+    fn files_matching_the_baseline_are_never_modified_even_when_accepted() {
+        let mut mod_entry = mod_entry_with_baseline();
+        assert!(set_mod_ignore_local_changes(&mut mod_entry, true));
+        let source = mod_entry.source.as_ref().unwrap();
+        mod_entry.content_mtime = source.baseline_content_mtime;
+        mod_entry.ini_hash = source.baseline_ini_hash.clone();
+        assert!(!mod_has_local_changes_for_update_check(&mod_entry));
     }
 }

@@ -397,6 +397,10 @@ enum TextKey {
     LibraryIgnoreUpdateOnceBulkDisabledTooltip,
     LibraryIgnoreUpdateAlways,
     LibraryIgnoreUpdateAlwaysTooltip,
+    LibraryMarkAsNotModified,
+    LibraryMarkAsNotModifiedTooltip,
+    LibraryRestoreModificationStatus,
+    LibraryRestoreModificationStatusTooltip,
     LibraryModified,
     LibraryModifiedSuffix,
     LibraryAndMore,
@@ -546,6 +550,8 @@ enum TextKey {
     ProfilesArchiveSize,
     ProfilesPreviousArchiveSize,
     ProfilesNoArchiveYet,
+    ProfilesUncompressedSize,
+    ProfilesUncompressedSizeValue,
     ProfilesOperationFailed,
     ProfilesFilesInUse,
     ProfilesFilesInUseUnknown,
@@ -2360,6 +2366,22 @@ impl TextCatalog {
         self.get(TextKey::LibraryIgnoreUpdateAlwaysTooltip)
     }
 
+    fn mark_as_not_modified(self) -> &'static str {
+        self.get(TextKey::LibraryMarkAsNotModified)
+    }
+
+    fn mark_as_not_modified_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryMarkAsNotModifiedTooltip)
+    }
+
+    fn restore_modification_status(self) -> &'static str {
+        self.get(TextKey::LibraryRestoreModificationStatus)
+    }
+
+    fn restore_modification_status_tooltip(self) -> &'static str {
+        self.get(TextKey::LibraryRestoreModificationStatusTooltip)
+    }
+
     fn modified(self) -> &'static str {
         self.get(TextKey::LibraryModified)
     }
@@ -2996,6 +3018,14 @@ impl TextCatalog {
 
     fn profile_no_archive_yet(self) -> &'static str {
         self.get(TextKey::ProfilesNoArchiveYet)
+    }
+
+    fn profile_uncompressed_size(self) -> &'static str {
+        self.get(TextKey::ProfilesUncompressedSize)
+    }
+
+    fn profile_uncompressed_size_value(self, size: &str) -> String {
+        self.get(TextKey::ProfilesUncompressedSizeValue).replace("{size}", size)
     }
 
     fn profile_operation_failed(self) -> &'static str {

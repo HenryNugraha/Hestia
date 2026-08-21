@@ -1337,6 +1337,22 @@ pub struct ModSourceData {
     pub history: InstallHistory,
     pub baseline_content_mtime: Option<DateTime<Utc>>,
     pub baseline_ini_hash: Option<String>,
+    /// Set when the user chose "Ignore local changes" on a mod that diverged from
+    /// its install baseline. Records the on-disk fingerprint at that moment; the
+    /// baseline itself is left untouched so the choice can be undone. The mod
+    /// reads as unmodified only while its files still match this fingerprint,
+    /// so later edits surface as Modified again on their own. Cleared whenever
+    /// the baseline is rewritten (install, update, relink).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_local_changes: Option<AcceptedLocalChanges>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AcceptedLocalChanges {
+    pub content_mtime: Option<DateTime<Utc>>,
+    pub ini_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -399,6 +399,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "使用忽略一次之前，请先将至少一个已选择 Mod 与 GameBanana 同步", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "始终忽略更新", // LibraryIgnoreUpdateAlways
     "将此 Mod 的更新状态无限期设为“始终忽略更新”，直到取消勾选", // LibraryIgnoreUpdateAlwaysTooltip
+    "标记为未修改", // LibraryMarkAsNotModified
+    "将此 Mod 当前的文件视为未修改。原始安装基准会保留，此后再编辑文件会重新显示为已修改。更新会直接覆盖这些修改。", // LibraryMarkAsNotModifiedTooltip
+    "恢复修改状态", // LibraryRestoreModificationStatus
+    "重新将此 Mod 的文件与原始安装基准比较，恢复“已修改”状态", // LibraryRestoreModificationStatusTooltip
     "已修改", // LibraryModified
     "\n(已修改)", // LibraryModifiedSuffix
     "…以及另外 {count} 个", // LibraryAndMore
@@ -549,6 +553,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "归档大小", // ProfilesArchiveSize
     "上次归档大小", // ProfilesPreviousArchiveSize
     "尚无归档", // ProfilesNoArchiveYet
+    "大小", // ProfilesUncompressedSize
+    "{size}（未压缩）", // ProfilesUncompressedSizeValue
     "配置文件操作失败", // ProfilesOperationFailed
     "{folder} 中的文件正被 {apps} 占用，请关闭后重试。", // ProfilesFilesInUse
     "{folder} 中的文件正被其他程序占用，请关闭后重试。", // ProfilesFilesInUseUnknown

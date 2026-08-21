@@ -399,6 +399,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Sinkronkan setidaknya satu mod terpilih dengan GameBanana sebelum memakai abaikan sekali", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Selalu abaikan", // LibraryIgnoreUpdateAlways
     "Mengatur status pembaruan mod ini menjadi \"Selalu Mengabaikan Pembaruan\" sampai dinonaktifkan", // LibraryIgnoreUpdateAlwaysTooltip
+    "Tandai sebagai tidak dimodifikasi", // LibraryMarkAsNotModified
+    "Memperlakukan file mod ini saat ini sebagai tidak dimodifikasi. Acuan pemasangan asli tetap disimpan, dan mengedit file setelah titik ini akan kembali ditandai sebagai dimodifikasi. Pembaruan akan menimpa perubahan ini.", // LibraryMarkAsNotModifiedTooltip
+    "Pulihkan status modifikasi", // LibraryRestoreModificationStatus
+    "Mengembalikan status Dimodifikasi dengan membandingkan kembali file mod ini terhadap acuan pemasangan asli", // LibraryRestoreModificationStatusTooltip
     "Dimodifikasi", // LibraryModified
     "\n(Dimodifikasi)", // LibraryModifiedSuffix
     "…dan {count} lainnya", // LibraryAndMore
@@ -549,6 +553,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ukuran arsip", // ProfilesArchiveSize
     "Ukuran arsip sebelumnya", // ProfilesPreviousArchiveSize
     "Belum ada arsip", // ProfilesNoArchiveYet
+    "Ukuran", // ProfilesUncompressedSize
+    "{size} (belum dikompresi)", // ProfilesUncompressedSizeValue
     "Operasi profil gagal", // ProfilesOperationFailed
     "File di {folder} sedang dibuka oleh {apps}, tutup dulu lalu coba lagi.", // ProfilesFilesInUse
     "File di {folder} sedang dibuka oleh program lain, tutup dulu lalu coba lagi.", // ProfilesFilesInUseUnknown

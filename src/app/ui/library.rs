@@ -3287,6 +3287,24 @@ impl HestiaApp {
             return;
         }
 
+        // "Mark as not modified" only while the mod reads Modified; "Restore
+        // modification status" only while an acceptance is in effect. Neither
+        // shows otherwise. Sits above the ignore checkboxes.
+        if let Some(mark_as_not_modified) =
+            Self::local_changes_action_for_mod(&self.state.mods[index])
+        {
+            if Self::local_changes_action_button(ui, text, 12.0,mark_as_not_modified).clicked() {
+                if let Some(mod_entry) = self.state.mods.get_mut(index) {
+                    if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                        let _ = xxmi::save_mod_metadata(mod_entry);
+                        self.save_state();
+                    }
+                }
+                ui.close();
+            }
+            ui.add_space(-2.0);
+        }
+
         let mut ignore_current_update = self.state.mods[index]
             .source
             .as_ref()
@@ -3324,7 +3342,6 @@ impl HestiaApp {
         ignore_always_response
             .clone()
             .on_hover_text(text.ignore_update_always_tooltip());
-
         if ignore_once_response.changed() || ignore_always_response.changed() || changed {
             let mut cancel_mod = None;
             if ignore_update_always {
@@ -3380,6 +3397,44 @@ impl HestiaApp {
             }
             self.save_state();
         }
+    }
+
+    /// Which local-changes action a mod offers right now: `Some(true)` for
+    /// "Mark as not modified" (the mod reads Modified), `Some(false)` for
+    /// "Restore modification status" (an acceptance is in effect), `None` when
+    /// neither applies.
+    fn local_changes_action_for_mod(mod_entry: &ModEntry) -> Option<bool> {
+        if mod_ignores_local_changes(mod_entry) {
+            Some(false)
+        } else if mod_has_local_changes_for_update_check(mod_entry) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    fn local_changes_action_button(
+        ui: &mut Ui,
+        text: TextCatalog,
+        size: f32,
+        mark_as_not_modified: bool,
+    ) -> egui::Response {
+        let (icon, label, tooltip) = if mark_as_not_modified {
+            (
+                Icon::FileCheck,
+                text.mark_as_not_modified(),
+                text.mark_as_not_modified_tooltip(),
+            )
+        } else {
+            (
+                Icon::Undo2,
+                text.restore_modification_status(),
+                text.restore_modification_status_tooltip(),
+            )
+        };
+        ui.button(icon_text_sized(icon, label, size, size))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tooltip)
     }
 
     fn mod_supports_update_preferences(mod_entry: &ModEntry) -> bool {
@@ -3493,6 +3548,10 @@ impl HestiaApp {
         let mut any_ignore_update_always = false;
         let mut all_ignore_update_always = true;
         let mut any_can_use_ignore_once = false;
+        // "Mark as not modified" shows when any selected mod reads Modified;
+        // "Restore modification status" when any carries an acceptance.
+        let mut any_modified = false;
+        let mut any_marked_not_modified = false;
 
         for mod_id in &mod_ids {
             let Some(mod_entry) = self
@@ -3514,6 +3573,11 @@ impl HestiaApp {
                 && !ignore_update_always;
             let can_use_ignore_once =
                 ignore_current_update || ignore_once_signature_for_mod(mod_entry).is_some();
+            match Self::local_changes_action_for_mod(mod_entry) {
+                Some(true) => any_modified = true,
+                Some(false) => any_marked_not_modified = true,
+                None => {}
+            }
 
             any_ignore_current_update |= ignore_current_update;
             all_ignore_current_update &= ignore_current_update;
@@ -3527,6 +3591,22 @@ impl HestiaApp {
         let ignore_current_update_mixed = any_ignore_current_update && !all_ignore_current_update;
         let ignore_update_always_mixed = any_ignore_update_always && !all_ignore_update_always;
         let text = self.text();
+
+        // Local-changes actions sit above the ignore checkboxes, same as the
+        // single-mod menu.
+        let mut local_changes_action = None;
+        if any_modified {
+            if Self::local_changes_action_button(ui, text, 12.0,true).clicked() {
+                local_changes_action = Some(true);
+            }
+            ui.add_space(-2.0);
+        }
+        if any_marked_not_modified {
+            if Self::local_changes_action_button(ui, text, 12.0,false).clicked() {
+                local_changes_action = Some(false);
+            }
+            ui.add_space(-2.0);
+        }
 
         let ignore_once_response = ui.add_enabled(
             any_can_use_ignore_once,
@@ -3548,7 +3628,6 @@ impl HestiaApp {
         ignore_always_response
             .clone()
             .on_hover_text(text.ignore_update_always_tooltip());
-
         if ignore_once_response.changed() || ignore_always_response.changed() {
             self.apply_selected_update_preferences(
                 &mod_ids,
@@ -3556,8 +3635,42 @@ impl HestiaApp {
                 ignore_update_always,
             );
         }
+        if let Some(mark_as_not_modified) = local_changes_action {
+            self.apply_selected_ignore_local_changes(&mod_ids, mark_as_not_modified);
+            ui.close();
+        }
 
         true
+    }
+
+    /// Bulk counterpart of the per-mod "Ignore local changes" toggle. Enabling
+    /// accepts the current files of every selected mod that is modified right
+    /// now; disabling clears the acceptance on every selected mod that has one.
+    fn apply_selected_ignore_local_changes(&mut self, mod_ids: &[String], ignore: bool) {
+        let mut touched = false;
+        for mod_id in mod_ids {
+            let Some(mod_entry) = self
+                .state
+                .mods
+                .iter_mut()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+            else {
+                continue;
+            };
+            if !Self::mod_supports_update_preferences(mod_entry) {
+                continue;
+            }
+            if ignore && !mod_has_local_changes_for_update_check(mod_entry) {
+                continue;
+            }
+            if set_mod_ignore_local_changes(mod_entry, ignore) {
+                let _ = xxmi::save_mod_metadata(mod_entry);
+                touched = true;
+            }
+        }
+        if touched {
+            self.save_state();
+        }
     }
 
     /// Whether the mod's `.ini` files contain any 3DMigoto keybind section, cached
@@ -8733,6 +8846,21 @@ impl HestiaApp {
                         let _ = open_in_explorer(&selected.root_path);
                         ui.close();
                     }
+                    if let Some(mark_as_not_modified) =
+                        Self::local_changes_action_for_mod(&selected)
+                    {
+                        if Self::local_changes_action_button(ui, text, 13.0, mark_as_not_modified)
+                            .clicked()
+                        {
+                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                                    let _ = xxmi::save_mod_metadata(mod_entry);
+                                    self.save_state();
+                                }
+                            }
+                            ui.close();
+                        }
+                    }
 
                     if gb_id > 0 {
                         ui.separator();
@@ -9453,6 +9581,24 @@ impl HestiaApp {
                                             let _ = open_in_explorer(&selected.root_path);
                                         }
                                     });
+                                    // Local-changes action lives here (it is about the
+                                    // on-disk files, not the GameBanana link): "Mark as
+                                    // not modified" while Modified, "Restore modification
+                                    // status" while a mark is in effect.
+                                    if let Some(mark_as_not_modified) = Self::local_changes_action_for_mod(&selected) {
+                                        ui.add_space(4.0);
+                                        ui.horizontal_centered(|ui| {
+                                            if Self::local_changes_action_button(ui, text, 12.0,mark_as_not_modified).clicked() {
+                                                let selected_id = selected.id.clone();
+                                                if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
+                                                    if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                                                        let _ = xxmi::save_mod_metadata(mod_entry);
+                                                        self.save_state();
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
                                 });
                             },
                             );

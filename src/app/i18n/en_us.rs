@@ -399,6 +399,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Sync at least one selected mod with GameBanana before using ignore once", // LibraryIgnoreUpdateOnceBulkDisabledTooltip
     "Ignore update always", // LibraryIgnoreUpdateAlways
     "Indefinitely sets this mod's update status to \"Ignoring Update Always\" until unchecked", // LibraryIgnoreUpdateAlwaysTooltip
+    "Mark as not modified", // LibraryMarkAsNotModified
+    "Treats this mod's current files as unmodified. The original install baseline is kept, and editing files after this point will show as modified again. Updates will install over these changes.", // LibraryMarkAsNotModifiedTooltip
+    "Restore modification status", // LibraryRestoreModificationStatus
+    "Brings back the Modified status by comparing this mod's files against the original install baseline again", // LibraryRestoreModificationStatusTooltip
     "Modified", // LibraryModified
     "\n(Modified)", // LibraryModifiedSuffix
     "…and {count} more", // LibraryAndMore
@@ -549,6 +553,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Archive size", // ProfilesArchiveSize
     "Previous archive size", // ProfilesPreviousArchiveSize
     "No archive yet", // ProfilesNoArchiveYet
+    "Size", // ProfilesUncompressedSize
+    "{size} (uncompressed)", // ProfilesUncompressedSizeValue
     "Profile operation failed", // ProfilesOperationFailed
     "Files in {folder} are open in {apps}, close them and try again.", // ProfilesFilesInUse
     "Files in {folder} are open in another program, close it and try again.", // ProfilesFilesInUseUnknown

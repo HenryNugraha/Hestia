@@ -2398,6 +2398,11 @@ impl HestiaApp {
             source.baseline_content_mtime.as_ref(),
         );
         source.baseline_ini_hash.hash(hasher);
+        source.accepted_local_changes.is_some().hash(hasher);
+        if let Some(accepted) = source.accepted_local_changes.as_ref() {
+            Self::hash_optional_datetime_for_library_cache(hasher, accepted.content_mtime.as_ref());
+            accepted.ini_hash.hash(hasher);
+        }
     }
 
     fn mods_for_selected_game(&self) -> Vec<&ModEntry> {
