@@ -411,6 +411,8 @@ impl HestiaApp {
             log_display_cache: LogDisplayCache::default(),
             tools_window_nonce,
             tools_force_default_pos,
+            new_tool_ids: HashSet::new(),
+            tools_new_badges_shown: false,
             tool_launch_options_prompt: None,
             dragging_window_tool_id: None,
             dragging_window_tool_target_index: None,
@@ -1449,10 +1451,20 @@ impl HestiaApp {
     }
 
     fn push_toast(&mut self, message: String, is_error: bool) {
+        self.push_toast_with_action(message, is_error, None);
+    }
+
+    fn push_toast_with_action(
+        &mut self,
+        message: String,
+        is_error: bool,
+        action: Option<ToastAction>,
+    ) {
         let entry = ToastEntry {
             message,
             is_error,
             created_at: 0.0,
+            action,
         };
         self.toasts.insert(0, entry);
         if self.toasts.len() > TOAST_LIMIT {

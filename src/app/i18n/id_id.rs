@@ -80,6 +80,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Alat Ditambahkan", // ToolsActionAdded
     "Alat Dihapus", // ToolsActionRemoved
     "Alat Dijalankan", // ToolsActionLaunched
+    "Baru", // ToolsNewBadge
+    "{mod} menyertakan alat: {tool}", // ToolsInstalledModIncludesTool
+    "{mod} menyertakan {count} alat", // ToolsInstalledModIncludesTools
+    "Buka Alat", // ToolsOpenToolsAction
 
     // Window: Tool Launch Options
     "Atur Opsi Peluncuran", // ToolLaunchOptionsWindowTitle

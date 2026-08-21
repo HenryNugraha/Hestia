@@ -355,15 +355,17 @@ impl HestiaApp {
         items
     }
 
-    fn sync_tools_for_selected_game(&mut self) -> bool {
+    /// Rescans the selected game's mods folder for executables and returns the ids of tools that
+    /// were not known before this pass.
+    fn sync_tools_for_selected_game(&mut self) -> Vec<String> {
         let Some(game) = self.selected_game().cloned() else {
-            return false;
+            return Vec::new();
         };
         let Some(mods_root) = game.mods_path(self.state.static_prefs.use_default_mods_path) else {
-            return false;
+            return Vec::new();
         };
         if !mods_root.is_dir() {
-            return false;
+            return Vec::new();
         }
         let game_id = game.definition.id;
         let discovered = self.discover_tools_for_game(&game_id, &mods_root);
@@ -375,7 +377,7 @@ impl HestiaApp {
         game_id: &str,
         mods_root: &Path,
         discovered: Vec<DiscoveredGameTool>,
-    ) -> bool {
+    ) -> Vec<String> {
         let root = Some(mods_root);
         let manual_keys: HashSet<String> = self
             .state
@@ -394,6 +396,7 @@ impl HestiaApp {
             })
             .collect();
         let mut changed = false;
+        let mut added_ids = Vec::new();
 
         self.state.tools.retain_mut(|tool| {
             if tool.game_id != game_id {
@@ -448,8 +451,10 @@ impl HestiaApp {
             if existing_keys.contains(&key) {
                 continue;
             }
+            let id = ProfileId::random().to_string();
+            added_ids.push(id.clone());
             self.state.tools.push(ToolEntry {
-                id: ProfileId::random().to_string(),
+                id,
                 game_id: game_id.to_string(),
                 label: discovered.label,
                 path: discovered.path,
@@ -470,7 +475,82 @@ impl HestiaApp {
             self.compact_tool_titlebar_order_for_game(game_id);
         }
 
-        changed
+        added_ids
+    }
+
+    /// Surfaces tools that arrived with a just-finalized install: marks them "New" in the Tools
+    /// window and toasts once per mod with an Open Tools button. Discovery itself stays silent
+    /// everywhere else (startup, reload) so a fresh profile does not get a wall of badges.
+    fn announce_installed_mod_tools(&mut self, new_tool_ids: &[String], installed_mod_ids: &[String]) {
+        if new_tool_ids.is_empty() || installed_mod_ids.is_empty() {
+            return;
+        }
+        // (mod id, mod name, tool labels) in window order so the toast names the first card.
+        let mut per_mod: Vec<(String, String, Vec<String>)> = Vec::new();
+        for tool in &self.state.tools {
+            if !tool.auto_detected || !new_tool_ids.contains(&tool.id) {
+                continue;
+            }
+            let Some(mod_id) = tool
+                .source_mod_id
+                .as_ref()
+                .filter(|mod_id| installed_mod_ids.contains(mod_id))
+            else {
+                continue;
+            };
+            self.new_tool_ids.insert(tool.id.clone());
+            if let Some(entry) = per_mod.iter_mut().find(|(id, ..)| id == mod_id) {
+                entry.2.push(tool.label.clone());
+            } else {
+                let mod_name = self
+                    .state
+                    .mods
+                    .iter()
+                    .find(|mod_entry| &mod_entry.id == mod_id)
+                    .map(|mod_entry| mod_entry.folder_name.clone())
+                    .unwrap_or_default();
+                per_mod.push((mod_id.clone(), mod_name, vec![tool.label.clone()]));
+            }
+        }
+        if per_mod.is_empty() {
+            return;
+        }
+        // A button that opens an already-open window would do nothing visible; the badge carries
+        // the pointer in that case.
+        let action = (!self.state.show_tools).then_some(ToastAction::OpenTools);
+        for (_, mod_name, labels) in per_mod {
+            let text = self.text();
+            let message = if labels.len() == 1 {
+                text.installed_mod_includes_tool(&mod_name, &labels[0])
+            } else {
+                text.installed_mod_includes_tools(&mod_name, labels.len())
+            };
+            self.log_action(text.tool_action_added(), &labels.join(", "));
+            self.push_toast_with_action(message, false, action);
+        }
+    }
+
+    fn run_toast_action(&mut self, action: ToastAction) {
+        match action {
+            ToastAction::OpenTools => {
+                if !self.state.show_tools {
+                    self.toggle_tools_window();
+                }
+            }
+        }
+    }
+
+    /// The "New" badges only mean something while the user has not looked yet; once the Tools
+    /// window has been shown with them and then closed, they have done their job.
+    fn settle_new_tool_badges(&mut self) {
+        if self.state.show_tools {
+            if !self.new_tool_ids.is_empty() {
+                self.tools_new_badges_shown = true;
+            }
+        } else if self.tools_new_badges_shown {
+            self.tools_new_badges_shown = false;
+            self.new_tool_ids.clear();
+        }
     }
 
     fn prompt_add_tool_for_selected_game(&mut self) {

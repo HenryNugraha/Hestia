@@ -1,3 +1,11 @@
+fn toast_duration(toast: &ToastEntry) -> f64 {
+    if toast.action.is_some() {
+        TOAST_ACTION_DURATION
+    } else {
+        TOAST_DURATION
+    }
+}
+
 impl HestiaApp {
     fn render_top_bar(&mut self, ui: &mut egui::Ui) {
         let current_time = ui.input(|i| i.time);
@@ -9,7 +17,7 @@ impl HestiaApp {
             }
         }
         self.toasts
-            .retain(|toast| current_time - toast.created_at <= TOAST_DURATION);
+            .retain(|toast| current_time - toast.created_at <= toast_duration(toast));
 
         egui::Panel::top("top_bar")
             .frame(
@@ -759,12 +767,14 @@ impl HestiaApp {
                 let panel_rect = ui.available_rect_before_wrap();
                 let center_x = panel_rect.center().x;
                 let mut next_y = panel_rect.top() + TOAST_OFFSET;
+                let mut clicked_action: Option<(usize, ToastAction)> = None;
                 for (index, toast) in self.toasts.iter().enumerate() {
+                    let duration = toast_duration(toast);
                     let elapsed = current_time - toast.created_at;
-                    let fade_start = (TOAST_DURATION - 1.0).max(0.0);
+                    let fade_start = (duration - 1.0).max(0.0);
                     let alpha = if elapsed > fade_start {
                         let fade_time = elapsed - fade_start;
-                        let fade_duration = (TOAST_DURATION - fade_start).max(0.001);
+                        let fade_duration = (duration - fade_start).max(0.001);
                         ((1.0 - (fade_time / fade_duration)) * 255.0) as u8
                     } else {
                         255
@@ -789,10 +799,11 @@ impl HestiaApp {
                         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, next_y))
                         .fixed_pos(egui::pos2(center_x, panel_rect.top()))
                         // Above Order::Foreground so toasts stay visible over
-                        // the fullview image overlay; not interactable so they
-                        // never swallow clicks meant for what is beneath them.
+                        // the fullview image overlay; plain toasts are not
+                        // interactable so they never swallow clicks meant for
+                        // what is beneath them. Toasts with a button must be.
                         .order(egui::Order::Tooltip)
-                        .interactable(false)
+                        .interactable(toast.action.is_some())
                         .show(ui.ctx(), |ui| {
                             ui.set_max_width(TOAST_MAX_WIDTH);
                             let frame = egui::Frame::new()
@@ -802,15 +813,52 @@ impl HestiaApp {
                                 .inner_margin(egui::Margin::symmetric(14, 8));
                             frame
                                 .show(ui, |ui| {
-                                    ui.label(
-                                        RichText::new(&toast.message)
-                                            .color(text_color)
-                                            .size(13.0),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(&toast.message)
+                                                .color(text_color)
+                                                .size(13.0),
+                                        );
+                                        let Some(action) = toast.action else {
+                                            return;
+                                        };
+                                        ui.add_space(6.0);
+                                        let label = match action {
+                                            ToastAction::OpenTools => text.open_tools_action(),
+                                        };
+                                        let button = egui::Button::new(
+                                            RichText::new(label)
+                                                .color(Color32::from_rgba_unmultiplied(
+                                                    255, 255, 255, alpha,
+                                                ))
+                                                .size(12.0),
+                                        )
+                                        .fill(Color32::from_rgba_unmultiplied(
+                                            180, 78, 35, alpha,
+                                        ))
+                                        .stroke(egui::Stroke::new(
+                                            1.0,
+                                            Color32::from_rgba_unmultiplied(214, 104, 58, alpha),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(6));
+                                        if ui
+                                            .add(button)
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            clicked_action = Some((index, action));
+                                        }
+                                    });
                                 })
                                 .response
                         });
                     next_y += response.response.rect.height() + TOAST_SPACING;
+                }
+                if let Some((index, action)) = clicked_action {
+                    if index < self.toasts.len() {
+                        self.toasts.remove(index);
+                    }
+                    self.run_toast_action(action);
                 }
                 request_animation_repaint(ui.ctx());
             }

@@ -1,8 +1,16 @@
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ToastAction {
+    OpenTools,
+}
+
 #[derive(Clone)]
 struct ToastEntry {
     message: String,
     is_error: bool,
     created_at: f64,
+    /// Optional button rendered on the toast; actionable toasts stay up longer and are the only
+    /// ones that accept pointer input.
+    action: Option<ToastAction>,
 }
 
 #[derive(Default)]
@@ -338,6 +346,10 @@ pub struct HestiaApp {
     log_display_cache: LogDisplayCache,
     tools_window_nonce: u64,
     tools_force_default_pos: bool,
+    /// Auto-detected tools that arrived with a mod install and have not been looked at yet. Drives
+    /// the "New" badge in the Tools window; cleared once that window closes.
+    new_tool_ids: HashSet<String>,
+    tools_new_badges_shown: bool,
     tool_launch_options_prompt: Option<ToolLaunchOptionsPrompt>,
     dragging_window_tool_id: Option<String>,
     dragging_window_tool_target_index: Option<usize>,

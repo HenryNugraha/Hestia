@@ -80,6 +80,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Tool Added", // ToolsActionAdded
     "Tool Removed", // ToolsActionRemoved
     "Tool Launched", // ToolsActionLaunched
+    "New", // ToolsNewBadge
+    "{mod} includes a tool: {tool}", // ToolsInstalledModIncludesTool
+    "{mod} includes {count} tools", // ToolsInstalledModIncludesTools
+    "Open Tools", // ToolsOpenToolsAction
 
     // Window: Tool Launch Options
     "Set Launch Options", // ToolLaunchOptionsWindowTitle

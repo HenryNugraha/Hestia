@@ -80,6 +80,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "工具已添加", // ToolsActionAdded
     "工具已移除", // ToolsActionRemoved
     "工具已启动", // ToolsActionLaunched
+    "新", // ToolsNewBadge
+    "{mod} 包含工具：{tool}", // ToolsInstalledModIncludesTool
+    "{mod} 包含 {count} 个工具", // ToolsInstalledModIncludesTools
+    "打开工具", // ToolsOpenToolsAction
 
     // Window: Tool Launch Options
     "设置启动选项", // ToolLaunchOptionsWindowTitle

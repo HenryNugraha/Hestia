@@ -84,6 +84,10 @@ enum TextKey {
     ToolsActionAdded,
     ToolsActionRemoved,
     ToolsActionLaunched,
+    ToolsNewBadge,
+    ToolsInstalledModIncludesTool,
+    ToolsInstalledModIncludesTools,
+    ToolsOpenToolsAction,
 
     ToolLaunchOptionsWindowTitle,
     ToolLaunchOptionsHint,
@@ -1084,6 +1088,26 @@ impl TextCatalog {
 
     fn tool_action_launched(self) -> &'static str {
         self.get(TextKey::ToolsActionLaunched)
+    }
+
+    fn tool_new_badge(self) -> &'static str {
+        self.get(TextKey::ToolsNewBadge)
+    }
+
+    fn installed_mod_includes_tool(self, mod_name: &str, tool: &str) -> String {
+        self.get(TextKey::ToolsInstalledModIncludesTool)
+            .replace("{mod}", mod_name)
+            .replace("{tool}", tool)
+    }
+
+    fn installed_mod_includes_tools(self, mod_name: &str, count: usize) -> String {
+        self.get(TextKey::ToolsInstalledModIncludesTools)
+            .replace("{mod}", mod_name)
+            .replace("{count}", &count.to_string())
+    }
+
+    fn open_tools_action(self) -> &'static str {
+        self.get(TextKey::ToolsOpenToolsAction)
     }
 
     fn tool_launch_options(self) -> &'static str {

@@ -80,6 +80,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Утилита добавлена", // ToolsActionAdded
     "Утилита удалена", // ToolsActionRemoved
     "Утилита запущена", // ToolsActionLaunched
+    "Новое", // ToolsNewBadge
+    "{mod} содержит утилиту: {tool}", // ToolsInstalledModIncludesTool
+    "{mod} содержит утилит: {count}", // ToolsInstalledModIncludesTools
+    "Открыть утилиты", // ToolsOpenToolsAction
 
     // Window: Tool Launch Options
     "Задать параметры запуска", // ToolLaunchOptionsWindowTitle

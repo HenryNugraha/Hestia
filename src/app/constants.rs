@@ -39,6 +39,8 @@ const COVER_BOTTOM_EXTEND: f32 = 2.0; // Adjust this to extend cover to bottom e
 // Toast notification limits, timing, and positioning.
 const TOAST_LIMIT: usize = 5;
 const TOAST_DURATION: f64 = 4.0;
+/// Toasts carrying a button need long enough to read and reach for it.
+const TOAST_ACTION_DURATION: f64 = 10.0;
 const TOAST_SPACING: f32 = 6.0;
 const TOAST_OFFSET: f32 = -108.0;
 const TOAST_MAX_WIDTH: f32 = CARD_WIDTH * 3.0;

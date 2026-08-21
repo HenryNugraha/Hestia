@@ -1799,14 +1799,17 @@ impl HestiaApp {
                     });
                     self.restore_imported_mod_categories(Some(&game_id));
                     self.run_xxmi_persist_scan_pass(&game_id);
+                    let mut new_tool_ids = Vec::new();
                     if is_current {
                         self.invalidate_stale_mod_textures(&old_ts);
                         self.sync_selection_after_refresh();
                         self.backfill_missing_mod_images(Some(&game_id));
-                        self.sync_tools_for_selected_game();
+                        new_tool_ids = self.sync_tools_for_selected_game();
                     }
-                    let finalized_install =
+                    let installed_mod_ids =
                         self.resolve_pending_install_finalization_for_game(&game_id);
+                    let finalized_install = !installed_mod_ids.is_empty();
+                    self.announce_installed_mod_tools(&new_tool_ids, &installed_mod_ids);
                     self.save_state();
                     if reload_before.is_some() {
                         self.queue_update_check_for_linked_mods_force(Some(&game_id));
@@ -1877,8 +1880,10 @@ impl HestiaApp {
         normalized_components(installed) == normalized_components(mod_root)
     }
 
-    fn resolve_pending_install_finalization_for_game(&mut self, game_id: &str) -> bool {
-        let mut finalized_any = false;
+    /// Finalizes every pending install that landed in `game_id` and returns the ids of the mods
+    /// those installs produced (empty when nothing was pending).
+    fn resolve_pending_install_finalization_for_game(&mut self, game_id: &str) -> Vec<String> {
+        let mut installed_mod_ids = Vec::new();
         let job_ids: Vec<u64> = self.pending_install_finalize.keys().copied().collect();
         for job_id in job_ids {
             let Some(payload) = self.pending_install_finalize.get(&job_id).cloned() else {
@@ -1895,13 +1900,17 @@ impl HestiaApp {
                 continue;
             }
             let _ = self.pending_install_finalize.remove(&job_id);
-            self.finalize_install_after_refresh(job_id, payload);
-            finalized_any = true;
+            installed_mod_ids.extend(self.finalize_install_after_refresh(job_id, payload));
         }
-        finalized_any
+        installed_mod_ids
     }
 
-    fn finalize_install_after_refresh(&mut self, _job_id: u64, payload: PendingInstallFinalize) {
+    /// Returns the ids of the mods this install produced.
+    fn finalize_install_after_refresh(
+        &mut self,
+        _job_id: u64,
+        payload: PendingInstallFinalize,
+    ) -> Vec<String> {
         let PendingInstallFinalize {
             installed_paths,
             installed_candidate_labels,
@@ -2256,6 +2265,7 @@ impl HestiaApp {
             self.log_action(text.installed_action(), fallback_name);
             self.set_message_ok(text.installed_name(fallback_name));
         }
+        newly_installed_ids
     }
 
     fn apply_browse_download_category(

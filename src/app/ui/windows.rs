@@ -1008,6 +1008,7 @@ impl HestiaApp {
     }
 
     fn render_tools_window(&mut self, ctx: &egui::Context) {
+        self.settle_new_tool_badges();
         if !self.state.show_tools {
             return;
         }
@@ -1286,6 +1287,79 @@ impl HestiaApp {
                                     }
                                 },
                             );
+                            // Pin toggle sits opposite the menu; always shown while pinned so the
+                            // state is readable at a glance, otherwise only on hover.
+                            let pointer_over_card_now = ui
+                                .ctx()
+                                .pointer_latest_pos()
+                                .is_some_and(|pos| rect.contains(pos));
+                            if tool.show_in_titlebar || (pointer_over_card_now && !is_dragging_this)
+                            {
+                                let pin_rect = egui::Rect::from_min_size(
+                                    egui::pos2(rect.left() + 10.0, rect.top() + 10.0),
+                                    Vec2::new(24.0, 24.0),
+                                );
+                                let mut pin_ui = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .max_rect(pin_rect)
+                                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                                );
+                                pin_ui.style_mut().spacing.button_padding = egui::vec2(4.0, 2.0);
+                                let pin_color = if tool.show_in_titlebar {
+                                    Color32::from_rgb(214, 104, 58)
+                                } else {
+                                    Color32::from_rgb(160, 165, 172)
+                                };
+                                let pin_response = pin_ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(
+                                                icon_char(if tool.show_in_titlebar {
+                                                    Icon::PinOff
+                                                } else {
+                                                    Icon::Pin
+                                                })
+                                                .to_string(),
+                                            )
+                                            .family(FontFamily::Name(LUCIDE_FAMILY.into()))
+                                            .size(16.0)
+                                            .color(pin_color),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(if tool.show_in_titlebar {
+                                        text.unpin_from_titlebar()
+                                    } else {
+                                        text.pin_to_titlebar()
+                                    });
+                                if pin_response.clicked() {
+                                    pin_changes.push((tool.id.clone(), !tool.show_in_titlebar));
+                                }
+                            }
+                            if self.new_tool_ids.contains(&tool.id) {
+                                let badge_font = egui::FontId::proportional(10.0);
+                                let galley = ui.painter().layout_no_wrap(
+                                    text.tool_new_badge().to_string(),
+                                    badge_font,
+                                    Color32::WHITE,
+                                );
+                                let badge_size = galley.size() + egui::vec2(12.0, 4.0);
+                                let badge_rect = egui::Rect::from_center_size(
+                                    egui::pos2(rect.center().x, rect.bottom() - 62.0),
+                                    badge_size,
+                                );
+                                ui.painter().rect_filled(
+                                    badge_rect,
+                                    egui::CornerRadius::same(8),
+                                    Color32::from_rgb(180, 78, 35),
+                                );
+                                ui.painter().galley(
+                                    badge_rect.min + egui::vec2(6.0, 2.0),
+                                    galley,
+                                    Color32::WHITE,
+                                );
+                            }
                             response.context_menu(|ui| {
                                 if ui
                                     .add_enabled(
