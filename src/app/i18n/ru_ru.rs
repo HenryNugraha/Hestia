@@ -806,4 +806,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Проверка…", // LibraryChecking
     "Сбросить размер и положение", // ResetWindowLayout
     "Фильтр персонажей", // BrowseFilterCharactersHint
+    "Для этого мода не привязан источник GameBanana. Нажмите, чтобы привязать.", // LibraryUnlinkedClickToLink
 ];

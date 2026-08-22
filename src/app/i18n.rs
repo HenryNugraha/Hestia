@@ -790,10 +790,11 @@ enum TextKey {
     LibraryChecking,
     ResetWindowLayout,
     BrowseFilterCharactersHint,
+    LibraryUnlinkedClickToLink,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::BrowseFilterCharactersHint as usize + 1;
+    const COUNT: usize = Self::LibraryUnlinkedClickToLink as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2265,6 +2266,10 @@ impl TextCatalog {
 
     fn unlinked(self) -> &'static str {
         self.get(TextKey::LibraryUnlinked)
+    }
+
+    fn unlinked_click_to_link(self) -> &'static str {
+        self.get(TextKey::LibraryUnlinkedClickToLink)
     }
 
     fn up_to_date(self) -> &'static str {

@@ -9235,6 +9235,30 @@ impl HestiaApp {
                             static_label(ui, RichText::new(update_text).size(12.0).color(update_color))
                                 .on_hover_text(Self::mod_update_badge_tooltip(&selected));
                         }
+                    } else {
+                        // Unlinked mods still get a status segment here, and clicking it
+                        // runs the same action as the "Link Mod" menu entry: expand the
+                        // SOURCE section and focus its link input.
+                        ui.add_space(-4.0);
+                        static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
+                        ui.add_space(-4.0);
+                        let (unlinked_text, unlinked_color) =
+                            Self::mod_update_state_badge(text, ModUpdateState::Unlinked);
+                        let unlinked_response = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(unlinked_text).size(12.0).color(unlinked_color),
+                                )
+                                .selectable(false)
+                                .sense(Sense::click()),
+                            )
+                            .on_hover_text(text.unlinked_click_to_link())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if unlinked_response.clicked() {
+                            self.my_mod_source_expanded = true;
+                            self.mod_detail_source_focus_pending = true;
+                            ui.ctx().request_repaint();
+                        }
                     }
                     ui.add_space(-4.0);
                     static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));

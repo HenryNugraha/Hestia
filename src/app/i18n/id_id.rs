@@ -807,4 +807,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Memeriksa…", // LibraryChecking
     "Atur ulang ukuran dan posisi", // ResetWindowLayout
     "Filter karakter", // BrowseFilterCharactersHint
+    "Belum ada sumber GameBanana yang ditautkan untuk mod ini. Klik untuk menautkannya.", // LibraryUnlinkedClickToLink
 ];

@@ -807,4 +807,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Checking…", // LibraryChecking
     "Reset size and position", // ResetWindowLayout
     "Filter characters", // BrowseFilterCharactersHint
+    "No GameBanana source is linked for this mod. Click to link it.", // LibraryUnlinkedClickToLink
 ];

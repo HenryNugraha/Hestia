@@ -807,4 +807,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "正在检查…", // LibraryChecking
     "重置大小和位置", // ResetWindowLayout
     "筛选角色", // BrowseFilterCharactersHint
+    "此模组尚未关联 GameBanana 来源。点击以关联。", // LibraryUnlinkedClickToLink
 ];
