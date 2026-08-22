@@ -350,9 +350,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Доступно при группировке по категориям.", // LibraryAvailableWhenGroupedByCategory
     "Сначала показывает плитки категорий, затем открывает по одной категории за раз", // LibraryCategoryFoldersTooltip
     "Показывает каждую категорию отдельным разделом в списке модов", // LibraryCategoryListTooltip
-    "Сортировка категорий", // LibrarySortCategoriesHeading
+    "Порядок папок", // LibrarySortCategoriesHeading
     "Вручную", // LibraryCategorySortManual
-    "По названию (А-Я)", // LibraryCategorySortByNameAsc
+    "Название А-Я", // LibraryCategorySortByNameAsc
     "Меньше всего модов", // LibraryCategorySortByLeastMods
     "Больше всего модов", // LibraryCategorySortByMostMods
     "Используется ваш ручной порядок категорий", // LibraryCategorySortManualTooltip
@@ -807,4 +807,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Сбросить размер и положение", // ResetWindowLayout
     "Фильтр персонажей", // BrowseFilterCharactersHint
     "Для этого мода не привязан источник GameBanana. Нажмите, чтобы привязать.", // LibraryUnlinkedClickToLink
+    "Название Я-А", // LibraryCategorySortByNameDesc
+    "Без категории", // LibraryUncategorizedSortHeading
+    "Как у модов", // LibraryUncategorizedSortSameAsMods
+    "Без категории: {status}", // LibraryUncategorizedStatusHeader
 ];

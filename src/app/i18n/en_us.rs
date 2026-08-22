@@ -350,9 +350,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Available when grouped by category.", // LibraryAvailableWhenGroupedByCategory
     "Shows category tiles first, then opens one category at a time", // LibraryCategoryFoldersTooltip
     "Shows every category as a section in the mod list", // LibraryCategoryListTooltip
-    "Sort Categories", // LibrarySortCategoriesHeading
+    "Folder Order", // LibrarySortCategoriesHeading
     "Manual", // LibraryCategorySortManual
-    "By Name (A-Z)", // LibraryCategorySortByNameAsc
+    "Name A-Z", // LibraryCategorySortByNameAsc
     "By Least Mods", // LibraryCategorySortByLeastMods
     "By Most Mods", // LibraryCategorySortByMostMods
     "Uses your manual category order", // LibraryCategorySortManualTooltip
@@ -808,4 +808,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Reset size and position", // ResetWindowLayout
     "Filter characters", // BrowseFilterCharactersHint
     "No GameBanana source is linked for this mod. Click to link it.", // LibraryUnlinkedClickToLink
+    "Name Z-A", // LibraryCategorySortByNameDesc
+    "Uncategorized", // LibraryUncategorizedSortHeading
+    "Same as mods", // LibraryUncategorizedSortSameAsMods
+    "Uncategorized: {status}", // LibraryUncategorizedStatusHeader
 ];

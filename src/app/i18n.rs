@@ -357,6 +357,10 @@ enum TextKey {
     LibraryCategorySortByNameTooltip,
     LibraryCategorySortByMostModsTooltip,
     LibraryCategorySortByLeastModsTooltip,
+    // No longer shown: the "Miscellaneous" section was folded into SORT/CATEGORIES when the
+    // sort menu was restructured. Kept (with its catalog strings) to preserve TextKey ordering
+    // and in case the section returns. See ENFORCE_CATEGORY_FOLDER_VIEW.
+    #[allow(dead_code)]
     LibraryMiscellaneousHeading,
     LibrarySortCategoryFirstTooltip,
     LibrarySortStatusFirstTooltip,
@@ -791,10 +795,14 @@ enum TextKey {
     ResetWindowLayout,
     BrowseFilterCharactersHint,
     LibraryUnlinkedClickToLink,
+    LibraryCategorySortByNameDesc,
+    LibraryUncategorizedSortHeading,
+    LibraryUncategorizedSortSameAsMods,
+    LibraryUncategorizedStatusHeader,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::LibraryUnlinkedClickToLink as usize + 1;
+    const COUNT: usize = Self::LibraryUncategorizedStatusHeader as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2187,6 +2195,7 @@ impl TextCatalog {
         match mode {
             ModCategorySortMode::Manual => self.get(TextKey::LibraryCategorySortManual),
             ModCategorySortMode::ByNameAsc => self.get(TextKey::LibraryCategorySortByNameAsc),
+            ModCategorySortMode::ByNameDesc => self.get(TextKey::LibraryCategorySortByNameDesc),
             ModCategorySortMode::ByModCountAsc => self.get(TextKey::LibraryCategorySortByLeastMods),
             ModCategorySortMode::ByModCountDesc => self.get(TextKey::LibraryCategorySortByMostMods),
         }
@@ -2208,6 +2217,9 @@ impl TextCatalog {
         self.get(TextKey::LibraryCategorySortByLeastModsTooltip)
     }
 
+    // Retained for when the "Miscellaneous" sort-menu section returns; the section was folded
+    // into SORT/CATEGORIES while the category folder view is enforced.
+    #[allow(dead_code)]
     fn library_miscellaneous_heading(self) -> &'static str {
         self.get(TextKey::LibraryMiscellaneousHeading)
     }
@@ -2222,6 +2234,21 @@ impl TextCatalog {
 
     fn library_uncategorized_first_list_only_tooltip(self) -> &'static str {
         self.get(TextKey::LibraryUncategorizedFirstListOnlyTooltip)
+    }
+
+    fn library_uncategorized_sort_heading(self) -> &'static str {
+        self.get(TextKey::LibraryUncategorizedSortHeading)
+    }
+
+    fn library_uncategorized_sort_same_as_mods(self) -> &'static str {
+        self.get(TextKey::LibraryUncategorizedSortSameAsMods)
+    }
+
+    /// Header for a status run inside the uncategorized pile, e.g. "Uncategorized: Disabled".
+    /// The catalog string carries a `{status}` placeholder so translators control word order.
+    fn library_uncategorized_status_header(self, status: &ModStatus) -> String {
+        self.get(TextKey::LibraryUncategorizedStatusHeader)
+            .replace("{status}", self.mod_status_label(status))
     }
 
     fn toggle_visibility(self) -> &'static str {

@@ -318,6 +318,14 @@ fn sort_categories_with_counts<F>(
                     .then_with(|| a.order.cmp(&b.order))
             });
         }
+        ModCategorySortMode::ByNameDesc => {
+            categories.sort_by(|a, b| {
+                b.name
+                    .to_lowercase()
+                    .cmp(&a.name.to_lowercase())
+                    .then_with(|| a.order.cmp(&b.order))
+            });
+        }
         ModCategorySortMode::ByModCountAsc => {
             categories.sort_by(|a, b| {
                 member_count(&a.id)
@@ -1142,6 +1150,67 @@ impl HestiaApp {
         should_save
     }
 
+    // Independent sort for the uncategorized pile (Option D). `None` means "Same
+    // as mods" — the pile just follows the global mod sort order.
+    fn render_library_uncategorized_sort_radio_rows(&mut self, ui: &mut Ui) -> bool {
+        let text = self.text();
+        let mut should_save = false;
+        let mut selected = self.state.static_prefs.library_uncategorized_sort;
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            None,
+            text.library_uncategorized_sort_same_as_mods(),
+            None,
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::NameAsc),
+            text.library_sort_label(LibrarySort::NameAsc),
+            Some(text.library_sort_name_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::NameDesc),
+            text.library_sort_label(LibrarySort::NameDesc),
+            Some(text.library_sort_name_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::DateDesc),
+            text.library_sort_label(LibrarySort::DateDesc),
+            Some(text.library_sort_newest_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::DateAsc),
+            text.library_sort_label(LibrarySort::DateAsc),
+            Some(text.library_sort_oldest_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::SizeAsc),
+            text.library_sort_label(LibrarySort::SizeAsc),
+            Some(text.library_sort_size_tooltip()),
+        );
+        should_save |= Self::sort_menu_radio(
+            ui,
+            &mut selected,
+            Some(LibrarySort::SizeDesc),
+            text.library_sort_label(LibrarySort::SizeDesc),
+            Some(text.library_sort_size_tooltip()),
+        );
+        if selected != self.state.static_prefs.library_uncategorized_sort {
+            self.state.static_prefs.library_uncategorized_sort = selected;
+        }
+        should_save
+    }
+
     fn render_library_group_radio_rows(&mut self, ui: &mut Ui) -> bool {
         let text = self.text();
         let mut should_save = false;
@@ -1321,56 +1390,86 @@ impl HestiaApp {
 
                 let mut should_save = false;
 
+                // ===== SORT (mods) =====
                 Self::sort_menu_heading(ui, text.library_sort_mods_heading());
                 ui.add_space(-2.0);
                 should_save |= self.render_library_sort_radio_rows(ui);
+                // Status-first clusters mods by status within the chosen sort. In the enforced
+                // Category view effective_library_group_mode() == Category, so this always hits
+                // the status-first arm; the category-first arm is only reachable when the
+                // (hidden) Status grouping is restored.
+                let detail_changed = match self.state.static_prefs.effective_library_group_mode() {
+                    LibraryGroupMode::Status => ui
+                        .checkbox(
+                            &mut self.state.static_prefs.library_sort_category_first,
+                            text.sort_by_category_first(),
+                        )
+                        .on_hover_text(text.library_sort_category_first_tooltip())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .changed(),
+                    LibraryGroupMode::Category | LibraryGroupMode::None => ui
+                        .checkbox(
+                            &mut self.state.static_prefs.library_sort_status_first,
+                            text.sort_by_status_first(),
+                        )
+                        .on_hover_text(text.library_sort_status_first_tooltip())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .changed(),
+                };
+                should_save |= detail_changed;
 
                 ui.add_space(2.0);
                 ui.separator();
                 ui.add_space(-1.0);
 
-                Self::sort_menu_heading(ui, text.library_group_mods_heading());
-                ui.add_space(-2.0);
-                should_save |= self.render_library_group_radio_rows(ui);
+                // Group-by (Category/Status/None) and category layout (Folders/List) are
+                // hidden for now to enforce the category folder view; kept behind the flag so
+                // they can be brought back in a future version. See ENFORCE_CATEGORY_FOLDER_VIEW.
+                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                    Self::sort_menu_heading(ui, text.library_group_mods_heading());
+                    ui.add_space(-2.0);
+                    should_save |= self.render_library_group_radio_rows(ui);
 
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(-1.0);
-
-                Self::sort_menu_heading(ui, text.library_category_layout_heading());
-                ui.add_space(-2.0);
-                if !matches!(
-                    self.state.static_prefs.library_group_mode,
-                    LibraryGroupMode::Category
-                ) {
-                    static_label(
-                        ui,
-                        RichText::new(text.library_available_when_grouped_by_category())
-                            .size(11.0)
-                            .italics()
-                            .color(Color32::from_gray(135)),
-                    );
+                    ui.add_space(2.0);
+                    ui.separator();
                     ui.add_space(-1.0);
-                }
-                ui.add_enabled_ui(
-                    matches!(
+
+                    Self::sort_menu_heading(ui, text.library_category_layout_heading());
+                    ui.add_space(-2.0);
+                    if !matches!(
                         self.state.static_prefs.library_group_mode,
                         LibraryGroupMode::Category
-                    ),
-                    |ui| {
-                        should_save |= self.render_library_category_layout_radio_rows(ui);
-                    },
-                );
+                    ) {
+                        static_label(
+                            ui,
+                            RichText::new(text.library_available_when_grouped_by_category())
+                                .size(11.0)
+                                .italics()
+                                .color(Color32::from_gray(135)),
+                        );
+                        ui.add_space(-1.0);
+                    }
+                    ui.add_enabled_ui(
+                        matches!(
+                            self.state.static_prefs.library_group_mode,
+                            LibraryGroupMode::Category
+                        ),
+                        |ui| {
+                            should_save |= self.render_library_category_layout_radio_rows(ui);
+                        },
+                    );
 
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(-1.0);
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.add_space(-1.0);
+                }
 
+                // ===== CATEGORIES (folder order) =====
                 Self::sort_menu_heading(ui, text.library_sort_categories_heading());
                 ui.add_space(-2.0);
                 let selected_game_id = self.selected_game().map(|game| game.definition.id.clone());
                 if !matches!(
-                    self.state.static_prefs.library_group_mode,
+                    self.state.static_prefs.effective_library_group_mode(),
                     LibraryGroupMode::Category
                 ) {
                     static_label(
@@ -1384,24 +1483,25 @@ impl HestiaApp {
                 }
                 ui.add_enabled_ui(
                     matches!(
-                        self.state.static_prefs.library_group_mode,
+                        self.state.static_prefs.effective_library_group_mode(),
                         LibraryGroupMode::Category
                     ) && selected_game_id.is_some(),
                     |ui| {
                         if let Some(game_id) = selected_game_id.as_deref() {
                             let mut category_sort_mode = self.category_sort_mode_for_game(game_id);
-                            should_save |= Self::sort_menu_radio(
-                                ui,
-                                &mut category_sort_mode,
-                                ModCategorySortMode::Manual,
-                                text.library_category_sort_label(ModCategorySortMode::Manual),
-                                Some(text.library_category_sort_manual_tooltip()),
-                            );
+                            // Order: Name A-Z, Name Z-A, Most mods, Fewest mods, Manual (last).
                             should_save |= Self::sort_menu_radio(
                                 ui,
                                 &mut category_sort_mode,
                                 ModCategorySortMode::ByNameAsc,
                                 text.library_category_sort_label(ModCategorySortMode::ByNameAsc),
+                                Some(text.library_category_sort_by_name_tooltip()),
+                            );
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::ByNameDesc,
+                                text.library_category_sort_label(ModCategorySortMode::ByNameDesc),
                                 Some(text.library_category_sort_by_name_tooltip()),
                             );
                             should_save |= Self::sort_menu_radio(
@@ -1422,85 +1522,26 @@ impl HestiaApp {
                                 ),
                                 Some(text.library_category_sort_by_least_mods_tooltip()),
                             );
+                            should_save |= Self::sort_menu_radio(
+                                ui,
+                                &mut category_sort_mode,
+                                ModCategorySortMode::Manual,
+                                text.library_category_sort_label(ModCategorySortMode::Manual),
+                                Some(text.library_category_sort_manual_tooltip()),
+                            );
                             if category_sort_mode != self.category_sort_mode_for_game(game_id) {
                                 self.set_category_sort_mode_for_game(game_id, category_sort_mode);
                             }
                         }
                     },
                 );
-
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(-1.0);
-
-                Self::sort_menu_heading(ui, text.library_miscellaneous_heading());
-                ui.add_space(-2.0);
-                let detail_changed = match self.state.static_prefs.library_group_mode {
-                    LibraryGroupMode::Status => ui
-                        .checkbox(
-                            &mut self.state.static_prefs.library_sort_category_first,
-                            text.sort_by_category_first(),
-                        )
-                        .on_hover_text(text.library_sort_category_first_tooltip())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .changed(),
-                    LibraryGroupMode::Category | LibraryGroupMode::None => ui
-                        .checkbox(
-                            &mut self.state.static_prefs.library_sort_status_first,
-                            text.sort_by_status_first(),
-                        )
-                        .on_hover_text(text.library_sort_status_first_tooltip())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .changed(),
-                };
-                should_save |= detail_changed;
-
-                let card_detail_changed = if matches!(
-                    self.state.static_prefs.library_group_mode,
-                    LibraryGroupMode::Category
-                ) {
-                    ui.checkbox(
-                        &mut self.state.static_prefs.library_category_group_show_status,
-                        text.show_mod_status_on_card(),
-                    )
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .changed()
-                } else {
-                    ui.checkbox(
-                        &mut self.state.static_prefs.library_status_group_show_category,
-                        text.show_category_on_card(),
-                    )
-                    .on_hover_text(text.show_category_on_card_tooltip())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .changed()
-                };
-                should_save |= card_detail_changed;
-
+                // Show empty category folders (Folders layout only).
                 ui.add_enabled_ui(
                     matches!(
-                        self.state.static_prefs.library_group_mode,
+                        self.state.static_prefs.effective_library_group_mode(),
                         LibraryGroupMode::Category
                     ) && matches!(
-                        self.state.static_prefs.library_category_display_mode,
-                        LibraryCategoryDisplayMode::GroupedSections
-                    ),
-                    |ui| {
-                        should_save |= ui
-                            .checkbox(
-                                &mut self.state.static_prefs.library_uncategorized_first,
-                                text.show_uncategorized_mods_first(),
-                            )
-                            .on_hover_text(text.library_uncategorized_first_list_only_tooltip())
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .changed();
-                    },
-                );
-                ui.add_enabled_ui(
-                    matches!(
-                        self.state.static_prefs.library_group_mode,
-                        LibraryGroupMode::Category
-                    ) && matches!(
-                        self.state.static_prefs.library_category_display_mode,
+                        self.state.static_prefs.effective_library_category_display_mode(),
                         LibraryCategoryDisplayMode::Folders
                     ),
                     |ui| {
@@ -1513,6 +1554,39 @@ impl HestiaApp {
                             .changed();
                     },
                 );
+                // "Show uncategorized mods first" only applies to the List layout, which is
+                // hidden while the folder view is enforced. Kept behind the flag so it can be
+                // brought back in a future version.
+                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                    ui.add_enabled_ui(
+                        matches!(
+                            self.state.static_prefs.effective_library_group_mode(),
+                            LibraryGroupMode::Category
+                        ) && matches!(
+                            self.state.static_prefs.effective_library_category_display_mode(),
+                            LibraryCategoryDisplayMode::GroupedSections
+                        ),
+                        |ui| {
+                            should_save |= ui
+                                .checkbox(
+                                    &mut self.state.static_prefs.library_uncategorized_first,
+                                    text.show_uncategorized_mods_first(),
+                                )
+                                .on_hover_text(text.library_uncategorized_first_list_only_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .changed();
+                        },
+                    );
+                }
+
+                ui.add_space(2.0);
+                ui.separator();
+                ui.add_space(-1.0);
+
+                // ===== UNCATEGORIZED (independent pile sort — Option D) =====
+                Self::sort_menu_heading(ui, text.library_uncategorized_sort_heading());
+                ui.add_space(-2.0);
+                should_save |= self.render_library_uncategorized_sort_radio_rows(ui);
 
                 if should_save {
                     self.selected_mods.clear();
@@ -4724,6 +4798,8 @@ impl HestiaApp {
             _,
             _,
             _,
+            _,
+            _,
         ) in cards.iter()
         {
             if self.selected_mods.contains(mod_id) {
@@ -5596,7 +5672,7 @@ impl HestiaApp {
         let left_padding = 12.0;
         let desired_right_gap = 4.0;
         let card_spacing = 8.0;
-        let library_group_mode = self.state.static_prefs.library_group_mode;
+        let library_group_mode = self.state.static_prefs.effective_library_group_mode();
         let uncategorized_first = self.state.static_prefs.library_uncategorized_first;
         let selected_game_id = self
             .selected_game()
@@ -5604,9 +5680,38 @@ impl HestiaApp {
             .unwrap_or_default();
         let category_sections = self.categories_for_game(&selected_game_id);
         let category_sort_mode = self.category_sort_mode_for_game(&selected_game_id);
-        let category_display_mode = self.state.static_prefs.library_category_display_mode;
+        let category_display_mode =
+            self.state.static_prefs.effective_library_category_display_mode();
         let show_empty_category_folders =
             self.state.static_prefs.library_show_empty_category_folders;
+        // Uncategorized pile (Option D): its own sort (None = "same as mods"), and whether
+        // to split the pile into per-status sub-sections (piggybacks on the status-first
+        // toggle; adaptive headers below only split when >1 status is present).
+        let uncategorized_sort = self.state.static_prefs.library_uncategorized_sort;
+        let uncategorized_status_split = self.state.static_prefs.library_sort_status_first;
+        // Re-sort a slice of the uncategorized pile by an explicit LibrarySort. Mirrors the
+        // global comparator's tie-break on the display name; date uses the precomputed key
+        // (card.16), size uses card.15.
+        fn sort_uncategorized_pile(cards: &mut [&LibraryCardRow], sort: LibrarySort) {
+            let name_key = |card: &&LibraryCardRow| {
+                card.2
+                    .as_deref()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(&card.1)
+                    .to_ascii_lowercase()
+            };
+            cards.sort_by(|a, b| {
+                let name_cmp = name_key(a).cmp(&name_key(b));
+                match sort {
+                    LibrarySort::NameAsc => name_cmp,
+                    LibrarySort::NameDesc => name_cmp.reverse(),
+                    LibrarySort::DateDesc => b.16.cmp(&a.16).then(name_cmp),
+                    LibrarySort::DateAsc => a.16.cmp(&b.16).then(name_cmp),
+                    LibrarySort::SizeAsc => a.15.cmp(&b.15).then(name_cmp),
+                    LibrarySort::SizeDesc => b.15.cmp(&a.15).then(name_cmp),
+                }
+            });
+        }
         let mut selected_category_folder_id =
             self.selected_category_folder_id
                 .clone()
@@ -5822,10 +5927,10 @@ impl HestiaApp {
                         // No folder tiles are visible while drilled into a category,
                         // so there is nowhere to drop a dragged mod.
                         let mod_drag_enabled = matches!(
-                            self.state.static_prefs.library_group_mode,
+                            self.state.static_prefs.effective_library_group_mode(),
                             LibraryGroupMode::Category
                         ) && matches!(
-                            self.state.static_prefs.library_category_display_mode,
+                            self.state.static_prefs.effective_library_category_display_mode(),
                             LibraryCategoryDisplayMode::Folders
                         ) && selected_category_folder_id.is_none();
                         let dragging_category_id = self.dragging_category_id.clone();
@@ -6147,6 +6252,8 @@ impl HestiaApp {
                                             ignoring_update_label,
                                             category_id,
                                             category_label,
+                                            _,
+                                            _,
                                         ) = card;
                                         
                                         let age_label =
@@ -6568,13 +6675,22 @@ impl HestiaApp {
                                                                                     .selectable(false),
                                                                                 )
                                                                                 .on_hover_cursor(egui::CursorIcon::Default);
-                                                                                let category_grouped = matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category);
-                                                                                let show_status_on_card = category_grouped
-                                                                                    && self.state.static_prefs.library_category_group_show_status;
-                                                                                let show_category_on_card = if category_grouped {
-                                                                                    !self.state.static_prefs.library_category_group_show_status
+                                                                                let category_grouped = matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category);
+                                                                                // Card label: in the enforced Category Folder view we always show the
+                                                                                // status word + dot on cards (the show-status / show-category toggles are
+                                                                                // hidden for now to enforce that view, might bring them back in a future
+                                                                                // version). The original toggle-driven logic is preserved below.
+                                                                                let (show_status_on_card, show_category_on_card) = if crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                                                                                    (true, false)
                                                                                 } else {
-                                                                                    self.state.static_prefs.library_status_group_show_category
+                                                                                    let show_status_on_card = category_grouped
+                                                                                        && self.state.static_prefs.library_category_group_show_status;
+                                                                                    let show_category_on_card = if category_grouped {
+                                                                                        !self.state.static_prefs.library_category_group_show_status
+                                                                                    } else {
+                                                                                        self.state.static_prefs.library_status_group_show_category
+                                                                                    };
+                                                                                    (show_status_on_card, show_category_on_card)
                                                                                 };
                                                                                 if show_category_on_card {
                                                                                     let clamped = category_label_display != category_label.as_str();
@@ -8066,23 +8182,79 @@ impl HestiaApp {
                                         }
 
                                         if !uncategorized_cards.is_empty() {
-                                            let response = render_section_label(
-                                                ui,
-                                                text.uncategorized(),
-                                                Color32::from_gray(165),
-                                                uncategorized_cards.len(),
-                                            );
-                                            if response.clicked() {
-                                                let ids: Vec<String> = uncategorized_cards
+                                            // Uncategorized pile (Option D): independent sort +
+                                            // adaptive status headers. `uncategorized_sort == None`
+                                            // means "same as mods" — keep the global order the cards
+                                            // already arrived in. When status-first is on and the
+                                            // pile spans more than one status, split it into
+                                            // "Uncategorized: {status}" sub-sections; otherwise a
+                                            // single "Uncategorized" header (no split when all mods
+                                            // share one status).
+                                            let present_statuses: Vec<ModStatus> = [
+                                                ModStatus::Active,
+                                                ModStatus::Disabled,
+                                                ModStatus::Archived,
+                                            ]
+                                            .into_iter()
+                                            .filter(|status| {
+                                                uncategorized_cards
                                                     .iter()
-                                                    .map(|card| card.0.clone())
-                                                    .collect();
-                                                let all_selected = ids
-                                                    .iter()
-                                                    .all(|id| selected_mods_snapshot.contains(id));
-                                                section_select_changes.push((ids, !all_selected));
+                                                    .any(|card| card.5 == *status)
+                                            })
+                                            .collect();
+                                            let split_by_status = uncategorized_status_split
+                                                && present_statuses.len() > 1;
+
+                                            let mut render_pile_section =
+                                                |ui: &mut Ui,
+                                                 label: String,
+                                                 mut section: Vec<&LibraryCardRow>| {
+                                                    if let Some(sort) = uncategorized_sort {
+                                                        sort_uncategorized_pile(&mut section, sort);
+                                                    }
+                                                    let response = render_section_label(
+                                                        ui,
+                                                        &label,
+                                                        Color32::from_gray(165),
+                                                        section.len(),
+                                                    );
+                                                    if response.clicked() {
+                                                        let ids: Vec<String> = section
+                                                            .iter()
+                                                            .map(|card| card.0.clone())
+                                                            .collect();
+                                                        let all_selected = ids.iter().all(|id| {
+                                                            selected_mods_snapshot.contains(id)
+                                                        });
+                                                        section_select_changes
+                                                            .push((ids, !all_selected));
+                                                    }
+                                                    render_cards(ui, section);
+                                                };
+
+                                            if split_by_status {
+                                                for status in present_statuses {
+                                                    let section: Vec<&LibraryCardRow> =
+                                                        uncategorized_cards
+                                                            .iter()
+                                                            .copied()
+                                                            .filter(|card| card.5 == status)
+                                                            .collect();
+                                                    render_pile_section(
+                                                        ui,
+                                                        text.library_uncategorized_status_header(
+                                                            &status,
+                                                        ),
+                                                        section,
+                                                    );
+                                                }
+                                            } else {
+                                                render_pile_section(
+                                                    ui,
+                                                    text.uncategorized().to_string(),
+                                                    uncategorized_cards,
+                                                );
                                             }
-                                            render_cards(ui, uncategorized_cards);
                                         }
                                     }
                                 } else {
@@ -8595,10 +8767,10 @@ impl HestiaApp {
                         .clicked()
                     {
                         let folders_mode = matches!(
-                            self.state.static_prefs.library_group_mode,
+                            self.state.static_prefs.effective_library_group_mode(),
                             LibraryGroupMode::Category
                         ) && matches!(
-                            self.state.static_prefs.library_category_display_mode,
+                            self.state.static_prefs.effective_library_category_display_mode(),
                             LibraryCategoryDisplayMode::Folders
                         );
                         let new_id = self.create_category_for_game(
@@ -8641,7 +8813,9 @@ impl HestiaApp {
             )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if drilled_category.is_none() {
+            // Group-by / category-layout submenu hidden for now to enforce the category
+            // folder view; kept behind the flag to bring back in a future version.
+            if drilled_category.is_none() && !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
                 ui.menu_button(
                     icon_text_sized(Icon::SquareStack, text.context_group_by(), 12.0, 12.0),
                     |ui| {

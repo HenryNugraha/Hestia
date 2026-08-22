@@ -189,6 +189,12 @@ pub struct StaticPreferences {
     pub library_group_mode: LibraryGroupMode,
     #[serde(default)]
     pub library_category_display_mode: LibraryCategoryDisplayMode,
+    /// Independent sort for the uncategorized pile in the category folder view.
+    /// `None` means "same as mods" (inherits [`library_sort`](Self::library_sort)); `Some`
+    /// overrides it, letting the pile read as an inbox (e.g. newest first) while the rest of
+    /// the library uses a different order.
+    #[serde(default)]
+    pub library_uncategorized_sort: Option<LibrarySort>,
     #[serde(default = "serde_default_true")]
     pub library_sort_status_first: bool,
     #[serde(default = "serde_default_true")]
@@ -225,6 +231,38 @@ pub struct StaticPreferences {
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
+/// The library view is currently locked to the Category grouping + Folders layout.
+///
+/// Status/None grouping and the List (grouped-sections) category layout are hidden for
+/// now to enforce the category folder view, but their preferences are still persisted
+/// and every code path behind them is kept intact. Setting this to `false` brings them
+/// all back exactly as the user last left them. Might bring them back in a future version.
+pub const ENFORCE_CATEGORY_FOLDER_VIEW: bool = true;
+
+impl StaticPreferences {
+    /// Effective library grouping used by all rendering and sorting. While the category
+    /// folder view is enforced this is always `Category`; otherwise it is the user's
+    /// stored [`library_group_mode`](Self::library_group_mode).
+    pub fn effective_library_group_mode(&self) -> LibraryGroupMode {
+        if ENFORCE_CATEGORY_FOLDER_VIEW {
+            LibraryGroupMode::Category
+        } else {
+            self.library_group_mode
+        }
+    }
+
+    /// Effective category layout used by all rendering. While the category folder view is
+    /// enforced this is always `Folders`; otherwise it is the user's stored
+    /// [`library_category_display_mode`](Self::library_category_display_mode).
+    pub fn effective_library_category_display_mode(&self) -> LibraryCategoryDisplayMode {
+        if ENFORCE_CATEGORY_FOLDER_VIEW {
+            LibraryCategoryDisplayMode::Folders
+        } else {
+            self.library_category_display_mode
+        }
+    }
+}
+
 impl Default for StaticPreferences {
     fn default() -> Self {
         Self {
@@ -256,6 +294,7 @@ impl Default for StaticPreferences {
             library_sort: LibrarySort::default(),
             library_group_mode: LibraryGroupMode::default(),
             library_category_display_mode: LibraryCategoryDisplayMode::default(),
+            library_uncategorized_sort: None,
             library_sort_status_first: true,
             library_status_group_show_category: true,
             library_category_group_show_status: true,
@@ -928,6 +967,7 @@ pub enum ModCategorySortMode {
     #[default]
     Manual,
     ByNameAsc,
+    ByNameDesc,
     ByModCountAsc,
     ByModCountDesc,
 }

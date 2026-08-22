@@ -2801,6 +2801,11 @@ impl HestiaApp {
                             let mut show_archived = !self.state.static_prefs.hide_archived;
                             let left_column_width = ui.available_width() * 0.32;
                             ui.horizontal_top(|ui| {
+                                // Group-by (Category/Status/None) and category layout
+                                // (Folders/List) pickers are hidden for now to enforce the
+                                // category folder view; kept behind ENFORCE_CATEGORY_FOLDER_VIEW
+                                // to bring back in a future version.
+                                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
                                     setting_block(ui, text.group_list_by(), &mut |ui| {
@@ -2835,8 +2840,9 @@ impl HestiaApp {
                                         );
                                     });
                                 });
+                                }
                                 ui.vertical(|ui| {
-                                    let checkbox_changed = match self.state.static_prefs.library_group_mode {
+                                    let checkbox_changed = match self.state.static_prefs.effective_library_group_mode() {
                                         LibraryGroupMode::Status => {
                                             let response = ui.checkbox(
                                                 &mut self.state.static_prefs.library_sort_category_first,
@@ -2861,7 +2867,12 @@ impl HestiaApp {
                                     if checkbox_changed {
                                         should_save = true;
                                     }
-                                    let show_card_detail_response = if matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category) {
+                                    // The card-label toggle (status word vs category name) is
+                                    // hidden for now to enforce the category folder view (cards
+                                    // auto-show the status word + dot); might bring it back in a
+                                    // future version. Kept behind ENFORCE_CATEGORY_FOLDER_VIEW.
+                                    if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                                    let show_card_detail_response = if matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category) {
                                         ui.checkbox(
                                             &mut self.state.static_prefs.library_category_group_show_status,
                                             text.show_mod_status_on_card(),
@@ -2879,6 +2890,7 @@ impl HestiaApp {
                                     if show_card_detail_response.changed() {
                                         should_save = true;
                                     }
+                                    }
                                     if ui
                                         .checkbox(&mut show_disabled, text.show_disabled_mods())
                                         .changed()
@@ -2893,10 +2905,14 @@ impl HestiaApp {
                                         self.state.static_prefs.hide_archived = !show_archived;
                                         should_save = true;
                                     }
-                                    if matches!(
-                                        self.state.static_prefs.library_category_display_mode,
+                                    // "Show uncategorized mods first" only applies to the List
+                                    // layout, which is hidden while the folder view is enforced.
+                                    // Kept behind ENFORCE_CATEGORY_FOLDER_VIEW.
+                                    if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW
+                                        && matches!(
+                                        self.state.static_prefs.effective_library_category_display_mode(),
                                         LibraryCategoryDisplayMode::GroupedSections
-                                    ) && matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
+                                    ) && matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category)
                                         && ui
                                             .checkbox(
                                                 &mut self.state.static_prefs.library_uncategorized_first,
@@ -2907,9 +2923,9 @@ impl HestiaApp {
                                         should_save = true;
                                     }
                                     if matches!(
-                                        self.state.static_prefs.library_category_display_mode,
+                                        self.state.static_prefs.effective_library_category_display_mode(),
                                         LibraryCategoryDisplayMode::Folders
-                                    ) && matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category)
+                                    ) && matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category)
                                         && ui
                                             .checkbox(
                                                 &mut self.state.static_prefs.library_show_empty_category_folders,

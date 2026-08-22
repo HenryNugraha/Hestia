@@ -2182,6 +2182,20 @@ impl HestiaApp {
                         Self::ignored_update_kind(mod_entry),
                         self.effective_mod_category_id(mod_entry),
                         self.mod_category_label(mod_entry),
+                        mod_entry.content_size_bytes,
+                        // Precomputed date sort key mirroring the global `sort_date` closure
+                        // (max of created_at / content_mtime / updated_at) so the uncategorized
+                        // pile's independent Date sort matches the mods list exactly.
+                        mod_entry
+                            .created_at
+                            .timestamp()
+                            .max(
+                                mod_entry
+                                    .content_mtime
+                                    .map(|ts| ts.timestamp())
+                                    .unwrap_or(i64::MIN),
+                            )
+                            .max(mod_entry.updated_at.timestamp()),
                     )
                 })
                 .collect();
@@ -2542,7 +2556,7 @@ impl HestiaApp {
             let name_cmp = display_name(a).cmp(&display_name(b));
             let status_cmp = if self.state.static_prefs.library_sort_status_first
                 && matches!(
-                    self.state.static_prefs.library_group_mode,
+                    self.state.static_prefs.effective_library_group_mode(),
                     LibraryGroupMode::Category | LibraryGroupMode::None
                 ) {
                 a.status.cmp(&b.status)
@@ -2551,7 +2565,7 @@ impl HestiaApp {
             };
             let category_cmp = if self.state.static_prefs.library_sort_category_first
                 && !matches!(
-                    self.state.static_prefs.library_group_mode,
+                    self.state.static_prefs.effective_library_group_mode(),
                     LibraryGroupMode::Category
                 ) {
                 category_order(a).cmp(&category_order(b)).then_with(|| {
