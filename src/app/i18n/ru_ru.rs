@@ -805,4 +805,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Связать мод", // LibraryLinkMod
     "Проверка…", // LibraryChecking
     "Сбросить размер и положение", // ResetWindowLayout
+    "Фильтр персонажей", // BrowseFilterCharactersHint
 ];

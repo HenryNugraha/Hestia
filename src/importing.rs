@@ -370,24 +370,44 @@ pub fn archive_source_total_size(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|meta| meta.len())
 }
 
+/// Strip the "uuid_" prefix some download sources stamp on archive and folder
+/// names ("8b7f2df5-61b7-409f-93bf-7948fd407fd4_Name" -> "Name"), so the
+/// installed folder gets the human name. A 36-char parse only succeeds for the
+/// hyphenated 8-4-4-4-12 form, so ordinary names are never mistaken for one.
+fn strip_uuid_prefix(name: &str) -> &str {
+    const UUID_PREFIX_LEN: usize = 37; // hyphenated uuid + '_'
+    if name.len() > UUID_PREFIX_LEN && name.is_char_boundary(UUID_PREFIX_LEN) {
+        let (prefix, rest) = name.split_at(UUID_PREFIX_LEN);
+        if prefix.ends_with('_')
+            && uuid::Uuid::parse_str(&prefix[..UUID_PREFIX_LEN - 1]).is_ok()
+        {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest;
+            }
+        }
+    }
+    name
+}
+
 fn import_source_label(path: &Path) -> String {
-    if let Some((base, _)) = numeric_split_part(path) {
-        return base
-            .file_stem()
+    let label = if let Some((base, _)) = numeric_split_part(path) {
+        base.file_stem()
             .and_then(OsStr::to_str)
             .unwrap_or("mod")
-            .to_string();
-    }
-    if let Some((prefix, _)) = rar_part_number(path)
+            .to_string()
+    } else if let Some((prefix, _)) = rar_part_number(path)
         && !prefix.is_empty()
     {
-        return prefix;
-    }
-    path.file_stem()
-        .or_else(|| path.file_name())
-        .and_then(OsStr::to_str)
-        .unwrap_or("mod")
-        .to_string()
+        prefix
+    } else {
+        path.file_stem()
+            .or_else(|| path.file_name())
+            .and_then(OsStr::to_str)
+            .unwrap_or("mod")
+            .to_string()
+    };
+    strip_uuid_prefix(&label).to_string()
 }
 
 fn collect_numeric_split_parts(base: &Path) -> Result<Vec<PathBuf>> {
@@ -692,22 +712,20 @@ fn inspect_directory(
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {
         let nested = &top_level_dirs[0];
         candidates.push(ImportCandidate {
-            label: nested
-                .file_name()
-                .and_then(OsStr::to_str)
-                .unwrap_or("mod")
-                .to_string(),
+            label: strip_uuid_prefix(
+                nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
+            )
+            .to_string(),
             path: nested.clone(),
         });
         notice = Some("Nested top-level folder detected. Hestia will import the inner folder as the mod root.".to_string());
     } else if top_level_dirs.len() > 1 && top_level_files.is_empty() {
         for dir in top_level_dirs {
             candidates.push(ImportCandidate {
-                label: dir
-                    .file_name()
-                    .and_then(OsStr::to_str)
-                    .unwrap_or("mod")
-                    .to_string(),
+                label: strip_uuid_prefix(
+                    dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
+                )
+                .to_string(),
                 path: dir,
             });
         }
@@ -760,22 +778,20 @@ fn inspect_directory_cancelable(
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {
         let nested = &top_level_dirs[0];
         candidates.push(ImportCandidate {
-            label: nested
-                .file_name()
-                .and_then(OsStr::to_str)
-                .unwrap_or("mod")
-                .to_string(),
+            label: strip_uuid_prefix(
+                nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
+            )
+            .to_string(),
             path: nested.clone(),
         });
         notice = Some("Nested top-level folder detected. Hestia will import the inner folder as the mod root.".to_string());
     } else if top_level_dirs.len() > 1 && top_level_files.is_empty() {
         for dir in top_level_dirs {
             candidates.push(ImportCandidate {
-                label: dir
-                    .file_name()
-                    .and_then(OsStr::to_str)
-                    .unwrap_or("mod")
-                    .to_string(),
+                label: strip_uuid_prefix(
+                    dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
+                )
+                .to_string(),
                 path: dir,
             });
         }
@@ -1327,10 +1343,257 @@ pub fn install_candidate_cancelable(
     Ok(Some(initial_target))
 }
 
+/// How deep below the mod root a named preview file is still considered part of
+/// this mod: covers `DISABLED_BY_HESTIA\<content>\preview.jpg` and a mixed-root
+/// install whose actual mod lives one folder down.
+const BUNDLED_PREVIEW_MAX_DEPTH: usize = 4;
+const BUNDLED_PREVIEW_MAX_IMAGES: usize = 10;
+const BUNDLED_PREVIEW_MAX_INI_BYTES: usize = 1024 * 1024;
+
+/// File-name conventions mod authors and other managers use for a bundled
+/// preview image: JASM's `.JASM_Cover`, MODORA's `.MODORA_Preview`, plain
+/// `preview`/`cover`/`thumbnail` files.
+fn is_bundled_preview_stem(stem: &str) -> bool {
+    let stem = stem.trim_start_matches('.').to_ascii_lowercase();
+    stem.contains("preview")
+        || stem == "cover"
+        || stem.ends_with("_cover")
+        || stem == "thumbnail"
+        || stem == "thumb"
+}
+
+fn is_bundled_preview_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp" | "tif" | "tiff" | "bmp"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Whether the lowercased ini blob mentions `file_name` as a standalone token.
+/// Plain `contains` would let a reference to `11.png` veto an unrelated
+/// `1.png`, so both neighbors must be non-alphanumeric.
+fn ini_blob_references_file(blob: &str, file_name: &str) -> bool {
+    let needle = file_name.to_ascii_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = blob.as_bytes();
+    for (idx, _) in blob.match_indices(&needle) {
+        let end = idx + needle.len();
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Find preview images a mod shipped with, best-candidate first.
+///
+/// Named preview files (`preview.*`, `.JASM_Cover.jpg`, ...) count anywhere
+/// within [`BUNDLED_PREVIEW_MAX_DEPTH`]. Loose images only count directly in
+/// the mod root or directly in the `DISABLED_BY_HESTIA` container, where a
+/// stray image is a preview by convention rather than a texture. Any image a
+/// `.ini` in the tree references is part of the mod itself and never adopted.
+pub fn discover_bundled_preview_images(mod_root: &Path) -> Vec<PathBuf> {
+    let mut named: Vec<(usize, u8, PathBuf)> = Vec::new();
+    let mut loose: Vec<PathBuf> = Vec::new();
+    let mut ini_paths: Vec<PathBuf> = Vec::new();
+
+    let walker = WalkDir::new(mod_root)
+        .max_depth(BUNDLED_PREVIEW_MAX_DEPTH)
+        .into_iter()
+        .filter_entry(|entry| {
+            !(entry.file_type().is_dir()
+                && (entry.file_name() == OsStr::new(crate::model::MOD_META_DIR)
+                    || entry.file_name() == OsStr::new("__MACOSX")))
+        });
+    for entry in walker {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ini"))
+        {
+            ini_paths.push(path.to_path_buf());
+            continue;
+        }
+        if !is_bundled_preview_extension(path) {
+            continue;
+        }
+        let stem = path.file_stem().and_then(OsStr::to_str).unwrap_or_default();
+        if is_bundled_preview_stem(stem) {
+            let rank = if stem.to_ascii_lowercase().contains("preview") {
+                0
+            } else {
+                1
+            };
+            named.push((entry.depth(), rank, path.to_path_buf()));
+        } else {
+            let in_root = entry.depth() == 1;
+            let in_disabled_container = entry.depth() == 2
+                && path
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == OsStr::new(crate::model::DISABLED_CONTAINER));
+            if in_root || in_disabled_container {
+                loose.push(path.to_path_buf());
+            }
+        }
+    }
+
+    let mut ini_blob = String::new();
+    for ini_path in &ini_paths {
+        let Ok(mut bytes) = fs::read(ini_path) else {
+            continue;
+        };
+        bytes.truncate(BUNDLED_PREVIEW_MAX_INI_BYTES);
+        ini_blob.push_str(&String::from_utf8_lossy(&bytes).to_ascii_lowercase());
+        ini_blob.push('\n');
+    }
+    let is_mod_asset = |path: &Path| {
+        path.file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| ini_blob_references_file(&ini_blob, name))
+    };
+    named.retain(|(_, _, path)| !is_mod_asset(path));
+    loose.retain(|path| !is_mod_asset(path));
+
+    named.sort_by(|a, b| {
+        (a.0, a.1, a.2.to_string_lossy().to_ascii_lowercase())
+            .cmp(&(b.0, b.1, b.2.to_string_lossy().to_ascii_lowercase()))
+    });
+    // A numbered set sorts numerically (2.png before 10.png), everything else
+    // falls back to name order behind it.
+    loose.sort_by_key(|path| {
+        let stem = path
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let numeric = stem.parse::<u64>().map_or((1u8, 0u64), |value| (0, value));
+        (
+            numeric,
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
+        )
+    });
+
+    let mut result: Vec<PathBuf> = named.into_iter().map(|(_, _, path)| path).collect();
+    result.extend(loose);
+    result.truncate(BUNDLED_PREVIEW_MAX_IMAGES);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn uuid_prefix_is_stripped_from_labels_only_when_it_is_a_real_uuid() {
+        assert_eq!(
+            strip_uuid_prefix("8b7f2df5-61b7-409f-93bf-7948fd407fd4_洁尔佩塔 侦探 1.2"),
+            "洁尔佩塔 侦探 1.2"
+        );
+        assert_eq!(
+            strip_uuid_prefix("30AC753A-8368-4A58-81EB-4672DB2A7742_Name"),
+            "Name"
+        );
+        // Not a uuid: hyphens in the wrong spots.
+        assert_eq!(
+            strip_uuid_prefix("8b7f2df561-b7-409f-93bf-7948fd407fd4_Name"),
+            "8b7f2df561-b7-409f-93bf-7948fd407fd4_Name"
+        );
+        // A bare uuid keeps its name rather than becoming empty.
+        assert_eq!(
+            strip_uuid_prefix("8b7f2df5-61b7-409f-93bf-7948fd407fd4"),
+            "8b7f2df5-61b7-409f-93bf-7948fd407fd4"
+        );
+        assert_eq!(
+            strip_uuid_prefix("8b7f2df5-61b7-409f-93bf-7948fd407fd4_"),
+            "8b7f2df5-61b7-409f-93bf-7948fd407fd4_"
+        );
+        assert_eq!(strip_uuid_prefix("ordinary mod name"), "ordinary mod name");
+    }
+
+    #[test]
+    fn nested_uuid_folder_candidate_gets_a_clean_label() {
+        let temp = tempfile::tempdir().unwrap();
+        let outer = temp.path().join("outer");
+        let nested = outer.join("8aca8d5d-97ba-40af-95ac-3346ebfc26d8_弧光 拉舒莎 1.2");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("mod.ini"), "x").unwrap();
+
+        let inspection =
+            inspect_directory("game", &ImportSource::Folder(outer.clone()), &outer).unwrap();
+        assert_eq!(inspection.candidates.len(), 1);
+        assert_eq!(inspection.candidates[0].label, "弧光 拉舒莎 1.2");
+    }
+
+    #[test]
+    fn bundled_preview_discovery_orders_named_before_loose_and_skips_ini_assets() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join(".JASM_Cover.jpg"), b"img").unwrap();
+        fs::write(root.join("nested").join("preview.webp"), b"img").unwrap();
+        fs::write(root.join("10.png"), b"img").unwrap();
+        fs::write(root.join("2.png"), b"img").unwrap();
+        fs::write(root.join("tex.png"), b"img").unwrap();
+        fs::write(root.join("mod.ini"), "[ResourceTex]\nfilename = tex.png\n").unwrap();
+
+        let found = discover_bundled_preview_images(root);
+        let names: Vec<String> = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec![".JASM_Cover.jpg", "preview.webp", "2.png", "10.png"]);
+    }
+
+    #[test]
+    fn bundled_preview_discovery_reads_disabled_container_and_skips_meta_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let disabled = root.join(crate::model::DISABLED_CONTAINER);
+        fs::create_dir_all(&disabled).unwrap();
+        fs::create_dir_all(root.join(crate::model::MOD_META_DIR)).unwrap();
+        fs::write(disabled.join("preview.jpg"), b"img").unwrap();
+        fs::write(disabled.join("1.png"), b"img").unwrap();
+        fs::write(
+            root.join(crate::model::MOD_META_DIR).join("manual_a.jpg"),
+            b"img",
+        )
+        .unwrap();
+
+        let found = discover_bundled_preview_images(root);
+        let names: Vec<String> = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["preview.jpg", "1.png"]);
+    }
+
+    #[test]
+    fn ini_reference_check_requires_token_boundaries() {
+        assert!(ini_blob_references_file("filename = 1.png", "1.png"));
+        assert!(ini_blob_references_file("filename=.\\sub\\1.png\r\n", "1.png"));
+        assert!(!ini_blob_references_file("filename = 11.png", "1.png"));
+        assert!(!ini_blob_references_file("filename = 1.pngx", "1.png"));
+        assert!(!ini_blob_references_file("", "1.png"));
+    }
 
     #[test]
     fn nested_folder_becomes_single_candidate() {

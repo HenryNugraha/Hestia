@@ -621,6 +621,9 @@ struct BrowseState {
     character_categories: Vec<BrowseCharacterCategory>,
     character_categories_loading: bool,
     character_categories_started_at: Option<Instant>,
+    character_filter_query: String,
+    character_filter_focus_pending: bool,
+    toggle_character_picker_requested: bool,
     selected_character_category: Option<BrowseCharacterCategory>,
     details: HashMap<u64, BrowseDetailCache>,
     loading_details: HashMap<u64, Instant>,
@@ -1269,6 +1272,14 @@ struct LocalModImageResult {
 
 enum ManualImageEvent {
     Added {
+        mod_id: String,
+        folder_name: String,
+        rel_paths: Vec<String>,
+    },
+    /// Preview images the mod shipped with, adopted right after an external
+    /// install. Applied like `Added` but without the user-facing toast, since
+    /// the install message is the one that matters at that moment.
+    BundledAdopted {
         mod_id: String,
         folder_name: String,
         rel_paths: Vec<String>,

@@ -789,10 +789,11 @@ enum TextKey {
     LibraryLinkMod,
     LibraryChecking,
     ResetWindowLayout,
+    BrowseFilterCharactersHint,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::ResetWindowLayout as usize + 1;
+    const COUNT: usize = Self::BrowseFilterCharactersHint as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -1799,6 +1800,10 @@ impl TextCatalog {
 
     fn browse_no_characters_returned(self) -> &'static str {
         self.get(TextKey::BrowseNoCharactersReturned)
+    }
+
+    fn browse_filter_characters_hint(self) -> &'static str {
+        self.get(TextKey::BrowseFilterCharactersHint)
     }
 
     fn browse_mod_detail(self) -> &'static str {

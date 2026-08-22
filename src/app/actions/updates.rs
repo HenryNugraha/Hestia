@@ -2259,6 +2259,17 @@ impl HestiaApp {
             }
         }
 
+        // An external install (no Browse metadata, no GameBanana profile) may
+        // ship its own preview image; adopt it as the initial mod image the
+        // same way a manually supplied one lands. This runs after the
+        // install-disabled handling above so the scan sees the files in their
+        // final place, DISABLED_BY_HESTIA included.
+        if pending_meta.is_none() && gb_profile.is_none() {
+            for id in &newly_installed_ids {
+                self.enqueue_adopt_bundled_preview_images(id);
+            }
+        }
+
         for id in &newly_installed_ids {
             let candidate_labels = self
                 .state

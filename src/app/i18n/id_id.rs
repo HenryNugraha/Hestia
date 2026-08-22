@@ -806,4 +806,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tautkan Mod", // LibraryLinkMod
     "Memeriksa…", // LibraryChecking
     "Atur ulang ukuran dan posisi", // ResetWindowLayout
+    "Filter karakter", // BrowseFilterCharactersHint
 ];

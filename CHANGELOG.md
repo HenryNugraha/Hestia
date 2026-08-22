@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.1] - 2026-08-xx
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## [1.9.0] - 2026-08-20
 
 ### Added

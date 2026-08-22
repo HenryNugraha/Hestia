@@ -327,6 +327,13 @@ impl HestiaApp {
                                 .corner_radius(radius),
                             )
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let popup_id = response.id.with("popup");
+                        let was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+                        if std::mem::take(
+                            &mut self.browse_state.toggle_character_picker_requested,
+                        ) {
+                            egui::Popup::toggle_id(ui.ctx(), popup_id);
+                        }
                         egui::Popup::from_toggle_button_response(&response)
                             .kind(egui::PopupKind::Menu)
                             .layout(egui::Layout::top_down(egui::Align::Min))
@@ -335,6 +342,9 @@ impl HestiaApp {
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .frame(egui::Frame::popup(ui.style()))
                             .show(|ui| self.render_browse_character_picker(ui));
+                        if egui::Popup::is_id_open(ui.ctx(), popup_id) && !was_open {
+                            self.browse_state.character_filter_focus_pending = true;
+                        }
                     });
 
                     ui.add_space(-1.0);
@@ -1112,7 +1122,7 @@ impl HestiaApp {
                 ui.close();
             }
         }
-        ui.separator();
+        ui.add_space(-12.0);
         let status = if self.browse_state.character_categories_loading {
             text.browse_loading().to_string()
         } else if let Some(name) = selected_category_name.as_deref() {
@@ -1130,9 +1140,93 @@ impl HestiaApp {
             Color32::from_gray(150),
         );
 
+        let filter_hint = text.browse_filter_characters_hint();
+        let filter_row_height = 28.0;
+        let mut filter_enter_pressed = false;
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            let field_width = BROWSE_CHARACTER_PICKER_WIDTH - 8.0 - 8.0;
+            let (field_rect, _) = ui.allocate_exact_size(
+                Vec2::new(field_width, filter_row_height),
+                Sense::hover(),
+            );
+            ui.painter().rect_filled(
+                field_rect,
+                egui::CornerRadius::same(6),
+                Color32::from_gray(38),
+            );
+            ui.painter().rect_stroke(
+                field_rect,
+                egui::CornerRadius::same(6),
+                egui::Stroke::new(1.0, Color32::from_gray(60)),
+                egui::StrokeKind::Inside,
+            );
+            let search_icon_x = field_rect.left() + 14.0;
+            ui.painter().text(
+                egui::pos2(search_icon_x, field_rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                icon_char(Icon::Search),
+                egui::FontId::new(12.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                Color32::from_gray(150),
+            );
+            let input_rect = egui::Rect::from_min_max(
+                egui::pos2(search_icon_x + 12.0, field_rect.top()),
+                egui::pos2(field_rect.right() - 24.0, field_rect.bottom()),
+            );
+            let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(input_rect));
+            let filter_resp = child_ui.add(
+                TextEdit::singleline(&mut self.browse_state.character_filter_query)
+                    .id(ui.id().with("browse_character_filter_input"))
+                    .hint_text(filter_hint)
+                    .frame(egui::Frame::NONE)
+                    .vertical_align(egui::Align::Center)
+                    .desired_width(input_rect.width()),
+            );
+            if self.browse_state.character_filter_focus_pending {
+                filter_resp.request_focus();
+                self.browse_state.character_filter_focus_pending = false;
+            }
+            if filter_resp.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                filter_enter_pressed = true;
+            }
+            if !self.browse_state.character_filter_query.is_empty() {
+                let clear_rect = egui::Rect::from_center_size(
+                    egui::pos2(field_rect.right() - 13.0, field_rect.center().y),
+                    Vec2::splat(20.0),
+                );
+                let clear_resp = ui
+                    .interact(
+                        clear_rect,
+                        ui.id().with("browse_character_filter_clear"),
+                        Sense::click(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                ui.painter().text(
+                    clear_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    icon_char(Icon::X),
+                    egui::FontId::new(12.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                    if clear_resp.hovered() {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_gray(150)
+                    },
+                );
+                if clear_resp.clicked() {
+                    self.browse_state.character_filter_query.clear();
+                }
+            }
+        });
+        ui.add_space(4.0);
+
         let grid_width = BROWSE_CHARACTER_PICKER_WIDTH - 8.0;
-        let grid_height =
-            BROWSE_CHARACTER_PICKER_HEIGHT - BROWSE_CHARACTER_PICKER_HEADER_HEIGHT - 18.0;
+        let grid_height = BROWSE_CHARACTER_PICKER_HEIGHT
+            - BROWSE_CHARACTER_PICKER_HEADER_HEIGHT
+            - 18.0
+            - (filter_row_height + 8.0);
         if self.browse_state.character_categories_loading {
             ui.allocate_ui_with_layout(
                 Vec2::new(grid_width, grid_height),
@@ -1168,7 +1262,45 @@ impl HestiaApp {
             return;
         }
 
-        let categories = self.browse_state.character_categories.clone();
+        let filter_query = self.browse_state.character_filter_query.trim().to_lowercase();
+        let categories: Vec<BrowseCharacterCategory> = if filter_query.is_empty() {
+            self.browse_state.character_categories.clone()
+        } else {
+            self.browse_state
+                .character_categories
+                .iter()
+                .filter(|category| category.name.to_lowercase().contains(&filter_query))
+                .cloned()
+                .collect()
+        };
+
+        // Enter in the filter field selects the first matching character and
+        // closes the popup (only once at least one character was typed).
+        if filter_enter_pressed && !filter_query.is_empty() {
+            if let Some(first) = categories.first().cloned() {
+                self.select_browse_character_category(first);
+                ui.close();
+                return;
+            }
+        }
+
+        if categories.is_empty() {
+            ui.allocate_ui_with_layout(
+                Vec2::new(grid_width, grid_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.browse_no_characters_returned())
+                            .size(12.5)
+                            .color(Color32::from_gray(170)),
+                    );
+                },
+            );
+            return;
+        }
+
         let columns = 3;
         let scroll_rect = ui.available_rect_before_wrap();
         let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);

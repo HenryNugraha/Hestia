@@ -806,4 +806,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "关联模组", // LibraryLinkMod
     "正在检查…", // LibraryChecking
     "重置大小和位置", // ResetWindowLayout
+    "筛选角色", // BrowseFilterCharactersHint
 ];

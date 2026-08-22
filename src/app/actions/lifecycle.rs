@@ -2845,6 +2845,13 @@ impl HestiaApp {
         }) {
             self.focus_active_search(ctx);
         }
+        if self.current_view == ViewMode::Browse
+            && ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::D))
+            })
+        {
+            self.browse_state.toggle_character_picker_requested = true;
+        }
         let app_window_focused =
             ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
         if app_window_focused

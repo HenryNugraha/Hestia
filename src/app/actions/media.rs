@@ -174,6 +174,65 @@ impl HestiaApp {
         Ok(imported)
     }
 
+    /// Best-effort sibling of `import_manual_images_from_paths` for images a
+    /// mod shipped with: one unreadable file skips that file instead of
+    /// failing and rolling back the whole adoption.
+    fn import_bundled_images_best_effort(mod_root: &Path, paths: Vec<PathBuf>) -> Vec<String> {
+        let mut imported = Vec::new();
+        for path in paths {
+            match Self::save_manual_mod_image_from_path(mod_root, &path) {
+                Ok(rel) => imported.push(rel),
+                Err(err) => {
+                    tracing::warn!("skipping bundled preview image {}: {err:#}", path.display());
+                }
+            }
+        }
+        imported
+    }
+
+    /// After an external (non-Browse) install, adopt any preview image the mod
+    /// shipped with (preview.jpg, .JASM_Cover.jpg, a loose 1.png next to the
+    /// ini) as if the user had supplied it manually. Linked mods keep their
+    /// GameBanana images; a mod that already shows a screenshot is left alone.
+    fn enqueue_adopt_bundled_preview_images(&mut self, mod_id: &str) {
+        let Some(mod_entry) = self.state.mods.iter().find(|item| item.id == mod_id) else {
+            return;
+        };
+        if !Self::is_unlinked_mod_entry(mod_entry) {
+            return;
+        }
+        let root_path = mod_entry.root_path.clone();
+        let folder_name = mod_entry.folder_name.clone();
+        let existing_screenshots = mod_entry.metadata.user.screenshots.clone();
+        let mod_id = mod_id.to_string();
+        let tx = self.manual_image_event_tx.clone();
+        let handle = self.runtime_services.handle();
+        self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_add(1);
+        self.runtime_services.spawn(async move {
+            let result = handle.spawn_blocking(move || {
+                // A Replace install can leave screenshot entries whose files
+                // died with the old folder; only a screenshot that still
+                // exists on disk blocks adoption.
+                let has_live_screenshot = existing_screenshots
+                    .iter()
+                    .any(|rel| root_path.join(rel).exists());
+                if has_live_screenshot {
+                    return Vec::new();
+                }
+                let discovered = importing::discover_bundled_preview_images(&root_path);
+                Self::import_bundled_images_best_effort(&root_path, discovered)
+            });
+            let rel_paths = result.await.unwrap_or_default();
+            // Always send, even empty: the pending counter above must come
+            // back down exactly once per enqueue.
+            let _ = tx.send(ManualImageEvent::BundledAdopted {
+                mod_id,
+                folder_name,
+                rel_paths,
+            });
+        });
+    }
+
     fn enqueue_add_images_to_unlinked_mod(
         &mut self,
         mod_id: &str,
@@ -445,6 +504,45 @@ impl HestiaApp {
                     self.save_state();
                     self.log_action(self.text().images_added_action(), &folder_name);
                     self.set_message_ok(self.text().images_added(count));
+                }
+                ManualImageEvent::BundledAdopted {
+                    mod_id,
+                    folder_name,
+                    rel_paths,
+                } => {
+                    if rel_paths.is_empty() {
+                        continue;
+                    }
+                    let cover_changed = {
+                        let Some(mod_entry) =
+                            self.state.mods.iter_mut().find(|item| item.id == mod_id)
+                        else {
+                            continue;
+                        };
+                        let old_cover = mod_entry.metadata.user.cover_image.clone();
+                        // Adoption only ran because no listed screenshot still
+                        // existed on disk; drop those dead entries so the
+                        // adopted previews become the visible set.
+                        let root_path = mod_entry.root_path.clone();
+                        mod_entry
+                            .metadata
+                            .user
+                            .screenshots
+                            .retain(|rel| root_path.join(rel).exists());
+                        mod_entry.metadata.user.screenshots.extend(rel_paths);
+                        Self::sync_mod_cover_to_first_screenshot(mod_entry);
+                        let cover_changed = old_cover != mod_entry.metadata.user.cover_image;
+                        if let Err(err) = xxmi::save_mod_metadata(mod_entry) {
+                            self.report_error(err, Some(self.text().could_not_save_images()));
+                            continue;
+                        }
+                        cover_changed
+                    };
+                    if cover_changed {
+                        self.clear_mod_card_texture(&mod_id);
+                    }
+                    self.save_state();
+                    self.log_action(self.text().images_added_action(), &folder_name);
                 }
                 ManualImageEvent::Failed { folder_name, error } => {
                     self.report_error_message(
