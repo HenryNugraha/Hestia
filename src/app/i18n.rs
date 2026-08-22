@@ -796,13 +796,12 @@ enum TextKey {
     BrowseFilterCharactersHint,
     LibraryUnlinkedClickToLink,
     LibraryCategorySortByNameDesc,
-    LibraryUncategorizedSortHeading,
-    LibraryUncategorizedSortSameAsMods,
     LibraryUncategorizedStatusHeader,
+    LibrarySortMenuTitle,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::LibraryUncategorizedStatusHeader as usize + 1;
+    const COUNT: usize = Self::LibrarySortMenuTitle as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2135,6 +2134,10 @@ impl TextCatalog {
         self.get(TextKey::LibrarySortMenuTooltip)
     }
 
+    fn library_sort_menu_title(self) -> &'static str {
+        self.get(TextKey::LibrarySortMenuTitle)
+    }
+
     fn library_sort_mods_heading(self) -> &'static str {
         self.get(TextKey::LibrarySortModsHeading)
     }
@@ -2234,14 +2237,6 @@ impl TextCatalog {
 
     fn library_uncategorized_first_list_only_tooltip(self) -> &'static str {
         self.get(TextKey::LibraryUncategorizedFirstListOnlyTooltip)
-    }
-
-    fn library_uncategorized_sort_heading(self) -> &'static str {
-        self.get(TextKey::LibraryUncategorizedSortHeading)
-    }
-
-    fn library_uncategorized_sort_same_as_mods(self) -> &'static str {
-        self.get(TextKey::LibraryUncategorizedSortSameAsMods)
     }
 
     /// Header for a status run inside the uncategorized pile, e.g. "Uncategorized: Disabled".
@@ -3250,6 +3245,9 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralInstalledModsSortByCategoryFirst)
     }
 
+    // Backs the Status-grouping "sort by category first" control, hidden behind
+    // ENFORCE_CATEGORY_FOLDER_VIEW; kept so the string returns when that view does.
+    #[allow(dead_code)]
     fn sort_by_category_first_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsSortByCategoryFirstTooltip)
     }
@@ -3262,14 +3260,19 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralInstalledModsSortByStatusFirstTooltip)
     }
 
+    // The card-detail toggles (status word vs category name on a card) are hidden behind
+    // ENFORCE_CATEGORY_FOLDER_VIEW; kept so the strings return when that view does.
+    #[allow(dead_code)]
     fn show_mod_status_on_card(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowModStatusOnCard)
     }
 
+    #[allow(dead_code)]
     fn show_category_on_card(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowCategoryOnCard)
     }
 
+    #[allow(dead_code)]
     fn show_category_on_card_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowCategoryOnCardTooltip)
     }

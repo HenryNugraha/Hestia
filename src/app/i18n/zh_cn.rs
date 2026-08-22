@@ -337,7 +337,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "大小：最小 → 最大", // LibrarySortSizeAsc
     "大小：最大 → 最小", // LibrarySortSizeDesc
     "排序、分组并设置已安装 Mod 的布局", // LibrarySortMenuTooltip
-    "排序 Mod", // LibrarySortModsHeading
+    "Mod 顺序", // LibrarySortModsHeading
     "按 Mod 标题排序，没有标题时使用文件夹名", // LibrarySortNameTooltip
     "使用已知最新的安装、内容或刷新时间", // LibrarySortNewestTooltip
     "优先使用已知最旧的安装、内容或刷新时间", // LibrarySortOldestTooltip
@@ -350,7 +350,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "按分类分组时可用。", // LibraryAvailableWhenGroupedByCategory
     "先显示分类磁贴，然后一次打开一个分类", // LibraryCategoryFoldersTooltip
     "将每个分类作为 Mod 列表中的一个分区显示", // LibraryCategoryListTooltip
-    "文件夹顺序", // LibrarySortCategoriesHeading
+    "分类顺序", // LibrarySortCategoriesHeading
     "手动", // LibraryCategorySortManual
     "名称 A-Z", // LibraryCategorySortByNameAsc
     "Mod 最少", // LibraryCategorySortByLeastMods
@@ -809,7 +809,6 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "筛选角色", // BrowseFilterCharactersHint
     "此模组尚未关联 GameBanana 来源。点击以关联。", // LibraryUnlinkedClickToLink
     "名称 Z-A", // LibraryCategorySortByNameDesc
-    "未分类", // LibraryUncategorizedSortHeading
-    "与模组相同", // LibraryUncategorizedSortSameAsMods
     "未分类：{status}", // LibraryUncategorizedStatusHeader
+    "排序与顺序", // LibrarySortMenuTitle
 ];

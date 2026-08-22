@@ -189,12 +189,6 @@ pub struct StaticPreferences {
     pub library_group_mode: LibraryGroupMode,
     #[serde(default)]
     pub library_category_display_mode: LibraryCategoryDisplayMode,
-    /// Independent sort for the uncategorized pile in the category folder view.
-    /// `None` means "same as mods" (inherits [`library_sort`](Self::library_sort)); `Some`
-    /// overrides it, letting the pile read as an inbox (e.g. newest first) while the rest of
-    /// the library uses a different order.
-    #[serde(default)]
-    pub library_uncategorized_sort: Option<LibrarySort>,
     #[serde(default = "serde_default_true")]
     pub library_sort_status_first: bool,
     #[serde(default = "serde_default_true")]
@@ -294,7 +288,6 @@ impl Default for StaticPreferences {
             library_sort: LibrarySort::default(),
             library_group_mode: LibraryGroupMode::default(),
             library_category_display_mode: LibraryCategoryDisplayMode::default(),
-            library_uncategorized_sort: None,
             library_sort_status_first: true,
             library_status_group_show_category: true,
             library_category_group_show_status: true,

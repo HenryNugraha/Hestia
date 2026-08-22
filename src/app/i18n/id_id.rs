@@ -337,7 +337,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ukuran Terkecil → Terbesar", // LibrarySortSizeAsc
     "Ukuran Terbesar → Terkecil", // LibrarySortSizeDesc
     "Urutkan, kelompokkan, dan atur tampilan mod terpasang", // LibrarySortMenuTooltip
-    "Urutkan Mod", // LibrarySortModsHeading
+    "Urutan Mod", // LibrarySortModsHeading
     "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada", // LibrarySortNameTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui", // LibrarySortNewestTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terlama yang diketahui terlebih dahulu", // LibrarySortOldestTooltip
@@ -350,7 +350,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tersedia saat dikelompokkan berdasarkan kategori.", // LibraryAvailableWhenGroupedByCategory
     "Menampilkan tile kategori lebih dulu, lalu membuka satu kategori pada satu waktu", // LibraryCategoryFoldersTooltip
     "Menampilkan setiap kategori sebagai bagian dalam daftar mod", // LibraryCategoryListTooltip
-    "Urutan Folder", // LibrarySortCategoriesHeading
+    "Urutan Kategori", // LibrarySortCategoriesHeading
     "Manual", // LibraryCategorySortManual
     "Nama A-Z", // LibraryCategorySortByNameAsc
     "Mod Paling Sedikit", // LibraryCategorySortByLeastMods
@@ -809,7 +809,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Filter karakter", // BrowseFilterCharactersHint
     "Belum ada sumber GameBanana yang ditautkan untuk mod ini. Klik untuk menautkannya.", // LibraryUnlinkedClickToLink
     "Nama Z-A", // LibraryCategorySortByNameDesc
-    "Tanpa kategori", // LibraryUncategorizedSortHeading
-    "Sama seperti mod", // LibraryUncategorizedSortSameAsMods
     "Tanpa kategori: {status}", // LibraryUncategorizedStatusHeader
+    "Urutkan & Susun", // LibrarySortMenuTitle
 ];

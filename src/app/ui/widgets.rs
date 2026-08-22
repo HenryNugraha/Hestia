@@ -838,6 +838,125 @@ fn static_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respons
         .on_hover_cursor(egui::CursorIcon::Default)
 }
 
+/// A quick-action icon pinned to the right edge of a menu section header (e.g. the
+/// filter popup's "show all" / "hide all" toggles).
+struct MenuHeaderAction<'a> {
+    icon: Icon,
+    tooltip: &'a str,
+}
+
+/// The translucent popup frame shared by the sort and filter menus, so both float
+/// over the library with the same weight.
+fn menu_popup_frame(ui: &Ui) -> egui::Frame {
+    egui::Frame::popup(ui.style())
+        .fill({
+            let fill = ui.style().visuals.window_fill();
+            Color32::from_rgba_premultiplied(
+                fill.r(),
+                fill.g(),
+                fill.b(),
+                ((fill.a() as f32) * 0.94).round() as u8,
+            )
+        })
+        .inner_margin(egui::Margin::same(12))
+}
+
+/// Section header shared by the sort and filter menus: a bold label on the left,
+/// with an optional cluster of quick-action icons pinned to the right edge. Plain
+/// bold, no underline; sections are delimited by [`menu_section_separator`], so an
+/// underline would be a redundant second divider. Spans the full available width
+/// and returns one bool per action, `true` on the frame it was clicked (aligned to
+/// the `actions` order).
+fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -> Vec<bool> {
+    const ICON_SIZE: f32 = 20.0;
+    // The paired filter icons read as one control, so they sit slightly tucked.
+    const ICON_GAP: f32 = -4.0;
+    // Minimum breathing room between the label and the action cluster.
+    const LABEL_GAP: f32 = 6.0;
+
+    let width = ui.available_width();
+    let row_height = if actions.is_empty() { 18.0 } else { ICON_SIZE };
+    let (row_rect, _) = ui.allocate_exact_size(Vec2::new(width, row_height), Sense::hover());
+
+    let action_count = actions.len();
+    let cluster_width = if action_count == 0 {
+        0.0
+    } else {
+        action_count as f32 * ICON_SIZE + (action_count as f32 - 1.0) * ICON_GAP
+    };
+    let cluster_left = row_rect.right() - cluster_width;
+
+    // Label: bold, left-aligned, truncated to the room before the action cluster.
+    let max_label_width = if action_count == 0 {
+        width
+    } else {
+        (cluster_left - LABEL_GAP - row_rect.left()).max(24.0)
+    };
+    let label_rect = egui::Rect::from_min_size(
+        row_rect.left_top(),
+        Vec2::new(max_label_width, row_rect.height()),
+    );
+    // Place the label over the reserved rect with a left-to-right layout so it pins to
+    // the left. ui.put would center it (its layout overrides the Label's halign), hence
+    // the explicit layout here; truncation keeps a long translation on one line.
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(label_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.add(
+                egui::Label::new(
+                    bold(label, None)
+                        .size(12.5)
+                        .color(Color32::from_rgb(228, 231, 235)),
+                )
+                .truncate()
+                .selectable(false),
+            )
+            .on_hover_cursor(egui::CursorIcon::Default);
+        },
+    );
+
+    // Right-pinned quick actions, laid out left-to-right within the cluster.
+    let mut clicks = Vec::with_capacity(action_count);
+    for (index, action) in actions.iter().enumerate() {
+        let center_x = cluster_left + ICON_SIZE / 2.0 + index as f32 * (ICON_SIZE + ICON_GAP);
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(center_x, row_rect.center().y),
+            Vec2::splat(ICON_SIZE),
+        );
+        let response = ui
+            .interact(
+                icon_rect,
+                ui.id().with((label, "menu_header_action", index)),
+                Sense::click(),
+            )
+            .on_hover_text(action.tooltip)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        ui.painter().text(
+            icon_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icon_char(action.icon),
+            egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            if response.hovered() {
+                Color32::WHITE
+            } else {
+                Color32::from_gray(185)
+            },
+        );
+        clicks.push(response.clicked());
+    }
+    clicks
+}
+
+/// The divider shared by the sort and filter menus between sections. Kept in one
+/// place so both menus breathe identically under `item_spacing.y == 4.0`.
+fn menu_section_separator(ui: &mut Ui) {
+    ui.add_space(2.0);
+    ui.separator();
+    ui.add_space(-1.0);
+}
+
 /// Width of the widest entry in `texts` laid out on a single line.
 fn widest_text_width(ui: &Ui, texts: &[&str], style: egui::TextStyle) -> f32 {
     let font_id = style.resolve(ui.style());

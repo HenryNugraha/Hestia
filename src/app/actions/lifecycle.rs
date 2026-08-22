@@ -2182,20 +2182,6 @@ impl HestiaApp {
                         Self::ignored_update_kind(mod_entry),
                         self.effective_mod_category_id(mod_entry),
                         self.mod_category_label(mod_entry),
-                        mod_entry.content_size_bytes,
-                        // Precomputed date sort key mirroring the global `sort_date` closure
-                        // (max of created_at / content_mtime / updated_at) so the uncategorized
-                        // pile's independent Date sort matches the mods list exactly.
-                        mod_entry
-                            .created_at
-                            .timestamp()
-                            .max(
-                                mod_entry
-                                    .content_mtime
-                                    .map(|ts| ts.timestamp())
-                                    .unwrap_or(i64::MIN),
-                            )
-                            .max(mod_entry.updated_at.timestamp()),
                     )
                 })
                 .collect();

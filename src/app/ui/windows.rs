@@ -2795,152 +2795,166 @@ impl HestiaApp {
 
                         static_label(ui, bold(text.installed_mods_list(), Some(16.0)).underline());
                         ui.indent("setting_general_installed_mods_list", |ui| {
-                            let group_mode = self.state.static_prefs.library_group_mode;
-                            let category_display_mode = self.state.static_prefs.library_category_display_mode;
+                            let library_sort = self.state.static_prefs.library_sort;
+                            let library_sort_status_first =
+                                self.state.static_prefs.library_sort_status_first;
                             let mut show_disabled = !self.state.static_prefs.hide_disabled;
                             let mut show_archived = !self.state.static_prefs.hide_archived;
-                            let left_column_width = ui.available_width() * 0.32;
+                            let selected_game_id =
+                                self.selected_game().map(|game| game.definition.id.clone());
+
+                            // Group-by (Category/Status/None), category layout (Folders/List),
+                            // the card-detail toggle, and "uncategorized first" are hidden while
+                            // the category folder view is enforced. Kept behind
+                            // ENFORCE_CATEGORY_FOLDER_VIEW so they can be brought back in a future
+                            // version (the panel would need a re-layout pass then).
+                            if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                                let group_mode = self.state.static_prefs.library_group_mode;
+                                let category_display_mode =
+                                    self.state.static_prefs.library_category_display_mode;
+                                setting_block(ui, text.group_list_by(), &mut |ui| {
+                                    egui::ComboBox::from_id_salt("library_group_mode")
+                                        .selected_text(text.library_group_mode(self.state.static_prefs.library_group_mode))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Category, text.library_group_mode(LibraryGroupMode::Category));
+                                            ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Status, text.library_group_mode(LibraryGroupMode::Status));
+                                            ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::None, text.library_group_mode(LibraryGroupMode::None));
+                                        });
+                                });
+                                ui.add_space(8.0);
+                                setting_block(ui, text.category_layout(), &mut |ui| {
+                                    ui.add_enabled_ui(
+                                        matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
+                                        |ui| {
+                                            egui::ComboBox::from_id_salt("library_category_display_mode")
+                                                .selected_text(text.library_category_display_mode(self.state.static_prefs.library_category_display_mode))
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut self.state.static_prefs.library_category_display_mode, LibraryCategoryDisplayMode::GroupedSections, text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections));
+                                                    ui.selectable_value(&mut self.state.static_prefs.library_category_display_mode, LibraryCategoryDisplayMode::Folders, text.library_category_display_mode(LibraryCategoryDisplayMode::Folders));
+                                                });
+                                        },
+                                    );
+                                });
+                                ui.add_space(8.0);
+                                if self.state.static_prefs.library_group_mode != group_mode {
+                                    should_save = true;
+                                }
+                                if self.state.static_prefs.library_category_display_mode != category_display_mode {
+                                    should_save = true;
+                                }
+                            }
+
+                            // Two columns: #1 Mod Order + #2 status-first on the left, #3 Category
+                            // Order + #4 empty-folders on the right. The left column is sized with
+                            // the SAME inputs as the Behavior section above, so the two panels'
+                            // first columns line up in every language (incl. Russian).
+                            let left_column_needed = settings_column_width(
+                                ui,
+                                &[text.when_launching_game(), text.after_installing_mod()],
+                                &[
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                    text.after_install_behavior(AfterInstallBehavior::DoNothing),
+                                    text.after_install_behavior(AfterInstallBehavior::AddToSelection),
+                                    text.after_install_behavior(AfterInstallBehavior::OpenModDetail),
+                                ],
+                            );
+                            let right_column_needed = settings_column_width(
+                                ui,
+                                &[text.when_launching_tool()],
+                                &[
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                ],
+                            );
+                            let left_column_width =
+                                settings_left_column_width(ui, left_column_needed, right_column_needed);
                             ui.horizontal_top(|ui| {
-                                // Group-by (Category/Status/None) and category layout
-                                // (Folders/List) pickers are hidden for now to enforce the
-                                // category folder view; kept behind ENFORCE_CATEGORY_FOLDER_VIEW
-                                // to bring back in a future version.
-                                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
-                                    setting_block(ui, text.group_list_by(), &mut |ui| {
-                                        egui::ComboBox::from_id_salt("library_group_mode")
-                                            .selected_text(text.library_group_mode(self.state.static_prefs.library_group_mode))
+                                    // 1. Mod Order (mirrors the library sort menu's "Mod Order").
+                                    setting_block(ui, text.library_sort_mods_heading(), &mut |ui| {
+                                        egui::ComboBox::from_id_salt("settings_library_sort")
+                                            .selected_text(text.library_sort_label(self.state.static_prefs.library_sort))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Category, text.library_group_mode(LibraryGroupMode::Category));
-                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::Status, text.library_group_mode(LibraryGroupMode::Status));
-                                                ui.selectable_value(&mut self.state.static_prefs.library_group_mode, LibraryGroupMode::None, text.library_group_mode(LibraryGroupMode::None));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::NameAsc, text.library_sort_label(LibrarySort::NameAsc));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::NameDesc, text.library_sort_label(LibrarySort::NameDesc));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::DateDesc, text.library_sort_label(LibrarySort::DateDesc));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::DateAsc, text.library_sort_label(LibrarySort::DateAsc));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::SizeAsc, text.library_sort_label(LibrarySort::SizeAsc));
+                                                ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::SizeDesc, text.library_sort_label(LibrarySort::SizeDesc));
                                             });
                                     });
-                                    ui.add_space(8.0);
-                                    setting_block(ui, text.category_layout(), &mut |ui| {
-                                        ui.add_enabled_ui(
-                                            matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
-                                            |ui| {
-                                                egui::ComboBox::from_id_salt("library_category_display_mode")
-                                                    .selected_text(text.library_category_display_mode(self.state.static_prefs.library_category_display_mode))
-                                                    .show_ui(ui, |ui| {
-                                                        ui.selectable_value(
-                                                            &mut self.state.static_prefs.library_category_display_mode,
-                                                            LibraryCategoryDisplayMode::GroupedSections,
-                                                            text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
-                                                        );
-                                                        ui.selectable_value(
-                                                            &mut self.state.static_prefs.library_category_display_mode,
-                                                            LibraryCategoryDisplayMode::Folders,
-                                                            text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
-                                                        );
-                                                    });
-                                            },
-                                        );
-                                    });
+                                    // 2. Sort by status first.
+                                    ui.add_space(4.0);
+                                    ui.checkbox(
+                                        &mut self.state.static_prefs.library_sort_status_first,
+                                        text.sort_by_status_first(),
+                                    )
+                                    .on_hover_text(text.sort_by_status_first_tooltip());
                                 });
-                                }
                                 ui.vertical(|ui| {
-                                    let checkbox_changed = match self.state.static_prefs.effective_library_group_mode() {
-                                        LibraryGroupMode::Status => {
-                                            let response = ui.checkbox(
-                                                &mut self.state.static_prefs.library_sort_category_first,
-                                                text.sort_by_category_first(),
-                                            );
-                                            response
-                                                .clone()
-                                                .on_hover_text(text.sort_by_category_first_tooltip());
-                                            response.changed()
-                                        }
-                                        LibraryGroupMode::Category | LibraryGroupMode::None => {
-                                            let response = ui.checkbox(
-                                                &mut self.state.static_prefs.library_sort_status_first,
-                                                text.sort_by_status_first(),
-                                            );
-                                            response
-                                                .clone()
-                                                .on_hover_text(text.sort_by_status_first_tooltip());
-                                            response.changed()
-                                        }
-                                    };
-                                    if checkbox_changed {
-                                        should_save = true;
-                                    }
-                                    // The card-label toggle (status word vs category name) is
-                                    // hidden for now to enforce the category folder view (cards
-                                    // auto-show the status word + dot); might bring it back in a
-                                    // future version. Kept behind ENFORCE_CATEGORY_FOLDER_VIEW.
-                                    if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
-                                    let show_card_detail_response = if matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category) {
-                                        ui.checkbox(
-                                            &mut self.state.static_prefs.library_category_group_show_status,
-                                            text.show_mod_status_on_card(),
+                                    // 3. Category Order. Stored per game (like the sort menu), so it
+                                    // acts on the currently selected game; disabled when none is
+                                    // selected. set_category_sort_mode_for_game saves internally.
+                                    setting_block(ui, text.library_sort_categories_heading(), &mut |ui| {
+                                        ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
+                                            if let Some(game_id) = selected_game_id.as_deref() {
+                                                let mut category_sort_mode =
+                                                    self.category_sort_mode_for_game(game_id);
+                                                egui::ComboBox::from_id_salt("settings_category_sort")
+                                                    .selected_text(text.library_category_sort_label(category_sort_mode))
+                                                    .show_ui(ui, |ui| {
+                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameAsc, text.library_category_sort_label(ModCategorySortMode::ByNameAsc));
+                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameDesc, text.library_category_sort_label(ModCategorySortMode::ByNameDesc));
+                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountDesc, text.library_category_sort_label(ModCategorySortMode::ByModCountDesc));
+                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountAsc, text.library_category_sort_label(ModCategorySortMode::ByModCountAsc));
+                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::Manual, text.library_category_sort_label(ModCategorySortMode::Manual));
+                                                    });
+                                                if category_sort_mode != self.category_sort_mode_for_game(game_id) {
+                                                    self.set_category_sort_mode_for_game(game_id, category_sort_mode);
+                                                }
+                                            }
+                                        });
+                                    });
+                                    // 4. Show empty category folders.
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .checkbox(
+                                            &mut self.state.static_prefs.library_show_empty_category_folders,
+                                            text.show_empty_category_folders(),
                                         )
-                                    } else {
-                                        let response = ui.checkbox(
-                                            &mut self.state.static_prefs.library_status_group_show_category,
-                                            text.show_category_on_card(),
-                                        );
-                                        response
-                                            .clone()
-                                            .on_hover_text(text.show_category_on_card_tooltip());
-                                        response
-                                    };
-                                    if show_card_detail_response.changed() {
-                                        should_save = true;
-                                    }
-                                    }
-                                    if ui
-                                        .checkbox(&mut show_disabled, text.show_disabled_mods())
                                         .changed()
-                                    {
-                                        self.state.static_prefs.hide_disabled = !show_disabled;
-                                        should_save = true;
-                                    }
-                                    if ui
-                                        .checkbox(&mut show_archived, text.show_archived_mods())
-                                        .changed()
-                                    {
-                                        self.state.static_prefs.hide_archived = !show_archived;
-                                        should_save = true;
-                                    }
-                                    // "Show uncategorized mods first" only applies to the List
-                                    // layout, which is hidden while the folder view is enforced.
-                                    // Kept behind ENFORCE_CATEGORY_FOLDER_VIEW.
-                                    if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW
-                                        && matches!(
-                                        self.state.static_prefs.effective_library_category_display_mode(),
-                                        LibraryCategoryDisplayMode::GroupedSections
-                                    ) && matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category)
-                                        && ui
-                                            .checkbox(
-                                                &mut self.state.static_prefs.library_uncategorized_first,
-                                                text.show_uncategorized_mods_first(),
-                                            )
-                                            .changed()
-                                    {
-                                        should_save = true;
-                                    }
-                                    if matches!(
-                                        self.state.static_prefs.effective_library_category_display_mode(),
-                                        LibraryCategoryDisplayMode::Folders
-                                    ) && matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category)
-                                        && ui
-                                            .checkbox(
-                                                &mut self.state.static_prefs.library_show_empty_category_folders,
-                                                text.show_empty_category_folders(),
-                                            )
-                                            .changed()
                                     {
                                         should_save = true;
                                     }
                                 });
                             });
-                            if self.state.static_prefs.library_group_mode != group_mode {
+                            ui.add_space(10.0);
+
+                            // 5. Show disabled mods.
+                            if ui
+                                .checkbox(&mut show_disabled, text.show_disabled_mods())
+                                .changed()
+                            {
+                                self.state.static_prefs.hide_disabled = !show_disabled;
                                 should_save = true;
                             }
-                            if self.state.static_prefs.library_category_display_mode != category_display_mode {
+                            // 6. Show archived mods.
+                            if ui
+                                .checkbox(&mut show_archived, text.show_archived_mods())
+                                .changed()
+                            {
+                                self.state.static_prefs.hide_archived = !show_archived;
+                                should_save = true;
+                            }
+
+                            if self.state.static_prefs.library_sort != library_sort {
+                                should_save = true;
+                            }
+                            if self.state.static_prefs.library_sort_status_first != library_sort_status_first {
                                 should_save = true;
                             }
                             ui.add_space(1.0);

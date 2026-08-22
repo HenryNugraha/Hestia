@@ -1063,25 +1063,6 @@ enum CategoryPickerTarget<'a> {
 }
 
 impl HestiaApp {
-    fn sort_menu_heading(ui: &mut Ui, text: &str) {
-        ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width(), 18.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(
-                        bold(text, None)
-                            .size(12.5)
-                            .underline()
-                            .color(Color32::from_rgb(228, 231, 235)),
-                    )
-                    .selectable(false),
-                )
-                .on_hover_cursor(egui::CursorIcon::Default);
-            },
-        );
-    }
-
     fn sort_menu_radio<T: Copy + PartialEq>(
         ui: &mut Ui,
         current: &mut T,
@@ -1096,6 +1077,56 @@ impl HestiaApp {
             response = response.on_hover_text(tooltip);
         }
         response.changed()
+    }
+
+    /// A modifier row for the sort menu: label on the left, a compact on/off pill switch
+    /// pinned to the right. Deliberately not a radio/checkbox — a switch reads as an
+    /// independent on/off state, so it doesn't blend into the mutually-exclusive radio
+    /// lists above it. On/off stays legible even at this size because the switch signals
+    /// two ways at once (knob position + green-on / red-off). The whole row is clickable.
+    fn sort_menu_toggle(
+        ui: &mut Ui,
+        value: &mut bool,
+        label: &str,
+        tooltip: Option<&str>,
+    ) -> bool {
+        // Very compact vs the default 32x16 switch, but the dual on/off cue keeps it clear.
+        const TOGGLE_SIZE: Vec2 = Vec2::new(24.0, 14.0);
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            let mut switch_response = toggle_switch_sized(ui, value, TOGGLE_SIZE)
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            // Position the label directly off the switch rect so the gap/vertical are exact
+            // (item_spacing clamps at 0 and can't pull the label in any tighter than that).
+            const LABEL_GAP_X: f32 = 4.0; // horizontal gap from switch to label
+            const LABEL_NUDGE_UP: f32 = 1.0;
+            let text_color = ui.visuals().text_color();
+            let galley = ui.painter().layout_no_wrap(
+                label.to_string(),
+                egui::FontId::proportional(13.0),
+                text_color,
+            );
+            let label_size = galley.size();
+            let label_min = egui::pos2(
+                switch_response.rect.right() + LABEL_GAP_X,
+                switch_response.rect.center().y - label_size.y / 2.0 - LABEL_NUDGE_UP,
+            );
+            let label_rect = egui::Rect::from_min_size(label_min, label_size);
+            let label_response = ui.allocate_rect(label_rect, Sense::click());
+            ui.painter().galley(label_min, galley, text_color);
+            let label_response = label_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            // Clicking the label toggles too (the switch already flipped `value` on its own click).
+            if label_response.clicked() {
+                *value = !*value;
+                switch_response.mark_changed();
+            }
+            if let Some(tooltip) = tooltip {
+                switch_response = switch_response.on_hover_text(tooltip);
+                label_response.on_hover_text(tooltip);
+            }
+            changed = switch_response.changed();
+        });
+        changed
     }
 
     fn render_library_sort_radio_rows(&mut self, ui: &mut Ui) -> bool {
@@ -1146,67 +1177,6 @@ impl HestiaApp {
         );
         if selected_sort != self.state.static_prefs.library_sort {
             self.state.static_prefs.library_sort = selected_sort;
-        }
-        should_save
-    }
-
-    // Independent sort for the uncategorized pile (Option D). `None` means "Same
-    // as mods" — the pile just follows the global mod sort order.
-    fn render_library_uncategorized_sort_radio_rows(&mut self, ui: &mut Ui) -> bool {
-        let text = self.text();
-        let mut should_save = false;
-        let mut selected = self.state.static_prefs.library_uncategorized_sort;
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            None,
-            text.library_uncategorized_sort_same_as_mods(),
-            None,
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::NameAsc),
-            text.library_sort_label(LibrarySort::NameAsc),
-            Some(text.library_sort_name_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::NameDesc),
-            text.library_sort_label(LibrarySort::NameDesc),
-            Some(text.library_sort_name_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::DateDesc),
-            text.library_sort_label(LibrarySort::DateDesc),
-            Some(text.library_sort_newest_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::DateAsc),
-            text.library_sort_label(LibrarySort::DateAsc),
-            Some(text.library_sort_oldest_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::SizeAsc),
-            text.library_sort_label(LibrarySort::SizeAsc),
-            Some(text.library_sort_size_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut selected,
-            Some(LibrarySort::SizeDesc),
-            text.library_sort_label(LibrarySort::SizeDesc),
-            Some(text.library_sort_size_tooltip()),
-        );
-        if selected != self.state.static_prefs.library_uncategorized_sort {
-            self.state.static_prefs.library_uncategorized_sort = selected;
         }
         should_save
     }
@@ -1266,7 +1236,7 @@ impl HestiaApp {
         should_save
     }
 
-    fn render_library_sort_menu_button(&mut self, ui: &mut Ui, alpha: u8, width: f32) {
+    fn render_library_sort_menu_button(&mut self, ui: &mut Ui, width: f32) {
         let text = self.text();
         let button_label = text.library_sort_label(self.state.static_prefs.library_sort);
         let mut button_job = LayoutJob::default();
@@ -1275,7 +1245,7 @@ impl HestiaApp {
             0.0,
             TextFormat {
                 font_id: egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
-                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                color: Color32::from_rgb(225, 229, 233),
                 ..Default::default()
             },
         );
@@ -1284,7 +1254,7 @@ impl HestiaApp {
             0.0,
             TextFormat {
                 font_id: egui::FontId::proportional(13.0),
-                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                color: Color32::from_rgb(225, 229, 233),
                 ..Default::default()
             },
         );
@@ -1293,7 +1263,7 @@ impl HestiaApp {
             0.0,
             TextFormat {
                 font_id: egui::FontId::proportional(13.0),
-                color: Color32::from_rgba_premultiplied(225, 229, 233, alpha),
+                color: Color32::from_rgb(225, 229, 233),
                 ..Default::default()
             },
         );
@@ -1370,19 +1340,7 @@ impl HestiaApp {
             .open_memory(popup_open_command)
             .width(244.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .frame(
-                egui::Frame::popup(ui.style())
-                    .fill({
-                        let fill = ui.style().visuals.window_fill();
-                        Color32::from_rgba_premultiplied(
-                            fill.r(),
-                            fill.g(),
-                            fill.b(),
-                            ((fill.a() as f32) * 0.94).round() as u8,
-                        )
-                    })
-                    .inner_margin(egui::Margin::same(12)),
-            )
+            .frame(menu_popup_frame(ui))
             .show(|ui| {
                 ui.set_min_width(220.0);
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -1390,51 +1348,61 @@ impl HestiaApp {
 
                 let mut should_save = false;
 
+                // Menu title, styled to match the filter menu's "Toggle Visibility".
+                ui.add_sized(
+                    [ui.available_width(), 0.0],
+                    egui::Label::new(
+                        RichText::new(text.library_sort_menu_title())
+                            .size(12.5)
+                            .strong()
+                            .color(Color32::from_rgb(228, 231, 235)),
+                    )
+                    .halign(egui::Align::Min)
+                    .wrap()
+                    .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::Default);
+                menu_section_separator(ui);
+
                 // ===== SORT (mods) =====
-                Self::sort_menu_heading(ui, text.library_sort_mods_heading());
+                menu_section_header(ui, text.library_sort_mods_heading(), &[]);
                 ui.add_space(-2.0);
                 should_save |= self.render_library_sort_radio_rows(ui);
+                // Tiny gap so the modifier switch detaches from the radio list above (no hairline).
+                ui.add_space(4.0);
                 // Status-first clusters mods by status within the chosen sort. In the enforced
                 // Category view effective_library_group_mode() == Category, so this always hits
                 // the status-first arm; the category-first arm is only reachable when the
                 // (hidden) Status grouping is restored.
                 let detail_changed = match self.state.static_prefs.effective_library_group_mode() {
-                    LibraryGroupMode::Status => ui
-                        .checkbox(
-                            &mut self.state.static_prefs.library_sort_category_first,
-                            text.sort_by_category_first(),
-                        )
-                        .on_hover_text(text.library_sort_category_first_tooltip())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .changed(),
-                    LibraryGroupMode::Category | LibraryGroupMode::None => ui
-                        .checkbox(
-                            &mut self.state.static_prefs.library_sort_status_first,
-                            text.sort_by_status_first(),
-                        )
-                        .on_hover_text(text.library_sort_status_first_tooltip())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .changed(),
+                    LibraryGroupMode::Status => Self::sort_menu_toggle(
+                        ui,
+                        &mut self.state.static_prefs.library_sort_category_first,
+                        text.sort_by_category_first(),
+                        Some(text.library_sort_category_first_tooltip()),
+                    ),
+                    LibraryGroupMode::Category | LibraryGroupMode::None => Self::sort_menu_toggle(
+                        ui,
+                        &mut self.state.static_prefs.library_sort_status_first,
+                        text.sort_by_status_first(),
+                        Some(text.library_sort_status_first_tooltip()),
+                    ),
                 };
                 should_save |= detail_changed;
 
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(-1.0);
+                menu_section_separator(ui);
 
                 // Group-by (Category/Status/None) and category layout (Folders/List) are
                 // hidden for now to enforce the category folder view; kept behind the flag so
                 // they can be brought back in a future version. See ENFORCE_CATEGORY_FOLDER_VIEW.
                 if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
-                    Self::sort_menu_heading(ui, text.library_group_mods_heading());
+                    menu_section_header(ui, text.library_group_mods_heading(), &[]);
                     ui.add_space(-2.0);
                     should_save |= self.render_library_group_radio_rows(ui);
 
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(-1.0);
+                    menu_section_separator(ui);
 
-                    Self::sort_menu_heading(ui, text.library_category_layout_heading());
+                    menu_section_header(ui, text.library_category_layout_heading(), &[]);
                     ui.add_space(-2.0);
                     if !matches!(
                         self.state.static_prefs.library_group_mode,
@@ -1459,13 +1427,11 @@ impl HestiaApp {
                         },
                     );
 
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(-1.0);
+                    menu_section_separator(ui);
                 }
 
                 // ===== CATEGORIES (folder order) =====
-                Self::sort_menu_heading(ui, text.library_sort_categories_heading());
+                menu_section_header(ui, text.library_sort_categories_heading(), &[]);
                 ui.add_space(-2.0);
                 let selected_game_id = self.selected_game().map(|game| game.definition.id.clone());
                 if !matches!(
@@ -1535,6 +1501,8 @@ impl HestiaApp {
                         }
                     },
                 );
+                // Tiny gap so the modifier switch detaches from the category radio list (no hairline).
+                ui.add_space(4.0);
                 // Show empty category folders (Folders layout only).
                 ui.add_enabled_ui(
                     matches!(
@@ -1545,13 +1513,12 @@ impl HestiaApp {
                         LibraryCategoryDisplayMode::Folders
                     ),
                     |ui| {
-                        should_save |= ui
-                            .checkbox(
-                                &mut self.state.static_prefs.library_show_empty_category_folders,
-                                text.show_empty_category_folders(),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .changed();
+                        should_save |= Self::sort_menu_toggle(
+                            ui,
+                            &mut self.state.static_prefs.library_show_empty_category_folders,
+                            text.show_empty_category_folders(),
+                            None,
+                        );
                     },
                 );
                 // "Show uncategorized mods first" only applies to the List layout, which is
@@ -1578,15 +1545,6 @@ impl HestiaApp {
                         },
                     );
                 }
-
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(-1.0);
-
-                // ===== UNCATEGORIZED (independent pile sort — Option D) =====
-                Self::sort_menu_heading(ui, text.library_uncategorized_sort_heading());
-                ui.add_space(-2.0);
-                should_save |= self.render_library_uncategorized_sort_radio_rows(ui);
 
                 if should_save {
                     self.selected_mods.clear();
@@ -4798,8 +4756,6 @@ impl HestiaApp {
             _,
             _,
             _,
-            _,
-            _,
         ) in cards.iter()
         {
             if self.selected_mods.contains(mod_id) {
@@ -4944,9 +4900,6 @@ impl HestiaApp {
                                 egui::PopupAnchor::PointerFixed
                             };
                         const MODS_STATUS_FILTER_POPUP_WIDTH: f32 = 170.0;
-                        const VISIBILITY_HEADER_ICON_SIZE: f32 = 20.0;
-                        const VISIBILITY_HEADER_ICON_GAP: f32 = -4.0;
-                        const VISIBILITY_HEADER_LABEL_GAP: f32 = 3.0;
 
                         egui::Popup::new(
                             mods_status_filter_popup_id,
@@ -4960,21 +4913,11 @@ impl HestiaApp {
                             .gap(0.0)
                             .open_memory(filter_popup_command)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                            .frame(
-                                egui::Frame::popup(ui.style())
-                                    .fill({
-                                        let fill = ui.style().visuals.window_fill();
-                                        Color32::from_rgba_premultiplied(
-                                            fill.r(),
-                                            fill.g(),
-                                            fill.b(),
-                                            ((fill.a() as f32) * 0.9).round() as u8,
-                                        )
-                                    })
-                                    .inner_margin(egui::Margin::same(12)),
-                            )
+                            .frame(menu_popup_frame(ui))
                             .show(|ui| {
                                 ui.set_width(MODS_STATUS_FILTER_POPUP_WIDTH);
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                ui.spacing_mut().item_spacing.y = 4.0;
                                 ui.add_sized(
                                     [MODS_STATUS_FILTER_POPUP_WIDTH, 0.0],
                                     egui::Label::new(
@@ -4988,144 +4931,35 @@ impl HestiaApp {
                                     .selectable(false),
                                 )
                                 .on_hover_cursor(egui::CursorIcon::Default);
-                                ui.add_space(-2.0);
-                                ui.separator();
-                                ui.add_space(-2.0);
+                                menu_section_separator(ui);
 
-                                let visibility_header =
-                                    |ui: &mut Ui,
-                                     heading: &str,
-                                     show_all_tooltip: &str,
-                                     hide_all_tooltip: &str|
-                                     -> (bool, bool) {
-                                        let row_size = Vec2::new(
-                                            MODS_STATUS_FILTER_POPUP_WIDTH,
-                                            VISIBILITY_HEADER_ICON_SIZE,
-                                        );
-                                        let (row_rect, _) =
-                                            ui.allocate_exact_size(row_size, Sense::hover());
-                                        let label_font = egui::FontId::proportional(13.0);
-                                        let label_color = Color32::from_gray(190);
-                                        let measured_label_width = ui
-                                            .painter()
-                                            .layout_no_wrap(
-                                                heading.to_owned(),
-                                                label_font.clone(),
-                                                label_color,
-                                            )
-                                            .size()
-                                            .x;
-                                        let max_label_width = MODS_STATUS_FILTER_POPUP_WIDTH
-                                            - (VISIBILITY_HEADER_ICON_SIZE * 2.0)
-                                            - VISIBILITY_HEADER_ICON_GAP
-                                            - VISIBILITY_HEADER_LABEL_GAP;
-                                        let label_width =
-                                            measured_label_width.min(max_label_width).max(24.0);
-                                        let label_rect = egui::Rect::from_min_size(
-                                            row_rect.left_top(),
-                                            Vec2::new(label_width, row_rect.height()),
-                                        );
-                                        ui.put(
-                                            label_rect,
-                                            egui::Label::new(
-                                                RichText::new(heading)
-                                                    .font(label_font)
-                                                    .underline()
-                                                    .color(label_color),
-                                            )
-                                            .truncate()
-                                            .selectable(false),
-                                        )
-                                        .on_hover_cursor(egui::CursorIcon::Default);
-
-                                        let show_rect = egui::Rect::from_center_size(
-                                            egui::pos2(
-                                                label_rect.right()
-                                                    + VISIBILITY_HEADER_LABEL_GAP
-                                                    + VISIBILITY_HEADER_ICON_SIZE / 2.0,
-                                                row_rect.center().y,
-                                            ),
-                                            Vec2::splat(VISIBILITY_HEADER_ICON_SIZE),
-                                        );
-                                        let hide_rect = egui::Rect::from_center_size(
-                                            egui::pos2(
-                                                show_rect.right()
-                                                    + VISIBILITY_HEADER_ICON_GAP
-                                                    + VISIBILITY_HEADER_ICON_SIZE / 2.0,
-                                                row_rect.center().y,
-                                            ),
-                                            Vec2::splat(VISIBILITY_HEADER_ICON_SIZE),
-                                        );
-
-                                        let show_response = ui
-                                            .interact(
-                                                show_rect,
-                                                ui.id().with((heading, "show_all")),
-                                                Sense::click(),
-                                            )
-                                            .on_hover_text(show_all_tooltip)
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                        let hide_response = ui
-                                            .interact(
-                                                hide_rect,
-                                                ui.id().with((heading, "hide_all")),
-                                                Sense::click(),
-                                            )
-                                            .on_hover_text(hide_all_tooltip)
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-
-                                        ui.painter().text(
-                                            show_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            icon_char(Icon::MousePointerSquareDashed),
-                                            egui::FontId::new(
-                                                13.0,
-                                                FontFamily::Name(LUCIDE_FAMILY.into()),
-                                            ),
-                                            if show_response.hovered() {
-                                                Color32::WHITE
-                                            } else {
-                                                Color32::from_gray(185)
-                                            },
-                                        );
-                                        ui.painter().text(
-                                            hide_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            icon_char(Icon::SquareDashedBottom),
-                                            egui::FontId::new(
-                                                13.0,
-                                                FontFamily::Name(LUCIDE_FAMILY.into()),
-                                            ),
-                                            if hide_response.hovered() {
-                                                Color32::WHITE
-                                            } else {
-                                                Color32::from_gray(185)
-                                            },
-                                        );
-
-                                        (show_response.clicked(), hide_response.clicked())
-                                    };
-
-                                let (show_all, hide_all) = visibility_header(
+                                let mod_state_actions = menu_section_header(
                                     ui,
                                     text.mod_state_heading(),
-                                    text.show_all_mod_states(),
-                                    text.hide_all_mod_states(),
+                                    &[
+                                        MenuHeaderAction {
+                                            icon: Icon::MousePointerSquareDashed,
+                                            tooltip: text.show_all_mod_states(),
+                                        },
+                                        MenuHeaderAction {
+                                            icon: Icon::SquareDashedBottom,
+                                            tooltip: text.hide_all_mod_states(),
+                                        },
+                                    ],
                                 );
-                                if show_all {
+                                if mod_state_actions[0] {
                                     self.show_enabled_mods = true;
                                     self.state.static_prefs.hide_disabled = false;
                                     self.state.static_prefs.hide_archived = false;
                                     self.selected_mods.clear();
                                     self.save_state();
-                                } else if hide_all {
+                                } else if mod_state_actions[1] {
                                     self.show_enabled_mods = false;
                                     self.state.static_prefs.hide_disabled = true;
                                     self.state.static_prefs.hide_archived = true;
                                     self.selected_mods.clear();
                                     self.save_state();
                                 }
-                                ui.add_space(-3.0);
 
                                 let enabled_changed = ui
                                     .checkbox(&mut self.show_enabled_mods, text.enabled_mods())
@@ -5156,17 +4990,23 @@ impl HestiaApp {
                                     self.selected_mods.clear();
                                 }
 
-                                ui.add_space(-2.0);
-                                ui.separator();
-                                ui.add_space(-2.0);
+                                menu_section_separator(ui);
 
-                                let (show_all, hide_all) = visibility_header(
+                                let update_state_actions = menu_section_header(
                                     ui,
                                     text.update_state_heading(),
-                                    text.show_all_update_states(),
-                                    text.hide_all_update_states(),
+                                    &[
+                                        MenuHeaderAction {
+                                            icon: Icon::MousePointerSquareDashed,
+                                            tooltip: text.show_all_update_states(),
+                                        },
+                                        MenuHeaderAction {
+                                            icon: Icon::SquareDashedBottom,
+                                            tooltip: text.hide_all_update_states(),
+                                        },
+                                    ],
                                 );
-                                if show_all {
+                                if update_state_actions[0] {
                                     self.show_unlinked_mods = true;
                                     self.show_up_to_date_mods = true;
                                     self.show_update_available_mods = true;
@@ -5175,7 +5015,7 @@ impl HestiaApp {
                                     self.show_modified_locally_mods = true;
                                     self.show_ignoring_update_mods = true;
                                     self.selected_mods.clear();
-                                } else if hide_all {
+                                } else if update_state_actions[1] {
                                     self.show_unlinked_mods = false;
                                     self.show_up_to_date_mods = false;
                                     self.show_update_available_mods = false;
@@ -5185,7 +5025,6 @@ impl HestiaApp {
                                     self.show_ignoring_update_mods = false;
                                     self.selected_mods.clear();
                                 }
-                                ui.add_space(-3.0);
 
                                 let unlinked_changed = ui
                                     .checkbox(&mut self.show_unlinked_mods, text.unlinked())
@@ -5304,11 +5143,15 @@ impl HestiaApp {
                         }
                     });
 
-                    // Floating Header Label: Disappears if expanded OR if selection is active
+                    // Floating Header Label: fades out when the filter bar expands OR a selection is active.
+                    // The sort dropdown fades out only on selection, so it stays reachable while filtering.
                     let header_visibility = (1.0 - how_expanded) * (1.0 - selection_anim);
-                    if header_visibility > 0.01 {
+                    let sort_visibility = 1.0 - selection_anim;
+                    if sort_visibility > 0.01 {
                         ui.add_space(-4.0 * header_visibility);
-                        let unit_width = 302.0 * header_visibility;
+                        // Reserve width that shrinks monotonically as the filter bar expands (302 -> 162),
+                        // so the combo anchored inside it never over-travels. Fades out on selection.
+                        let unit_width = (302.0 - 140.0 * how_expanded) * sort_visibility;
                         let (unit_rect, label_resp) = ui.allocate_exact_size(egui::vec2(unit_width, 41.0), Sense::click());
                         if ui.ctx().input(|i| {
                             i.pointer.secondary_clicked()
@@ -5336,45 +5179,54 @@ impl HestiaApp {
                             unit_rect.left() - unit_slide_left,
                             unit_rect.top(),
                         );
-                        let alpha = (header_visibility * 255.0) as u8;
-                        let title_color = Color32::from_rgba_premultiplied(228, 231, 235, alpha);
+                        let title_alpha = (header_visibility * 255.0) as u8;
+                        let title_color = Color32::from_rgba_premultiplied(228, 231, 235, title_alpha);
                         let title_text = bold(text.installed_mods(), Some(18.0)).color(title_color);
                         let title_galley = egui::WidgetText::from(title_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default);
                         let extended_clip_rect = unit_rect.expand2(egui::vec2(10.0, 0.0));
-                        ui.painter().with_clip_rect(extended_clip_rect).galley(
-                            egui::Align2::LEFT_CENTER
-                                .align_size_within_rect(title_galley.size(), unit_rect)
-                                .min
-                                + egui::vec2(content_origin.x - unit_rect.left() - 10.0, 0.0),
-                            title_galley.clone(),
-                            title_color,
-                        );
+                        // Skip painting at ~0 alpha: premultiplied RGB with alpha 0 blends additively (stays visible).
+                        if header_visibility > 0.01 {
+                            ui.painter().with_clip_rect(extended_clip_rect).galley(
+                                egui::Align2::LEFT_CENTER
+                                    .align_size_within_rect(title_galley.size(), unit_rect)
+                                    .min
+                                    + egui::vec2(content_origin.x - unit_rect.left() - 10.0, 0.0),
+                                title_galley.clone(),
+                                title_color,
+                            );
+                        }
 
                         let combo_width = 148.0;
                         let combo_gap = 14.0;
-                        let combo_x = (content_origin.x + title_galley.size().x + combo_gap)
-                            .min(unit_rect.right() - combo_width);
+                        // Slide the combo smoothly from just-after-the-title (idle) to just-after-the-filter-bar
+                        // (expanded), anchored off the unit's left edge so it moves the minimal ~59px and never
+                        // over-travels. content_origin drives the title's slide only, not the combo.
+                        let combo_offset = (title_galley.size().x + combo_gap) * (1.0 - how_expanded)
+                            + combo_gap * how_expanded;
+                        // Selection outro/intro slide (mirrors the bulk-button group): slide right while fading
+                        // out as a selection appears, slide left into place while fading back in as it clears.
+                        const SORT_SELECTION_SLIDE: f32 = 22.0;
+                        let selection_slide = (1.0 - sort_visibility) * SORT_SELECTION_SLIDE;
+                        let combo_x = unit_rect.left() + combo_offset + selection_slide;
                         let combo_rect = egui::Rect::from_min_size(
                             egui::pos2(combo_x, unit_rect.top() + 6.0),
                             egui::vec2(combo_width, 30.0),
                         );
                         let mut combo_ui = ui.new_child(
                             egui::UiBuilder::new()
+                                .id(egui::Id::new("hestia_library_sort_combo"))
                                 .max_rect(combo_rect)
                                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
                         );
-                        combo_ui.visuals_mut().widgets.inactive.bg_fill =
-                            Color32::from_rgba_premultiplied(44, 47, 52, alpha);
-                        combo_ui.visuals_mut().widgets.hovered.bg_fill =
-                            Color32::from_rgba_premultiplied(50, 54, 60, alpha);
-                        combo_ui.visuals_mut().widgets.active.bg_fill =
-                            Color32::from_rgba_premultiplied(40, 43, 48, alpha);
-                        combo_ui.visuals_mut().widgets.inactive.bg_stroke.color =
-                            Color32::from_rgba_premultiplied(69, 74, 81, alpha);
-                        combo_ui.visuals_mut().widgets.hovered.bg_stroke.color =
-                            Color32::from_rgba_premultiplied(92, 98, 107, alpha);
-                        combo_ui.visuals_mut().widgets.active.bg_stroke.color =
-                            Color32::from_rgba_premultiplied(92, 98, 107, alpha);
+                        // Fade the whole dropdown via egui's opacity system, which composites correctly down
+                        // to zero. (Manual premultiplied-alpha colors blend additively near 0 -> bright artifacts.)
+                        combo_ui.set_opacity(sort_visibility);
+                        combo_ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_rgb(44, 47, 52);
+                        combo_ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgb(50, 54, 60);
+                        combo_ui.visuals_mut().widgets.active.bg_fill = Color32::from_rgb(40, 43, 48);
+                        combo_ui.visuals_mut().widgets.inactive.bg_stroke.color = Color32::from_rgb(69, 74, 81);
+                        combo_ui.visuals_mut().widgets.hovered.bg_stroke.color = Color32::from_rgb(92, 98, 107);
+                        combo_ui.visuals_mut().widgets.active.bg_stroke.color = Color32::from_rgb(92, 98, 107);
                         combo_ui.visuals_mut().widgets.inactive.corner_radius =
                             egui::CornerRadius::same(6);
                         combo_ui.visuals_mut().widgets.hovered.corner_radius =
@@ -5385,15 +5237,30 @@ impl HestiaApp {
                             egui::CornerRadius::same(6);
                         combo_ui.spacing_mut().icon_spacing = 4.0;
 
-                        self.render_library_sort_menu_button(&mut combo_ui, alpha, combo_rect.width());
+                        self.render_library_sort_menu_button(&mut combo_ui, combo_rect.width());
                     }
 
                     if selection_anim > 0.01 {
                         // Dynamically reduce the gap by 10px when the search bar is collapsed
                         ui.add_space(10.0 * selection_anim * how_expanded);
-                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 41.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0; // Total control over vertical gaps
-                            ui.vertical(|ui| {
+                        // Intro/outro slide, mirroring the sort dropdown in reverse: enter from the left while
+                        // fading in, slide left while fading out. Fade via egui's opacity system so every color
+                        // (including the red "update" button) composites cleanly to 0 with no additive artifacts.
+                        const BULK_SELECTION_SLIDE: f32 = 22.0;
+                        let bulk_slide = -(1.0 - selection_anim) * BULK_SELECTION_SLIDE;
+                        let bulk_group_rect = egui::Rect::from_min_size(
+                            ui.cursor().min + egui::vec2(bulk_slide, 0.0),
+                            Vec2::new(ui.available_width(), 41.0),
+                        );
+                        let mut group_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .id(egui::Id::new("hestia_library_bulk_ops"))
+                                .max_rect(bulk_group_rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        group_ui.set_opacity(selection_anim);
+                        group_ui.spacing_mut().item_spacing.y = 2.0; // Total control over vertical gaps
+                        group_ui.vertical(|ui| {
                                 ui.add_space(-5.0); // Stack top margin
                                 ui.spacing_mut().button_padding = egui::vec2(7.0, 5.0);
                                 let radius = egui::CornerRadius::same(5);
@@ -5595,10 +5462,19 @@ impl HestiaApp {
                                     static_label(ui, RichText::new(text.selected_count(self.selected_mods.len())).size(12.0).color(Color32::from_gray(160)));
                                 });
                             });
-                        });
+                        // Reserve the group's footprint so the right-aligned stats never overlap it.
+                        let bulk_used_width = group_ui.min_rect().width();
+                        ui.allocate_space(Vec2::new((bulk_used_width + bulk_slide).max(0.0), 41.0));
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Explicit (not salted) id: keeps the interactive count Label's id fixed so it
+                    // can never shift onto another widget's slot on a selection-transition frame,
+                    // which is what produced the debug-only red id-clash flash at the header's edge.
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .id(egui::Id::new("hestia_library_header_stats"))
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                        |ui| {
                         ui.set_height(41.0); // Keep right-side layout height stable
                         // Only show stats if selection is empty AND 0.7s has passed
                         let show_stats_target = !has_selection && self.selection_empty_at.map_or(true, |t| now - t > 0.7);
@@ -5684,34 +5560,10 @@ impl HestiaApp {
             self.state.static_prefs.effective_library_category_display_mode();
         let show_empty_category_folders =
             self.state.static_prefs.library_show_empty_category_folders;
-        // Uncategorized pile (Option D): its own sort (None = "same as mods"), and whether
-        // to split the pile into per-status sub-sections (piggybacks on the status-first
-        // toggle; adaptive headers below only split when >1 status is present).
-        let uncategorized_sort = self.state.static_prefs.library_uncategorized_sort;
+        // The uncategorized pile inherits the mod sort order (it's a filtered slice of the
+        // globally-sorted cards). When status-first is on and the pile spans more than one
+        // status, it splits into per-status sub-sections with adaptive headers below.
         let uncategorized_status_split = self.state.static_prefs.library_sort_status_first;
-        // Re-sort a slice of the uncategorized pile by an explicit LibrarySort. Mirrors the
-        // global comparator's tie-break on the display name; date uses the precomputed key
-        // (card.16), size uses card.15.
-        fn sort_uncategorized_pile(cards: &mut [&LibraryCardRow], sort: LibrarySort) {
-            let name_key = |card: &&LibraryCardRow| {
-                card.2
-                    .as_deref()
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or(&card.1)
-                    .to_ascii_lowercase()
-            };
-            cards.sort_by(|a, b| {
-                let name_cmp = name_key(a).cmp(&name_key(b));
-                match sort {
-                    LibrarySort::NameAsc => name_cmp,
-                    LibrarySort::NameDesc => name_cmp.reverse(),
-                    LibrarySort::DateDesc => b.16.cmp(&a.16).then(name_cmp),
-                    LibrarySort::DateAsc => a.16.cmp(&b.16).then(name_cmp),
-                    LibrarySort::SizeAsc => a.15.cmp(&b.15).then(name_cmp),
-                    LibrarySort::SizeDesc => b.15.cmp(&a.15).then(name_cmp),
-                }
-            });
-        }
         let mut selected_category_folder_id =
             self.selected_category_folder_id
                 .clone()
@@ -6252,8 +6104,6 @@ impl HestiaApp {
                                             ignoring_update_label,
                                             category_id,
                                             category_label,
-                                            _,
-                                            _,
                                         ) = card;
                                         
                                         let age_label =
@@ -8182,12 +8032,10 @@ impl HestiaApp {
                                         }
 
                                         if !uncategorized_cards.is_empty() {
-                                            // Uncategorized pile (Option D): independent sort +
-                                            // adaptive status headers. `uncategorized_sort == None`
-                                            // means "same as mods" — keep the global order the cards
-                                            // already arrived in. When status-first is on and the
-                                            // pile spans more than one status, split it into
-                                            // "Uncategorized: {status}" sub-sections; otherwise a
+                                            // The pile keeps the global mod sort order (it's a
+                                            // filtered slice of the sorted cards). When status-first
+                                            // is on and the pile spans more than one status, split it
+                                            // into "Uncategorized: {status}" sub-sections; otherwise a
                                             // single "Uncategorized" header (no split when all mods
                                             // share one status).
                                             let present_statuses: Vec<ModStatus> = [
@@ -8208,10 +8056,7 @@ impl HestiaApp {
                                             let mut render_pile_section =
                                                 |ui: &mut Ui,
                                                  label: String,
-                                                 mut section: Vec<&LibraryCardRow>| {
-                                                    if let Some(sort) = uncategorized_sort {
-                                                        sort_uncategorized_pile(&mut section, sort);
-                                                    }
+                                                 section: Vec<&LibraryCardRow>| {
                                                     let response = render_section_label(
                                                         ui,
                                                         &label,
@@ -8822,10 +8667,8 @@ impl HestiaApp {
                         ui.set_min_width(200.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         should_save |= self.render_library_group_radio_rows(ui);
-                        ui.add_space(2.0);
-                        ui.separator();
-                        ui.add_space(-1.0);
-                        Self::sort_menu_heading(ui, text.library_category_layout_heading());
+                        menu_section_separator(ui);
+                        menu_section_header(ui, text.library_category_layout_heading(), &[]);
                         ui.add_space(-2.0);
                         ui.add_enabled_ui(
                             matches!(

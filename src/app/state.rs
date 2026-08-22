@@ -161,8 +161,6 @@ type LibraryCardRow = (
     Option<IgnoredUpdateKind>,
     Option<String>,
     String,
-    u64,
-    i64,
 );
 
 struct LibraryCardCache {

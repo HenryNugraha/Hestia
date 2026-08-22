@@ -337,7 +337,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Smallest → Largest Size", // LibrarySortSizeAsc
     "Largest → Smallest Size", // LibrarySortSizeDesc
     "Sort, group, and layout installed mods", // LibrarySortMenuTooltip
-    "Sort Mods", // LibrarySortModsHeading
+    "Mod Order", // LibrarySortModsHeading
     "Sorts by mod title, falling back to folder name", // LibrarySortNameTooltip
     "Uses the newest known install, content, or refresh timestamp", // LibrarySortNewestTooltip
     "Uses the oldest known install, content, or refresh timestamp first", // LibrarySortOldestTooltip
@@ -350,7 +350,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Available when grouped by category.", // LibraryAvailableWhenGroupedByCategory
     "Shows category tiles first, then opens one category at a time", // LibraryCategoryFoldersTooltip
     "Shows every category as a section in the mod list", // LibraryCategoryListTooltip
-    "Folder Order", // LibrarySortCategoriesHeading
+    "Category Order", // LibrarySortCategoriesHeading
     "Manual", // LibraryCategorySortManual
     "Name A-Z", // LibraryCategorySortByNameAsc
     "By Least Mods", // LibraryCategorySortByLeastMods
@@ -809,7 +809,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Filter characters", // BrowseFilterCharactersHint
     "No GameBanana source is linked for this mod. Click to link it.", // LibraryUnlinkedClickToLink
     "Name Z-A", // LibraryCategorySortByNameDesc
-    "Uncategorized", // LibraryUncategorizedSortHeading
-    "Same as mods", // LibraryUncategorizedSortSameAsMods
     "Uncategorized: {status}", // LibraryUncategorizedStatusHeader
+    "Sort & Order", // LibrarySortMenuTitle
 ];

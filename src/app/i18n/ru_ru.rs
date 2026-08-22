@@ -337,7 +337,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Наименьший → Наибольший размер", // LibrarySortSizeAsc
     "Наибольший → Наименьший размер", // LibrarySortSizeDesc
     "Сортировка, группировка и вид установленных модов", // LibrarySortMenuTooltip
-    "Сортировка модов", // LibrarySortModsHeading
+    "Порядок модов", // LibrarySortModsHeading
     "Сортировка по названию мода, при отсутствии — по имени папки", // LibrarySortNameTooltip
     "Используется самая новая известная дата установки, изменения содержимого или обновления", // LibrarySortNewestTooltip
     "Сначала используется самая старая известная дата установки, изменения содержимого или обновления", // LibrarySortOldestTooltip
@@ -350,7 +350,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Доступно при группировке по категориям.", // LibraryAvailableWhenGroupedByCategory
     "Сначала показывает плитки категорий, затем открывает по одной категории за раз", // LibraryCategoryFoldersTooltip
     "Показывает каждую категорию отдельным разделом в списке модов", // LibraryCategoryListTooltip
-    "Порядок папок", // LibrarySortCategoriesHeading
+    "Порядок категорий", // LibrarySortCategoriesHeading
     "Вручную", // LibraryCategorySortManual
     "Название А-Я", // LibraryCategorySortByNameAsc
     "Меньше всего модов", // LibraryCategorySortByLeastMods
@@ -808,7 +808,6 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Фильтр персонажей", // BrowseFilterCharactersHint
     "Для этого мода не привязан источник GameBanana. Нажмите, чтобы привязать.", // LibraryUnlinkedClickToLink
     "Название Я-А", // LibraryCategorySortByNameDesc
-    "Без категории", // LibraryUncategorizedSortHeading
-    "Как у модов", // LibraryUncategorizedSortSameAsMods
     "Без категории: {status}", // LibraryUncategorizedStatusHeader
+    "Сортировка и порядок", // LibrarySortMenuTitle
 ];
