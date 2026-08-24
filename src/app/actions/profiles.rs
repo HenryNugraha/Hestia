@@ -214,6 +214,31 @@ impl HestiaApp {
         })
     }
 
+    fn selected_game_process_running_cached(
+        &mut self,
+        game: &GameInstall,
+        ctx: &egui::Context,
+    ) -> bool {
+        const TTL: f64 = 1.0;
+
+        ctx.request_repaint_after(Duration::from_secs_f64(TTL));
+        let now = ctx.input(|input| input.time);
+        if let Some(cache) = &self.selected_game_running_cache
+            && cache.game_id == game.definition.id
+            && now < cache.next_check_at
+        {
+            return cache.running;
+        }
+
+        let running = self.game_process_running(game);
+        self.selected_game_running_cache = Some(SelectedGameRunningCache {
+            game_id: game.definition.id.clone(),
+            running,
+            next_check_at: now + TTL,
+        });
+        running
+    }
+
     fn game_exe_names(game: &GameInstall) -> Vec<String> {
         [game.vanilla_exe_path(), game.modded_exe_path()]
             .into_iter()

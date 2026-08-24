@@ -1917,11 +1917,28 @@ pub struct D3dxReloadConfigStatus {
     pub path: PathBuf,
     pub fields: Vec<D3dxReloadStatusField>,
     pub error: Option<String>,
+    pub managed_by_hestia: bool,
 }
 
 impl D3dxReloadConfigStatus {
     pub fn healthy(&self) -> bool {
         self.error.is_none() && self.fields.iter().all(|field| field.matches)
+    }
+
+    pub fn foreground_window_matches(&self) -> bool {
+        self.field_matches(FOREGROUND_WINDOW_KEY)
+    }
+
+    pub fn autosave_interval_matches(&self) -> bool {
+        self.field_matches(AUTOSAVE_INTERVAL_KEY)
+    }
+
+    fn field_matches(&self, key: &str) -> bool {
+        self.error.is_none()
+            && self
+                .fields
+                .iter()
+                .any(|field| field.key.eq_ignore_ascii_case(key) && field.matches)
     }
 }
 
@@ -2036,6 +2053,7 @@ fn reload_config_status_for_root(importer_root: &Path) -> D3dxReloadConfigStatus
                 path,
                 fields,
                 error: Some(format!("reading d3dx.ini failed: {err}")),
+                managed_by_hestia: false,
             };
         }
     };
@@ -2046,6 +2064,7 @@ fn reload_config_status_for_root(importer_root: &Path) -> D3dxReloadConfigStatus
                 path,
                 fields,
                 error: Some(format!("d3dx.ini is not valid UTF-8: {err}")),
+                managed_by_hestia: false,
             };
         }
     };
@@ -2054,12 +2073,15 @@ fn reload_config_status_for_root(importer_root: &Path) -> D3dxReloadConfigStatus
     let foreground = first_system_active_value(&lines, FOREGROUND_WINDOW_KEY).map(str::to_string);
     let interval = first_system_active_value(&lines, AUTOSAVE_INTERVAL_KEY).map(str::to_string);
     fields = canonical_reload_status_fields(foreground, interval);
-    let error = matches!(scan_hestia_section(&lines), SectionScan::Malformed)
+    let section_scan = scan_hestia_section(&lines);
+    let managed_by_hestia = matches!(section_scan, SectionScan::One { .. });
+    let error = matches!(section_scan, SectionScan::Malformed)
         .then(|| MALFORMED_MARKERS_NOTICE.to_string());
     D3dxReloadConfigStatus {
         path,
         fields,
         error,
+        managed_by_hestia,
     }
 }
 
@@ -4882,6 +4904,8 @@ settings_auto_save_interval = 1\r\n\
         let status = reload_config_status_for_root(temp.path());
 
         assert!(status.healthy());
+        assert!(status.foreground_window_matches());
+        assert!(status.autosave_interval_matches());
         assert_eq!(
             status_pairs(&status),
             vec![
@@ -4903,11 +4927,36 @@ settings_auto_save_interval = 1\r\n\
         let status = reload_config_status_for_root(temp.path());
 
         assert!(!status.healthy());
+        assert!(!status.foreground_window_matches());
+        assert!(!status.autosave_interval_matches());
         assert_eq!(
             status_pairs(&status),
             vec![
                 (FOREGROUND_WINDOW_KEY, Some("ReShade".to_string()), false),
                 (AUTOSAVE_INTERVAL_KEY, None, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn reload_config_status_reports_partial_capabilities() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("d3dx.ini"),
+            "[System]\r\nadditional_foreground_window = Hestia\r\nsettings_auto_save_interval = 60\r\n",
+        )
+        .unwrap();
+
+        let status = reload_config_status_for_root(temp.path());
+
+        assert!(!status.healthy());
+        assert!(status.foreground_window_matches());
+        assert!(!status.autosave_interval_matches());
+        assert_eq!(
+            status_pairs(&status),
+            vec![
+                (FOREGROUND_WINDOW_KEY, Some("Hestia".to_string()), true),
+                (AUTOSAVE_INTERVAL_KEY, Some("60".to_string()), false),
             ]
         );
     }
@@ -4924,6 +4973,8 @@ settings_auto_save_interval = 1\r\n\
         let status = reload_config_status_for_root(temp.path());
 
         assert!(!status.healthy());
+        assert!(!status.foreground_window_matches());
+        assert!(!status.autosave_interval_matches());
         assert_eq!(status.error.as_deref(), Some(MALFORMED_MARKERS_NOTICE));
         assert_eq!(
             status_pairs(&status),

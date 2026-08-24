@@ -378,9 +378,7 @@ fn strip_uuid_prefix(name: &str) -> &str {
     const UUID_PREFIX_LEN: usize = 37; // hyphenated uuid + '_'
     if name.len() > UUID_PREFIX_LEN && name.is_char_boundary(UUID_PREFIX_LEN) {
         let (prefix, rest) = name.split_at(UUID_PREFIX_LEN);
-        if prefix.ends_with('_')
-            && uuid::Uuid::parse_str(&prefix[..UUID_PREFIX_LEN - 1]).is_ok()
-        {
+        if prefix.ends_with('_') && uuid::Uuid::parse_str(&prefix[..UUID_PREFIX_LEN - 1]).is_ok() {
             let rest = rest.trim_start();
             if !rest.is_empty() {
                 return rest;
@@ -712,20 +710,16 @@ fn inspect_directory(
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {
         let nested = &top_level_dirs[0];
         candidates.push(ImportCandidate {
-            label: strip_uuid_prefix(
-                nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
-            )
-            .to_string(),
+            label: strip_uuid_prefix(nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"))
+                .to_string(),
             path: nested.clone(),
         });
         notice = Some("Nested top-level folder detected. Hestia will import the inner folder as the mod root.".to_string());
     } else if top_level_dirs.len() > 1 && top_level_files.is_empty() {
         for dir in top_level_dirs {
             candidates.push(ImportCandidate {
-                label: strip_uuid_prefix(
-                    dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
-                )
-                .to_string(),
+                label: strip_uuid_prefix(dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"))
+                    .to_string(),
                 path: dir,
             });
         }
@@ -778,20 +772,16 @@ fn inspect_directory_cancelable(
     if top_level_dirs.len() == 1 && top_level_files.is_empty() {
         let nested = &top_level_dirs[0];
         candidates.push(ImportCandidate {
-            label: strip_uuid_prefix(
-                nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
-            )
-            .to_string(),
+            label: strip_uuid_prefix(nested.file_name().and_then(OsStr::to_str).unwrap_or("mod"))
+                .to_string(),
             path: nested.clone(),
         });
         notice = Some("Nested top-level folder detected. Hestia will import the inner folder as the mod root.".to_string());
     } else if top_level_dirs.len() > 1 && top_level_files.is_empty() {
         for dir in top_level_dirs {
             candidates.push(ImportCandidate {
-                label: strip_uuid_prefix(
-                    dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"),
-                )
-                .to_string(),
+                label: strip_uuid_prefix(dir.file_name().and_then(OsStr::to_str).unwrap_or("mod"))
+                    .to_string(),
                 path: dir,
             });
         }
@@ -1470,8 +1460,11 @@ pub fn discover_bundled_preview_images(mod_root: &Path) -> Vec<PathBuf> {
     loose.retain(|path| !is_mod_asset(path));
 
     named.sort_by(|a, b| {
-        (a.0, a.1, a.2.to_string_lossy().to_ascii_lowercase())
-            .cmp(&(b.0, b.1, b.2.to_string_lossy().to_ascii_lowercase()))
+        (a.0, a.1, a.2.to_string_lossy().to_ascii_lowercase()).cmp(&(
+            b.0,
+            b.1,
+            b.2.to_string_lossy().to_ascii_lowercase(),
+        ))
     });
     // A numbered set sorts numerically (2.png before 10.png), everything else
     // falls back to name order behind it.
@@ -1560,7 +1553,10 @@ mod tests {
             .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
-        assert_eq!(names, vec![".JASM_Cover.jpg", "preview.webp", "2.png", "10.png"]);
+        assert_eq!(
+            names,
+            vec![".JASM_Cover.jpg", "preview.webp", "2.png", "10.png"]
+        );
     }
 
     #[test]
@@ -1589,7 +1585,10 @@ mod tests {
     #[test]
     fn ini_reference_check_requires_token_boundaries() {
         assert!(ini_blob_references_file("filename = 1.png", "1.png"));
-        assert!(ini_blob_references_file("filename=.\\sub\\1.png\r\n", "1.png"));
+        assert!(ini_blob_references_file(
+            "filename=.\\sub\\1.png\r\n",
+            "1.png"
+        ));
         assert!(!ini_blob_references_file("filename = 11.png", "1.png"));
         assert!(!ini_blob_references_file("filename = 1.pngx", "1.png"));
         assert!(!ini_blob_references_file("", "1.png"));

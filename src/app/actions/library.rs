@@ -22,9 +22,39 @@ struct XxmiNamespaceContext {
 }
 
 impl HestiaApp {
+    fn current_d3dx_reload_status_for_game(
+        &self,
+        game: &GameInstall,
+    ) -> Option<xxmi_persist::D3dxReloadConfigStatus> {
+        self.d3dx_reload_status_cache
+            .as_ref()
+            .filter(|cache| cache.game_id == game.definition.id)
+            .map(|cache| cache.status.clone())
+            .or_else(|| {
+                xxmi_persist::reload_config_status(
+                    game,
+                    self.state.static_prefs.use_default_mods_path,
+                )
+            })
+    }
+
+    fn xxmi_reload_hotkey_capable_for_game(&self, game: &GameInstall) -> bool {
+        game.is_xxmi()
+            && self
+                .current_d3dx_reload_status_for_game(game)
+                .is_some_and(|status| status.foreground_window_matches())
+    }
+
+    fn xxmi_live_readback_capable_for_game(&self, game: &GameInstall) -> bool {
+        game.is_xxmi()
+            && self
+                .current_d3dx_reload_status_for_game(game)
+                .is_some_and(|status| status.autosave_interval_matches())
+    }
+
     fn xxmi_reload_enabled_for_game(&self, game: &GameInstall, trigger: ReloadHotkeyTrigger) -> bool {
         game.is_xxmi()
-            && game.apply_mod_changes_in_game
+            && self.xxmi_reload_hotkey_capable_for_game(game)
             && self.state.static_prefs.reload_hotkey_triggers.enabled(trigger)
     }
 
@@ -189,7 +219,7 @@ impl HestiaApp {
             return;
         };
 
-        let running = self.game_process_running(&game);
+        let running = self.selected_game_process_running_cached(&game, ctx);
         let poll_interval = if running {
             RUNNING_POLL_INTERVAL
         } else {
@@ -584,7 +614,7 @@ impl HestiaApp {
     }
 
     fn send_xxmi_reload_hotkey_if_supported(&mut self, game: &GameInstall) {
-        if !(game.apply_mod_changes_in_game && self.game_process_running(game)) {
+        if !(self.xxmi_reload_hotkey_capable_for_game(game) && self.game_process_running(game)) {
             return;
         }
         let game_id = game.definition.id.clone();
@@ -1480,6 +1510,11 @@ impl HestiaApp {
             .static_prefs
             .reload_hotkey_triggers
             .enabled(ReloadHotkeyTrigger::DisablingMods);
+        let reload_capable_game_ids: HashSet<String> = games
+            .iter()
+            .filter(|game| self.xxmi_reload_hotkey_capable_for_game(game))
+            .map(|game| game.definition.id.clone())
+            .collect();
         // Single iteration: filter selected mods and disable in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
@@ -1504,9 +1539,7 @@ impl HestiaApp {
                 if result.is_ok() {
                     disabled_count += 1;
                     if disable_trigger_enabled
-                        && game.is_some_and(|game| {
-                            game.is_xxmi() && game.apply_mod_changes_in_game
-                        })
+                        && reload_capable_game_ids.contains(&mod_entry.game_id)
                     {
                         reload_requests.insert(
                             mod_entry.game_id.clone(),
@@ -1557,6 +1590,11 @@ impl HestiaApp {
             .static_prefs
             .reload_hotkey_triggers
             .enabled(ReloadHotkeyTrigger::RestoringMods);
+        let reload_capable_game_ids: HashSet<String> = games
+            .iter()
+            .filter(|game| self.xxmi_reload_hotkey_capable_for_game(game))
+            .map(|game| game.definition.id.clone())
+            .collect();
         // Single iteration: process all selected mods in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) {
@@ -1582,9 +1620,7 @@ impl HestiaApp {
                     if result.is_ok() {
                         enabled_count += 1;
                         if enable_trigger_enabled
-                            && game.is_some_and(|game| {
-                                game.is_xxmi() && game.apply_mod_changes_in_game
-                            })
+                            && reload_capable_game_ids.contains(&mod_entry.game_id)
                         {
                             reload_requests.insert(
                                 mod_entry.game_id.clone(),
@@ -1604,7 +1640,9 @@ impl HestiaApp {
                             .is_ok()
                         {
                             unarchived_count += 1;
-                            if restore_trigger_enabled && game_ref.apply_mod_changes_in_game {
+                            if restore_trigger_enabled
+                                && reload_capable_game_ids.contains(&mod_entry.game_id)
+                            {
                                 reload_requests.insert(
                                     mod_entry.game_id.clone(),
                                     ReloadHotkeyTrigger::RestoringMods,
@@ -1745,6 +1783,11 @@ impl HestiaApp {
             .static_prefs
             .reload_hotkey_triggers
             .enabled(ReloadHotkeyTrigger::ArchivingMods);
+        let reload_capable_game_ids: HashSet<String> = games
+            .iter()
+            .filter(|game| self.xxmi_reload_hotkey_capable_for_game(game))
+            .map(|game| game.definition.id.clone())
+            .collect();
         for mod_entry in self.state.mods.iter_mut() {
             if mods_to_clear.iter().any(|m| m.id == mod_entry.id) {
                 if let Some(game_ref) = games
@@ -1760,7 +1803,9 @@ impl HestiaApp {
                             .is_ok()
                     {
                         archived_count += 1;
-                        if archive_trigger_enabled && game_ref.apply_mod_changes_in_game {
+                        if archive_trigger_enabled
+                            && reload_capable_game_ids.contains(&mod_entry.game_id)
+                        {
                             reload_requests.insert(
                                 mod_entry.game_id.clone(),
                                 ReloadHotkeyTrigger::ArchivingMods,

@@ -643,7 +643,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "删除 Mod 时：", // SettingsGeneralOperationalWhenDeletingMod
     "移至回收站", // SettingsGeneralOperationalMoveToRecycleBin
     "永久删除", // SettingsGeneralOperationalDeletePermanently
-    "── 实验性 / 仅 XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "XXMI 功能", // SettingsGeneralXxmiFeaturesSection
     "保存 Mod 自定义设置", // SettingsGeneralOperationalPreserveModSettings
     "在重命名、禁用、归档、更新或删除 Mod 以及切换配置文件时，保留已保存的游戏内 Mod 自定义设置（XXMI 持久化设置）", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "允许 Hestia 修改 d3dx.ini 配置", // SettingsGeneralOperationalSendReloadHotkey
@@ -655,6 +655,17 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "预期", // SettingsGeneralOperationalD3dxStatusExpected
     "当前", // SettingsGeneralOperationalD3dxStatusCurrent
     "缺失", // SettingsGeneralOperationalD3dxStatusMissing
+    "应用设置", // SettingsGeneralXxmiFeaturesApplySettings
+    "让 Hestia 管理", // SettingsGeneralXxmiFeaturesLetHestiaManage
+    "恢复原始设置", // SettingsGeneralXxmiFeaturesRestoreOriginal
+    "修复设置", // SettingsGeneralXxmiFeaturesRepairSettings
+    "不可用", // SettingsGeneralXxmiFeaturesUnavailableAction
+    "未配置", // SettingsGeneralXxmiFeaturesNotConfigured
+    "部分配置", // SettingsGeneralXxmiFeaturesPartiallyConfigured
+    "手动配置", // SettingsGeneralXxmiFeaturesConfiguredManually
+    "由 Hestia 管理", // SettingsGeneralXxmiFeaturesManagedByHestia
+    "需要修复", // SettingsGeneralXxmiFeaturesNeedsRepair
+    "Hestia 无法读取或修改 d3dx.ini", // SettingsGeneralXxmiFeaturesUnavailable
     "游戏运行时功能受限", // SettingsGeneralOperationalPreserveLimited
     "游戏过程中完全可用", // SettingsGeneralOperationalPreserveFull
     "自动重新加载 XXMI 的时机：", // SettingsGeneralOperationalReloadHotkeyTrigger

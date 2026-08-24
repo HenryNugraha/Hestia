@@ -643,7 +643,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "When deleting a mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Move to Recycle Bin", // SettingsGeneralOperationalMoveToRecycleBin
     "Delete Permanently", // SettingsGeneralOperationalDeletePermanently
-    "── EXPERIMENTAL / XXMI Only ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "XXMI Features", // SettingsGeneralXxmiFeaturesSection
     "Preserve in-game mod settings", // SettingsGeneralOperationalPreserveModSettings
     "Keeps saved in-game mod customization (XXMI persistent settings) when renaming, disabling, archiving, updating, or deleting mods, and across profile switches", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "Let Hestia modify d3dx.ini configuration", // SettingsGeneralOperationalSendReloadHotkey
@@ -655,6 +655,17 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Expected", // SettingsGeneralOperationalD3dxStatusExpected
     "Current", // SettingsGeneralOperationalD3dxStatusCurrent
     "missing", // SettingsGeneralOperationalD3dxStatusMissing
+    "Apply settings", // SettingsGeneralXxmiFeaturesApplySettings
+    "Let Hestia manage", // SettingsGeneralXxmiFeaturesLetHestiaManage
+    "Restore original settings", // SettingsGeneralXxmiFeaturesRestoreOriginal
+    "Repair settings", // SettingsGeneralXxmiFeaturesRepairSettings
+    "Unavailable", // SettingsGeneralXxmiFeaturesUnavailableAction
+    "Not configured", // SettingsGeneralXxmiFeaturesNotConfigured
+    "Partially configured", // SettingsGeneralXxmiFeaturesPartiallyConfigured
+    "Configured manually", // SettingsGeneralXxmiFeaturesConfiguredManually
+    "Managed by Hestia", // SettingsGeneralXxmiFeaturesManagedByHestia
+    "Needs repair", // SettingsGeneralXxmiFeaturesNeedsRepair
+    "Hestia cannot read or modify d3dx.ini", // SettingsGeneralXxmiFeaturesUnavailable
     "Limited capability while game is running", // SettingsGeneralOperationalPreserveLimited
     "Fully functional during gameplay", // SettingsGeneralOperationalPreserveFull
     "Auto-reload XXMI when:", // SettingsGeneralOperationalReloadHotkeyTrigger

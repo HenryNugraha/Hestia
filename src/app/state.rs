@@ -77,6 +77,12 @@ struct D3dxReloadStatusCache {
     status: xxmi_persist::D3dxReloadConfigStatus,
 }
 
+struct SelectedGameRunningCache {
+    game_id: String,
+    running: bool,
+    next_check_at: f64,
+}
+
 enum HotkeyCustomizationRequest {
     LoadValues {
         game: GameInstall,
@@ -324,6 +330,8 @@ pub struct HestiaApp {
     // saved consent is on but the file no longer has the required values.
     d3dx_reload_status_cache: Option<D3dxReloadStatusCache>,
     d3dx_reload_config_watch: Option<D3dxReloadConfigWatch>,
+    // Throttled selected-game process check shared by Settings and d3dx.ini monitoring.
+    selected_game_running_cache: Option<SelectedGameRunningCache>,
     // Throttled cache for the Hotkeys List write-block check (game running + consent off),
     // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
     hotkeys_write_block_cache: Option<(String, bool, f64)>,

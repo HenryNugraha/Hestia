@@ -640,7 +640,7 @@ enum TextKey {
     SettingsGeneralOperationalWhenDeletingMod,
     SettingsGeneralOperationalMoveToRecycleBin,
     SettingsGeneralOperationalDeletePermanently,
-    SettingsGeneralOperationalXxmiExperimentalSection,
+    SettingsGeneralXxmiFeaturesSection,
     SettingsGeneralOperationalPreserveModSettings,
     SettingsGeneralOperationalPreserveModSettingsTooltip,
     SettingsGeneralOperationalSendReloadHotkey,
@@ -652,6 +652,17 @@ enum TextKey {
     SettingsGeneralOperationalD3dxStatusExpected,
     SettingsGeneralOperationalD3dxStatusCurrent,
     SettingsGeneralOperationalD3dxStatusMissing,
+    SettingsGeneralXxmiFeaturesApplySettings,
+    SettingsGeneralXxmiFeaturesLetHestiaManage,
+    SettingsGeneralXxmiFeaturesRestoreOriginal,
+    SettingsGeneralXxmiFeaturesRepairSettings,
+    SettingsGeneralXxmiFeaturesUnavailableAction,
+    SettingsGeneralXxmiFeaturesNotConfigured,
+    SettingsGeneralXxmiFeaturesPartiallyConfigured,
+    SettingsGeneralXxmiFeaturesConfiguredManually,
+    SettingsGeneralXxmiFeaturesManagedByHestia,
+    SettingsGeneralXxmiFeaturesNeedsRepair,
+    SettingsGeneralXxmiFeaturesUnavailable,
     SettingsGeneralOperationalPreserveLimited,
     SettingsGeneralOperationalPreserveFull,
     SettingsGeneralOperationalReloadHotkeyTrigger,
@@ -3363,8 +3374,8 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralOperationalWhenDeletingMod)
     }
 
-    fn xxmi_experimental_section(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralOperationalXxmiExperimentalSection)
+    fn xxmi_features_section(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesSection)
     }
 
     fn preserve_mod_settings(self) -> &'static str {
@@ -3409,6 +3420,50 @@ impl TextCatalog {
 
     fn d3dx_status_missing(self) -> &'static str {
         self.get(TextKey::SettingsGeneralOperationalD3dxStatusMissing)
+    }
+
+    fn xxmi_features_apply_settings(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesApplySettings)
+    }
+
+    fn xxmi_features_let_hestia_manage(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesLetHestiaManage)
+    }
+
+    fn xxmi_features_restore_original(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesRestoreOriginal)
+    }
+
+    fn xxmi_features_repair_settings(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesRepairSettings)
+    }
+
+    fn xxmi_features_unavailable_action(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesUnavailableAction)
+    }
+
+    fn xxmi_features_not_configured(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesNotConfigured)
+    }
+
+    fn xxmi_features_partially_configured(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesPartiallyConfigured)
+    }
+
+    fn xxmi_features_configured_manually(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesConfiguredManually)
+    }
+
+    fn xxmi_features_managed_by_hestia(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesManagedByHestia)
+    }
+
+    fn xxmi_features_needs_repair(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesNeedsRepair)
+    }
+
+    fn xxmi_features_unavailable(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralXxmiFeaturesUnavailable)
     }
 
     fn preserve_limited_caption(self) -> &'static str {

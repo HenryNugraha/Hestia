@@ -362,7 +362,9 @@ mod tests {
         let image = record_thumbnail_image(&record).expect("preview content screenshot");
         assert_eq!(
             thumbnail_url(image).as_deref(),
-            Some("https://images.gamebanana.com/img/ss/mods/sgi_common_thumbs_66bddc0c8d974_220.webp"),
+            Some(
+                "https://images.gamebanana.com/img/ss/mods/sgi_common_thumbs_66bddc0c8d974_220.webp"
+            ),
         );
     }
 

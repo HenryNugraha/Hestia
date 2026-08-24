@@ -371,6 +371,7 @@ impl HestiaApp {
             live_state_watch: None,
             d3dx_reload_status_cache: None,
             d3dx_reload_config_watch: None,
+            selected_game_running_cache: None,
             hotkeys_write_block_cache: None,
             hotkey_customization_tx,
             hotkey_customization_rx,

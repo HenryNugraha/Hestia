@@ -1529,9 +1529,12 @@ mod tests {
 
     #[test]
     fn floating_window_layouts_default_empty_and_roundtrip() {
-        let old_config: AppPreferences = toml::from_str("version = 7
+        let old_config: AppPreferences = toml::from_str(
+            "version = 7
 games = []
-").unwrap();
+",
+        )
+        .unwrap();
         assert_eq!(
             old_config.static_prefs.floating_windows,
             crate::model::FloatingWindowLayouts::default()

@@ -643,7 +643,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При удалении мода:", // SettingsGeneralOperationalWhenDeletingMod
     "Переместить в корзину", // SettingsGeneralOperationalMoveToRecycleBin
     "Удалить навсегда", // SettingsGeneralOperationalDeletePermanently
-    "── ЭКСПЕРИМЕНТАЛЬНО / только XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "Функции XXMI", // SettingsGeneralXxmiFeaturesSection
     "Сохранять настройки кастомизации модов", // SettingsGeneralOperationalPreserveModSettings
     "Сохраняет внутриигровую настройку модов (персистентные параметры XXMI) при переименовании, отключении, архивировании, обновлении и удалении модов, а также при переключении профилей", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "Разрешить Hestia изменять конфигурацию d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
@@ -655,6 +655,17 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Ожидается", // SettingsGeneralOperationalD3dxStatusExpected
     "Текущее", // SettingsGeneralOperationalD3dxStatusCurrent
     "нет", // SettingsGeneralOperationalD3dxStatusMissing
+    "Применить настройки", // SettingsGeneralXxmiFeaturesApplySettings
+    "Разрешить Hestia управление", // SettingsGeneralXxmiFeaturesLetHestiaManage
+    "Восстановить исходные настройки", // SettingsGeneralXxmiFeaturesRestoreOriginal
+    "Исправить настройки", // SettingsGeneralXxmiFeaturesRepairSettings
+    "Недоступно", // SettingsGeneralXxmiFeaturesUnavailableAction
+    "Не настроено", // SettingsGeneralXxmiFeaturesNotConfigured
+    "Настроено частично", // SettingsGeneralXxmiFeaturesPartiallyConfigured
+    "Настроено вручную", // SettingsGeneralXxmiFeaturesConfiguredManually
+    "Управляется Hestia", // SettingsGeneralXxmiFeaturesManagedByHestia
+    "Требуется исправление", // SettingsGeneralXxmiFeaturesNeedsRepair
+    "Hestia не может прочитать или изменить d3dx.ini", // SettingsGeneralXxmiFeaturesUnavailable
     "Ограниченные возможности при запущенной игре", // SettingsGeneralOperationalPreserveLimited
     "Полностью работает во время игры", // SettingsGeneralOperationalPreserveFull
     "Автоперезагрузка XXMI при:", // SettingsGeneralOperationalReloadHotkeyTrigger

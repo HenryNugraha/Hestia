@@ -621,7 +621,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tampilkan mod yang dinonaktifkan", // SettingsGeneralInstalledModsShowDisabledMods
     "Tampilkan mod yang diarsipkan", // SettingsGeneralInstalledModsShowArchivedMods
     "Tampilkan mod tanpa kategori lebih dulu", // SettingsGeneralInstalledModsShowUncategorizedModsFirst
-    "Tampilkan folder kategori kosong", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
+    "Tampilkan folder yang kosong", // SettingsGeneralInstalledModsShowEmptyCategoryFolders
 
     // Window: Settings > General > Operational
     "Operasional", // SettingsGeneralOperationalSection
@@ -643,7 +643,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Saat menghapus mod:", // SettingsGeneralOperationalWhenDeletingMod
     "Pindahkan ke Tempat Sampah", // SettingsGeneralOperationalMoveToRecycleBin
     "Hapus permanen", // SettingsGeneralOperationalDeletePermanently
-    "── EKSPERIMENTAL / Hanya XXMI ──", // SettingsGeneralOperationalXxmiExperimentalSection
+    "Fitur XXMI", // SettingsGeneralXxmiFeaturesSection
     "Simpan pengaturan kustomisasi mod", // SettingsGeneralOperationalPreserveModSettings
     "Menjaga kustomisasi mod dalam game yang tersimpan (pengaturan persisten XXMI) saat mengganti nama, menonaktifkan, mengarsipkan, memperbarui, atau menghapus mod, serta saat berganti profil", // SettingsGeneralOperationalPreserveModSettingsTooltip
     "Izinkan Hestia mengubah konfigurasi d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
@@ -655,6 +655,17 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Diharapkan", // SettingsGeneralOperationalD3dxStatusExpected
     "Saat ini", // SettingsGeneralOperationalD3dxStatusCurrent
     "tidak ada", // SettingsGeneralOperationalD3dxStatusMissing
+    "Terapkan pengaturan", // SettingsGeneralXxmiFeaturesApplySettings
+    "Izinkan Hestia mengelola", // SettingsGeneralXxmiFeaturesLetHestiaManage
+    "Pulihkan pengaturan awal", // SettingsGeneralXxmiFeaturesRestoreOriginal
+    "Perbaiki pengaturan", // SettingsGeneralXxmiFeaturesRepairSettings
+    "Tidak tersedia", // SettingsGeneralXxmiFeaturesUnavailableAction
+    "Belum dikonfigurasi", // SettingsGeneralXxmiFeaturesNotConfigured
+    "Dikonfigurasi sebagian", // SettingsGeneralXxmiFeaturesPartiallyConfigured
+    "Dikonfigurasi manual", // SettingsGeneralXxmiFeaturesConfiguredManually
+    "Dikelola oleh Hestia", // SettingsGeneralXxmiFeaturesManagedByHestia
+    "Perlu diperbaiki", // SettingsGeneralXxmiFeaturesNeedsRepair
+    "Hestia tidak dapat membaca atau mengubah d3dx.ini", // SettingsGeneralXxmiFeaturesUnavailable
     "Kemampuan terbatas saat game berjalan", // SettingsGeneralOperationalPreserveLimited
     "Berfungsi penuh selama bermain", // SettingsGeneralOperationalPreserveFull
     "Muat ulang XXMI otomatis saat:", // SettingsGeneralOperationalReloadHotkeyTrigger

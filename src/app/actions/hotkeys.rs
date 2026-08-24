@@ -20,9 +20,9 @@ impl HestiaApp {
             return;
         };
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // Live-state un-mappings only matter when the folded consent is on (otherwise the
-        // helper is not installed and there are no mirror keys to read back).
-        let mirrors = if game.apply_mod_changes_in_game {
+        // Live-state un-mappings only matter when d3dx.ini flushes persist values quickly
+        // enough for Hestia to read back during gameplay.
+        let mirrors = if self.xxmi_live_readback_capable_for_game(&game) {
             xxmi_persist::importer_root_for(&game, use_default)
                 .map(|importer_root| {
                     Self::mod_mirror_set(entry, &importer_root).1
@@ -61,9 +61,9 @@ impl HestiaApp {
     }
 
     /// Whether cycling a hotkey value in the List view can't reach the game right now:
-    /// the mod's XXMI game is running but the folded consent is off, so Hestia can't push
-    /// a reload and the write would never take effect. Non-XXMI games and consent-on games
-    /// are never blocked. The running check enumerates processes, so the result is cached
+    /// the mod's XXMI game is running but d3dx.ini does not allow Hestia-delivered hotkeys,
+    /// so the write would never take effect. Non-XXMI games and capable games are never blocked.
+    /// The running check enumerates processes, so the result is cached
     /// for ~0.5s (keyed by game id) to keep it out of the per-frame render cost; a repaint
     /// is scheduled so a game exit or launch flips the state within one interval.
     fn hotkeys_write_blocked(&mut self, entry: &ModEntry, ctx: &egui::Context) -> bool {
@@ -72,7 +72,7 @@ impl HestiaApp {
             self.hotkeys_write_block_cache = None;
             return false;
         };
-        if !game.is_xxmi() || game.apply_mod_changes_in_game {
+        if !game.is_xxmi() || self.xxmi_reload_hotkey_capable_for_game(&game) {
             self.hotkeys_write_block_cache = None;
             return false;
         }
@@ -228,16 +228,16 @@ impl HestiaApp {
     }
 
     /// Regenerate (or remove) each mod-local live-state helper `hestia.ini` for a game.
-    /// With the folded consent off, or when a mod is inactive, an empty mirror set removes
-    /// that mod's helper so no stale mirroring survives. Cheap when nothing changed
+    /// Without fast d3dx_user.ini autosave, or when a mod is inactive, an empty mirror set
+    /// removes that mod's helper so no stale mirroring survives. Cheap when nothing changed
     /// (hash-compare).
     fn refresh_live_state_helper_for_game(&mut self, game: &GameInstall) {
         if !game.is_xxmi() {
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
-        let importer_root = game
-            .apply_mod_changes_in_game
+        let importer_root = self
+            .xxmi_live_readback_capable_for_game(game)
             .then(|| xxmi_persist::importer_root_for(game, use_default))
             .flatten();
         let entries = self
@@ -271,8 +271,8 @@ impl HestiaApp {
     /// Poll `d3dx_user.ini` for the mod whose Hotkeys view is open and re-read its values when
     /// the DLL flushes a change, so the shown live values self-correct within the autosave
     /// cadence — including changes made with the mod's own in-game hotkeys. A no-op unless the
-    /// folded consent is on and the game is running (while closed the file is not flushed, and
-    /// editing it there would race the flush).
+    /// fast d3dx_user.ini autosave is active and the game is running (while closed the file is
+    /// not flushed, and editing it there would race the flush).
     fn poll_live_state_watch(&mut self, ctx: &egui::Context) {
         // Half the 1s autosave interval, so a flush is picked up within ~0.5s.
         const POLL_INTERVAL: f64 = 0.5;
@@ -289,10 +289,7 @@ impl HestiaApp {
             self.live_state_watch = None;
             return;
         };
-        if !(game.is_xxmi()
-            && game.apply_mod_changes_in_game
-            && self.game_process_running(&game))
-        {
+        if !(self.xxmi_live_readback_capable_for_game(&game) && self.game_process_running(&game)) {
             self.live_state_watch = None;
             return;
         }
@@ -473,6 +470,13 @@ impl HestiaApp {
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
         if entry.status == ModStatus::Active && self.game_process_running(&game) {
+            if !self.xxmi_reload_hotkey_capable_for_game(&game) {
+                self.push_log(format!(
+                    "XXMI mod customization ({} / {}): skipped live change because d3dx.ini does not allow Hestia-delivered hotkeys",
+                    game.definition.id, entry.folder_name
+                ));
+                return;
+            }
             if key_spec.trim().is_empty() {
                 self.push_log(format!(
                     "XXMI mod customization ({} / {}): skipped live change for {var_name} because the mod does not define a keyboard hotkey",
@@ -653,6 +657,13 @@ impl HestiaApp {
         };
         if !self.game_process_running(&game) {
             self.report_warn("hotkey could not be triggered: game is not running", None);
+            return;
+        }
+        if !self.xxmi_reload_hotkey_capable_for_game(&game) {
+            self.report_warn(
+                "hotkey could not be triggered: d3dx.ini does not allow Hestia-delivered hotkeys",
+                None,
+            );
             return;
         }
         if let Some(other_game) = self.other_running_xxmi_game(&game) {

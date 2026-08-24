@@ -72,7 +72,7 @@ fn xxmi_d3dx_status_table(
     let rows = status.fields.len();
     let height = header_h + row_h * rows as f32;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
-    let field_w = (width - 198.0).max(170.0);
+    let field_w = 205.0;
     let expected_w = 66.0;
     let col_x = [rect.left(), rect.left() + field_w, rect.left() + field_w + expected_w];
     let pad = 8.0;
@@ -192,6 +192,91 @@ fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: C
         let b = start + dir * (offset + dash).min(length);
         ui.painter().line_segment([a, b], stroke);
         offset += dash + gap;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum XxmiD3dxSettingsAction {
+    Apply,
+    Manage,
+    Restore,
+    Repair,
+    Unavailable,
+}
+
+struct XxmiD3dxSettingsActionState<'a> {
+    action: XxmiD3dxSettingsAction,
+    label: &'a str,
+    status: &'a str,
+    fill: Color32,
+    enabled: bool,
+}
+
+fn xxmi_d3dx_settings_action_state<'a>(
+    text: TextCatalog,
+    status: Option<&xxmi_persist::D3dxReloadConfigStatus>,
+    saved_management: bool,
+) -> XxmiD3dxSettingsActionState<'a> {
+    let orange = Color32::from_rgb(180, 78, 35);
+    let neutral = Color32::from_rgb(88, 92, 102);
+    let Some(status) = status else {
+        return XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Unavailable,
+            label: text.xxmi_features_unavailable_action(),
+            status: text.xxmi_features_unavailable(),
+            fill: neutral,
+            enabled: false,
+        };
+    };
+    if status.error.is_some() {
+        return XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Unavailable,
+            label: text.xxmi_features_unavailable_action(),
+            status: text.xxmi_features_unavailable(),
+            fill: neutral,
+            enabled: false,
+        };
+    }
+
+    let healthy = status.healthy();
+    let matching_fields = status.fields.iter().filter(|field| field.matches).count();
+    let managed_by_hestia = status.managed_by_hestia;
+    if managed_by_hestia && healthy {
+        XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Restore,
+            label: text.xxmi_features_restore_original(),
+            status: text.xxmi_features_managed_by_hestia(),
+            fill: neutral,
+            enabled: true,
+        }
+    } else if managed_by_hestia || saved_management {
+        XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Repair,
+            label: text.xxmi_features_repair_settings(),
+            status: text.xxmi_features_needs_repair(),
+            fill: orange,
+            enabled: true,
+        }
+    } else if healthy {
+        XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Manage,
+            label: text.xxmi_features_let_hestia_manage(),
+            status: text.xxmi_features_configured_manually(),
+            fill: orange,
+            enabled: true,
+        }
+    } else {
+        XxmiD3dxSettingsActionState {
+            action: XxmiD3dxSettingsAction::Apply,
+            label: text.xxmi_features_apply_settings(),
+            status: if matching_fields == 1 {
+                text.xxmi_features_partially_configured()
+            } else {
+                text.xxmi_features_not_configured()
+            },
+            fill: orange,
+            enabled: true,
+        }
     }
 }
 
@@ -3210,49 +3295,73 @@ impl HestiaApp {
                                     ui.selectable_value(&mut self.state.static_prefs.delete_behavior, DeleteBehavior::Permanent, text.delete_behavior(DeleteBehavior::Permanent));
                                 });
                             if self.state.static_prefs.delete_behavior != delete_behavior { should_save = true; }
-                            ui.add_space(8.0);
+                            ui.add_space(1.0);
+                        });
+                        ui.add_space(24.0);
+
+                        let selected_game = self.selected_game().cloned();
+                        let selected_game_id =
+                            selected_game.as_ref().map(|game| game.definition.id.clone());
+                        let xxmi_settings_enabled =
+                            selected_game.as_ref().is_some_and(|game| game.is_xxmi());
+                        let preserve_mod_settings = self.state.static_prefs.preserve_mod_settings;
+                        let d3dx_management_enabled = selected_game.as_ref().is_some_and(|game| {
+                            game.is_xxmi() && game.apply_mod_changes_in_game
+                        });
+                        let selected_game_running = xxmi_settings_enabled
+                            && selected_game
+                                .as_ref()
+                                .is_some_and(|game| self.selected_game_process_running_cached(game, ctx));
+                        let d3dx_reload_status = selected_game_id.as_deref().and_then(|game_id| {
+                            self.d3dx_reload_status_cache
+                                .as_ref()
+                                .filter(|cache| cache.game_id == game_id)
+                                .map(|cache| cache.status.clone())
+                        });
+                        let reload_hotkey_capable = d3dx_reload_status
+                            .as_ref()
+                            .is_some_and(|status| status.foreground_window_matches());
+                        let live_readback_capable = d3dx_reload_status
+                            .as_ref()
+                            .is_some_and(|status| status.autosave_interval_matches());
+                        let action_state = xxmi_d3dx_settings_action_state(
+                            text,
+                            d3dx_reload_status.as_ref(),
+                            d3dx_management_enabled,
+                        );
+                        let status_color = match action_state.action {
+                            XxmiD3dxSettingsAction::Restore | XxmiD3dxSettingsAction::Manage => {
+                                Color32::from_rgb(34, 197, 94)
+                            }
+                            XxmiD3dxSettingsAction::Unavailable => Color32::from_gray(150),
+                            XxmiD3dxSettingsAction::Apply | XxmiD3dxSettingsAction::Repair => {
+                                Color32::from_rgb(224, 185, 122)
+                            }
+                        };
+                        ui.horizontal(|ui| {
                             static_label(
                                 ui,
-                                bold(text.xxmi_experimental_section(), Some(13.0)),
+                                bold(text.xxmi_features_section(), Some(16.0)).underline(),
                             );
                             ui.add_space(-2.0);
-                            let selected_game = self.selected_game().cloned();
-                            let selected_game_id =
-                                selected_game.as_ref().map(|game| game.definition.id.clone());
-                            let xxmi_settings_enabled =
-                                selected_game.as_ref().is_some_and(|game| game.is_xxmi());
-                            let preserve_mod_settings = self.state.static_prefs.preserve_mod_settings;
-                            let send_reload_hotkey = selected_game.as_ref().is_some_and(|game| {
-                                game.is_xxmi() && game.apply_mod_changes_in_game
+                            ui.vertical(|ui| {
+                                ui.add_space(4.0);
+                                static_label(
+                                    ui,
+                                    RichText::new(action_state.status)
+                                        .size(11.5)
+                                        .italics()
+                                        .color(status_color),
+                                );
                             });
-                            let selected_game_running = selected_game
-                                .as_ref()
-                                .is_some_and(|game| self.game_process_running(game));
-                            let d3dx_reload_status = selected_game_id.as_deref().and_then(|game_id| {
-                                self.d3dx_reload_status_cache
-                                    .as_ref()
-                                    .filter(|cache| cache.game_id == game_id)
-                                    .map(|cache| cache.status.clone())
-                            });
-                            let mut desired_send_reload_hotkey = send_reload_hotkey;
-                            // Consent checkbox comes first: it gates the two d3dx.ini edits, so the
-                            // bulleted explainer directly beneath it names those edits (the two
-                            // identifiers highlighted in the brand color) and their consequences.
+                        });
+                        ui.indent("setting_general_xxmi_features", |ui| {
                             ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
-                                ui.checkbox(
-                                    &mut desired_send_reload_hotkey,
-                                    text.send_reload_hotkey(),
-                                )
-                                .on_hover_text(text.send_reload_hotkey_tooltip());
-                                let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
+                                ui.scope(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
                                 if let Some(status) = d3dx_reload_status.as_ref() {
-                                    ui.add_space(-2.0);
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(label_indent);
-                                        ui.vertical(|ui| {
-                                            xxmi_d3dx_status_table(ui, text, status);
-                                        });
-                                    });
+                                    xxmi_d3dx_status_table(ui, text, status);
+                                    ui.add_space(3.0);
                                 }
                                 let foreground_mismatch = d3dx_reload_status
                                     .as_ref()
@@ -3263,7 +3372,12 @@ impl HestiaApp {
                                                 .eq_ignore_ascii_case("additional_foreground_window")
                                         })
                                     })
-                                    .is_some_and(|field| !field.matches);
+                                    .is_some_and(|field| {
+                                        d3dx_reload_status
+                                            .as_ref()
+                                            .is_some_and(|status| status.error.is_none())
+                                            && !field.matches
+                                    });
                                 let autosave_mismatch = d3dx_reload_status
                                     .as_ref()
                                     .and_then(|status| {
@@ -3273,57 +3387,93 @@ impl HestiaApp {
                                                 .eq_ignore_ascii_case("settings_auto_save_interval")
                                         })
                                     })
-                                    .is_some_and(|field| !field.matches);
+                                    .is_some_and(|field| {
+                                        d3dx_reload_status
+                                            .as_ref()
+                                            .is_some_and(|status| status.error.is_none())
+                                            && !field.matches
+                                    });
                                 let show_any_note =
                                     foreground_mismatch || autosave_mismatch || selected_game_running;
-                                let notes_indent = label_indent + 10.0;
+                                let notes_indent = 10.0;
                                 if show_any_note {
                                     // Compact the explainer into a tight block. `item_spacing.y` is the
                                     // gap between bullets; the negative lead pulls the first bullet up
                                     // under the status table. Nudge either to taste.
-                                    ui.spacing_mut().item_spacing.y = 1.0;
-                                    ui.add_space(-3.0);
-                                    if foreground_mismatch {
-                                        xxmi_consent_code_bullet(
-                                            ui,
-                                            notes_indent,
-                                            text.d3dx_bullet_foreground(),
-                                            "additional_foreground_window",
-                                        );
-                                    }
-                                    if autosave_mismatch {
-                                        xxmi_consent_code_bullet(
-                                            ui,
-                                            notes_indent,
-                                            text.d3dx_bullet_autosave(),
-                                            "settings_auto_save_interval",
-                                        );
-                                    }
-                                    if selected_game_running {
-                                        xxmi_consent_bullet(
-                                            ui,
-                                            notes_indent,
-                                            &[(
-                                                text.d3dx_bullet_restart(),
-                                                Color32::from_gray(150),
-                                                false,
-                                            )],
-                                        );
-                                    }
+                                    ui.scope(|ui| {
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        if foreground_mismatch {
+                                            xxmi_consent_code_bullet(
+                                                ui,
+                                                notes_indent,
+                                                text.d3dx_bullet_foreground(),
+                                                "additional_foreground_window",
+                                            );
+                                        }
+                                        if autosave_mismatch {
+                                            xxmi_consent_code_bullet(
+                                                ui,
+                                                notes_indent,
+                                                text.d3dx_bullet_autosave(),
+                                                "settings_auto_save_interval",
+                                            );
+                                        }
+                                        if selected_game_running {
+                                            xxmi_consent_bullet(
+                                                ui,
+                                                notes_indent,
+                                                &[(
+                                                    text.d3dx_bullet_restart(),
+                                                    Color32::from_gray(150),
+                                                    false,
+                                                )],
+                                            );
+                                        }
+                                    });
+                                    ui.add_space(2.0);
                                 }
-                            });
-                            if desired_send_reload_hotkey != send_reload_hotkey {
-                                if let Some(game_id) = selected_game_id.as_deref() {
-                                    self.request_xxmi_reload_setting_change(
-                                        game_id,
-                                        desired_send_reload_hotkey,
+                                ui.horizontal(|ui| {
+                                    let icon = match action_state.action {
+                                        XxmiD3dxSettingsAction::Restore => Icon::RotateCcw,
+                                        XxmiD3dxSettingsAction::Unavailable => Icon::AlertTriangle,
+                                        XxmiD3dxSettingsAction::Apply
+                                        | XxmiD3dxSettingsAction::Manage
+                                        | XxmiD3dxSettingsAction::Repair => Icon::FileCog,
+                                    };
+                                    let response = ui.add_enabled(
+                                        action_state.enabled,
+                                        egui::Button::new(icon_text_sized(
+                                            icon,
+                                            action_state.label,
+                                            13.0,
+                                            12.0,
+                                        ))
+                                        .fill(action_state.fill),
                                     );
-                                }
-                                should_save = true;
-                            }
-                            // Preserve checkbox second, with a capability caption keyed to the
-                            // committed consent state: vivid green when Hestia may edit d3dx.ini
-                            // (fully functional), red when it may not (limited while the game runs).
+                                    if response.clicked() {
+                                        if let Some(game_id) = selected_game_id.as_deref() {
+                                            match action_state.action {
+                                                XxmiD3dxSettingsAction::Apply
+                                                | XxmiD3dxSettingsAction::Manage
+                                                | XxmiD3dxSettingsAction::Repair => {
+                                                    self.request_xxmi_reload_setting_change(
+                                                        game_id, true,
+                                                    );
+                                                    should_save = true;
+                                                }
+                                                XxmiD3dxSettingsAction::Restore => {
+                                                    self.request_xxmi_reload_setting_change(
+                                                        game_id, false,
+                                                    );
+                                                    should_save = true;
+                                                }
+                                                XxmiD3dxSettingsAction::Unavailable => {}
+                                            }
+                                        }
+                                    }
+                                });
+                                });
+                            });
                             ui.add_enabled_ui(xxmi_settings_enabled, |ui| {
                                 ui.checkbox(
                                     &mut self.state.static_prefs.preserve_mod_settings,
@@ -3334,7 +3484,7 @@ impl HestiaApp {
                                 let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
                                 ui.horizontal(|ui| {
                                     ui.add_space(label_indent);
-                                    let (caption, color) = if send_reload_hotkey {
+                                    let (caption, color) = if live_readback_capable {
                                         (text.preserve_full_caption(), Color32::from_rgb(34, 197, 94))
                                     } else {
                                         (text.preserve_limited_caption(), Color32::from_rgb(218, 70, 70))
@@ -3347,17 +3497,7 @@ impl HestiaApp {
                             if self.state.static_prefs.preserve_mod_settings != preserve_mod_settings {
                                 should_save = true;
                             }
-                            let trigger_controls_enabled = selected_game_id
-                                .as_deref()
-                                .and_then(|game_id| {
-                                    self.state
-                                        .games
-                                        .iter()
-                                        .find(|game| game.definition.id == game_id)
-                                })
-                                .is_some_and(|game| {
-                                    game.is_xxmi() && game.apply_mod_changes_in_game
-                                });
+                            let trigger_controls_enabled = reload_hotkey_capable;
                             let reload_triggers = self.state.static_prefs.reload_hotkey_triggers.clone();
                             ui.add_enabled_ui(trigger_controls_enabled, |ui| {
                                 static_label(ui, text.reload_hotkey_trigger());
