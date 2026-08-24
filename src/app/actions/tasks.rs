@@ -47,6 +47,15 @@ impl HestiaApp {
         };
     }
 
+    fn clear_log(&mut self) -> Result<usize> {
+        let count = self.state.operations.len();
+        persistence::clear_operation_logs(&self.portable)?;
+        self.state.operations.clear();
+        self.log_display_cache = LogDisplayCache::default();
+        self.log_revision = self.log_revision.wrapping_add(1);
+        Ok(count)
+    }
+
     fn log_action(&mut self, action: &str, subject: &str) {
         let subject = sanitize_log_subject(subject);
         if subject.is_empty() {

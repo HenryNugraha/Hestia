@@ -760,14 +760,18 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "On app launch, Hestia verifies the proxy connection \nbefore starting operations. If it fails, \nHestia continues without the proxy.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
-    "Cache and Archive", // SettingsAdvancedCacheArchiveSection
+    "Data Cleanup", // SettingsAdvancedCacheArchiveSection
     "Cache size:", // SettingsAdvancedCacheArchiveCacheSize
     "Current Usage: {gb} GB", // SettingsAdvancedCacheArchiveCurrentUsage
     "Clear Cache", // SettingsAdvancedCacheArchiveClearCache
     "Cache cleared", // SettingsAdvancedCacheArchiveCacheCleared
     "Could not clear cache", // SettingsAdvancedCacheArchiveClearCacheFailed
+    "Clear Log", // SettingsAdvancedCacheArchiveClearLog
+    "Log Entries: {count}", // SettingsAdvancedCacheArchiveLogEntries
+    "Log cleared: {count}", // SettingsAdvancedCacheArchiveLogCleared
+    "Could not clear log", // SettingsAdvancedCacheArchiveClearLogFailed
     "Archive Usage: {gb} GB", // SettingsAdvancedCacheArchiveArchiveUsage
-    "Delete Archived Mods", // SettingsAdvancedCacheArchiveDeleteArchivedMods
+    "Clear Archive", // SettingsAdvancedCacheArchiveDeleteArchivedMods
     "Recycled", // SettingsAdvancedCacheArchiveRecycled
     "Deleted", // SettingsAdvancedCacheArchiveDeleted
     "{count} archived mods", // SettingsAdvancedCacheArchiveArchivedMods

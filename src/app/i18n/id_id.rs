@@ -760,14 +760,18 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Saat aplikasi dibuka, Hestia memverifikasi \nkoneksi proksi sebelum memulai operasi. \nJika gagal, Hestia melanjutkan tanpa proksi.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
-    "Cache dan Arsip", // SettingsAdvancedCacheArchiveSection
+    "Pembersihan Data", // SettingsAdvancedCacheArchiveSection
     "Ukuran cache:", // SettingsAdvancedCacheArchiveCacheSize
     "Penggunaan saat ini: {gb} GB", // SettingsAdvancedCacheArchiveCurrentUsage
     "Bersihkan Cache", // SettingsAdvancedCacheArchiveClearCache
     "Cache dibersihkan", // SettingsAdvancedCacheArchiveCacheCleared
     "Tidak dapat membersihkan cache", // SettingsAdvancedCacheArchiveClearCacheFailed
+    "Bersihkan Log", // SettingsAdvancedCacheArchiveClearLog
+    "Entri log: {count}", // SettingsAdvancedCacheArchiveLogEntries
+    "Log dibersihkan: {count}", // SettingsAdvancedCacheArchiveLogCleared
+    "Tidak dapat membersihkan log", // SettingsAdvancedCacheArchiveClearLogFailed
     "Penggunaan arsip: {gb} GB", // SettingsAdvancedCacheArchiveArchiveUsage
-    "Hapus Mod yang Diarsipkan", // SettingsAdvancedCacheArchiveDeleteArchivedMods
+    "Bersihkan Arsip", // SettingsAdvancedCacheArchiveDeleteArchivedMods
     "Dipindahkan ke Tempat Sampah", // SettingsAdvancedCacheArchiveRecycled
     "Dihapus", // SettingsAdvancedCacheArchiveDeleted
     "{count} mod yang diarsipkan", // SettingsAdvancedCacheArchiveArchivedMods

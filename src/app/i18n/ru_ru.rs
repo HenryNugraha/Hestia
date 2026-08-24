@@ -759,14 +759,18 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При запуске Hestia проверяет подключение \nк прокси перед началом операций. \nПри ошибке Hestia продолжит работу без прокси.", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
-    "Кэш и архив", // SettingsAdvancedCacheArchiveSection
+    "Очистка данных", // SettingsAdvancedCacheArchiveSection
     "Размер кэша:", // SettingsAdvancedCacheArchiveCacheSize
     "Текущее использование: {gb} ГБ", // SettingsAdvancedCacheArchiveCurrentUsage
     "Очистить кэш", // SettingsAdvancedCacheArchiveClearCache
     "Кэш очищен", // SettingsAdvancedCacheArchiveCacheCleared
     "Не удалось очистить кэш", // SettingsAdvancedCacheArchiveClearCacheFailed
+    "Очистить журнал", // SettingsAdvancedCacheArchiveClearLog
+    "Записей журнала: {count}", // SettingsAdvancedCacheArchiveLogEntries
+    "Журнал очищен: {count}", // SettingsAdvancedCacheArchiveLogCleared
+    "Не удалось очистить журнал", // SettingsAdvancedCacheArchiveClearLogFailed
     "Использование архива: {gb} ГБ", // SettingsAdvancedCacheArchiveArchiveUsage
-    "Удалить архивные моды", // SettingsAdvancedCacheArchiveDeleteArchivedMods
+    "Очистить архив", // SettingsAdvancedCacheArchiveDeleteArchivedMods
     "Перемещено в корзину", // SettingsAdvancedCacheArchiveRecycled
     "Удалено", // SettingsAdvancedCacheArchiveDeleted
     "{count} архивных модов", // SettingsAdvancedCacheArchiveArchivedMods

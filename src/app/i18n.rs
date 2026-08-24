@@ -756,6 +756,10 @@ enum TextKey {
     SettingsAdvancedCacheArchiveClearCache,
     SettingsAdvancedCacheArchiveCacheCleared,
     SettingsAdvancedCacheArchiveClearCacheFailed,
+    SettingsAdvancedCacheArchiveClearLog,
+    SettingsAdvancedCacheArchiveLogEntries,
+    SettingsAdvancedCacheArchiveLogCleared,
+    SettingsAdvancedCacheArchiveClearLogFailed,
     SettingsAdvancedCacheArchiveArchiveUsage,
     SettingsAdvancedCacheArchiveDeleteArchivedMods,
     SettingsAdvancedCacheArchiveRecycled,
@@ -3868,6 +3872,24 @@ impl TextCatalog {
 
     fn clear_cache_failed(self) -> &'static str {
         self.get(TextKey::SettingsAdvancedCacheArchiveClearCacheFailed)
+    }
+
+    fn clear_log(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedCacheArchiveClearLog)
+    }
+
+    fn log_entries(self, count: usize) -> String {
+        self.get(TextKey::SettingsAdvancedCacheArchiveLogEntries)
+            .replace("{count}", &format_count_with_separators(count as u64))
+    }
+
+    fn log_cleared(self, count: usize) -> String {
+        self.get(TextKey::SettingsAdvancedCacheArchiveLogCleared)
+            .replace("{count}", &format_count_with_separators(count as u64))
+    }
+
+    fn clear_log_failed(self) -> &'static str {
+        self.get(TextKey::SettingsAdvancedCacheArchiveClearLogFailed)
     }
 
     fn archive_usage(self, gb: f64) -> String {

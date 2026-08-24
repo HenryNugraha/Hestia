@@ -760,14 +760,18 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "应用启动时，Hestia 会在开始操作前验证代理连接。\n如果失败，Hestia 将不使用代理继续运行。", // SettingsAdvancedProxyStartupBehavior
 
     // Window: Settings > Advanced > Cache and Archive
-    "缓存和归档", // SettingsAdvancedCacheArchiveSection
+    "数据清理", // SettingsAdvancedCacheArchiveSection
     "缓存大小：", // SettingsAdvancedCacheArchiveCacheSize
     "当前使用量：{gb} GB", // SettingsAdvancedCacheArchiveCurrentUsage
     "清除缓存", // SettingsAdvancedCacheArchiveClearCache
     "缓存已清除", // SettingsAdvancedCacheArchiveCacheCleared
     "无法清除缓存", // SettingsAdvancedCacheArchiveClearCacheFailed
+    "清除日志", // SettingsAdvancedCacheArchiveClearLog
+    "日志条目：{count}", // SettingsAdvancedCacheArchiveLogEntries
+    "日志已清除：{count}", // SettingsAdvancedCacheArchiveLogCleared
+    "无法清除日志", // SettingsAdvancedCacheArchiveClearLogFailed
     "归档使用量：{gb} GB", // SettingsAdvancedCacheArchiveArchiveUsage
-    "删除已归档的 Mod", // SettingsAdvancedCacheArchiveDeleteArchivedMods
+    "清除归档", // SettingsAdvancedCacheArchiveDeleteArchivedMods
     "已移至回收站", // SettingsAdvancedCacheArchiveRecycled
     "已删除", // SettingsAdvancedCacheArchiveDeleted
     "{count} 个已归档的 Mod", // SettingsAdvancedCacheArchiveArchivedMods

@@ -716,6 +716,13 @@ pub fn append_operation_log(paths: &PortablePaths, entry: &OperationLogEntry) ->
     Ok(())
 }
 
+pub fn clear_operation_logs(paths: &PortablePaths) -> Result<()> {
+    let conn = open_history_db(paths)?;
+    conn.execute("DELETE FROM operation_logs", [])?;
+    conn.execute_batch("VACUUM")?;
+    Ok(())
+}
+
 pub fn replace_task(paths: &PortablePaths, task: &TaskEntry) -> Result<()> {
     let conn = open_history_db(paths)?;
     conn.execute(
@@ -1953,6 +1960,59 @@ games = []
         assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
         assert_eq!(paths.state_source, None);
         assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+    }
+
+    #[test]
+    fn clear_operation_logs_preserves_task_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PortablePaths {
+            state_archive: temp.path().join("hestia.toml"),
+            state_source: None,
+            history_db: temp.path().join("hestia.dat"),
+        };
+        init_history_store(&paths).unwrap();
+        append_operation_log(
+            &paths,
+            &OperationLogEntry {
+                id: "log-1".to_string(),
+                timestamp: Utc::now(),
+                summary: "Installed: Example".to_string(),
+            },
+        )
+        .unwrap();
+        {
+            let conn = open_history_db(&paths).unwrap();
+            conn.execute(
+                "INSERT INTO task_history
+                (id, kind, status, title, game_id, created_at, updated_at, total_size, unsafe_content, retry_payload)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    1_i64,
+                    "Install",
+                    "Completed",
+                    "Install Example",
+                    "wuwa",
+                    Utc::now().to_rfc3339(),
+                    Utc::now().to_rfc3339(),
+                    Option::<i64>::None,
+                    0_i64,
+                    Option::<String>::None,
+                ],
+            )
+            .unwrap();
+        }
+
+        clear_operation_logs(&paths).unwrap();
+
+        let conn = open_history_db(&paths).unwrap();
+        let log_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
+            .unwrap();
+        let task_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM task_history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(log_count, 0);
+        assert_eq!(task_count, 1);
     }
 
     #[test]

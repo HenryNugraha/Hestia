@@ -4633,65 +4633,130 @@ impl HestiaApp {
                         static_label(ui, bold(text.cache_and_archive(), Some(16.0)).underline());
                         ui.indent("setting_advanced_cache", |ui| {
                             self.refresh_usage_counters_if_needed(ui.input(|i| i.time));
-                            static_label(ui, text.cache_size());
-                            ui.add_space(-4.0);
                             let previous_tier = self.state.static_prefs.cache_size_tier;
-                            egui::ComboBox::from_id_salt("cache_size_tier")
-                                .selected_text(self.state.static_prefs.cache_size_tier.label())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb2, "2 GB");
-                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb4, "4 GB");
-                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb8, "8 GB");
-                                    ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb16, "16 GB");
-                                });
+                            let usage_gb =
+                                self.usage_cache_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                            let archive_gb =
+                                self.usage_archive_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                            let log_entry_count = self.state.operations.len();
+                            let column_gap = ui.spacing().item_spacing.x;
+                            let column_width = ((ui.available_width() - column_gap) / 2.0)
+                                .max(ui.spacing().interact_size.x);
+                            ui.horizontal_top(|ui| {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(column_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        static_label(ui, text.cache_size());
+                                        ui.add_space(-4.0);
+                                        egui::ComboBox::from_id_salt("cache_size_tier")
+                                            .selected_text(
+                                                self.state.static_prefs.cache_size_tier.label(),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb2, "2 GB");
+                                                ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb4, "4 GB");
+                                                ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb8, "8 GB");
+                                                ui.selectable_value(&mut self.state.static_prefs.cache_size_tier, CacheSizeTier::Gb16, "16 GB");
+                                            });
+                                        ui.add_space(8.0);
+                                        static_label(ui, text.log_entries(log_entry_count));
+                                        ui.add_space(-4.0);
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Trash2,
+                                                text.clear_log(),
+                                                14.5,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            match self.clear_log() {
+                                                Ok(count) => self.set_message_ok(text.log_cleared(count)),
+                                                Err(err) => self.report_error(
+                                                    err,
+                                                    Some(text.clear_log_failed()),
+                                                ),
+                                            }
+                                        }
+                                    },
+                                );
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(column_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        static_label(ui, text.current_usage(usage_gb));
+                                        ui.add_space(-4.0);
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Trash2,
+                                                text.clear_cache(),
+                                                14.5,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            match self.clear_cache() {
+                                                Ok(()) => self.set_message_ok(text.cache_cleared()),
+                                                Err(err) => self.report_error(
+                                                    err,
+                                                    Some(text.clear_cache_failed()),
+                                                ),
+                                            }
+                                        }
+                                        ui.add_space(8.0);
+                                        static_label(ui, text.archive_usage(archive_gb));
+                                        ui.add_space(-4.0);
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::Trash2,
+                                                text.delete_archived_mods(),
+                                                14.5,
+                                                13.0,
+                                            ))
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
+                                        {
+                                            match self.clear_archives() {
+                                                Ok(count) => {
+                                                    if count > 0 {
+                                                        let action = text.archive_delete_action(
+                                                            self.state.static_prefs.delete_behavior,
+                                                        );
+                                                        self.log_action(
+                                                            action,
+                                                            &text.archived_mods_count(count),
+                                                        );
+                                                        self.set_message_ok(
+                                                            text.archives_cleared(count),
+                                                        );
+                                                    } else {
+                                                        self.set_message_ok(text.no_archives_to_clear());
+                                                    }
+                                                    self.refresh();
+                                                }
+                                                Err(err) => self.report_error(
+                                                    err,
+                                                    Some(text.clear_archives_failed()),
+                                                ),
+                                            }
+                                        }
+                                    },
+                                );
+                            });
                             if self.state.static_prefs.cache_size_tier != previous_tier {
-                                self.cache_limit_bytes
-                                    .store(self.state.static_prefs.cache_size_tier.bytes(), Ordering::Relaxed);
+                                self.cache_limit_bytes.store(
+                                    self.state.static_prefs.cache_size_tier.bytes(),
+                                    Ordering::Relaxed,
+                                );
                                 let _ = persistence::evict_lru_if_needed(
                                     &self.portable,
                                     self.state.static_prefs.cache_size_tier.bytes(),
                                 );
                                 self.mark_usage_counters_dirty();
                                 should_save = true;
-                            }
-                            ui.add_space(8.0);
-                            let usage_gb =
-                                self.usage_cache_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                            static_label(ui, text.current_usage(usage_gb));
-                            ui.add_space(-4.0);
-                            if ui
-                                .button(icon_text_sized(Icon::Trash2, text.clear_cache(), 14.5, 13.0))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                match self.clear_cache() {
-                                    Ok(()) => self.set_message_ok(text.cache_cleared()),
-                                    Err(err) => self.report_error(err, Some(text.clear_cache_failed())),
-                                }
-                            }
-                            ui.add_space(8.0);
-                            let archive_gb =
-                                self.usage_archive_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                            static_label(ui, text.archive_usage(archive_gb));
-                            ui.add_space(-4.0);
-                            if ui
-                                .button(icon_text_sized(Icon::Trash2, text.delete_archived_mods(), 14.5, 13.0))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                match self.clear_archives() {
-                                    Ok(count) => {
-                                        if count > 0 {
-                                            let action = text.archive_delete_action(self.state.static_prefs.delete_behavior);
-                                            self.log_action(action, &text.archived_mods_count(count));
-                                            self.set_message_ok(text.archives_cleared(count));
-                                        } else {
-                                            self.set_message_ok(text.no_archives_to_clear());
-                                        }
-                                        self.refresh();
-                                    }
-                                    Err(err) => self.report_error(err, Some(text.clear_archives_failed())),
-                                }
                             }
                             ui.add_space(1.0);
                         });
