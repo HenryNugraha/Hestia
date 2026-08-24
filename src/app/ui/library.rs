@@ -541,7 +541,7 @@ fn flush_preserved_spaces(output: &mut String, count: usize) {
 }
 
 fn personal_note_content_width(ui: &Ui) -> f32 {
-    (ui.available_width() - 28.0).max(0.0)
+    (markdown_reading_lane_width(ui) - 28.0).max(0.0)
 }
 
 fn soft_add_note_button(ui: &mut Ui, text: &str) -> egui::Response {
@@ -4041,16 +4041,17 @@ impl HestiaApp {
                             );
                         });
                         if !entry.markdown.trim().is_empty() {
+                            let markdown_width = markdown_reading_lane_width(ui);
                             self.queue_gif_previews_for_markdown(
                                 ui.ctx(),
                                 &entry.markdown,
                                 None,
-                                ui.available_width(),
+                                markdown_width,
                             );
                             let markdown =
                                 self.cached_rewrite_markdown_gif_images(&entry.markdown, None);
                             self.prewarm_markdown_images(&markdown);
-                            self.render_markdown_with_inline_images(ui, &markdown, None);
+                            self.render_markdown_reading_lane(ui, &markdown, None);
                         }
                     }
                     ui.add_space(1.0);
@@ -10970,14 +10971,14 @@ impl HestiaApp {
                                 ui.ctx(),
                                 &markdown,
                                 Some(&selected.root_path),
-                                ui.available_width(),
+                                markdown_reading_lane_width(ui),
                             );
                             let markdown = self.cached_rewrite_markdown_gif_images(
                                 &markdown,
                                 Some(&selected.root_path),
                             );
                             self.prewarm_markdown_images(&markdown);
-                            self.render_markdown_with_inline_images(
+                            self.render_markdown_reading_lane(
                                 ui,
                                 &markdown,
                                 Some(&selected.root_path),
@@ -11016,14 +11017,12 @@ impl HestiaApp {
                                         Some(&selected.root_path),
                                     );
                                     self.prewarm_markdown_images(&markdown);
-                                    ui.scope(|ui| {
-                                        ui.set_max_width(width);
-                                        self.render_markdown_with_inline_images(
-                                            ui,
-                                            &markdown,
-                                            Some(&selected.root_path),
-                                        );
-                                    });
+                                    self.render_markdown_in_width(
+                                        ui,
+                                        &markdown,
+                                        Some(&selected.root_path),
+                                        width,
+                                    );
                                 } else {
                                     ui.add(egui::Label::new(
                                         RichText::new(extracted)

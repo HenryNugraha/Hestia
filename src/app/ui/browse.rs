@@ -2086,22 +2086,19 @@ impl HestiaApp {
                                             );
                                         });
                                         if !entry.markdown.trim().is_empty() {
+                                            let markdown_width = markdown_reading_lane_width(ui);
                                             self.queue_gif_previews_for_markdown(
                                                 ui.ctx(),
                                                 &entry.markdown,
                                                 None,
-                                                ui.available_width(),
+                                                markdown_width,
                                             );
                                             let markdown = self.cached_rewrite_markdown_gif_images(
                                                 &entry.markdown,
                                                 None,
                                             );
                                             self.prewarm_markdown_images(&markdown);
-                                            self.render_markdown_with_inline_images(
-                                                ui,
-                                                &markdown,
-                                                None,
-                                            );
+                                            self.render_markdown_reading_lane(ui, &markdown, None);
                                         }
                                     }
                                     ui.add_space(1.0);
@@ -2329,12 +2326,12 @@ impl HestiaApp {
                             ui.ctx(),
                             &detail.markdown,
                             None,
-                            ui.available_width(),
+                            markdown_reading_lane_width(ui),
                         );
                         let markdown =
                             self.cached_rewrite_markdown_gif_images(&detail.markdown, None);
                         self.prewarm_markdown_images(&markdown);
-                        self.render_markdown_with_inline_images(ui, &markdown, None);
+                        self.render_markdown_reading_lane(ui, &markdown, None);
 
                         let render_file_section_label = |ui: &mut Ui, label: &str, count: usize| {
                             let section_height = 20.0;

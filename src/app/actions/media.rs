@@ -1216,6 +1216,28 @@ impl HestiaApp {
         }
     }
 
+    fn render_markdown_reading_lane(
+        &mut self,
+        ui: &mut Ui,
+        markdown: &str,
+        mod_root: Option<&Path>,
+    ) {
+        self.render_markdown_in_width(ui, markdown, mod_root, markdown_reading_lane_width(ui));
+    }
+
+    fn render_markdown_in_width(
+        &mut self,
+        ui: &mut Ui,
+        markdown: &str,
+        mod_root: Option<&Path>,
+        width: f32,
+    ) {
+        ui.scope(|ui| {
+            ui.set_max_width(width);
+            self.render_markdown_with_inline_images(ui, markdown, mod_root);
+        });
+    }
+
     fn process_local_mod_image_queue(&mut self, ctx: &egui::Context) {
         if self.pending_mod_image_queue.is_empty() {
             return;
@@ -2038,6 +2060,10 @@ fn render_inline_gif_placeholder(ui: &mut Ui, _pending: bool) -> egui::Response 
         Color32::from_gray(225),
     );
     response
+}
+
+fn markdown_reading_lane_width(ui: &Ui) -> f32 {
+    ui.available_width().min(720.0).max(1.0)
 }
 
 fn gif_preview_max_width(width: f32) -> u32 {

@@ -304,6 +304,7 @@ impl HestiaApp {
                 // floor that comfortably fits it; growing just adds empty space,
                 // and this stops a shrink from clipping the highlights.
                 .min_width(360.0)
+                .max_width(560.0)
                 .min_height(180.0)
                 .collapsible(true)
                 .frame(window_frame);
@@ -328,6 +329,7 @@ impl HestiaApp {
         }
 
         window.show(ctx, |ui| {
+            ui.set_max_width(ui.available_width().min(528.0));
             ui.horizontal(|ui| {
                 if feedback_survey().is_some() {
                     let version_response = ui
