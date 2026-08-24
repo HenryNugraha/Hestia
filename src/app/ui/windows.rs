@@ -830,7 +830,13 @@ impl HestiaApp {
 
         if let Some(shown) = shown_floating_window_rect(&log_response) {
             let size = [shown.width(), shown.height()];
-            self.remember_floating_window_layout(ctx, |layouts| layouts.log_size = Some(size));
+            let user_adjusted = floating_window_user_adjusted(ctx, &log_response);
+            self.remember_floating_window_layout(
+                ctx,
+                FloatingWindow::Log,
+                user_adjusted,
+                |layouts| layouts.log_size = Some(size),
+            );
         }
         let reset_log_layout = log_default_rect.is_some_and(|default_rect| {
             self.floating_window_layout_controls(
@@ -1211,7 +1217,13 @@ impl HestiaApp {
 
         if let Some(shown) = shown_floating_window_rect(&tasks_response) {
             let size = [shown.width(), shown.height()];
-            self.remember_floating_window_layout(ctx, |layouts| layouts.tasks_size = Some(size));
+            let user_adjusted = floating_window_user_adjusted(ctx, &tasks_response);
+            self.remember_floating_window_layout(
+                ctx,
+                FloatingWindow::Tasks,
+                user_adjusted,
+                |layouts| layouts.tasks_size = Some(size),
+            );
         }
         let reset_tasks_layout = tasks_default_rect.is_some_and(|default_rect| {
             self.floating_window_layout_controls(
@@ -1881,7 +1893,13 @@ impl HestiaApp {
 
         if let Some(shown) = shown_floating_window_rect(&tools_response) {
             let size = [shown.width(), shown.height()];
-            self.remember_floating_window_layout(ctx, |layouts| layouts.tools_size = Some(size));
+            let user_adjusted = floating_window_user_adjusted(ctx, &tools_response);
+            self.remember_floating_window_layout(
+                ctx,
+                FloatingWindow::Tools,
+                user_adjusted,
+                |layouts| layouts.tools_size = Some(size),
+            );
         }
         let reset_tools_layout = tools_default_rect.is_some_and(|default_rect| {
             self.floating_window_layout_controls(
@@ -4968,7 +4986,13 @@ impl HestiaApp {
             shown_floating_window_rect(&settings_response),
         ) {
             let saved = floating_window_rect_relative_to(shown, inset_rect);
-            self.remember_floating_window_layout(ctx, |layouts| layouts.settings = Some(saved));
+            let user_adjusted = floating_window_user_adjusted(ctx, &settings_response);
+            self.remember_floating_window_layout(
+                ctx,
+                FloatingWindow::Settings,
+                user_adjusted,
+                |layouts| layouts.settings = Some(saved),
+            );
         }
         let reset_settings_layout = settings_default_rect.is_some_and(|default_rect| {
             self.floating_window_layout_controls(

@@ -3225,15 +3225,24 @@ impl HestiaApp {
         self.flush_floating_window_layouts(ctx, now);
     }
 
-    /// Applies a change to the remembered floating-window geometry and arms the
-    /// trailing debounce if anything actually changed. Call every frame a window is
-    /// shown; identical geometry is a no-op so this never writes while idle.
+    /// Applies a change to the remembered floating-window geometry after the user
+    /// has actually moved/resized that window. Content can still auto-grow a
+    /// window, but that layout is not treated as a user override.
     fn remember_floating_window_layout(
         &mut self,
         ctx: &egui::Context,
+        window: FloatingWindow,
+        user_adjusted: bool,
         apply: impl FnOnce(&mut FloatingWindowLayouts),
     ) {
         let layouts = &mut self.state.static_prefs.floating_windows;
+        let should_remember = user_adjusted || floating_window_layout_overridden(layouts, window);
+        if user_adjusted {
+            set_floating_window_layout_overridden(layouts, window, true);
+        }
+        if !should_remember {
+            return;
+        }
         let before = layouts.clone();
         apply(layouts);
         if *layouts != before {
@@ -3701,29 +3710,35 @@ impl HestiaApp {
         match window {
             FloatingWindow::Log => {
                 layouts.log_size = None;
+                layouts.log_user_layout = false;
                 self.log_window_nonce = self.log_window_nonce.wrapping_add(1);
                 self.log_force_default_pos = true;
             }
             FloatingWindow::Tasks => {
                 layouts.tasks_size = None;
+                layouts.tasks_user_layout = false;
                 self.tasks_window_nonce = self.tasks_window_nonce.wrapping_add(1);
                 self.tasks_force_default_pos = true;
             }
             FloatingWindow::Tools => {
                 layouts.tools_size = None;
+                layouts.tools_user_layout = false;
                 self.tools_window_nonce = self.tools_window_nonce.wrapping_add(1);
                 self.tools_force_default_pos = true;
             }
             FloatingWindow::Settings => {
                 layouts.settings = None;
+                layouts.settings_user_layout = false;
                 self.settings_window_nonce = self.settings_window_nonce.wrapping_add(1);
             }
             FloatingWindow::LibraryDetail => {
                 layouts.library_detail = None;
+                layouts.library_detail_user_layout = false;
                 self.mod_detail_window_nonce = self.mod_detail_window_nonce.wrapping_add(1);
             }
             FloatingWindow::BrowseDetail => {
                 layouts.browse_detail = None;
+                layouts.browse_detail_user_layout = false;
                 self.browse_detail_window_nonce = self.browse_detail_window_nonce.wrapping_add(1);
             }
         }
@@ -3792,7 +3807,10 @@ impl HestiaApp {
         });
 
         let mut reset_requested = false;
-        if !at_default {
+        let show_reset_button =
+            floating_window_layout_overridden(&self.state.static_prefs.floating_windows, window)
+                && !at_default;
+        if show_reset_button {
             egui::Area::new(overlay_id)
                 .order(egui::Order::Foreground)
                 .fixed_pos(button_rect.min)
@@ -3871,6 +3889,72 @@ impl HestiaApp {
 }
 
 const FLOATING_WINDOW_SAVE_DEBOUNCE_SECS: f64 = 0.5;
+
+fn floating_window_layout_overridden(
+    layouts: &FloatingWindowLayouts,
+    window: FloatingWindow,
+) -> bool {
+    match window {
+        FloatingWindow::Log => layouts.log_user_layout,
+        FloatingWindow::Tasks => layouts.tasks_user_layout,
+        FloatingWindow::Tools => layouts.tools_user_layout,
+        FloatingWindow::Settings => layouts.settings_user_layout,
+        FloatingWindow::LibraryDetail => layouts.library_detail_user_layout,
+        FloatingWindow::BrowseDetail => layouts.browse_detail_user_layout,
+    }
+}
+
+fn set_floating_window_layout_overridden(
+    layouts: &mut FloatingWindowLayouts,
+    window: FloatingWindow,
+    value: bool,
+) {
+    match window {
+        FloatingWindow::Log => layouts.log_user_layout = value,
+        FloatingWindow::Tasks => layouts.tasks_user_layout = value,
+        FloatingWindow::Tools => layouts.tools_user_layout = value,
+        FloatingWindow::Settings => layouts.settings_user_layout = value,
+        FloatingWindow::LibraryDetail => layouts.library_detail_user_layout = value,
+        FloatingWindow::BrowseDetail => layouts.browse_detail_user_layout = value,
+    }
+}
+
+fn floating_window_user_adjusted<R>(
+    ctx: &egui::Context,
+    response: &Option<egui::InnerResponse<Option<R>>>,
+) -> bool {
+    let Some(inner) = response else {
+        return false;
+    };
+    let area_id = inner.response.id;
+    if ctx
+        .read_response(area_id.with("__title_click"))
+        .is_some_and(response_drag_active)
+    {
+        return true;
+    }
+
+    let resize_id = egui::Id::new(inner.response.layer_id).with("edge_drag");
+    [
+        "right",
+        "left",
+        "bottom",
+        "top",
+        "right_bottom",
+        "right_top",
+        "left_bottom",
+        "left_top",
+    ]
+    .into_iter()
+    .any(|side| {
+        ctx.read_response(resize_id.with(side))
+            .is_some_and(response_drag_active)
+    })
+}
+
+fn response_drag_active(response: egui::Response) -> bool {
+    response.drag_started() || response.dragged() || response.drag_stopped()
+}
 
 /// Paints a lucide glyph with its ink box centered on `center`. Painting text with
 /// `Align2::CENTER_CENTER` centers the font row, and icon fonts don't sit centered
@@ -4038,6 +4122,35 @@ mod floating_window_layout_tests {
             restore_floating_window_rect(None, default_pos, egui::vec2(420.0, 560.0), pane);
         assert_eq!(pos, default_pos);
         assert_eq!(size, egui::vec2(420.0, 560.0));
+    }
+
+    #[test]
+    fn user_layout_flags_are_per_window() {
+        let mut layouts = FloatingWindowLayouts::default();
+        assert!(!floating_window_layout_overridden(
+            &layouts,
+            FloatingWindow::Settings
+        ));
+        assert!(!floating_window_layout_overridden(
+            &layouts,
+            FloatingWindow::Log
+        ));
+
+        set_floating_window_layout_overridden(&mut layouts, FloatingWindow::Settings, true);
+        assert!(floating_window_layout_overridden(
+            &layouts,
+            FloatingWindow::Settings
+        ));
+        assert!(!floating_window_layout_overridden(
+            &layouts,
+            FloatingWindow::Log
+        ));
+
+        set_floating_window_layout_overridden(&mut layouts, FloatingWindow::Settings, false);
+        assert!(!floating_window_layout_overridden(
+            &layouts,
+            FloatingWindow::Settings
+        ));
     }
 }
 

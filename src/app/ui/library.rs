@@ -11210,9 +11210,15 @@ impl HestiaApp {
 
         if let Some(shown) = shown_floating_window_rect(&mod_detail_response) {
             let saved = floating_window_rect_relative_to(shown, details_rect);
-            self.remember_floating_window_layout(ui.ctx(), |layouts| {
-                layouts.library_detail = Some(saved);
-            });
+            let user_adjusted = floating_window_user_adjusted(ui.ctx(), &mod_detail_response);
+            self.remember_floating_window_layout(
+                ui.ctx(),
+                FloatingWindow::LibraryDetail,
+                user_adjusted,
+                |layouts| {
+                    layouts.library_detail = Some(saved);
+                },
+            );
         }
         if self.floating_window_layout_controls(
             ui.ctx(),

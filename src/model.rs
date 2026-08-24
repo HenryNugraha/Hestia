@@ -121,6 +121,18 @@ pub struct FloatingWindowLayouts {
     pub library_detail: Option<FloatingWindowRect>,
     #[serde(default)]
     pub browse_detail: Option<FloatingWindowRect>,
+    #[serde(default)]
+    pub log_user_layout: bool,
+    #[serde(default)]
+    pub tasks_user_layout: bool,
+    #[serde(default)]
+    pub tools_user_layout: bool,
+    #[serde(default)]
+    pub settings_user_layout: bool,
+    #[serde(default)]
+    pub library_detail_user_layout: bool,
+    #[serde(default)]
+    pub browse_detail_user_layout: bool,
 }
 
 /// Static preferences that rarely change during runtime.
