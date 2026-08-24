@@ -590,6 +590,10 @@ struct PendingInstallFinalize {
     pending_meta: Option<PendingBrowseInstallMeta>,
     pending_unsafe: bool,
     install_disabled: bool,
+    /// Category folder the user was drilled into when the install was queued.
+    /// Applied to the new mod(s) only for external installs (no GameBanana
+    /// listing to derive a category from). See `finalize_install_after_refresh`.
+    target_category_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -600,6 +604,9 @@ struct InstallJob {
     title: Option<String>,
     reuse_existing_task: bool,
     install_disabled: bool,
+    /// Open category folder captured at enqueue time; see `target_category_id`
+    /// on `PendingInstallFinalize`.
+    category_id: Option<String>,
 }
 
 #[derive(Default)]

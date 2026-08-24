@@ -406,6 +406,54 @@ fn effective_metadata_source(
     }
 }
 
+fn mod_detail_shows_personal_note(
+    mod_entry: &ModEntry,
+    personal_note_editing: bool,
+    has_description: bool,
+    hotkeys_available: bool,
+) -> bool {
+    let personal_note_source_path = xxmi::personal_note_relative_path();
+    let personal_note_selected = mod_entry.metadata.extracted.readme_path.as_deref()
+        == Some(personal_note_source_path.as_str())
+        || personal_note_editing;
+    if !personal_note_selected {
+        return false;
+    }
+
+    let textfile_available = mod_entry
+        .metadata
+        .extracted
+        .readme_path
+        .as_deref()
+        .is_some_and(|path| {
+            mod_entry
+                .metadata
+                .extracted
+                .text_sources
+                .iter()
+                .any(|source| source.path == path)
+        });
+    let legacy_explicit_readme = mod_entry
+        .metadata
+        .user
+        .extracted_metadata_source_path
+        .is_some()
+        && mod_entry.metadata.user.extracted_metadata_source_path.as_deref()
+            == mod_entry.metadata.extracted.readme_path.as_deref();
+
+    matches!(
+        effective_metadata_source(
+            mod_entry.metadata.user.selected_metadata_source,
+            personal_note_editing,
+            has_description,
+            hotkeys_available,
+            textfile_available,
+            legacy_explicit_readme,
+        ),
+        MetadataSourceKind::TextFile
+    )
+}
+
 const METADATA_SOURCE_POPUP_WIDTH: f32 = 132.0;
 
 static PERSONAL_NOTE_HTML_TAG_RE: Lazy<Regex> =
@@ -9423,15 +9471,25 @@ impl HestiaApp {
                             .as_ref()
                             .and_then(|source| source.gamebanana.as_ref())
                             .is_some();
+                        let hotkeys_available = self.mod_has_keybinds(&selected);
+                        let personal_note_editing =
+                            self.personal_note_edit_target_id.as_deref() == Some(selected.id.as_str());
+                        let detail_shows_personal_note = mod_detail_shows_personal_note(
+                            &selected,
+                            personal_note_editing,
+                            mod_primary_description_markdown(&selected, &self.portable) != "No description",
+                            hotkeys_available,
+                        );
                         let has_unlinked_text_to_translate = !translation_is_linked
                             && !self.unlinked_texts_to_translate(&selected.id).is_empty();
                         // Also offer translation on unlinked mods that only carry keybinds,
                         // so the inline Hotkeys view (List labels / Raw lines) can be translated.
                         let has_hotkeys_to_translate =
-                            !translation_is_linked && self.mod_has_keybinds(&selected);
-                        if translation_is_linked
-                            || has_unlinked_text_to_translate
-                            || has_hotkeys_to_translate
+                            !translation_is_linked && hotkeys_available;
+                        if !detail_shows_personal_note
+                            && (translation_is_linked
+                                || has_unlinked_text_to_translate
+                                || has_hotkeys_to_translate)
                         {
                             let translation_state = self.my_mods_translation_state.get(&selected.id);
                             let is_loading = if translation_is_linked {

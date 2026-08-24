@@ -208,7 +208,7 @@ async fn fetch_unlinked_text_translation(
     }
 
     let challenge = client
-        .get("https://cerberus.hnawc.com/challenge?algo=argon2id&cost=2&counter=32&memory=131072")
+        .get("https://thalia.hnawc.com/auth")
         .send()
         .await
         .context("failed to request Altcha challenge")?

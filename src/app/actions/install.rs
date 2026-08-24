@@ -49,6 +49,10 @@ impl HestiaApp {
                         .install_inflight
                         .get(&job_id)
                         .is_some_and(|job| job.install_disabled);
+                    let target_category_id = self
+                        .install_inflight
+                        .get(&job_id)
+                        .and_then(|job| job.category_id.clone());
                     self.apply_pending_update_source_metadata_before_refresh(
                         pending_meta.as_ref(),
                         gb_profile.as_deref(),
@@ -73,6 +77,7 @@ impl HestiaApp {
                             pending_meta,
                             pending_unsafe,
                             install_disabled,
+                            target_category_id,
                         },
                     );
                     if self.install_batch_active {
@@ -259,6 +264,17 @@ impl HestiaApp {
             self.install_batch_active = true;
         }
 
+        // External installs carry no GameBanana listing, so they normally land
+        // uncategorized. When the user is drilled into a category folder, treat
+        // that folder as the target so both the Install button and drag-and-drop
+        // drop the mod where the user is looking. Only meaningful in the library
+        // folder view; a drop from Browse/overview assigns nothing.
+        let target_category_id = if self.current_view == ViewMode::Library {
+            self.selected_category_folder_id.clone()
+        } else {
+            None
+        };
+
         let mut added_any = false;
         for source in sources {
             // Split archive volumes all normalize to their first part so the
@@ -308,6 +324,7 @@ impl HestiaApp {
                 title: None,
                 reuse_existing_task: false,
                 install_disabled,
+                category_id: target_category_id.clone(),
             };
             self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
             self.install_queue.push_back(job.clone());
@@ -349,6 +366,9 @@ impl HestiaApp {
             title: Some(title),
             reuse_existing_task: true,
             install_disabled: false,
+            // Browse/update installs derive their category from the GameBanana
+            // listing (see apply_browse_download_category), so no folder capture.
+            category_id: None,
         };
         self.install_queue.push_back(job.clone());
         self.add_install_task(&job);

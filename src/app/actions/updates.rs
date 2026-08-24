@@ -2029,6 +2029,7 @@ impl HestiaApp {
             pending_meta,
             pending_unsafe,
             install_disabled: local_install_disabled,
+            target_category_id,
         } = payload;
         let post_install_rename = pending_meta
             .as_ref()
@@ -2298,6 +2299,20 @@ impl HestiaApp {
                 pending_meta.as_ref(),
                 gb_profile.as_deref(),
             );
+        }
+        // External installs (no GameBanana listing) inherit the category folder
+        // the user was drilled into when they queued the install. GameBanana
+        // downloads/updates carry pending_meta and derive their own category
+        // above, so this fallback stays out of their way. Skip if the folder was
+        // deleted between queueing and finalize.
+        if pending_meta.is_none() {
+            if let Some(category_id) = target_category_id.filter(|id| {
+                self.state.categories.iter().any(|category| category.id == *id)
+            }) {
+                for id in &newly_installed_ids {
+                    self.assign_mod_category(id, Some(category_id.clone()));
+                }
+            }
         }
         if let Some((target_mod_id, rename_to)) = post_install_rename {
             match self.rename_mod_folder(&target_mod_id, &rename_to) {

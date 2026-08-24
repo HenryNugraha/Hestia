@@ -2704,7 +2704,7 @@ impl HestiaApp {
         !self.selected_mods.is_empty() || self.selected_mod().is_some()
     }
 
-    fn current_view_detail_can_translate(&self) -> bool {
+    fn current_view_detail_can_translate(&mut self) -> bool {
         match self.current_view {
             ViewMode::Browse => {
                 self.browse_detail_open
@@ -2714,14 +2714,26 @@ impl HestiaApp {
                         .is_some_and(|mod_id| self.browse_state.details.contains_key(&mod_id))
             }
             ViewMode::Library => {
+                let selected_mod = self.selected_mod().cloned();
                 self.mod_detail_open
-                    && self.selected_mod().is_some_and(|mod_entry| {
-                        mod_entry
-                            .source
-                            .as_ref()
-                            .and_then(|source| source.gamebanana.as_ref())
-                            .is_some()
-                            || !self.unlinked_texts_to_translate(&mod_entry.id).is_empty()
+                    && selected_mod.is_some_and(|mod_entry| {
+                        let hotkeys_available = self.mod_has_keybinds(&mod_entry);
+                        let personal_note_editing = self.personal_note_edit_target_id.as_deref()
+                            == Some(mod_entry.id.as_str());
+                        let detail_shows_personal_note = mod_detail_shows_personal_note(
+                            &mod_entry,
+                            personal_note_editing,
+                            mod_primary_description_markdown(&mod_entry, &self.portable)
+                                != "No description",
+                            hotkeys_available,
+                        );
+                        !detail_shows_personal_note
+                            && (mod_entry
+                                .source
+                                .as_ref()
+                                .and_then(|source| source.gamebanana.as_ref())
+                                .is_some()
+                                || !self.unlinked_texts_to_translate(&mod_entry.id).is_empty())
                     })
             }
         }
@@ -2856,8 +2868,8 @@ impl HestiaApp {
             ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
         if app_window_focused
             && !text_input_active
-            && self.current_view_detail_can_translate()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F7))
+            && self.current_view_detail_can_translate()
         {
             self.toggle_visible_detail_translation();
         }
