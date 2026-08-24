@@ -251,6 +251,26 @@ enum SettingsTab {
     About,
 }
 
+impl SettingsTab {
+    const TAB_ORDER: &'static [SettingsTab] = &[
+        SettingsTab::General,
+        SettingsTab::Categories,
+        SettingsTab::Advanced,
+        SettingsTab::Games,
+        SettingsTab::About,
+    ];
+
+    fn scroll_index(self) -> usize {
+        match self {
+            SettingsTab::General => 0,
+            SettingsTab::Categories => 1,
+            SettingsTab::Advanced => 2,
+            SettingsTab::Games => 3,
+            SettingsTab::About => 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum ModDetailTab {
@@ -325,6 +345,7 @@ pub struct HestiaApp {
     mod_detail_open: bool,
     browse_detail_open: bool,
     settings_tab: SettingsTab,
+    settings_tab_scroll_offsets: [f32; SettingsTab::TAB_ORDER.len()],
     mod_detail_tab: ModDetailTab,
     last_titlebar_rect: Option<egui::Rect>,
     last_right_pane_rect: Option<egui::Rect>,
@@ -412,6 +433,7 @@ pub struct HestiaApp {
     tasks_window_nonce: u64,
     tasks_force_default_pos: bool,
     tasks_tab: TasksTab,
+    tasks_tab_scroll_offsets: [f32; TasksTab::TAB_ORDER.len()],
     tasks_scroll_to_edge: bool,
     task_row_advance_cache: HashMap<u64, (TaskStatus, f32)>,
     task_row_advance_cache_width: f32,
@@ -1293,6 +1315,24 @@ enum TasksTab {
     Installs,
     Completed,
     Failed,
+}
+
+impl TasksTab {
+    const TAB_ORDER: &'static [TasksTab] = &[
+        TasksTab::Downloads,
+        TasksTab::Installs,
+        TasksTab::Completed,
+        TasksTab::Failed,
+    ];
+
+    fn scroll_index(self) -> usize {
+        match self {
+            TasksTab::Downloads => 0,
+            TasksTab::Installs => 1,
+            TasksTab::Completed => 2,
+            TasksTab::Failed => 3,
+        }
+    }
 }
 
 struct CoverRequest {

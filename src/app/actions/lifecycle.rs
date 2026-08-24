@@ -405,6 +405,7 @@ impl HestiaApp {
             mod_detail_open: false,
             browse_detail_open: false,
             settings_tab: SettingsTab::General,
+            settings_tab_scroll_offsets: [0.0; SettingsTab::TAB_ORDER.len()],
             mod_detail_tab: ModDetailTab::Overview,
             last_titlebar_rect: None,
             last_right_pane_rect: None,
@@ -478,6 +479,7 @@ impl HestiaApp {
             tasks_window_nonce,
             tasks_force_default_pos,
             tasks_tab: TasksTab::Installs,
+            tasks_tab_scroll_offsets: [0.0; TasksTab::TAB_ORDER.len()],
             tasks_scroll_to_edge: false,
             task_row_advance_cache: HashMap::new(),
             task_row_advance_cache_width: 0.0,
@@ -2684,12 +2686,8 @@ impl HestiaApp {
         self.feedback_survey_force_default_pos = true;
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab: move to the next / previous primary tab,
-    /// wrapping at both ends. Tab order is `ViewMode::TAB_ORDER`; add new
-    /// views there and this picks them up automatically.
-    fn cycle_primary_view(&mut self, forward: bool) {
-        let order = ViewMode::TAB_ORDER;
-        let Some(idx) = order.iter().position(|&v| v == self.current_view) else {
+    fn cycle_ordered_value<T: Copy + PartialEq>(current: &mut T, order: &[T], forward: bool) {
+        let Some(idx) = order.iter().position(|&value| value == *current) else {
             return;
         };
         let next = if forward {
@@ -2697,11 +2695,26 @@ impl HestiaApp {
         } else {
             (idx + order.len() - 1) % order.len()
         };
-        if order[next] == self.current_view {
+        if order[next] == *current {
             return;
         }
-        self.current_view = order[next];
+        *current = order[next];
+    }
+
+    /// Ctrl+Tab / Ctrl+Shift+Tab: move to the next / previous primary tab,
+    /// wrapping at both ends. Tab order is `ViewMode::TAB_ORDER`; add new
+    /// views there and this picks them up automatically.
+    fn cycle_primary_view(&mut self, forward: bool) {
+        Self::cycle_ordered_value(&mut self.current_view, ViewMode::TAB_ORDER, forward);
         self.clear_mod_detail_rename();
+    }
+
+    fn cycle_settings_tab(&mut self, forward: bool) {
+        Self::cycle_ordered_value(&mut self.settings_tab, SettingsTab::TAB_ORDER, forward);
+    }
+
+    fn cycle_tasks_tab(&mut self, forward: bool) {
+        Self::cycle_ordered_value(&mut self.tasks_tab, TasksTab::TAB_ORDER, forward);
     }
 
     fn leave_category_folder_view(&mut self) -> bool {
@@ -2869,6 +2882,8 @@ impl HestiaApp {
             ..Default::default()
         };
         let text_input_active = self.shortcuts_blocked_by_text_input(ctx);
+        let app_window_focused =
+            ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
 
         // Ctrl+Tab cycles forward through the primary tabs, Ctrl+Shift+Tab
         // cycles backward (same convention as browser tab switching).
@@ -2882,6 +2897,31 @@ impl HestiaApp {
             });
             if let Some(forward) = tab_cycle {
                 self.cycle_primary_view(forward);
+            }
+        }
+        if app_window_focused
+            && !text_input_active
+            && (self.settings_open
+                || (self.state.show_tasks && self.state.tasks_layout == TasksLayout::Tabbed))
+        {
+            let tab_cycle = ctx.input_mut(|input| {
+                if input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::PageDown))
+                {
+                    Some(true)
+                } else if input
+                    .consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::PageUp))
+                {
+                    Some(false)
+                } else {
+                    None
+                }
+            });
+            if let Some(forward) = tab_cycle {
+                if self.settings_open {
+                    self.cycle_settings_tab(forward);
+                } else if self.state.show_tasks && self.state.tasks_layout == TasksLayout::Tabbed {
+                    self.cycle_tasks_tab(forward);
+                }
             }
         }
         // Ctrl+P — the settings/preferences shortcut. Deliberately NOT a bare
@@ -2920,8 +2960,6 @@ impl HestiaApp {
         {
             self.browse_state.toggle_character_picker_requested = true;
         }
-        let app_window_focused =
-            ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
         if app_window_focused
             && !text_input_active
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F7))

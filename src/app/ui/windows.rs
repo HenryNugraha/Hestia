@@ -1126,7 +1126,10 @@ impl HestiaApp {
 
                 let scroll_rect = ui.available_rect_before_wrap();
                 let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
-                ScrollArea::vertical()
+                let tab_scroll_index = self.tasks_tab.scroll_index();
+                let tab_scroll_offset = self.tasks_tab_scroll_offsets[tab_scroll_index];
+                let tab_scroll_output = ScrollArea::vertical()
+                    .vertical_scroll_offset(tab_scroll_offset)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         apply_vertical_scroll_navigation(ui, scroll_navigation, false);
@@ -1170,6 +1173,7 @@ impl HestiaApp {
                         }
                         apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                     });
+                self.tasks_tab_scroll_offsets[tab_scroll_index] = tab_scroll_output.state.offset.y;
             }
             TasksLayout::SingleList => {
                 let stick_to_bottom =
@@ -2912,7 +2916,12 @@ impl HestiaApp {
 
             let scroll_rect = ui.available_rect_before_wrap();
             let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
-            ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+            let tab_scroll_index = self.settings_tab.scroll_index();
+            let tab_scroll_offset = self.settings_tab_scroll_offsets[tab_scroll_index];
+            let tab_scroll_output = ScrollArea::vertical()
+                .vertical_scroll_offset(tab_scroll_offset)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
                 apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                 match self.settings_tab {
                     SettingsTab::General => {
@@ -4886,6 +4895,8 @@ impl HestiaApp {
                 }
                 apply_vertical_scroll_navigation(ui, scroll_navigation, true);
             });
+            self.settings_tab_scroll_offsets[tab_scroll_index] =
+                tab_scroll_output.state.offset.y;
         });
         if let (Some(inset_rect), Some(shown)) = (
             settings_inset_rect,
