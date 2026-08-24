@@ -155,22 +155,44 @@ impl HestiaApp {
             .collect()
     }
 
-    fn maybe_prompt_unhealthy_d3dx_reload_status(
+    fn sync_d3dx_reload_status_prompt(
         &mut self,
         game: &GameInstall,
         status: &xxmi_persist::D3dxReloadConfigStatus,
         token: Option<(std::time::SystemTime, u64)>,
     ) {
-        if !game.apply_mod_changes_in_game || status.healthy() {
+        if !game.apply_mod_changes_in_game {
             return;
+        }
+        if status.healthy() {
+            if self
+                .pending_d3dx_foreground_conflict
+                .as_ref()
+                .is_some_and(|prompt| prompt.game_id == game.definition.id)
+            {
+                self.pending_d3dx_foreground_conflict = None;
+            }
+            return;
+        }
+
+        let mut fields = self.d3dx_reload_status_prompt_fields(status);
+        if fields.is_empty() {
+            fields.push(("d3dx.ini".to_string(), "unhealthy".to_string()));
         }
         if self
             .pending_d3dx_foreground_conflict
             .as_ref()
             .is_some_and(|prompt| prompt.game_id == game.definition.id)
         {
+            self.pending_d3dx_foreground_conflict = Some(D3dxForegroundConflictPrompt {
+                game_id: game.definition.id.clone(),
+                game_name: game.definition.name.clone(),
+                path: status.path.clone(),
+                fields,
+            });
             return;
         }
+
         let prompt_token = D3dxReloadPromptToken { token };
         if self
             .d3dx_reload_config_watch
@@ -181,10 +203,6 @@ impl HestiaApp {
             return;
         }
 
-        let mut fields = self.d3dx_reload_status_prompt_fields(status);
-        if fields.is_empty() {
-            fields.push(("d3dx.ini".to_string(), "unhealthy".to_string()));
-        }
         self.pending_d3dx_foreground_conflict = Some(D3dxForegroundConflictPrompt {
             game_id: game.definition.id.clone(),
             game_name: game.definition.name.clone(),
@@ -266,7 +284,7 @@ impl HestiaApp {
         }
         if changed || cache_missing {
             if let Some(status) = self.refresh_d3dx_reload_status_for_game(&game) {
-                self.maybe_prompt_unhealthy_d3dx_reload_status(&game, &status, token);
+                self.sync_d3dx_reload_status_prompt(&game, &status, token);
             }
         }
     }
