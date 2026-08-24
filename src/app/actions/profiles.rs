@@ -87,6 +87,16 @@ impl HestiaApp {
     }
 
     fn profile_operation_block_reason(&self, kind: ProfileOperationKind) -> Option<&'static str> {
+        if let Some(reason) = self.profile_operation_non_process_block_reason(kind) {
+            return Some(reason);
+        }
+        self.running_process_block_reason()
+    }
+
+    fn profile_operation_non_process_block_reason(
+        &self,
+        kind: ProfileOperationKind,
+    ) -> Option<&'static str> {
         if self.profile_operation_inflight.is_some() {
             return Some("another profile operation is already running");
         }
@@ -129,11 +139,40 @@ impl HestiaApp {
         if self.app_update_download_inflight.is_some() {
             return Some("an app update is running");
         }
-        self.running_process_block_reason()
+        None
     }
 
-    /// Both process guards in one scan. `profile_operations_blocked` runs from the render loop, so
-    /// this must enumerate processes at most once per call.
+    fn profile_operation_block_reason_for_render(
+        &mut self,
+        kind: ProfileOperationKind,
+        ctx: &egui::Context,
+    ) -> Option<&'static str> {
+        if let Some(reason) = self.profile_operation_non_process_block_reason(kind) {
+            return Some(reason);
+        }
+
+        const TTL: f64 = 1.0;
+        ctx.request_repaint_after(Duration::from_secs_f64(TTL));
+        let now = ctx.input(|input| input.time);
+        let game_id = self.selected_game().map(|game| game.definition.id.clone());
+        if let Some(cache) = &self.profile_process_block_cache
+            && cache.game_id == game_id
+            && now < cache.next_check_at
+        {
+            return cache.reason;
+        }
+
+        let reason = self.running_process_block_reason();
+        self.profile_process_block_cache = Some(ProfileProcessBlockCache {
+            game_id,
+            reason,
+            next_check_at: now + TTL,
+        });
+        reason
+    }
+
+    /// Both process guards in one scan. Render callers must go through
+    /// `profile_operation_block_reason_for_render` so this fresh check stays out of the frame loop.
     fn running_process_block_reason(&self) -> Option<&'static str> {
         let game = self.selected_game()?;
 
@@ -219,23 +258,36 @@ impl HestiaApp {
         game: &GameInstall,
         ctx: &egui::Context,
     ) -> bool {
-        const TTL: f64 = 1.0;
+        self.game_process_running_cached(game, ctx, Duration::from_secs(1))
+    }
 
-        ctx.request_repaint_after(Duration::from_secs_f64(TTL));
+    fn game_process_running_cached(
+        &mut self,
+        game: &GameInstall,
+        ctx: &egui::Context,
+        ttl: Duration,
+    ) -> bool {
+        let ttl_secs = ttl.as_secs_f64();
+        ctx.request_repaint_after(ttl);
         let now = ctx.input(|input| input.time);
-        if let Some(cache) = &self.selected_game_running_cache
-            && cache.game_id == game.definition.id
+        if let Some(cache) = self.game_process_running_cache.get(&game.definition.id)
             && now < cache.next_check_at
         {
             return cache.running;
         }
 
         let running = self.game_process_running(game);
-        self.selected_game_running_cache = Some(SelectedGameRunningCache {
-            game_id: game.definition.id.clone(),
-            running,
-            next_check_at: now + TTL,
-        });
+        if self.game_process_running_cache.len() >= 16 {
+            self.game_process_running_cache
+                .retain(|_, cache| now < cache.next_check_at);
+        }
+        self.game_process_running_cache.insert(
+            game.definition.id.clone(),
+            GameProcessRunningCache {
+                running,
+                next_check_at: now + ttl_secs,
+            },
+        );
         running
     }
 
@@ -695,6 +747,55 @@ impl HestiaApp {
         removed
     }
 
+    fn cached_profile_storage_status(
+        &mut self,
+        game_id: &str,
+        profile_id: ProfileId,
+        archive_path: PathBuf,
+        loose_path: PathBuf,
+    ) -> ProfileStorageStatusSnapshot {
+        const TTL: Duration = Duration::from_secs(10);
+
+        let now = Instant::now();
+        let key = (
+            game_id.to_string(),
+            profile_id,
+            archive_path.clone(),
+            loose_path.clone(),
+        );
+        if let Some(entry) = self.profile_storage_status_cache.get(&key)
+            && now.duration_since(entry.checked_at) < TTL
+        {
+            return entry.snapshot;
+        }
+
+        let archive_metadata = fs::metadata(&archive_path)
+            .ok()
+            .filter(|entry| entry.is_file());
+        let snapshot = ProfileStorageStatusSnapshot {
+            loose_exists: loose_path.is_dir(),
+            archive_exists: archive_metadata.is_some(),
+            archive_part_exists: archive_sidecar_path(&archive_path, "part").is_file(),
+            archive_size: archive_metadata.map(|entry| entry.len()),
+        };
+        if self.profile_storage_status_cache.len() >= 512 {
+            self.profile_storage_status_cache
+                .retain(|_, entry| now.duration_since(entry.checked_at) < TTL);
+        }
+        self.profile_storage_status_cache.insert(
+            key,
+            ProfileStorageStatusCacheEntry {
+                snapshot,
+                checked_at: now,
+            },
+        );
+        snapshot
+    }
+
+    fn invalidate_profile_storage_status_cache(&mut self) {
+        self.profile_storage_status_cache.clear();
+    }
+
     fn profile_error_is_storage_out_of_date(error: &anyhow::Error) -> bool {
         error.chain().any(|cause| {
             let message = cause.to_string();
@@ -880,13 +981,12 @@ impl HestiaApp {
         }
     }
 
-    pub(crate) fn profile_operations_blocked(&self) -> bool {
-        self.profile_operation_block_reason(ProfileOperationKind::Switch)
-            .is_some()
-    }
-
-    fn profile_actions_paused_reason(&self, text: TextCatalog) -> Option<&'static str> {
-        self.profile_operation_block_reason(ProfileOperationKind::Switch)
+    fn profile_actions_paused_reason_for_render(
+        &mut self,
+        text: TextCatalog,
+        ctx: &egui::Context,
+    ) -> Option<&'static str> {
+        self.profile_operation_block_reason_for_render(ProfileOperationKind::Switch, ctx)
             .and_then(|reason| Self::profile_actions_paused_reason_text(text, reason))
     }
 
@@ -2008,6 +2108,7 @@ impl HestiaApp {
 
     fn consume_profile_events(&mut self) {
         while let Ok(event) = self.profile_event_rx.try_recv() {
+            self.invalidate_profile_storage_status_cache();
             match event {
                 ProfileEvent::ArchiveQueued {
                     game_id,

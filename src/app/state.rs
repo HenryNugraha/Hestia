@@ -77,10 +77,28 @@ struct D3dxReloadStatusCache {
     status: xxmi_persist::D3dxReloadConfigStatus,
 }
 
-struct SelectedGameRunningCache {
-    game_id: String,
+struct GameProcessRunningCache {
     running: bool,
     next_check_at: f64,
+}
+
+struct ProfileProcessBlockCache {
+    game_id: Option<String>,
+    reason: Option<&'static str>,
+    next_check_at: f64,
+}
+
+#[derive(Clone, Copy)]
+struct ProfileStorageStatusSnapshot {
+    loose_exists: bool,
+    archive_exists: bool,
+    archive_part_exists: bool,
+    archive_size: Option<u64>,
+}
+
+struct ProfileStorageStatusCacheEntry {
+    snapshot: ProfileStorageStatusSnapshot,
+    checked_at: Instant,
 }
 
 enum HotkeyCustomizationRequest {
@@ -330,8 +348,12 @@ pub struct HestiaApp {
     // saved consent is on but the file no longer has the required values.
     d3dx_reload_status_cache: Option<D3dxReloadStatusCache>,
     d3dx_reload_config_watch: Option<D3dxReloadConfigWatch>,
-    // Throttled selected-game process check shared by Settings and d3dx.ini monitoring.
-    selected_game_running_cache: Option<SelectedGameRunningCache>,
+    // Throttled game process checks shared by render/update paths that only need UI-fresh state.
+    game_process_running_cache: HashMap<String, GameProcessRunningCache>,
+    // Render-only cache for profile process guards; actual profile operations re-check fresh.
+    profile_process_block_cache: Option<ProfileProcessBlockCache>,
+    profile_storage_status_cache:
+        HashMap<(String, ProfileId, PathBuf, PathBuf), ProfileStorageStatusCacheEntry>,
     // Throttled cache for the Hotkeys List write-block check (game running + consent off),
     // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
     hotkeys_write_block_cache: Option<(String, bool, f64)>,
@@ -484,6 +506,7 @@ pub struct HestiaApp {
     markdown_dependency_signature_cache: HashMap<String, (String, Instant)>,
     render_safe_markdown_cache: HashMap<String, String>,
     path_file_status_cache: Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path_dir_status_cache: Mutex<HashMap<PathBuf, (bool, Instant)>>,
     path_write_status_cache: Mutex<HashMap<PathBuf, (bool, Instant)>>,
     browse_commonmark_cache: CommonMarkCache,
     browse_request_nonce: u64,

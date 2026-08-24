@@ -74,6 +74,56 @@ async fn probe_proxy_ports(candidates: &[Option<CustomProxyConfig>]) -> HashSet<
     open
 }
 
+fn cached_path_is_file_from(
+    cache: &Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path: &Path,
+    ttl: Duration,
+) -> bool {
+    cached_path_status_from(cache, path, ttl, Path::is_file)
+}
+
+fn cached_path_is_dir_from(
+    cache: &Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path: &Path,
+    ttl: Duration,
+) -> bool {
+    cached_path_status_from(cache, path, ttl, Path::is_dir)
+}
+
+fn cached_path_allows_creation_from(
+    cache: &Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path: &Path,
+    ttl: Duration,
+) -> bool {
+    cached_path_status_from(cache, path, ttl, path_allows_dir_creation)
+}
+
+fn cached_path_status_from(
+    cache: &Mutex<HashMap<PathBuf, (bool, Instant)>>,
+    path: &Path,
+    ttl: Duration,
+    probe: impl FnOnce(&Path) -> bool,
+) -> bool {
+    let now = Instant::now();
+    if let Ok(mut cache) = cache.lock() {
+        if let Some((exists, checked_at)) = cache.get(path)
+            && now.duration_since(*checked_at) < ttl
+        {
+            return *exists;
+        }
+        if cache.len() >= 512 {
+            cache.retain(|_, (_, checked_at)| now.duration_since(*checked_at) < ttl);
+            if cache.len() >= 512 {
+                cache.clear();
+            }
+        }
+        let exists = probe(path);
+        cache.insert(path.to_path_buf(), (exists, now));
+        return exists;
+    }
+    probe(path)
+}
+
 impl HestiaApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -371,7 +421,9 @@ impl HestiaApp {
             live_state_watch: None,
             d3dx_reload_status_cache: None,
             d3dx_reload_config_watch: None,
-            selected_game_running_cache: None,
+            game_process_running_cache: HashMap::new(),
+            profile_process_block_cache: None,
+            profile_storage_status_cache: HashMap::new(),
             hotkeys_write_block_cache: None,
             hotkey_customization_tx,
             hotkey_customization_rx,
@@ -511,6 +563,7 @@ impl HestiaApp {
             markdown_dependency_signature_cache: HashMap::new(),
             render_safe_markdown_cache: HashMap::new(),
             path_file_status_cache: Mutex::new(HashMap::new()),
+            path_dir_status_cache: Mutex::new(HashMap::new()),
             path_write_status_cache: Mutex::new(HashMap::new()),
             browse_commonmark_cache: CommonMarkCache::default(),
             browse_request_nonce: 0,

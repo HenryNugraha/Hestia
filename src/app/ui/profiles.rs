@@ -649,16 +649,12 @@ impl HestiaApp {
             .get(&game_id)
             .cloned()
             .unwrap_or_default();
-        let blocked = self.profile_operations_blocked();
+        let paused_reason = self.profile_actions_paused_reason_for_render(text, ui.ctx());
+        let blocked = paused_reason.is_some();
 
         let profile_count = catalog.profiles.len();
         let active_profile_id = catalog.active_profile_id;
-        let paused_reason = blocked
-            .then(|| {
-                self.profile_actions_paused_reason(text)
-                    .unwrap_or_else(|| text.profile_actions_paused_fallback())
-            })
-            .unwrap_or_default();
+        let paused_reason = paused_reason.unwrap_or_default();
         let paused_tooltip = blocked
             .then(|| format!("{} {}", text.profile_actions_paused_label(), paused_reason));
         let profile_row_gap = ui.spacing().item_spacing.y;
@@ -737,26 +733,29 @@ impl HestiaApp {
                             .profile_compression_states
                             .get(&(game_id.clone(), profile.id))
                             .copied();
+                        let storage = profile_roots.as_ref().map(|roots| {
+                            let archive_path = self
+                                .profile_archive_for(&game_id, &game, profile.id)
+                                .unwrap_or_else(|_| roots.archive_path(profile.id));
+                            let loose_path = self
+                                .profile_path_for(&game_id, &game, profile.id)
+                                .unwrap_or_else(|_| roots.profile_path(profile.id));
+                            self.cached_profile_storage_status(
+                                &game_id,
+                                profile.id,
+                                archive_path,
+                                loose_path,
+                            )
+                        });
                         let (loose_exists, archive_exists, archive_part_exists, archive_size) =
-                            profile_roots
-                                .as_ref()
-                                .map_or((false, false, false, None), |roots| {
-                                    let archive_path = self
-                                        .profile_archive_for(&game_id, &game, profile.id)
-                                        .unwrap_or_else(|_| roots.archive_path(profile.id));
-                                    let loose_path = self
-                                        .profile_path_for(&game_id, &game, profile.id)
-                                        .unwrap_or_else(|_| roots.profile_path(profile.id));
-                                    let archive_metadata = fs::metadata(&archive_path)
-                                        .ok()
-                                        .filter(|entry| entry.is_file());
-                                    (
-                                        loose_path.is_dir(),
-                                        archive_metadata.is_some(),
-                                        archive_sidecar_path(&archive_path, "part").is_file(),
-                                        archive_metadata.map(|entry| entry.len()),
-                                    )
-                                });
+                            storage.map_or((false, false, false, None), |storage| {
+                                (
+                                    storage.loose_exists,
+                                    storage.archive_exists,
+                                    storage.archive_part_exists,
+                                    storage.archive_size,
+                                )
+                            });
                         let storage_state = profile_storage_tooltip_state(
                             active,
                             transient,
@@ -907,7 +906,7 @@ impl HestiaApp {
         if blocked {
             ui.separator();
             let reason = self
-                .profile_actions_paused_reason(text)
+                .profile_actions_paused_reason_for_render(text, ui.ctx())
                 .unwrap_or_else(|| text.profile_actions_paused_fallback());
             profile_selector_paused_row(ui, text.profile_actions_paused_label(), reason);
         }

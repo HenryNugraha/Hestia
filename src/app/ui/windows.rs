@@ -3756,6 +3756,9 @@ impl HestiaApp {
                             .games
                             .iter()
                             .any(|game| game.enabled && game.is_xxmi());
+                        const SETTINGS_EDIT_PATH_TTL: Duration = Duration::from_secs(2);
+                        const SETTINGS_PASSIVE_PATH_TTL: Duration = Duration::from_secs(5);
+                        const SETTINGS_WRITE_PATH_TTL: Duration = Duration::from_secs(10);
                         if has_enabled_xxmi_games {
                     static_label(ui, bold(text.games_xxmi_section(), Some(16.0)).underline());
                     ui.group(|ui| {
@@ -3773,7 +3776,9 @@ impl HestiaApp {
                                 .static_prefs
                                 .modded_launcher_path_override
                                 .as_ref()
-                                .map_or(true, |path| !path.is_file());
+                                .map_or(true, |path| {
+                                    !self.cached_path_is_file(path, SETTINGS_PASSIVE_PATH_TTL)
+                                });
                             ui.horizontal(|ui| {
                                 static_label(
                                     ui,
@@ -3929,6 +3934,9 @@ impl HestiaApp {
                     let mut reload_setting_changes = Vec::new();
                     let grant_access_inflight = self.grant_access_inflight;
                     let mut grant_access_request: Option<(String, PathBuf)> = None;
+                    let path_file_status_cache = &self.path_file_status_cache;
+                    let path_dir_status_cache = &self.path_dir_status_cache;
+                    let path_write_status_cache = &self.path_write_status_cache;
                     for (index, game) in self.state.games.iter_mut().enumerate() {
                         ui.group(|ui| {
                                 ui.set_min_width(360.0);
@@ -4028,7 +4036,13 @@ impl HestiaApp {
                                                 let vanilla_invalid = game
                                                     .vanilla_exe_path_override
                                                     .as_ref()
-                                                    .map(|path| !path.is_file())
+                                                    .map(|path| {
+                                                        !cached_path_is_file_from(
+                                                            path_file_status_cache,
+                                                            path,
+                                                            SETTINGS_PASSIVE_PATH_TTL,
+                                                        )
+                                                    })
                                                     .unwrap_or(true);
                                                 ui.horizontal(|ui| {
                                                     ui.label(
@@ -4061,7 +4075,12 @@ impl HestiaApp {
                                                         .data_mut(|d| d.get_temp::<String>(input_id))
                                                         .unwrap_or_else(|| current_vanilla_value.clone());
                                                     let vanilla_dirty = vanilla_value != current_vanilla_value;
-                                                    let invalid = vanilla_value.trim().is_empty() || !Path::new(&vanilla_value).is_file();
+                                                    let invalid = vanilla_value.trim().is_empty()
+                                                        || !cached_path_is_file_from(
+                                                            path_file_status_cache,
+                                                            Path::new(&vanilla_value),
+                                                            SETTINGS_EDIT_PATH_TTL,
+                                                        );
                                                     let resp = ui.add(
                                                         TextEdit::singleline(&mut vanilla_value)
                                                             .id(input_id)
@@ -4157,7 +4176,13 @@ impl HestiaApp {
                                             if game.enabled && (game.is_unreal_engine() || !self.state.static_prefs.use_default_mods_path) {
                                                 let mods_invalid = game
                                                     .mods_path(self.state.static_prefs.use_default_mods_path)
-                                                    .map(|path| !path.is_dir())
+                                                    .map(|path| {
+                                                        !cached_path_is_dir_from(
+                                                            path_dir_status_cache,
+                                                            &path,
+                                                            SETTINGS_PASSIVE_PATH_TTL,
+                                                        )
+                                                    })
                                                     .unwrap_or(true);
                                                 // Denied creation on an existing ancestor means the path is
                                                 // protected, even if the mods dir itself is missing (it may be
@@ -4165,8 +4190,17 @@ impl HestiaApp {
                                                 let mods_protected = game
                                                     .mods_path(self.state.static_prefs.use_default_mods_path)
                                                     .is_some_and(|path| {
-                                                        path.ancestors().any(|ancestor| ancestor.is_dir())
-                                                            && !path_allows_dir_creation(&path)
+                                                        path.ancestors().any(|ancestor| {
+                                                            cached_path_is_dir_from(
+                                                                path_dir_status_cache,
+                                                                ancestor,
+                                                                SETTINGS_PASSIVE_PATH_TTL,
+                                                            )
+                                                        }) && !cached_path_allows_creation_from(
+                                                            path_write_status_cache,
+                                                            &path,
+                                                            SETTINGS_WRITE_PATH_TTL,
+                                                        )
                                                     });
                                                 ui.horizontal(|ui| {
                                                     let mods_label = if game.is_unreal_engine() {
@@ -4254,7 +4288,12 @@ impl HestiaApp {
                                                         .data_mut(|d| d.get_temp::<String>(input_id))
                                                         .unwrap_or_else(|| current_path_value.clone());
                                                     let path_dirty = path_value != current_path_value;
-                                                    let invalid = path_value.trim().is_empty() || !Path::new(&path_value).is_dir();
+                                                    let invalid = path_value.trim().is_empty()
+                                                        || !cached_path_is_dir_from(
+                                                            path_dir_status_cache,
+                                                            Path::new(&path_value),
+                                                            SETTINGS_EDIT_PATH_TTL,
+                                                        );
                                                     let resp = ui.add(
                                                         TextEdit::singleline(&mut path_value)
                                                             .id(input_id)
