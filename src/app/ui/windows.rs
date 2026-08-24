@@ -57,6 +57,144 @@ fn xxmi_consent_code_bullet(ui: &mut egui::Ui, indent: f32, template: &str, code
     }
 }
 
+fn xxmi_d3dx_status_table(
+    ui: &mut egui::Ui,
+    text: TextCatalog,
+    status: &xxmi_persist::D3dxReloadConfigStatus,
+) {
+    let header_color = Color32::from_rgb(170, 175, 183);
+    let ok_color = Color32::from_rgb(34, 197, 94);
+    let error_color = Color32::from_rgb(218, 70, 70);
+    let line_color = Color32::from_rgba_unmultiplied(170, 175, 183, 78);
+    let width = ui.available_width().min(500.0);
+    let header_h = 18.0;
+    let row_h = 22.0;
+    let rows = status.fields.len();
+    let height = header_h + row_h * rows as f32;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    let field_w = (width - 198.0).max(170.0);
+    let expected_w = 66.0;
+    let col_x = [rect.left(), rect.left() + field_w, rect.left() + field_w + expected_w];
+    let pad = 8.0;
+
+    for col in [col_x[1], col_x[2]] {
+        paint_dashed_line(
+            ui,
+            egui::pos2(col, rect.top()),
+            egui::pos2(col, rect.bottom()),
+            line_color,
+        );
+    }
+    for y in (0..rows).map(|idx| rect.top() + header_h + row_h * idx as f32) {
+        paint_dashed_line(
+            ui,
+            egui::pos2(rect.left(), y),
+            egui::pos2(rect.right(), y),
+            line_color,
+        );
+    }
+
+    let label = |ui: &egui::Ui, pos: egui::Pos2, text: &str, font_id: egui::FontId, color: Color32| {
+        ui.painter().text(
+            pos,
+            egui::Align2::LEFT_CENTER,
+            text,
+            font_id,
+            color,
+        );
+    };
+
+    let mut header_label = |cell: egui::Rect, value: &str| {
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(cell)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.add(egui::Label::new(bold(value, Some(13.0)).color(header_color)).selectable(false));
+    };
+    header_label(
+        egui::Rect::from_min_max(
+            egui::pos2(col_x[0] + pad, rect.top()),
+            egui::pos2(col_x[1] - pad, rect.top() + header_h),
+        ),
+        text.d3dx_status_field(),
+    );
+    header_label(
+        egui::Rect::from_min_max(
+            egui::pos2(col_x[1] + pad, rect.top()),
+            egui::pos2(col_x[2] - pad, rect.top() + header_h),
+        ),
+        text.d3dx_status_expected(),
+    );
+    header_label(
+        egui::Rect::from_min_max(
+            egui::pos2(col_x[2] + pad, rect.top()),
+            egui::pos2(rect.right() - pad, rect.top() + header_h),
+        ),
+        text.d3dx_status_current(),
+    );
+
+    for (idx, field) in status.fields.iter().enumerate() {
+        let row_ok = status.error.is_none() && field.matches;
+        let y = rect.top() + header_h + row_h * idx as f32 + row_h * 0.5;
+        label(
+            ui,
+            egui::pos2(col_x[0] + pad, y),
+            field.key,
+            egui::FontId::monospace(11.0),
+            Color32::from_gray(190),
+        );
+        label(
+            ui,
+            egui::pos2(col_x[1] + pad, y),
+            field.expected,
+            egui::FontId::monospace(11.0),
+            Color32::from_gray(190),
+        );
+        ui.painter().text(
+            egui::pos2(col_x[2] + pad, y),
+            egui::Align2::LEFT_CENTER,
+            icon_char(if row_ok { Icon::Check } else { Icon::CircleX }),
+            egui::FontId::new(12.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+            if row_ok { ok_color } else { error_color },
+        );
+        let value = field.current.as_deref().unwrap_or(text.d3dx_status_missing());
+        label(
+            ui,
+            egui::pos2(col_x[2] + pad + 18.0, y),
+            value,
+            egui::FontId::monospace(11.0),
+            if row_ok {
+                Color32::from_gray(190)
+            } else {
+                error_color
+            },
+        );
+    }
+    if let Some(error) = status.error.as_deref() {
+        response.on_hover_text(error);
+    }
+}
+
+fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: Color32) {
+    let stroke = egui::Stroke::new(1.0, color);
+    let dash = 4.0;
+    let gap = 3.0;
+    let delta = end - start;
+    let length = delta.length();
+    if length <= 0.0 {
+        return;
+    }
+    let dir = delta / length;
+    let mut offset = 0.0;
+    while offset < length {
+        let a = start + dir * offset;
+        let b = start + dir * (offset + dash).min(length);
+        ui.painter().line_segment([a, b], stroke);
+        offset += dash + gap;
+    }
+}
+
 impl HestiaApp {
     fn render_whats_new_window(&mut self, ctx: &egui::Context) {
         if !self.state.show_whats_new {
@@ -3087,6 +3225,15 @@ impl HestiaApp {
                             let send_reload_hotkey = selected_game.as_ref().is_some_and(|game| {
                                 game.is_xxmi() && game.apply_mod_changes_in_game
                             });
+                            let selected_game_running = selected_game
+                                .as_ref()
+                                .is_some_and(|game| self.game_process_running(game));
+                            let d3dx_reload_status = selected_game_id.as_deref().and_then(|game_id| {
+                                self.d3dx_reload_status_cache
+                                    .as_ref()
+                                    .filter(|cache| cache.game_id == game_id)
+                                    .map(|cache| cache.status.clone())
+                            });
                             let mut desired_send_reload_hotkey = send_reload_hotkey;
                             // Consent checkbox comes first: it gates the two d3dx.ini edits, so the
                             // bulleted explainer directly beneath it names those edits (the two
@@ -3098,33 +3245,72 @@ impl HestiaApp {
                                 )
                                 .on_hover_text(text.send_reload_hotkey_tooltip());
                                 let label_indent = ui.spacing().icon_width + ui.spacing().icon_spacing;
-                                // Compact the explainer into a tight block. `item_spacing.y` is the
-                                // gap between bullets; the negative lead pulls the first bullet up
-                                // under the checkbox label. Nudge either to taste.
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                ui.add_space(-5.0);
-                                xxmi_consent_code_bullet(
-                                    ui,
-                                    label_indent,
-                                    text.d3dx_bullet_autosave(),
-                                    "settings_auto_save_interval",
-                                );
-                                xxmi_consent_code_bullet(
-                                    ui,
-                                    label_indent,
-                                    text.d3dx_bullet_foreground(),
-                                    "additional_foreground_window",
-                                );
-                                xxmi_consent_bullet(
-                                    ui,
-                                    label_indent,
-                                    &[(text.d3dx_bullet_restart(), Color32::from_gray(150), false)],
-                                );
-                                xxmi_consent_bullet(
-                                    ui,
-                                    label_indent,
-                                    &[(text.d3dx_bullet_hotkeys(), Color32::from_gray(150), false)],
-                                );
+                                if let Some(status) = d3dx_reload_status.as_ref() {
+                                    ui.add_space(-2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(label_indent);
+                                        ui.vertical(|ui| {
+                                            xxmi_d3dx_status_table(ui, text, status);
+                                        });
+                                    });
+                                }
+                                let foreground_mismatch = d3dx_reload_status
+                                    .as_ref()
+                                    .and_then(|status| {
+                                        status.fields.iter().find(|field| {
+                                            field
+                                                .key
+                                                .eq_ignore_ascii_case("additional_foreground_window")
+                                        })
+                                    })
+                                    .is_some_and(|field| !field.matches);
+                                let autosave_mismatch = d3dx_reload_status
+                                    .as_ref()
+                                    .and_then(|status| {
+                                        status.fields.iter().find(|field| {
+                                            field
+                                                .key
+                                                .eq_ignore_ascii_case("settings_auto_save_interval")
+                                        })
+                                    })
+                                    .is_some_and(|field| !field.matches);
+                                let show_any_note =
+                                    foreground_mismatch || autosave_mismatch || selected_game_running;
+                                let notes_indent = label_indent + 10.0;
+                                if show_any_note {
+                                    // Compact the explainer into a tight block. `item_spacing.y` is the
+                                    // gap between bullets; the negative lead pulls the first bullet up
+                                    // under the status table. Nudge either to taste.
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    ui.add_space(-3.0);
+                                    if foreground_mismatch {
+                                        xxmi_consent_code_bullet(
+                                            ui,
+                                            notes_indent,
+                                            text.d3dx_bullet_foreground(),
+                                            "additional_foreground_window",
+                                        );
+                                    }
+                                    if autosave_mismatch {
+                                        xxmi_consent_code_bullet(
+                                            ui,
+                                            notes_indent,
+                                            text.d3dx_bullet_autosave(),
+                                            "settings_auto_save_interval",
+                                        );
+                                    }
+                                    if selected_game_running {
+                                        xxmi_consent_bullet(
+                                            ui,
+                                            notes_indent,
+                                            &[(
+                                                text.d3dx_bullet_restart(),
+                                                Color32::from_gray(150),
+                                                false,
+                                            )],
+                                        );
+                                    }
+                                }
                             });
                             if desired_send_reload_hotkey != send_reload_hotkey {
                                 if let Some(game_id) = selected_game_id.as_deref() {

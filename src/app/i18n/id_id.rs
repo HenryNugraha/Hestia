@@ -649,9 +649,12 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Izinkan Hestia mengubah konfigurasi d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
     "Setelah Hestia mengubah mod XXMI yang aktif saat game berjalan, kirim hotkey muat ulang XXMI agar game langsung memuatnya. Juga membuat daftar Hotkey menampilkan nilai langsung tiap mod di dalam game dan mengubahnya secara tepat, termasuk perubahan yang kamu buat lewat tombol mod itu sendiri", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Hestia perlu mengubah {code} untuk membaca data kustomisasi mod dengan andal", // SettingsGeneralOperationalD3dxBulletAutosave
-    "Hestia perlu mengubah {code} untuk memicu muat ulang XXMI dan hotkey mod", // SettingsGeneralOperationalD3dxBulletForeground
+    "Hestia perlu mengubah {code} untuk memicu muat ulang XXMI dan hotkey mod. Hotkey mod yang ditekan di Hestia akan berpengaruh di dalam game", // SettingsGeneralOperationalD3dxBulletForeground
     "Mengubah ini memerlukan restart game secara manual", // SettingsGeneralOperationalD3dxBulletRestart
-    "Hotkey mod yang ditekan di Hestia akan berpengaruh di dalam game", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "Field", // SettingsGeneralOperationalD3dxStatusField
+    "Diharapkan", // SettingsGeneralOperationalD3dxStatusExpected
+    "Saat ini", // SettingsGeneralOperationalD3dxStatusCurrent
+    "tidak ada", // SettingsGeneralOperationalD3dxStatusMissing
     "Kemampuan terbatas saat game berjalan", // SettingsGeneralOperationalPreserveLimited
     "Berfungsi penuh selama bermain", // SettingsGeneralOperationalPreserveFull
     "Muat ulang XXMI otomatis saat:", // SettingsGeneralOperationalReloadHotkeyTrigger

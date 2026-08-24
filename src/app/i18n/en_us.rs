@@ -649,9 +649,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Let Hestia modify d3dx.ini configuration", // SettingsGeneralOperationalSendReloadHotkey
     "After Hestia changes live XXMI mods while the game is running, send the XXMI reload hotkey so the game picks them up immediately. Also lets the Hotkeys list show each mod's live in-game value and update it in exact steps, including changes you make with the mod's own keys", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Hestia needs to modify {code} to reliably read mod customization data", // SettingsGeneralOperationalD3dxBulletAutosave
-    "Hestia needs to modify {code} to trigger XXMI reload and mod hotkeys", // SettingsGeneralOperationalD3dxBulletForeground
+    "Hestia needs to modify {code} to trigger XXMI reload and mod hotkeys. Mod hotkeys pressed on Hestia will take effect in game", // SettingsGeneralOperationalD3dxBulletForeground
     "Changing this will require a manual game restart", // SettingsGeneralOperationalD3dxBulletRestart
-    "Mod hotkeys pressed on Hestia will take effect in game", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "Field", // SettingsGeneralOperationalD3dxStatusField
+    "Expected", // SettingsGeneralOperationalD3dxStatusExpected
+    "Current", // SettingsGeneralOperationalD3dxStatusCurrent
+    "missing", // SettingsGeneralOperationalD3dxStatusMissing
     "Limited capability while game is running", // SettingsGeneralOperationalPreserveLimited
     "Fully functional during gameplay", // SettingsGeneralOperationalPreserveFull
     "Auto-reload XXMI when:", // SettingsGeneralOperationalReloadHotkeyTrigger

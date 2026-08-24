@@ -59,6 +59,24 @@ struct LiveStateWatch {
     next_poll_at: f64,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct D3dxReloadPromptToken {
+    token: Option<(SystemTime, u64)>,
+}
+
+struct D3dxReloadConfigWatch {
+    game_id: String,
+    token: Option<(SystemTime, u64)>,
+    next_poll_at: f64,
+    prompted_unhealthy_token: Option<D3dxReloadPromptToken>,
+}
+
+#[derive(Clone)]
+struct D3dxReloadStatusCache {
+    game_id: String,
+    status: xxmi_persist::D3dxReloadConfigStatus,
+}
+
 enum HotkeyCustomizationRequest {
     LoadValues {
         game: GameInstall,
@@ -302,6 +320,10 @@ pub struct HestiaApp {
     // Live-state watch: while the Hotkeys view is open for a mod whose game has the folded
     // consent on and is running, poll `d3dx_user.ini` for changes and re-read on flush.
     live_state_watch: Option<LiveStateWatch>,
+    // Active XXMI game's root d3dx.ini status, shown in Settings and used to prompt when the
+    // saved consent is on but the file no longer has the required values.
+    d3dx_reload_status_cache: Option<D3dxReloadStatusCache>,
+    d3dx_reload_config_watch: Option<D3dxReloadConfigWatch>,
     // Throttled cache for the Hotkeys List write-block check (game running + consent off),
     // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
     hotkeys_write_block_cache: Option<(String, bool, f64)>,

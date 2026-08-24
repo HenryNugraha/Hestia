@@ -648,7 +648,10 @@ enum TextKey {
     SettingsGeneralOperationalD3dxBulletAutosave,
     SettingsGeneralOperationalD3dxBulletForeground,
     SettingsGeneralOperationalD3dxBulletRestart,
-    SettingsGeneralOperationalD3dxBulletHotkeys,
+    SettingsGeneralOperationalD3dxStatusField,
+    SettingsGeneralOperationalD3dxStatusExpected,
+    SettingsGeneralOperationalD3dxStatusCurrent,
+    SettingsGeneralOperationalD3dxStatusMissing,
     SettingsGeneralOperationalPreserveLimited,
     SettingsGeneralOperationalPreserveFull,
     SettingsGeneralOperationalReloadHotkeyTrigger,
@@ -3392,8 +3395,20 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralOperationalD3dxBulletRestart)
     }
 
-    fn d3dx_bullet_hotkeys(self) -> &'static str {
-        self.get(TextKey::SettingsGeneralOperationalD3dxBulletHotkeys)
+    fn d3dx_status_field(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxStatusField)
+    }
+
+    fn d3dx_status_expected(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxStatusExpected)
+    }
+
+    fn d3dx_status_current(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxStatusCurrent)
+    }
+
+    fn d3dx_status_missing(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxStatusMissing)
     }
 
     fn preserve_limited_caption(self) -> &'static str {

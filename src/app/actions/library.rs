@@ -80,6 +80,165 @@ impl HestiaApp {
         // The folded consent also governs the live-state helper: install it (mirroring the
         // active mods' shown variables) when on, remove it when off.
         self.refresh_live_state_helper_for_game(game);
+        self.refresh_d3dx_reload_status_for_game(game);
+    }
+
+    fn refresh_d3dx_reload_status_for_game(
+        &mut self,
+        game: &GameInstall,
+    ) -> Option<xxmi_persist::D3dxReloadConfigStatus> {
+        let status =
+            xxmi_persist::reload_config_status(game, self.state.static_prefs.use_default_mods_path);
+        if let Some(status) = status.clone() {
+            self.d3dx_reload_status_cache = Some(D3dxReloadStatusCache {
+                game_id: game.definition.id.clone(),
+                status,
+            });
+        } else if self
+            .d3dx_reload_status_cache
+            .as_ref()
+            .is_some_and(|cache| cache.game_id == game.definition.id)
+        {
+            self.d3dx_reload_status_cache = None;
+        }
+        status
+    }
+
+    fn d3dx_reload_status_prompt_fields(
+        &self,
+        status: &xxmi_persist::D3dxReloadConfigStatus,
+    ) -> Vec<(String, String)> {
+        status
+            .fields
+            .iter()
+            .filter(|field| status.error.is_some() || !field.matches)
+            .map(|field| {
+                let current = field.current.clone().unwrap_or_else(|| {
+                    if status.error.is_some() {
+                        "unreadable".to_string()
+                    } else {
+                        "missing".to_string()
+                    }
+                });
+                (field.key.to_string(), current)
+            })
+            .collect()
+    }
+
+    fn maybe_prompt_unhealthy_d3dx_reload_status(
+        &mut self,
+        game: &GameInstall,
+        status: &xxmi_persist::D3dxReloadConfigStatus,
+        token: Option<(std::time::SystemTime, u64)>,
+    ) {
+        if !game.apply_mod_changes_in_game || status.healthy() {
+            return;
+        }
+        if self
+            .pending_d3dx_foreground_conflict
+            .as_ref()
+            .is_some_and(|prompt| prompt.game_id == game.definition.id)
+        {
+            return;
+        }
+        let prompt_token = D3dxReloadPromptToken { token };
+        if self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .and_then(|watch| watch.prompted_unhealthy_token.as_ref())
+            .is_some_and(|prompted| prompted == &prompt_token)
+        {
+            return;
+        }
+
+        let mut fields = self.d3dx_reload_status_prompt_fields(status);
+        if fields.is_empty() {
+            fields.push(("d3dx.ini".to_string(), "unhealthy".to_string()));
+        }
+        self.pending_d3dx_foreground_conflict = Some(D3dxForegroundConflictPrompt {
+            game_id: game.definition.id.clone(),
+            game_name: game.definition.name.clone(),
+            path: status.path.clone(),
+            fields,
+        });
+        if let Some(watch) = self.d3dx_reload_config_watch.as_mut()
+            && watch.game_id == game.definition.id
+        {
+            watch.prompted_unhealthy_token = Some(prompt_token);
+        }
+    }
+
+    fn poll_d3dx_reload_config_watch(&mut self, ctx: &egui::Context) {
+        const NOT_RUNNING_POLL_INTERVAL: f64 = 1.0;
+        const RUNNING_POLL_INTERVAL: f64 = 5.0;
+
+        let Some(game) = self.selected_game().cloned() else {
+            self.d3dx_reload_config_watch = None;
+            self.d3dx_reload_status_cache = None;
+            return;
+        };
+        if !game.is_xxmi() {
+            self.d3dx_reload_config_watch = None;
+            self.d3dx_reload_status_cache = None;
+            return;
+        }
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let Some(importer_root) = xxmi_persist::importer_root_for(&game, use_default) else {
+            self.d3dx_reload_config_watch = None;
+            self.d3dx_reload_status_cache = None;
+            return;
+        };
+
+        let running = self.game_process_running(&game);
+        let poll_interval = if running {
+            RUNNING_POLL_INTERVAL
+        } else {
+            NOT_RUNNING_POLL_INTERVAL
+        };
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(poll_interval));
+
+        let now = ctx.input(|input| input.time);
+        if self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_none_or(|watch| watch.game_id != game.definition.id)
+        {
+            self.d3dx_reload_config_watch = Some(D3dxReloadConfigWatch {
+                game_id: game.definition.id.clone(),
+                token: xxmi_persist::d3dx_ini_change_token(&importer_root),
+                next_poll_at: now,
+                prompted_unhealthy_token: None,
+            });
+        }
+        if self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_some_and(|watch| now < watch.next_poll_at)
+        {
+            return;
+        }
+
+        let token = xxmi_persist::d3dx_ini_change_token(&importer_root);
+        let cache_missing = self
+            .d3dx_reload_status_cache
+            .as_ref()
+            .is_none_or(|cache| cache.game_id != game.definition.id);
+        let changed = self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.token != token);
+        if let Some(watch) = self.d3dx_reload_config_watch.as_mut() {
+            if watch.token != token {
+                watch.prompted_unhealthy_token = None;
+            }
+            watch.token = token;
+            watch.next_poll_at = now + poll_interval;
+        }
+        if changed || cache_missing {
+            if let Some(status) = self.refresh_d3dx_reload_status_for_game(&game) {
+                self.maybe_prompt_unhealthy_d3dx_reload_status(&game, &status, token);
+            }
+        }
     }
 
     fn set_game_reload_preference(&mut self, game_id: &str, enabled: bool) {

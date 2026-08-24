@@ -369,6 +369,8 @@ impl HestiaApp {
             mod_hotkey_values_cache: HashMap::new(),
             mod_hotkey_values_loading: HashSet::new(),
             live_state_watch: None,
+            d3dx_reload_status_cache: None,
+            d3dx_reload_config_watch: None,
             hotkeys_write_block_cache: None,
             hotkey_customization_tx,
             hotkey_customization_rx,

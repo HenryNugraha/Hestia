@@ -918,8 +918,7 @@ pub fn ensure_live_state_helper(mod_root: &Path, mirrors: &[MirrorVar]) -> Resul
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context(format!("creating {}", parent.display()))?;
     }
-    persistence::write_atomic_text(&path, &text)
-        .context(format!("writing {}", path.display()))?;
+    persistence::write_atomic_text(&path, &text).context(format!("writing {}", path.display()))?;
     Ok(true)
 }
 
@@ -1368,6 +1367,11 @@ pub fn user_ini_change_token(importer_root: &Path) -> Option<(std::time::SystemT
     Some((meta.modified().ok()?, meta.len()))
 }
 
+pub fn d3dx_ini_change_token(importer_root: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = fs::metadata(importer_root.join(D3DX_INI_FILE)).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 /// Whole-file text of `d3dx_user.ini`, or `None` when missing or not UTF-8.
 pub fn snapshot_user_ini(importer_root: &Path) -> Option<String> {
     let bytes = fs::read(importer_root.join(USER_INI_FILE)).ok()?;
@@ -1607,7 +1611,9 @@ fn user_ini_probe(importer_root: &Path, prefixes: &[String]) -> Result<UserIniPr
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return Err(err).context(format!("reading metadata for {}", path.display())),
     };
-    let modified = metadata.as_ref().and_then(|metadata| metadata.modified().ok());
+    let modified = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.modified().ok());
     let len = metadata.as_ref().map(|metadata| metadata.len());
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -1646,16 +1652,15 @@ fn wait_for_user_ini_update(
     let started = Instant::now();
     loop {
         let current = user_ini_probe(importer_root, prefixes)?;
-        if current.file_changed_from(before) || current.matching_entries != before.matching_entries {
+        if current.file_changed_from(before) || current.matching_entries != before.matching_entries
+        {
             return Ok(current);
         }
         if started.elapsed() >= LIVE_CLEAR_RELOAD_TIMEOUT {
             if allow_quiet_timeout {
                 return Ok(current);
             }
-            bail!(
-                "timed out waiting for {USER_INI_FILE} to update after {stage} reload"
-            );
+            bail!("timed out waiting for {USER_INI_FILE} to update after {stage} reload");
         }
         thread::sleep(LIVE_CLEAR_RELOAD_POLL);
     }
@@ -1690,7 +1695,10 @@ fn live_clear_temp_path(mods_root: &Path) -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-    bail!("could not allocate a temporary clear folder under {}", base.display())
+    bail!(
+        "could not allocate a temporary clear folder under {}",
+        base.display()
+    )
 }
 
 fn ensure_reload_was_sent(report: ReloadHotkeyReport, stage: &str) -> Result<String> {
@@ -1802,7 +1810,9 @@ pub fn clear_mod_variables_live_by_reload_rename(
             let _ = send_reload_hotkey_foreground_aware(game, use_default);
         }
     }
-    let _ = temp_root.parent().and_then(|parent| fs::remove_dir(parent).ok());
+    let _ = temp_root
+        .parent()
+        .and_then(|parent| fs::remove_dir(parent).ok());
     result
 }
 
@@ -1894,6 +1904,27 @@ pub struct D3dxReloadConflict {
     pub fields: Vec<D3dxConflictField>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct D3dxReloadStatusField {
+    pub key: &'static str,
+    pub expected: &'static str,
+    pub current: Option<String>,
+    pub matches: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct D3dxReloadConfigStatus {
+    pub path: PathBuf,
+    pub fields: Vec<D3dxReloadStatusField>,
+    pub error: Option<String>,
+}
+
+impl D3dxReloadConfigStatus {
+    pub fn healthy(&self) -> bool {
+        self.error.is_none() && self.fields.iter().all(|field| field.matches)
+    }
+}
+
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug)]
 struct FocusRouteOutcome {
@@ -1914,7 +1945,9 @@ enum D3dxPatch {
     },
     /// Markers were malformed; Hestia refused to touch the file. `reason` is surfaced to
     /// the user so they can repair the markers by hand.
-    Refused { reason: String },
+    Refused {
+        reason: String,
+    },
 }
 
 /// Whether a synthetic reload hotkey can actually reach this importer while Hestia is the
@@ -1956,7 +1989,10 @@ pub fn ensure_reload_config(
     match patch_d3dx_ini_text(&text, enable_reload) {
         D3dxPatch::Unchanged => Ok(Vec::new()),
         D3dxPatch::Refused { reason } => Ok(vec![reason]),
-        D3dxPatch::Updated { text: updated, notices } => {
+        D3dxPatch::Updated {
+            text: updated,
+            notices,
+        } => {
             rotate_d3dx_backup(&d3dx_ini)?;
             persistence::write_atomic_text(&d3dx_ini, &updated)
                 .context(format!("writing {}", d3dx_ini.display()))?;
@@ -1980,6 +2016,75 @@ pub fn reload_config_conflict(
     } else {
         Ok(Some(D3dxReloadConflict { path, fields }))
     }
+}
+
+pub fn reload_config_status(
+    game: &GameInstall,
+    use_default: bool,
+) -> Option<D3dxReloadConfigStatus> {
+    let importer_root = importer_root_for(game, use_default)?;
+    Some(reload_config_status_for_root(&importer_root))
+}
+
+fn reload_config_status_for_root(importer_root: &Path) -> D3dxReloadConfigStatus {
+    let path = importer_root.join(D3DX_INI_FILE);
+    let mut fields = canonical_reload_status_fields(None, None);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return D3dxReloadConfigStatus {
+                path,
+                fields,
+                error: Some(format!("reading d3dx.ini failed: {err}")),
+            };
+        }
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => {
+            return D3dxReloadConfigStatus {
+                path,
+                fields,
+                error: Some(format!("d3dx.ini is not valid UTF-8: {err}")),
+            };
+        }
+    };
+    let body = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let lines = split_ini_lines(body);
+    let foreground = first_system_active_value(&lines, FOREGROUND_WINDOW_KEY).map(str::to_string);
+    let interval = first_system_active_value(&lines, AUTOSAVE_INTERVAL_KEY).map(str::to_string);
+    fields = canonical_reload_status_fields(foreground, interval);
+    let error = matches!(scan_hestia_section(&lines), SectionScan::Malformed)
+        .then(|| MALFORMED_MARKERS_NOTICE.to_string());
+    D3dxReloadConfigStatus {
+        path,
+        fields,
+        error,
+    }
+}
+
+fn canonical_reload_status_fields(
+    foreground: Option<String>,
+    interval: Option<String>,
+) -> Vec<D3dxReloadStatusField> {
+    vec![
+        D3dxReloadStatusField {
+            key: FOREGROUND_WINDOW_KEY,
+            expected: HESTIA_WINDOW_TITLE,
+            matches: foreground
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE)),
+            current: foreground,
+        },
+        D3dxReloadStatusField {
+            key: AUTOSAVE_INTERVAL_KEY,
+            expected: HESTIA_AUTOSAVE_INTERVAL,
+            matches: interval
+                .as_deref()
+                .is_some_and(|value| value == HESTIA_AUTOSAVE_INTERVAL),
+            current: interval,
+        },
+    ]
 }
 
 /// The user-owned `[System]` values enabling reload would override, in the order Hestia
@@ -2214,7 +2319,10 @@ fn peel_hestia_section(lines: &mut Vec<String>, start: usize, end: usize) {
         .cloned()
         .collect();
     let mut drain_end = end + 1;
-    if lines.get(drain_end).is_some_and(|line| line.trim().is_empty()) {
+    if lines
+        .get(drain_end)
+        .is_some_and(|line| line.trim().is_empty())
+    {
         drain_end += 1;
     }
     lines.splice(start..drain_end, lifted);
@@ -2343,7 +2451,11 @@ fn normalize_legacy_hestia_artifacts(lines: &mut Vec<String>) {
 }
 
 /// The range `(start, end)` of the first block delimited by `start_marker` / `end_marker`.
-fn find_block_range(lines: &[String], start_marker: &str, end_marker: &str) -> Option<(usize, usize)> {
+fn find_block_range(
+    lines: &[String],
+    start_marker: &str,
+    end_marker: &str,
+) -> Option<(usize, usize)> {
     let start = lines.iter().position(|line| line.trim() == start_marker)?;
     let end = lines[start + 1..]
         .iter()
@@ -2873,8 +2985,8 @@ fn synthetic_keys() -> std::sync::MutexGuard<'static, SyntheticKeyRegistry> {
 #[cfg(windows)]
 fn send_keyboard_input(vk: u16, key_up: bool, label: &str) -> Result<()> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-        SendInput, VIRTUAL_KEY,
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        VIRTUAL_KEY,
     };
 
     let inputs = [INPUT {
@@ -3538,7 +3650,10 @@ mod tests {
         assert!(present.contains("= $\\mods\\bar\\bar.ini\\tail"));
         // Byte-stable for the same input regardless of order.
         let reordered = vec![mirrors[1].clone(), mirrors[0].clone()];
-        assert_eq!(generate_hestia_ini(&mirrors), generate_hestia_ini(&reordered));
+        assert_eq!(
+            generate_hestia_ini(&mirrors),
+            generate_hestia_ini(&reordered)
+        );
     }
 
     #[test]
@@ -3815,8 +3930,7 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
             var_name: "swap".to_string(),
         };
-        let helper_prefix =
-            hestia_helper_namespace_prefix(&importer_root, &mod_root).unwrap();
+        let helper_prefix = hestia_helper_namespace_prefix(&importer_root, &mod_root).unwrap();
         let persist_key = mirror_persist_key(&helper_prefix, &mirror);
         fs::write(
             importer_root.join(USER_INI_FILE),
@@ -4738,9 +4852,7 @@ settings_auto_save_interval = 1\r\n\
 
     fn active_interval_count(text: &str) -> usize {
         text.lines()
-            .filter(|line| {
-                active_kv(line).is_some_and(|(key, _)| is_interval_key(key))
-            })
+            .filter(|line| active_kv(line).is_some_and(|(key, _)| is_interval_key(key)))
             .count()
     }
 
@@ -4748,6 +4860,78 @@ settings_auto_save_interval = 1\r\n\
         text.lines()
             .filter(|line| active_kv(line).is_some_and(|(key, _)| is_foreground_key(key)))
             .count()
+    }
+
+    fn status_pairs(status: &D3dxReloadConfigStatus) -> Vec<(&'static str, Option<String>, bool)> {
+        status
+            .fields
+            .iter()
+            .map(|field| (field.key, field.current.clone(), field.matches))
+            .collect()
+    }
+
+    #[test]
+    fn reload_config_status_reports_healthy_required_values() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("d3dx.ini"),
+            "[System]\r\nadditional_foreground_window = Hestia\r\nsettings_auto_save_interval = 1\r\n",
+        )
+        .unwrap();
+
+        let status = reload_config_status_for_root(temp.path());
+
+        assert!(status.healthy());
+        assert_eq!(
+            status_pairs(&status),
+            vec![
+                (FOREGROUND_WINDOW_KEY, Some("Hestia".to_string()), true),
+                (AUTOSAVE_INTERVAL_KEY, Some("1".to_string()), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn reload_config_status_reports_missing_and_mismatched_values() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("d3dx.ini"),
+            "[System]\r\nadditional_foreground_window = ReShade\r\n",
+        )
+        .unwrap();
+
+        let status = reload_config_status_for_root(temp.path());
+
+        assert!(!status.healthy());
+        assert_eq!(
+            status_pairs(&status),
+            vec![
+                (FOREGROUND_WINDOW_KEY, Some("ReShade".to_string()), false),
+                (AUTOSAVE_INTERVAL_KEY, None, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn reload_config_status_reports_malformed_markers_as_unhealthy() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("d3dx.ini"),
+            "[System]\r\n; --- HESTIA SECTION START ---\r\nadditional_foreground_window = Hestia\r\nsettings_auto_save_interval = 1\r\n",
+        )
+        .unwrap();
+
+        let status = reload_config_status_for_root(temp.path());
+
+        assert!(!status.healthy());
+        assert_eq!(status.error.as_deref(), Some(MALFORMED_MARKERS_NOTICE));
+        assert_eq!(
+            status_pairs(&status),
+            vec![
+                (FOREGROUND_WINDOW_KEY, Some("Hestia".to_string()), true),
+                (AUTOSAVE_INTERVAL_KEY, Some("1".to_string()), true),
+            ]
+        );
     }
 
     // E1: enable on a plain [System] injects the canonical block; re-enabling is a no-op.
@@ -4783,8 +4967,7 @@ settings_auto_save_interval = 1\r\n\
     // E3: a foreign foreground tool and a user interval are both stashed; the block wins.
     #[test]
     fn enable_stashes_foreign_foreground_and_interval() {
-        let original =
-            "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
+        let original = "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
         let (updated, _) = expect_updated(patch_d3dx_ini_text(original, true));
         assert!(updated.contains(&format!(
             "{HESTIA_STASH_MARKER}\r\n; additional_foreground_window = ReShade\r\n"
@@ -4839,8 +5022,7 @@ x = 1\r\n";
     // D1 / C1: enable then disable restores the file byte-for-byte, twice over.
     #[test]
     fn enable_disable_round_trips_and_is_stable() {
-        let original =
-            "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
+        let original = "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
         let (enabled, _) = expect_updated(patch_d3dx_ini_text(original, true));
         let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&enabled, false));
         assert!(notices.is_empty());
@@ -4913,8 +5095,7 @@ x = 1\r\n";
     // D7: a missing END marker is malformed → refuse and touch nothing.
     #[test]
     fn refuses_on_missing_end_marker() {
-        let original =
-            "[System]\r\n; --- HESTIA SECTION START ---\r\nadditional_foreground_window = Hestia\r\n";
+        let original = "[System]\r\n; --- HESTIA SECTION START ---\r\nadditional_foreground_window = Hestia\r\n";
         assert!(matches!(
             patch_d3dx_ini_text(original, false),
             D3dxPatch::Refused { .. }
@@ -4942,9 +5123,8 @@ additional_foreground_window = Hestia\r\n\
     // their now-active line, and note it.
     #[test]
     fn disable_drops_orphan_marker_when_user_uncommented_line() {
-        let original = format!(
-            "[System]\r\n{HESTIA_STASH_MARKER}\r\nsettings_auto_save_interval = 60\r\n"
-        );
+        let original =
+            format!("[System]\r\n{HESTIA_STASH_MARKER}\r\nsettings_auto_save_interval = 60\r\n");
         let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&original, false));
         assert!(!disabled.contains(HESTIA_STASH_MARKER));
         assert!(disabled.contains("settings_auto_save_interval = 60\r\n"));
@@ -4992,8 +5172,7 @@ additional_foreground_window = Hestia\r\n\
     // Both managed keys are reported, foreground first, when the user has set them.
     #[test]
     fn conflict_reports_both_foreground_and_interval() {
-        let text =
-            "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n";
+        let text = "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n";
         assert_eq!(
             conflict_pairs(text),
             vec![

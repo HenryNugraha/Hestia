@@ -649,9 +649,12 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Разрешить Hestia изменять конфигурацию d3dx.ini", // SettingsGeneralOperationalSendReloadHotkey
     "После изменения активных XXMI-модов при запущенной игре Hestia отправит клавишу перезагрузки XXMI, чтобы игра сразу их подхватила. Также позволяет списку горячих клавиш показывать текущее внутриигровое значение каждого мода и изменять его точными шагами, включая изменения, сделанные собственными клавишами мода", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Hestia нужно изменить {code}, чтобы надёжно читать данные кастомизации модов", // SettingsGeneralOperationalD3dxBulletAutosave
-    "Hestia нужно изменить {code}, чтобы запускать перезагрузку XXMI и клавиши модов", // SettingsGeneralOperationalD3dxBulletForeground
+    "Hestia нужно изменить {code}, чтобы запускать перезагрузку XXMI и клавиши модов. Клавиши модов, нажатые в Hestia, сработают в игре", // SettingsGeneralOperationalD3dxBulletForeground
     "Изменение этого потребует ручного перезапуска игры", // SettingsGeneralOperationalD3dxBulletRestart
-    "Клавиши модов, нажатые в Hestia, сработают в игре", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "Поле", // SettingsGeneralOperationalD3dxStatusField
+    "Ожидается", // SettingsGeneralOperationalD3dxStatusExpected
+    "Текущее", // SettingsGeneralOperationalD3dxStatusCurrent
+    "нет", // SettingsGeneralOperationalD3dxStatusMissing
     "Ограниченные возможности при запущенной игре", // SettingsGeneralOperationalPreserveLimited
     "Полностью работает во время игры", // SettingsGeneralOperationalPreserveFull
     "Автоперезагрузка XXMI при:", // SettingsGeneralOperationalReloadHotkeyTrigger

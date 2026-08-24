@@ -649,9 +649,12 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "允许 Hestia 修改 d3dx.ini 配置", // SettingsGeneralOperationalSendReloadHotkey
     "当游戏运行时，Hestia 更改已启用的 XXMI Mod 后会发送 XXMI 重新加载热键，让游戏立即读取。同时让热键列表显示每个 Mod 的实时游戏内数值并精确地更改它，包括你用 Mod 自身按键所做的更改", // SettingsGeneralOperationalSendReloadHotkeyTooltip
     "Hestia 需要修改 {code} 才能可靠地读取 Mod 自定义数据", // SettingsGeneralOperationalD3dxBulletAutosave
-    "Hestia 需要修改 {code} 才能触发 XXMI 重新加载和 Mod 热键", // SettingsGeneralOperationalD3dxBulletForeground
+    "Hestia 需要修改 {code} 才能触发 XXMI 重新加载和 Mod 热键。在 Hestia 上按下 Mod 热键会在游戏内生效", // SettingsGeneralOperationalD3dxBulletForeground
     "更改此项需要手动重启游戏", // SettingsGeneralOperationalD3dxBulletRestart
-    "在 Hestia 上按下 Mod 热键会在游戏内生效", // SettingsGeneralOperationalD3dxBulletHotkeys
+    "字段", // SettingsGeneralOperationalD3dxStatusField
+    "预期", // SettingsGeneralOperationalD3dxStatusExpected
+    "当前", // SettingsGeneralOperationalD3dxStatusCurrent
+    "缺失", // SettingsGeneralOperationalD3dxStatusMissing
     "游戏运行时功能受限", // SettingsGeneralOperationalPreserveLimited
     "游戏过程中完全可用", // SettingsGeneralOperationalPreserveFull
     "自动重新加载 XXMI 的时机：", // SettingsGeneralOperationalReloadHotkeyTrigger
