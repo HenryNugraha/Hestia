@@ -176,6 +176,20 @@ fn xxmi_d3dx_status_table(
     }
 }
 
+/// Fills the `{backend}` slot of the "Active renderer" line in settings.
+///
+/// The GPU rides along inside that argument rather than in a catalog string of
+/// its own, so naming it costs no new translation entry. Worth showing because
+/// Hestia asks wgpu for the low-power adapter: on a hybrid machine the API name
+/// alone does not say whether the UI landed on the iGPU or took the discrete
+/// GPU the game wants. Glow reports no adapter, so it shows the API alone.
+fn active_renderer_display(label: &str, device: Option<&str>) -> String {
+    match device {
+        Some(device) => format!("{label} ({device})"),
+        None => label.to_owned(),
+    }
+}
+
 fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: Color32) {
     let stroke = egui::Stroke::new(1.0, color);
     let dash = 4.0;
@@ -4872,9 +4886,13 @@ impl HestiaApp {
                                 should_save = true;
                             }
                             ui.add_space(-4.0);
+                            let active_renderer = active_renderer_display(
+                                self.active_renderer_label,
+                                self.active_renderer_device.as_deref(),
+                            );
                             static_label(
                                 ui,
-                                RichText::new(text.renderer_active(self.active_renderer_label))
+                                RichText::new(text.renderer_active(&active_renderer))
                                     .color(Color32::from_gray(128))
                                     .italics()
                                     .size(12.0),
@@ -5016,5 +5034,25 @@ impl HestiaApp {
             let game_id = self.selected_game().map(|game| game.definition.id.clone());
             self.queue_update_check_for_linked_mods(game_id.as_deref());
         }
+    }
+}
+
+#[cfg(test)]
+mod renderer_label_tests {
+    use super::active_renderer_display;
+
+    #[test]
+    fn active_renderer_names_the_gpu_alongside_the_api() {
+        assert_eq!(
+            active_renderer_display("DirectX 12", Some("Intel(R) UHD Graphics 770")),
+            "DirectX 12 (Intel(R) UHD Graphics 770)"
+        );
+    }
+
+    #[test]
+    fn active_renderer_falls_back_to_the_api_alone_under_glow() {
+        // eframe exposes no wgpu adapter on the glow backend, so there is no
+        // device name to show and the line must not grow empty parentheses.
+        assert_eq!(active_renderer_display("OpenGL", None), "OpenGL");
     }
 }

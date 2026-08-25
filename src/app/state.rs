@@ -341,7 +341,12 @@ pub struct HestiaApp {
     browse_detail_window_nonce: u64,
     /// API name of the renderer actually in use this session ("DirectX 12",
     /// "Vulkan", "Metal", "OpenGL"), shown in settings next to the preference.
+    /// Compared against the predicted label to decide whether a restart would
+    /// change anything, so this stays the bare API name.
     active_renderer_label: &'static str,
+    /// GPU the UI actually landed on, appended to the label for display only.
+    /// `None` under glow, which never reports an adapter.
+    active_renderer_device: Option<String>,
     /// API name Auto would resolve to on this machine, probed at startup; used
     /// to hide the restart button when a selection changes nothing.
     auto_renderer_label: &'static str,

@@ -368,6 +368,10 @@ impl HestiaApp {
             ),
             None => tracing::info!("renderer device: glow (OpenGL)"),
         }
+        let active_renderer_device = active_adapter
+            .as_ref()
+            .map(|info| info.name.clone())
+            .filter(|name| !name.trim().is_empty());
         let active_renderer_label = match active_adapter.map(|info| info.backend) {
             Some(eframe::wgpu::Backend::Dx12) => "DirectX 12",
             Some(eframe::wgpu::Backend::Vulkan) => "Vulkan",
@@ -405,6 +409,7 @@ impl HestiaApp {
             mod_detail_window_nonce: 0,
             browse_detail_window_nonce: 0,
             active_renderer_label,
+            active_renderer_device,
             auto_renderer_label,
             boot_renderer_pref,
             renderer_boot_unconfirmed,
