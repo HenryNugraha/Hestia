@@ -2763,13 +2763,19 @@ impl HestiaApp {
         let mut replace = false;
         let mut cancel = false;
         let mut open = true;
+        let prompt_game_running = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == prompt.game_id)
+            .is_some_and(|game| self.game_process_running(game));
         let constrain_rect = self
             .last_right_pane_rect
             .unwrap_or_else(|| ctx.viewport_rect());
         let warn_color = Color32::from_rgb(214, 96, 34);
         egui::Window::new(icon_text_sized(
-            Icon::AlertTriangle,
-            text.d3dx_conflict_title(),
+            Icon::FileCog,
+            &text.d3dx_conflict_title(&prompt.game_name),
             14.0,
             14.0,
         ))
@@ -2799,7 +2805,7 @@ impl HestiaApp {
                     ui.set_width(420.0);
                     static_label(
                         ui,
-                        RichText::new(format!("{} - {}", prompt.game_name, prompt.path.display()))
+                        RichText::new(prompt.path.display().to_string())
                             .size(13.0)
                             .color(Color32::from_rgb(170, 175, 183)),
                     );
@@ -2842,6 +2848,27 @@ impl HestiaApp {
                             .clicked()
                         {
                             replace = true;
+                        }
+                        if prompt_game_running {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(190.0, 34.0),
+                                egui::Layout::top_down(egui::Align::Max),
+                                |ui| {
+                                    ui.add_space(2.0);
+                                    ui.add_sized(
+                                        [186.0, 0.0],
+                                        egui::Label::new(
+                                            RichText::new(text.d3dx_conflict_running_restart())
+                                                .size(12.0)
+                                                .italics()
+                                                .color(Color32::from_rgb(224, 185, 122)),
+                                        )
+                                        .halign(egui::Align::Max)
+                                        .selectable(false),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::Default);
+                                },
+                            );
                         }
                     });
                 });

@@ -681,6 +681,7 @@ enum TextKey {
     SettingsGeneralOperationalD3dxConflictExisting,
     SettingsGeneralOperationalD3dxConflictReplaceDetails,
     SettingsGeneralOperationalD3dxConflictNoOtherConfig,
+    SettingsGeneralOperationalD3dxConflictRunningRestart,
 
     SettingsGeneralTasksSection,
     SettingsGeneralTasksLayout,
@@ -3517,8 +3518,9 @@ impl TextCatalog {
         }
     }
 
-    fn d3dx_conflict_title(self) -> &'static str {
+    fn d3dx_conflict_title(self, game: &str) -> String {
         self.get(TextKey::SettingsGeneralOperationalD3dxConflictTitle)
+            .replace("{game}", game)
     }
 
     fn d3dx_conflict_intro(self) -> &'static str {
@@ -3541,6 +3543,10 @@ impl TextCatalog {
 
     fn d3dx_conflict_no_other_config(self) -> &'static str {
         self.get(TextKey::SettingsGeneralOperationalD3dxConflictNoOtherConfig)
+    }
+
+    fn d3dx_conflict_running_restart(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralOperationalD3dxConflictRunningRestart)
     }
 
     fn delete_behavior(self, behavior: DeleteBehavior) -> &'static str {

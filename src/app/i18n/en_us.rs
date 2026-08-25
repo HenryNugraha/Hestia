@@ -679,11 +679,12 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Restoring mods", // SettingsGeneralOperationalReloadTriggerRestoringMods
     "Customizing mods", // SettingsGeneralOperationalReloadTriggerCustomizingMods
     "Profile switch", // SettingsGeneralOperationalReloadTriggerProfileSwitch
-    "Modify d3dx.ini?", // SettingsGeneralOperationalD3dxConflictTitle
+    "Modify d3dx.ini for {game}?", // SettingsGeneralOperationalD3dxConflictTitle
     "To reload mods and read their customization while the game runs, Hestia adds two lines under [System]:\n\t➔ additional_foreground_window = Hestia\n\t➔ settings_auto_save_interval = 1", // SettingsGeneralOperationalD3dxConflictIntro
     "Your d3dx.ini already sets:", // SettingsGeneralOperationalD3dxConflictExisting
-    "Replace it? Hestia comments out any conflicting value (kept but inactive) and keeps its own settings in a marked block below [System]. Turning the option off restores your originals.", // SettingsGeneralOperationalD3dxConflictReplaceDetails
+    "Replace it? Hestia comments out any conflicting value (kept but inactive) and keeps its own settings in a marked block below [System].", // SettingsGeneralOperationalD3dxConflictReplaceDetails
     "Nothing else in d3dx.ini is changed. A backup is saved before every edit.", // SettingsGeneralOperationalD3dxConflictNoOtherConfig
+    "Game is running. After Replace,\nrestart it manually to take effect.", // SettingsGeneralOperationalD3dxConflictRunningRestart
 
     // Window: Settings > General > Tasks
     "Tasks", // SettingsGeneralTasksSection

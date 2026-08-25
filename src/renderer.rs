@@ -513,7 +513,7 @@ pub fn display_pci_for_window(window_pos: Option<(i32, i32)>) -> Option<(u32, u3
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
     use windows::Win32::Graphics::Gdi::{
-        MonitorFromPoint, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
+        HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint,
     };
 
     unsafe {
@@ -610,7 +610,10 @@ mod tests {
             // it deliberately behaves like Auto (no preferred rung).
             if pref.valid_on_current_platform() {
                 assert_eq!(preferred_rung(pref), Some(rung));
-                assert_ne!(rung.id, DX12.id, "per-GPU rungs need distinct breadcrumb ids");
+                assert_ne!(
+                    rung.id, DX12.id,
+                    "per-GPU rungs need distinct breadcrumb ids"
+                );
             }
         }
     }
@@ -632,7 +635,12 @@ mod tests {
 
     #[test]
     fn dedicated_falls_back_when_no_discrete_gpu_present() {
-        let infos = [info(wgpu::DeviceType::IntegratedGpu, 0x8086, 0x4680, "iGPU")];
+        let infos = [info(
+            wgpu::DeviceType::IntegratedGpu,
+            0x8086,
+            0x4680,
+            "iGPU",
+        )];
         // No discrete adapter: fall back to the one hardware adapter rather than
         // failing to boot.
         assert_eq!(
