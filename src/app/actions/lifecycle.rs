@@ -132,6 +132,7 @@ impl HestiaApp {
         runtime_services: RuntimeServices,
         startup_path_scan_due: bool,
         auto_renderer_label: &'static str,
+        renderer_boot_unconfirmed: bool,
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
@@ -351,11 +352,23 @@ impl HestiaApp {
         let applied_custom_proxy = runtime_services.custom_proxy();
         let proxy_url_draft = state.static_prefs.custom_proxy_url.clone();
         // `wgpu_render_state` is None exactly when eframe runs the glow backend.
-        let active_renderer_label = match cc
+        let active_adapter = cc
             .wgpu_render_state
             .as_ref()
-            .map(|render_state| render_state.adapter.get_info().backend)
-        {
+            .map(|render_state| render_state.adapter.get_info());
+        match &active_adapter {
+            // Named in the log because the GPU the UI landed on matters as much
+            // as the API: Hestia asks for the low-power adapter so it leaves the
+            // discrete GPU to whatever game is running.
+            Some(info) => tracing::info!(
+                "renderer device: {} ({:?}, {:?})",
+                info.name,
+                info.backend,
+                info.device_type
+            ),
+            None => tracing::info!("renderer device: glow (OpenGL)"),
+        }
+        let active_renderer_label = match active_adapter.map(|info| info.backend) {
             Some(eframe::wgpu::Backend::Dx12) => "DirectX 12",
             Some(eframe::wgpu::Backend::Vulkan) => "Vulkan",
             Some(eframe::wgpu::Backend::Metal) => "Metal",
@@ -394,6 +407,7 @@ impl HestiaApp {
             active_renderer_label,
             auto_renderer_label,
             boot_renderer_pref,
+            renderer_boot_unconfirmed,
             proxy_url_draft,
             proxy_url_validation_error: None,
             applied_custom_proxy,
@@ -668,6 +682,19 @@ impl HestiaApp {
             app.request_startup_custom_proxy_check();
         }
         app
+    }
+
+    /// Clears the renderer boot breadcrumb once this renderer has actually put
+    /// frames on screen. Until then the breadcrumb stays, so a driver that
+    /// enumerates fine and then dies during device creation or the first
+    /// presents demotes itself on the next launch instead of leaving the app
+    /// unstartable.
+    fn confirm_renderer_boot(&mut self, ctx: &egui::Context) {
+        if !self.renderer_boot_unconfirmed || !crate::renderer::boot_confirmed(ctx) {
+            return;
+        }
+        self.renderer_boot_unconfirmed = false;
+        crate::renderer::confirm_boot(&self.portable);
     }
 
     fn complete_startup_launch(&mut self, ctx: &egui::Context) {

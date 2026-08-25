@@ -161,6 +161,9 @@ impl HestiaApp {
         status: &xxmi_persist::D3dxReloadConfigStatus,
         token: Option<(std::time::SystemTime, u64)>,
     ) {
+        const UNHEALTHY_CONFIRMATIONS: u8 = 2;
+        const ERROR_CONFIRMATIONS: u8 = 3;
+
         if !game.apply_mod_changes_in_game {
             return;
         }
@@ -172,6 +175,11 @@ impl HestiaApp {
             {
                 self.pending_d3dx_foreground_conflict = None;
             }
+            if let Some(watch) = self.d3dx_reload_config_watch.as_mut()
+                && watch.game_id == game.definition.id
+            {
+                watch.pending_unhealthy = None;
+            }
             return;
         }
 
@@ -179,6 +187,19 @@ impl HestiaApp {
         if fields.is_empty() {
             fields.push(("d3dx.ini".to_string(), "unhealthy".to_string()));
         }
+        let mut candidate = D3dxReloadPromptCandidate {
+            token: D3dxReloadPromptToken { token },
+            fingerprint: D3dxReloadPromptFingerprint {
+                error: status.error.clone(),
+                fields: fields.clone(),
+            },
+            confirmations: 1,
+        };
+        let required_confirmations = if status.error.is_some() {
+            ERROR_CONFIRMATIONS
+        } else {
+            UNHEALTHY_CONFIRMATIONS
+        };
         if self
             .pending_d3dx_foreground_conflict
             .as_ref()
@@ -190,16 +211,48 @@ impl HestiaApp {
                 path: status.path.clone(),
                 fields,
             });
+            if let Some(watch) = self.d3dx_reload_config_watch.as_mut()
+                && watch.game_id == game.definition.id
+            {
+                watch.pending_unhealthy = None;
+                candidate.confirmations = required_confirmations;
+                watch.prompted_unhealthy = Some(candidate);
+            }
             return;
         }
 
-        let prompt_token = D3dxReloadPromptToken { token };
         if self
             .d3dx_reload_config_watch
             .as_ref()
-            .and_then(|watch| watch.prompted_unhealthy_token.as_ref())
-            .is_some_and(|prompted| prompted == &prompt_token)
+            .and_then(|watch| watch.prompted_unhealthy.as_ref())
+            .is_some_and(|prompted| {
+                prompted.token == candidate.token && prompted.fingerprint == candidate.fingerprint
+            })
         {
+            return;
+        }
+
+        let confirmed = if let Some(watch) = self.d3dx_reload_config_watch.as_mut()
+            && watch.game_id == game.definition.id
+        {
+            if let Some(pending) = watch.pending_unhealthy.as_mut() {
+                if pending.token == candidate.token && pending.fingerprint == candidate.fingerprint
+                {
+                    pending.confirmations = pending.confirmations.saturating_add(1);
+                    candidate.confirmations = pending.confirmations;
+                    pending.confirmations >= required_confirmations
+                } else {
+                    watch.pending_unhealthy = Some(candidate.clone());
+                    false
+                }
+            } else {
+                watch.pending_unhealthy = Some(candidate.clone());
+                false
+            }
+        } else {
+            false
+        };
+        if !confirmed {
             return;
         }
 
@@ -212,7 +265,8 @@ impl HestiaApp {
         if let Some(watch) = self.d3dx_reload_config_watch.as_mut()
             && watch.game_id == game.definition.id
         {
-            watch.prompted_unhealthy_token = Some(prompt_token);
+            watch.pending_unhealthy = None;
+            watch.prompted_unhealthy = Some(candidate);
         }
     }
 
@@ -255,7 +309,8 @@ impl HestiaApp {
                 game_id: game.definition.id.clone(),
                 token: xxmi_persist::d3dx_ini_change_token(&importer_root),
                 next_poll_at: now,
-                prompted_unhealthy_token: None,
+                pending_unhealthy: None,
+                prompted_unhealthy: None,
             });
         }
         if self
@@ -275,17 +330,34 @@ impl HestiaApp {
             .d3dx_reload_config_watch
             .as_ref()
             .is_some_and(|watch| watch.token != token);
+        let prompt_sync_needs_fresh_read = self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_some_and(|watch| {
+                watch.game_id == game.definition.id && watch.pending_unhealthy.is_some()
+            })
+            || self
+                .pending_d3dx_foreground_conflict
+                .as_ref()
+                .is_some_and(|prompt| prompt.game_id == game.definition.id);
         if let Some(watch) = self.d3dx_reload_config_watch.as_mut() {
             if watch.token != token {
-                watch.prompted_unhealthy_token = None;
+                watch.pending_unhealthy = None;
+                watch.prompted_unhealthy = None;
             }
             watch.token = token;
             watch.next_poll_at = now + poll_interval;
         }
-        if changed || cache_missing {
-            if let Some(status) = self.refresh_d3dx_reload_status_for_game(&game) {
-                self.sync_d3dx_reload_status_prompt(&game, &status, token);
-            }
+        let status = if changed || cache_missing || prompt_sync_needs_fresh_read {
+            self.refresh_d3dx_reload_status_for_game(&game)
+        } else {
+            self.d3dx_reload_status_cache
+                .as_ref()
+                .filter(|cache| cache.game_id == game.definition.id)
+                .map(|cache| cache.status.clone())
+        };
+        if let Some(status) = status {
+            self.sync_d3dx_reload_status_prompt(&game, &status, token);
         }
     }
 

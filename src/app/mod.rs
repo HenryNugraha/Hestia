@@ -138,6 +138,7 @@ impl eframe::App for HestiaApp {
             self.consume_profile_events();
         }
         self.complete_startup_launch(ctx);
+        self.confirm_renderer_boot(ctx);
 
         // Always run these - they have internal checks or are always needed
         profiling::scope!("logic::frame_upkeep");

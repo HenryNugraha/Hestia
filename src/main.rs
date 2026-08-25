@@ -8,6 +8,7 @@ mod model;
 mod persistence;
 #[cfg(feature = "profile")]
 mod profiler;
+mod renderer;
 
 use anyhow::Context;
 use eframe::icon_data;
@@ -126,15 +127,24 @@ fn main() -> anyhow::Result<()> {
             viewport = viewport.with_inner_size(vec2(w, h));
         }
     }
-    let (renderer, wgpu_backends, auto_renderer_label) =
-        select_renderer(state.static_prefs.renderer);
+    let renderer_selection = renderer::select(&portable, state.static_prefs.renderer);
+    let auto_renderer_label = renderer_selection.auto_label;
+    let renderer_boot_unconfirmed = renderer_selection.breadcrumb_pending;
     // eframe injects the display handle at instance creation time.
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
-    wgpu_setup.instance_descriptor.backends = wgpu_backends;
+    wgpu_setup.instance_descriptor.backends = renderer_selection.backends;
+    // eframe defaults to `HighPerformance`, which puts a 2D UI on the discrete
+    // GPU. Hestia is meant to sit open next to a running game, so it should
+    // take neither that GPU's cycles nor its VRAM; on the usual hybrid-laptop
+    // wiring (display driven by the iGPU) rendering on the dGPU also costs a
+    // cross-adapter copy every present. `compatible_surface` filtering still
+    // keeps this correct when the display hangs off the discrete GPU.
+    wgpu_setup.power_preference = eframe::wgpu::PowerPreference::from_env()
+        .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
     let options = eframe::NativeOptions {
         viewport,
         persist_window: false,
-        renderer,
+        renderer: renderer_selection.renderer,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(wgpu_setup),
             ..Default::default()
@@ -154,109 +164,11 @@ fn main() -> anyhow::Result<()> {
                 runtime_services,
                 startup_path_scan_due,
                 auto_renderer_label,
+                renderer_boot_unconfirmed,
             )))
         }),
     )
     .map_err(|err| anyhow::anyhow!(err.to_string()))
-}
-
-/// Renderer and wgpu backend selection. Priority: `HESTIA_RENDERER` /
-/// `WGPU_BACKEND` env overrides, then the user's settings preference, then
-/// Auto.
-///
-/// wgpu is preferred over glow because eframe's glow backend rebinds the GL
-/// context twice per frame, and on Windows `wglMakeCurrent` flushes the
-/// pipeline — ~5 ms of CPU per repaint, most of the frame cost whenever the
-/// cursor moves over the window (egui #4173). Auto forces DX12 on Windows:
-/// wgpu otherwise tends to pick Vulkan, whose swapchain bypasses DWM
-/// flip-model presentation and costs ~4x the GPU time per present (measured
-/// 11% vs 3% GPU while repainting maximized at 2560x1440).
-///
-/// An explicit preference whose backend has no hardware adapter falls back to
-/// Auto so the app still starts. Auto itself falls back to glow when wgpu has
-/// no hardware adapter at all (pre-DX12 boxes, GPU-less VMs): wgpu's software
-/// rasterizer would be slower there than glow on real hardware GL.
-fn select_renderer(
-    pref: model::RendererPreference,
-) -> (eframe::Renderer, eframe::wgpu::Backends, &'static str) {
-    use eframe::wgpu;
-    use model::RendererPreference;
-
-    let env_backends = wgpu::Backends::from_env();
-    let auto_backends = env_backends.unwrap_or(if cfg!(windows) {
-        wgpu::Backends::DX12
-    } else {
-        wgpu::Backends::PRIMARY | wgpu::Backends::GL
-    });
-
-    let instance = wgpu::Instance::default();
-    let find_hardware_adapter = |backends: wgpu::Backends| {
-        pollster::block_on(instance.enumerate_adapters(backends))
-            .into_iter()
-            .find(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
-    };
-    // What Auto would run on this machine. Probed even when the preference is
-    // explicit: settings compares it against the active renderer so the restart
-    // button only appears for a selection that would actually change something.
-    let auto_adapter = find_hardware_adapter(auto_backends);
-    let auto_label = match auto_adapter
-        .as_ref()
-        .map(|adapter| adapter.get_info().backend)
-    {
-        Some(wgpu::Backend::Dx12) => "DirectX 12",
-        Some(wgpu::Backend::Vulkan) => "Vulkan",
-        Some(wgpu::Backend::Metal) => "Metal",
-        Some(wgpu::Backend::Gl) => "OpenGL (wgpu)",
-        Some(_) => "wgpu",
-        None => "OpenGL",
-    };
-
-    match std::env::var("HESTIA_RENDERER").as_deref() {
-        Ok("glow") => return (eframe::Renderer::Glow, auto_backends, auto_label),
-        Ok("wgpu") => return (eframe::Renderer::Wgpu, auto_backends, auto_label),
-        _ => {}
-    }
-
-    let pref = if pref.valid_on_current_platform() {
-        pref
-    } else {
-        RendererPreference::Auto
-    };
-    if pref == RendererPreference::OpenGl {
-        return (eframe::Renderer::Glow, auto_backends, auto_label);
-    }
-    let requested_backends = if env_backends.is_some() {
-        auto_backends
-    } else {
-        match pref {
-            RendererPreference::Dx12 => wgpu::Backends::DX12,
-            RendererPreference::Vulkan => wgpu::Backends::VULKAN,
-            RendererPreference::Metal => wgpu::Backends::METAL,
-            _ => auto_backends,
-        }
-    };
-
-    // Try the requested backend first, then Auto's choice; reuse the Auto probe
-    // when they are the same set.
-    let candidates = if requested_backends == auto_backends {
-        vec![(auto_backends, auto_adapter)]
-    } else {
-        let requested_adapter = find_hardware_adapter(requested_backends);
-        vec![
-            (requested_backends, requested_adapter),
-            (auto_backends, auto_adapter),
-        ]
-    };
-    for (backends, adapter) in candidates {
-        if let Some(adapter) = adapter {
-            let info = adapter.get_info();
-            tracing::info!("using wgpu renderer: {} via {:?}", info.name, info.backend);
-            return (eframe::Renderer::Wgpu, backends, auto_label);
-        }
-        tracing::warn!("no hardware wgpu adapter for {backends:?}");
-    }
-    tracing::warn!("no hardware wgpu adapter found; falling back to glow renderer");
-    (eframe::Renderer::Glow, auto_backends, auto_label)
 }
 
 #[cfg(windows)]

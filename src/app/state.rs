@@ -64,11 +64,25 @@ struct D3dxReloadPromptToken {
     token: Option<(SystemTime, u64)>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct D3dxReloadPromptFingerprint {
+    error: Option<String>,
+    fields: Vec<(String, String)>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct D3dxReloadPromptCandidate {
+    token: D3dxReloadPromptToken,
+    fingerprint: D3dxReloadPromptFingerprint,
+    confirmations: u8,
+}
+
 struct D3dxReloadConfigWatch {
     game_id: String,
     token: Option<(SystemTime, u64)>,
     next_poll_at: f64,
-    prompted_unhealthy_token: Option<D3dxReloadPromptToken>,
+    pending_unhealthy: Option<D3dxReloadPromptCandidate>,
+    prompted_unhealthy: Option<D3dxReloadPromptCandidate>,
 }
 
 #[derive(Clone)]
@@ -334,6 +348,10 @@ pub struct HestiaApp {
     /// Renderer preference the app booted with; a differing current preference
     /// offers a restart button in settings.
     boot_renderer_pref: RendererPreference,
+    /// A renderer boot breadcrumb is on disk waiting to be cleared. Stays true
+    /// until enough passes have run to call this renderer working; if the
+    /// process dies first, the next launch demotes to the next rung.
+    renderer_boot_unconfirmed: bool,
     proxy_url_draft: String,
     proxy_url_validation_error: Option<String>,
     applied_custom_proxy: Option<CustomProxyConfig>,
