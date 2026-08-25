@@ -1,12 +1,27 @@
 # Changelog
 
-## [1.9.1] - 2026-08-xx
+## [1.9.1] - 2026-08-25
 
 ### Added
+- Added support for marking a mod as modified or not modified.
+- Added support for marking a mod as NSFW or not NSFW or auto.
+- Added hotkey CTRL+D hotkey to open the character filter menu.
+- Added a filter bar for easier searching of character in the character filter menu.
 
 ### Changed
+- Improved various area of interface.
+- Improved dragging mods to allow scrolling and auto-scroll at edge of area.
+- Improved error handling in mods operations.
+- Improved external mod intallation to automatically include images it has inside.
+- Improved external mod intallation to automatically assigned to the currently open category folder.
+- Overhauled interface related to sorting and filtering mods.
+- Overhauled some windows to persist their size if resized and added a reset size button.
+- Refactored the d3dx.ini file monitoring processes along with the relevant menu.
+- Refactored the renderer API setting to better detect between iGPU and dGPU.
 
 ### Fixed
+- Fixed potential bugs where Hestia spam F10 into the game.
+- Fixed render-loop performance leak related to profile operations.
 
 ## [1.9.0] - 2026-08-20
 
@@ -14,7 +29,7 @@
 - Added a new metadata section that lists mod hotkeys.
 - Added support for modifying mod in-game settings directly in Hestia.
 - Added support for preserving mod in-game settings when disabling/enabling mods and changing profiles.
-- Added Ctrl+Shift+Tab as a counterpart to Ctrl+Tab.
+- Added hotkey CTRL+SHIFT+TAB as a counterpart to CTRL+TAB.
 
 ### Changed
 - Reworked the mod description and metadata dropdown.

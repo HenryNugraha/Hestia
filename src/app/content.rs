@@ -4,10 +4,10 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "20 August 2026",
-    "20 Agustus 2026",
-    "2026年 8月 20日",
-    "20 августа 2026",
+    "25 August 2026",
+    "25 Agustus 2026",
+    "2026年 8月 25日",
+    "25 августа 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
@@ -77,6 +77,12 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
         "Beberapa peningkatan pada tampilan dan menu",
         "多项视觉和界面改进",
         "Разные улучшения внешнего вида и интерфейса",
+    ),
+    l10n(
+        "A few bug fixes and performance optimizations",
+        "Beberapa perbaikan bug dan optimasi kinerja",
+        "一些错误修复和性能优化",
+        "Несколько исправлений ошибок и оптимизаций производительности",
     ),
 ];
 
