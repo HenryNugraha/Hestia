@@ -403,6 +403,10 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Memperlakukan file mod ini saat ini sebagai tidak dimodifikasi. Acuan pemasangan asli tetap disimpan, dan mengedit file setelah titik ini akan kembali ditandai sebagai dimodifikasi. Pembaruan akan menimpa perubahan ini.", // LibraryMarkAsNotModifiedTooltip
     "Pulihkan status modifikasi", // LibraryRestoreModificationStatus
     "Mengembalikan status Dimodifikasi dengan membandingkan kembali file mod ini terhadap acuan pemasangan asli", // LibraryRestoreModificationStatusTooltip
+    "Tandai sebagai NSFW", // LibraryMarkAsNsfw
+    "Otomatis", // LibraryNsfwAuto
+    "Ya", // LibraryNsfwYes
+    "Tidak", // LibraryNsfwNo
     "Dimodifikasi", // LibraryModified
     "\n(Dimodifikasi)", // LibraryModifiedSuffix
     "…dan {count} lainnya", // LibraryAndMore

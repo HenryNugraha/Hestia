@@ -1291,6 +1291,10 @@ pub struct ModEntry {
     #[serde(default)]
     pub unsafe_content: bool,
     #[serde(default)]
+    pub unsafe_content_auto: bool,
+    #[serde(default)]
+    pub unsafe_content_preference: UnsafeContentPreference,
+    #[serde(default)]
     pub source: Option<ModSourceData>,
     #[serde(default)]
     pub update_state: ModUpdateState,
@@ -1304,6 +1308,10 @@ pub struct PortableModState {
     pub source: Option<ModSourceData>,
     #[serde(default)]
     pub unsafe_content: bool,
+    #[serde(default)]
+    pub unsafe_content_auto: Option<bool>,
+    #[serde(default)]
+    pub unsafe_content_preference: UnsafeContentPreference,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -1321,6 +1329,24 @@ pub enum ModUpdateState {
     ModifiedLocally,
     IgnoringUpdateOnce,
     IgnoringUpdateAlways,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum UnsafeContentPreference {
+    #[default]
+    Auto,
+    Yes,
+    No,
+}
+
+impl UnsafeContentPreference {
+    pub fn resolve(self, auto: bool) -> bool {
+        match self {
+            Self::Auto => auto,
+            Self::Yes => true,
+            Self::No => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

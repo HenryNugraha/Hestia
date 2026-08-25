@@ -403,6 +403,10 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Treats this mod's current files as unmodified. The original install baseline is kept, and editing files after this point will show as modified again. Updates will install over these changes.", // LibraryMarkAsNotModifiedTooltip
     "Restore modification status", // LibraryRestoreModificationStatus
     "Brings back the Modified status by comparing this mod's files against the original install baseline again", // LibraryRestoreModificationStatusTooltip
+    "Mark as NSFW", // LibraryMarkAsNsfw
+    "Auto", // LibraryNsfwAuto
+    "Yes", // LibraryNsfwYes
+    "No", // LibraryNsfwNo
     "Modified", // LibraryModified
     "\n(Modified)", // LibraryModifiedSuffix
     "…and {count} more", // LibraryAndMore

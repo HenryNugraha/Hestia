@@ -3517,6 +3517,106 @@ impl HestiaApp {
             .on_hover_text(tooltip)
     }
 
+    fn nsfw_preference_label(text: TextCatalog, preference: UnsafeContentPreference) -> &'static str {
+        match preference {
+            UnsafeContentPreference::Auto => text.nsfw_auto(),
+            UnsafeContentPreference::Yes => text.nsfw_yes(),
+            UnsafeContentPreference::No => text.nsfw_no(),
+        }
+    }
+
+    fn nsfw_preference_button(
+        ui: &mut Ui,
+        text: TextCatalog,
+        current: UnsafeContentPreference,
+        preference: UnsafeContentPreference,
+    ) -> egui::Response {
+        const ROW_WIDTH: f32 = 84.0;
+        const ROW_HEIGHT: f32 = 22.0;
+        const CHECK_WIDTH: f32 = 18.0;
+        const LABEL_PAD_X: f32 = 4.0;
+
+        let selected = current == preference;
+        let sense = if selected {
+            Sense::hover()
+        } else {
+            Sense::click()
+        };
+        let response = ui.allocate_response(Vec2::new(ROW_WIDTH, ROW_HEIGHT), sense);
+        if !selected {
+            Self::paint_category_popup_hover(ui, &response);
+        }
+
+        if selected {
+            ui.painter().text(
+                egui::pos2(response.rect.min.x + CHECK_WIDTH * 0.5, response.rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                icon_char(Icon::Check).to_string(),
+                egui::FontId::new(12.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                Color32::from_rgb(110, 194, 132),
+            );
+        }
+
+        ui.painter().text(
+            egui::pos2(
+                response.rect.min.x + CHECK_WIDTH + LABEL_PAD_X,
+                response.rect.center().y,
+            ),
+            egui::Align2::LEFT_CENTER,
+            Self::nsfw_preference_label(text, preference),
+            egui::FontId::new(12.0, FontFamily::Proportional),
+            if selected {
+                Color32::from_gray(130)
+            } else {
+                ui.visuals().text_color()
+            },
+        );
+
+        if selected {
+            response
+        } else {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        }
+    }
+
+    fn set_mod_unsafe_content_preference(
+        &mut self,
+        mod_id: &str,
+        preference: UnsafeContentPreference,
+    ) {
+        let backend = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_id)
+            .and_then(|mod_entry| {
+                self.state
+                    .games
+                    .iter()
+                    .find(|game| game.definition.id == mod_entry.game_id)
+                    .map(|game| game.definition.backend)
+            })
+            .unwrap_or_default();
+
+        let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
+            return;
+        };
+        if mod_entry.unsafe_content_preference == preference {
+            return;
+        }
+        mod_entry.unsafe_content_preference = preference;
+        mod_entry.unsafe_content = preference.resolve(mod_entry.unsafe_content_auto);
+        match backend {
+            GameBackend::Xxmi => {
+                let _ = xxmi::save_mod_metadata(mod_entry);
+            }
+            GameBackend::UnrealEngine => {
+                let _ = unrealengine::write_portable_metadata(mod_entry);
+            }
+        }
+        self.save_state();
+    }
+
     fn mod_supports_update_preferences(mod_entry: &ModEntry) -> bool {
         mod_entry
             .source
@@ -8912,8 +9012,41 @@ impl HestiaApp {
                         let _ = open_in_explorer(&selected.root_path);
                         ui.close();
                     }
+                    if self.state.static_prefs.unsafe_content_mode != UnsafeContentMode::Show {
+                        ui.menu_button(
+                            icon_text_sized(Icon::ShieldAlert, text.mark_as_nsfw(), 13.0, 13.0),
+                            |ui| {
+                                ui.set_min_width(96.0);
+                                for preference in [
+                                    UnsafeContentPreference::Auto,
+                                    UnsafeContentPreference::Yes,
+                                    UnsafeContentPreference::No,
+                                ] {
+                                    if Self::nsfw_preference_button(
+                                        ui,
+                                        text,
+                                        selected.unsafe_content_preference,
+                                        preference,
+                                    )
+                                    .clicked()
+                                    {
+                                        self.set_mod_unsafe_content_preference(
+                                            &selected.id,
+                                            preference,
+                                        );
+                                        ui.close();
+                                    }
+                                }
+                            },
+                        )
+                        .response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    }
                     if let Some(mark_as_not_modified) =
-                        Self::local_changes_action_for_mod(&selected)
+                        Self::local_changes_action_for_mod(&selected).filter(|mark| {
+                            !*mark
+                                || matches!(selected.update_state, ModUpdateState::ModifiedLocally)
+                        })
                     {
                         if Self::local_changes_action_button(ui, text, 13.0, mark_as_not_modified)
                             .clicked()
@@ -9682,10 +9815,20 @@ impl HestiaApp {
                                         }
                                     });
                                     // Local-changes action lives here (it is about the
-                                    // on-disk files, not the GameBanana link): "Mark as
-                                    // not modified" while Modified, "Restore modification
-                                    // status" while a mark is in effect.
-                                    if let Some(mark_as_not_modified) = Self::local_changes_action_for_mod(&selected) {
+                                    // on-disk files, not the GameBanana link). In this
+                                    // visible LOCAL section, only offer "Mark as not
+                                    // modified" while the mod currently reads Modified;
+                                    // keep "Restore modification status" while a mark is
+                                    // in effect.
+                                    if let Some(mark_as_not_modified) =
+                                        Self::local_changes_action_for_mod(&selected).filter(|mark| {
+                                            !*mark
+                                                || matches!(
+                                                    selected.update_state,
+                                                    ModUpdateState::ModifiedLocally
+                                                )
+                                        })
+                                    {
                                         ui.add_space(4.0);
                                         ui.horizontal_centered(|ui| {
                                             if Self::local_changes_action_button(ui, text, 12.0,mark_as_not_modified).clicked() {
@@ -10039,7 +10182,7 @@ impl HestiaApp {
                 let scroll_id_salt = egui::Id::new("my_mod_detail_scroll");
                 let scroll_rect = ui.available_rect_before_wrap();
                 let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
-                ScrollArea::vertical().id_salt(scroll_id_salt).show(ui, |ui| {
+                let detail_scroll_output = ScrollArea::vertical().id_salt(scroll_id_salt).show(ui, |ui| {
                     apply_vertical_scroll_navigation(ui, scroll_navigation, false);
                     ui.add_space(4.0);
                     let screenshot_paths = selected.metadata.user.screenshots.clone();
@@ -11118,6 +11261,16 @@ impl HestiaApp {
                     }
                     apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
+                let clicked_detail_scroll = ui.input(|i| {
+                    i.pointer.any_click()
+                        && i
+                            .pointer
+                            .interact_pos()
+                            .is_some_and(|pos| detail_scroll_output.inner_rect.contains(pos))
+                });
+                if self.my_mod_source_expanded && clicked_detail_scroll {
+                    self.my_mod_source_expanded = false;
+                }
 
                 // Paint the LOCAL/SOURCE handle (divider line + chevron tab) AFTER the scroll area
                 // so it sits on top: the tab's top edge meets the line (the section's top edge) and

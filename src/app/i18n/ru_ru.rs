@@ -403,6 +403,10 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Считает текущие файлы мода неизменёнными. Исходная база установки сохраняется, а правки файлов после этого момента снова будут отмечены как изменения. Обновления будут установлены поверх этих изменений.", // LibraryMarkAsNotModifiedTooltip
     "Вернуть статус изменения", // LibraryRestoreModificationStatus
     "Возвращает статус «Изменён», снова сравнивая файлы мода с исходной базой установки", // LibraryRestoreModificationStatusTooltip
+    "Пометить как NSFW", // LibraryMarkAsNsfw
+    "Авто", // LibraryNsfwAuto
+    "Да", // LibraryNsfwYes
+    "Нет", // LibraryNsfwNo
     "Изменён", // LibraryModified
     "\n(Изменён)", // LibraryModifiedSuffix
     "…и ещё {count}", // LibraryAndMore

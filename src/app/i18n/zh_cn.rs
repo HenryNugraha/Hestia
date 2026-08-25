@@ -403,6 +403,10 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "将此 Mod 当前的文件视为未修改。原始安装基准会保留，此后再编辑文件会重新显示为已修改。更新会直接覆盖这些修改。", // LibraryMarkAsNotModifiedTooltip
     "恢复修改状态", // LibraryRestoreModificationStatus
     "重新将此 Mod 的文件与原始安装基准比较，恢复“已修改”状态", // LibraryRestoreModificationStatusTooltip
+    "标记为 NSFW", // LibraryMarkAsNsfw
+    "自动", // LibraryNsfwAuto
+    "是", // LibraryNsfwYes
+    "否", // LibraryNsfwNo
     "已修改", // LibraryModified
     "\n(已修改)", // LibraryModifiedSuffix
     "…以及另外 {count} 个", // LibraryAndMore

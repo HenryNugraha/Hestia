@@ -1274,9 +1274,12 @@ impl HestiaApp {
                             err.as_deref().unwrap_or("unknown error"),
                         ));
                     }
-                    mod_entry.unsafe_content = snapshot
-                        .as_ref()
-                        .map_or(mod_entry.unsafe_content, |s| s.unsafe_content);
+                    if let Some(snapshot) = snapshot.as_ref() {
+                        mod_entry.unsafe_content_auto = snapshot.unsafe_content;
+                        mod_entry.unsafe_content = mod_entry
+                            .unsafe_content_preference
+                            .resolve(mod_entry.unsafe_content_auto);
+                    }
                     if let Some(snap) = snapshot.as_ref() {
                         should_sync_images = old_preview_urls != snap.preview_urls
                             || Self::is_missing_expected_source_images(mod_entry, snap);
@@ -2058,7 +2061,10 @@ impl HestiaApp {
                     primary_id = Some(mod_entry.id.clone());
                 }
                 if pending_unsafe {
-                    mod_entry.unsafe_content = true;
+                    mod_entry.unsafe_content_auto = true;
+                    mod_entry.unsafe_content = mod_entry
+                        .unsafe_content_preference
+                        .resolve(mod_entry.unsafe_content_auto);
                 }
                 if pending_meta.is_none() {
                     let backend = self
@@ -2621,7 +2627,14 @@ impl HestiaApp {
             let raw_state = determine_file_set_update_state(&source.file_set, local_sync_ts, &profile_compare);
             mod_entry.update_state =
                 apply_ignored_update_override(source, raw_state, gb_profile.as_deref().or(Some(&profile_compare)));
-            mod_entry.unsafe_content = gb_profile.as_ref().is_some_and(|p| !p.content_ratings.is_empty());
+            mod_entry.unsafe_content_auto = gb_profile
+                .as_ref()
+                .map(|p| !p.content_ratings.is_empty())
+                .or_else(|| source.snapshot.as_ref().map(|snapshot| snapshot.unsafe_content))
+                .unwrap_or(mod_entry.unsafe_content_auto);
+            mod_entry.unsafe_content = mod_entry
+                .unsafe_content_preference
+                .resolve(mod_entry.unsafe_content_auto);
 
             if let Some(profile) = gb_profile.as_ref() {
                 source.snapshot = Some(profile_to_snapshot(profile));
@@ -2689,7 +2702,10 @@ impl HestiaApp {
             let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
             source.snapshot = Some(profile_to_snapshot(&profile));
             source.raw_profile_json = serde_json::to_string(&profile).ok();
-            mod_entry.unsafe_content = !profile.content_ratings.is_empty();
+            mod_entry.unsafe_content_auto = !profile.content_ratings.is_empty();
+            mod_entry.unsafe_content = mod_entry
+                .unsafe_content_preference
+                .resolve(mod_entry.unsafe_content_auto);
             source.baseline_content_mtime = mod_entry.content_mtime;
             source.baseline_ini_hash = mod_entry.ini_hash.clone();
             // A fresh baseline supersedes any "Ignore local changes" acceptance.
@@ -3448,6 +3464,8 @@ mod ignore_local_changes_tests {
             ini_hash: Some("edited".to_string()),
             content_size_bytes: 0,
             unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: Default::default(),
             source: Some(source),
             update_state: ModUpdateState::ModifiedLocally,
         }

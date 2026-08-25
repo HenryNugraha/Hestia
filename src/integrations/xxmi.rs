@@ -924,14 +924,22 @@ fn load_mod_entry(
 
     let (content_mtime, ini_hash, content_size_bytes) = compute_mod_fingerprint(&root_path)?;
 
-    let (created_at, updated_at, unsafe_content) = match &portable {
-        Some(stored) => (
-            stored.created_at.unwrap_or_else(Utc::now),
-            stored.updated_at.unwrap_or_else(Utc::now),
-            derive_unsafe_content_from_portable(stored).unwrap_or(false),
-        ),
-        None => (Utc::now(), Utc::now(), false),
-    };
+    let (created_at, updated_at, unsafe_content, unsafe_content_auto, unsafe_content_preference) =
+        match &portable {
+            Some(stored) => {
+                let auto_unsafe = derive_unsafe_content_from_portable(stored)
+                    .or(stored.unsafe_content_auto)
+                    .unwrap_or(stored.unsafe_content);
+                (
+                    stored.created_at.unwrap_or_else(Utc::now),
+                    stored.updated_at.unwrap_or_else(Utc::now),
+                    stored.unsafe_content_preference.resolve(auto_unsafe),
+                    auto_unsafe,
+                    stored.unsafe_content_preference,
+                )
+            }
+            None => (Utc::now(), Utc::now(), false, false, Default::default()),
+        };
 
     Ok(ModEntry {
         id,
@@ -952,6 +960,8 @@ fn load_mod_entry(
         ini_hash,
         content_size_bytes,
         unsafe_content,
+        unsafe_content_auto,
+        unsafe_content_preference,
         source: portable.as_ref().and_then(|stored| stored.source.clone()),
         update_state: crate::model::ModUpdateState::Unlinked,
     })
@@ -996,6 +1006,9 @@ fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
         discovered.metadata.user = existing.metadata.user.clone();
         discovered.metadata.prompt_for_missing_metadata =
             existing.metadata.prompt_for_missing_metadata;
+        discovered.unsafe_content_auto = existing.unsafe_content_auto;
+        discovered.unsafe_content_preference = existing.unsafe_content_preference;
+        discovered.unsafe_content = existing.unsafe_content;
         discovered.source = existing.source.clone();
         discovered.update_state = existing.update_state;
         migrate_legacy_disabled_baseline(discovered);
@@ -1008,6 +1021,8 @@ fn write_portable_metadata(mod_entry: &ModEntry) -> Result<()> {
         metadata: mod_entry.metadata.clone(),
         source: mod_entry.source.clone(),
         unsafe_content: mod_entry.unsafe_content,
+        unsafe_content_auto: Some(mod_entry.unsafe_content_auto),
+        unsafe_content_preference: mod_entry.unsafe_content_preference,
         created_at: Some(mod_entry.created_at),
         updated_at: Some(mod_entry.updated_at),
     };

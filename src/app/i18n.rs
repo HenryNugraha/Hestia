@@ -405,6 +405,10 @@ enum TextKey {
     LibraryMarkAsNotModifiedTooltip,
     LibraryRestoreModificationStatus,
     LibraryRestoreModificationStatusTooltip,
+    LibraryMarkAsNsfw,
+    LibraryNsfwAuto,
+    LibraryNsfwYes,
+    LibraryNsfwNo,
     LibraryModified,
     LibraryModifiedSuffix,
     LibraryAndMore,
@@ -2431,6 +2435,22 @@ impl TextCatalog {
 
     fn restore_modification_status_tooltip(self) -> &'static str {
         self.get(TextKey::LibraryRestoreModificationStatusTooltip)
+    }
+
+    fn mark_as_nsfw(self) -> &'static str {
+        self.get(TextKey::LibraryMarkAsNsfw)
+    }
+
+    fn nsfw_auto(self) -> &'static str {
+        self.get(TextKey::LibraryNsfwAuto)
+    }
+
+    fn nsfw_yes(self) -> &'static str {
+        self.get(TextKey::LibraryNsfwYes)
+    }
+
+    fn nsfw_no(self) -> &'static str {
+        self.get(TextKey::LibraryNsfwNo)
     }
 
     fn modified(self) -> &'static str {

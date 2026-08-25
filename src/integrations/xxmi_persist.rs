@@ -3747,6 +3747,8 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             ini_hash: None,
             content_size_bytes: 0,
             unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: Default::default(),
             source: None,
             update_state: crate::model::ModUpdateState::Unlinked,
         }
