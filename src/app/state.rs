@@ -347,6 +347,10 @@ pub struct HestiaApp {
     /// GPU the UI actually landed on, appended to the label for display only.
     /// `None` under glow, which never reports an adapter.
     active_renderer_device: Option<String>,
+    /// Which kind of GPU the UI landed on, so settings can tell whether an
+    /// integrated/dedicated selection differs from what is running. `None` under
+    /// glow, or when the adapter is neither integrated nor discrete.
+    active_renderer_gpu: Option<GpuChoice>,
     /// API name Auto would resolve to on this machine, probed at startup; used
     /// to hide the restart button when a selection changes nothing.
     auto_renderer_label: &'static str,

@@ -372,6 +372,11 @@ impl HestiaApp {
             .as_ref()
             .map(|info| info.name.clone())
             .filter(|name| !name.trim().is_empty());
+        let active_renderer_gpu = active_adapter.as_ref().and_then(|info| match info.device_type {
+            eframe::wgpu::DeviceType::IntegratedGpu => Some(GpuChoice::Integrated),
+            eframe::wgpu::DeviceType::DiscreteGpu => Some(GpuChoice::Dedicated),
+            _ => None,
+        });
         let active_renderer_label = match active_adapter.map(|info| info.backend) {
             Some(eframe::wgpu::Backend::Dx12) => "DirectX 12",
             Some(eframe::wgpu::Backend::Vulkan) => "Vulkan",
@@ -410,6 +415,7 @@ impl HestiaApp {
             browse_detail_window_nonce: 0,
             active_renderer_label,
             active_renderer_device,
+            active_renderer_gpu,
             auto_renderer_label,
             boot_renderer_pref,
             renderer_boot_unconfirmed,

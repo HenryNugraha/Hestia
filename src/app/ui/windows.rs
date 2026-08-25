@@ -190,6 +190,23 @@ fn active_renderer_display(label: &str, device: Option<&str>) -> String {
     }
 }
 
+/// Dropdown label for an explicit renderer preference. API names are not
+/// translated (they are product names), and the GPU qualifier rides in the same
+/// literal to avoid a catalog entry. `Auto` is labelled by the catalog instead.
+fn renderer_menu_label(pref: RendererPreference) -> &'static str {
+    match pref {
+        RendererPreference::Auto => "Auto",
+        RendererPreference::Dx12 => "DirectX 12",
+        RendererPreference::Dx12Integrated => "DirectX 12 (Integrated GPU)",
+        RendererPreference::Dx12Dedicated => "DirectX 12 (Dedicated GPU)",
+        RendererPreference::Vulkan => "Vulkan",
+        RendererPreference::VulkanIntegrated => "Vulkan (Integrated GPU)",
+        RendererPreference::VulkanDedicated => "Vulkan (Dedicated GPU)",
+        RendererPreference::Metal => "Metal",
+        RendererPreference::OpenGl => "OpenGL",
+    }
+}
+
 fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: Color32) {
     let stroke = egui::Stroke::new(1.0, color);
     let dash = 4.0;
@@ -4801,37 +4818,60 @@ impl HestiaApp {
                             static_label(ui, text.renderer_graphics_api());
                             ui.add_space(-4.0);
                             let previous_renderer = self.state.static_prefs.renderer;
-                            let selected_label = self
-                                .state
-                                .static_prefs
-                                .renderer
-                                .api_label()
-                                .unwrap_or(text.renderer_auto());
+                            let selected_label = match self.state.static_prefs.renderer {
+                                RendererPreference::Auto => text.renderer_auto(),
+                                other => renderer_menu_label(other),
+                            };
                             let mut restart_requested = false;
                             ui.horizontal(|ui| {
                                 egui::ComboBox::from_id_salt("renderer_preference")
                                     .selected_text(selected_label)
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Auto, text.renderer_auto());
+                                        // Explicit picks always name a GPU; all automatic
+                                        // behavior (best API, display-matched GPU) is Auto.
                                         #[cfg(windows)]
-                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Dx12, "DirectX 12");
+                                        {
+                                            ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Dx12Integrated, renderer_menu_label(RendererPreference::Dx12Integrated));
+                                            ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Dx12Dedicated, renderer_menu_label(RendererPreference::Dx12Dedicated));
+                                        }
                                         #[cfg(any(windows, target_os = "linux"))]
-                                        ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Vulkan, "Vulkan");
+                                        {
+                                            ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::VulkanIntegrated, renderer_menu_label(RendererPreference::VulkanIntegrated));
+                                            ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::VulkanDedicated, renderer_menu_label(RendererPreference::VulkanDedicated));
+                                        }
                                         #[cfg(target_os = "macos")]
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Metal, "Metal");
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::OpenGl, "OpenGL");
                                     });
                                 // No button when the selection resolves to the renderer
                                 // already running (e.g. Auto resolved to DirectX 12 and
-                                // the user picks DirectX 12 explicitly).
+                                // the user picks DirectX 12 explicitly). The GPU dimension
+                                // counts too: switching between the integrated and
+                                // dedicated variants of one API still needs a restart even
+                                // though the API label is unchanged.
                                 let predicted_label = self
                                     .state
                                     .static_prefs
                                     .renderer
                                     .api_label()
                                     .unwrap_or(self.auto_renderer_label);
+                                let gpu_matches_active = match self
+                                    .state
+                                    .static_prefs
+                                    .renderer
+                                    .gpu_choice()
+                                {
+                                    // Auto and the API-only variants leave the GPU to the
+                                    // display match, so they never force a restart on the
+                                    // GPU dimension alone.
+                                    None => true,
+                                    Some(choice) => Some(choice) == self.active_renderer_gpu,
+                                };
+                                let resolves_to_active =
+                                    predicted_label == self.active_renderer_label && gpu_matches_active;
                                 if self.state.static_prefs.renderer != self.boot_renderer_pref
-                                    && predicted_label != self.active_renderer_label
+                                    && !resolves_to_active
                                 {
                                     let restart_galley = ui.painter().layout_job(icon_text_sized(
                                         Icon::RotateCw,

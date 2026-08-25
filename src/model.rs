@@ -1652,9 +1652,24 @@ impl Default for CacheSizeTier {
     }
 }
 
+/// Which physical GPU an explicit renderer preference should target. Only
+/// meaningful on machines with more than one adapter; a single-GPU box resolves
+/// every value to that one GPU. `Auto` picks the GPU that drives the display the
+/// window opens on, so the present path never crosses adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuChoice {
+    Integrated,
+    Dedicated,
+}
+
 /// Rendering backend preference. The renderer is fixed at window creation, so
 /// a change takes effect on the next launch. Picks that make no sense on the
 /// current platform (e.g. Dx12 on Linux) behave like Auto.
+///
+/// The `Dx12`/`Vulkan` variants are retained for backward compatibility with
+/// configs written before the per-GPU split; they behave like `Auto`'s GPU
+/// choice (match the display) for their fixed API. New selections always name a
+/// GPU, so all automatic behavior lives in `Auto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RendererPreference {
     Auto,
@@ -1662,25 +1677,43 @@ pub enum RendererPreference {
     Vulkan,
     Metal,
     OpenGl,
+    Dx12Integrated,
+    Dx12Dedicated,
+    VulkanIntegrated,
+    VulkanDedicated,
 }
 
 impl RendererPreference {
-    /// Proper API names; not translated.
+    /// Proper API names, ignoring the GPU dimension; not translated. Used to
+    /// compare a selection against the API that is actually running.
     pub fn api_label(self) -> Option<&'static str> {
         match self {
             Self::Auto => None,
-            Self::Dx12 => Some("DirectX 12"),
-            Self::Vulkan => Some("Vulkan"),
+            Self::Dx12 | Self::Dx12Integrated | Self::Dx12Dedicated => Some("DirectX 12"),
+            Self::Vulkan | Self::VulkanIntegrated | Self::VulkanDedicated => Some("Vulkan"),
             Self::Metal => Some("Metal"),
             Self::OpenGl => Some("OpenGL"),
+        }
+    }
+
+    /// The GPU an explicit selection forces, or `None` when the choice is
+    /// automatic (Auto, or the API-only back-compat variants) or the API only
+    /// ever has one adapter to run on (Metal, OpenGL).
+    pub fn gpu_choice(self) -> Option<GpuChoice> {
+        match self {
+            Self::Dx12Integrated | Self::VulkanIntegrated => Some(GpuChoice::Integrated),
+            Self::Dx12Dedicated | Self::VulkanDedicated => Some(GpuChoice::Dedicated),
+            _ => None,
         }
     }
 
     pub fn valid_on_current_platform(self) -> bool {
         match self {
             Self::Auto | Self::OpenGl => true,
-            Self::Dx12 => cfg!(windows),
-            Self::Vulkan => cfg!(any(windows, target_os = "linux")),
+            Self::Dx12 | Self::Dx12Integrated | Self::Dx12Dedicated => cfg!(windows),
+            Self::Vulkan | Self::VulkanIntegrated | Self::VulkanDedicated => {
+                cfg!(any(windows, target_os = "linux"))
+            }
             Self::Metal => cfg!(target_os = "macos"),
         }
     }

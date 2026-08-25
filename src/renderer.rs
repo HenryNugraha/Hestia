@@ -23,6 +23,30 @@ use eframe::wgpu;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Which adapter a rung wants inside its backend. Explicit user picks force a
+/// device type; `MatchDisplay` (used by Auto) defers to the adapter that drives
+/// the window's monitor so the present never crosses adapters; `Any` takes the
+/// first hardware adapter (glow, env pins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuTarget {
+    Any,
+    Integrated,
+    Dedicated,
+    MatchDisplay,
+}
+
+impl GpuTarget {
+    /// Does this adapter satisfy the target? `Any`/`MatchDisplay` accept every
+    /// hardware adapter here; `MatchDisplay` is resolved later, in the selector.
+    fn accepts(self, device_type: wgpu::DeviceType) -> bool {
+        match self {
+            GpuTarget::Integrated => device_type == wgpu::DeviceType::IntegratedGpu,
+            GpuTarget::Dedicated => device_type == wgpu::DeviceType::DiscreteGpu,
+            GpuTarget::Any | GpuTarget::MatchDisplay => device_type != wgpu::DeviceType::Cpu,
+        }
+    }
+}
+
 /// Sits next to `hestia.toml`, so a portable install keeps its own record.
 const BREADCRUMB_FILE: &str = "hestia-renderer.toml";
 
@@ -42,6 +66,8 @@ struct Rung {
     renderer: eframe::Renderer,
     /// Backends the wgpu instance is restricted to. Unused by the glow rung.
     backends: wgpu::Backends,
+    /// Which adapter within `backends` the rung wants.
+    gpu: GpuTarget,
 }
 
 const DX12: Rung = Rung {
@@ -49,6 +75,19 @@ const DX12: Rung = Rung {
     label: "DirectX 12",
     renderer: eframe::Renderer::Wgpu,
     backends: wgpu::Backends::DX12,
+    gpu: GpuTarget::MatchDisplay,
+};
+
+const DX12_IGPU: Rung = Rung {
+    id: "dx12-igpu",
+    gpu: GpuTarget::Integrated,
+    ..DX12
+};
+
+const DX12_DGPU: Rung = Rung {
+    id: "dx12-dgpu",
+    gpu: GpuTarget::Dedicated,
+    ..DX12
 };
 
 const VULKAN: Rung = Rung {
@@ -56,6 +95,19 @@ const VULKAN: Rung = Rung {
     label: "Vulkan",
     renderer: eframe::Renderer::Wgpu,
     backends: wgpu::Backends::VULKAN,
+    gpu: GpuTarget::MatchDisplay,
+};
+
+const VULKAN_IGPU: Rung = Rung {
+    id: "vulkan-igpu",
+    gpu: GpuTarget::Integrated,
+    ..VULKAN
+};
+
+const VULKAN_DGPU: Rung = Rung {
+    id: "vulkan-dgpu",
+    gpu: GpuTarget::Dedicated,
+    ..VULKAN
 };
 
 const METAL: Rung = Rung {
@@ -63,6 +115,7 @@ const METAL: Rung = Rung {
     label: "Metal",
     renderer: eframe::Renderer::Wgpu,
     backends: wgpu::Backends::METAL,
+    gpu: GpuTarget::MatchDisplay,
 };
 
 const WGPU_GL: Rung = Rung {
@@ -70,6 +123,7 @@ const WGPU_GL: Rung = Rung {
     label: "OpenGL (wgpu)",
     renderer: eframe::Renderer::Wgpu,
     backends: wgpu::Backends::GL,
+    gpu: GpuTarget::Any,
 };
 
 /// Terminal rung: no adapter probe, always accepted. eframe ignores
@@ -79,6 +133,7 @@ const GLOW: Rung = Rung {
     label: "OpenGL",
     renderer: eframe::Renderer::Glow,
     backends: wgpu::Backends::empty(),
+    gpu: GpuTarget::Any,
 };
 
 #[cfg(windows)]
@@ -95,6 +150,9 @@ const AUTO_LADDER: &[Rung] = &[VULKAN, WGPU_GL, GLOW];
 pub struct Selection {
     pub renderer: eframe::Renderer,
     pub backends: wgpu::Backends,
+    /// Which adapter within `backends` to run on. Consumed by [`pick_adapter`]
+    /// through eframe's `native_adapter_selector`.
+    pub gpu: GpuTarget,
     /// API name Auto resolves to on this machine. Settings compares it against
     /// the active renderer so the restart button only appears for a selection
     /// that would actually change something.
@@ -105,17 +163,24 @@ pub struct Selection {
 }
 
 /// Adapter probe with a memo, so overlapping ladders (the preference ladder and
-/// the Auto ladder) never enumerate the same backend twice.
+/// the Auto ladder) never enumerate the same backend/target twice.
 #[derive(Default)]
 struct Prober {
-    memo: Vec<(wgpu::Backends, Option<wgpu::Backend>)>,
+    memo: Vec<((wgpu::Backends, GpuTarget), Option<wgpu::Backend>)>,
 }
 
 impl Prober {
-    /// The backend of the first non-software adapter in `backends`, or `None`
-    /// when the machine has no hardware adapter there.
-    fn hardware_backend(&mut self, backends: wgpu::Backends) -> Option<wgpu::Backend> {
-        if let Some((_, hit)) = self.memo.iter().find(|(probed, _)| *probed == backends) {
+    /// The backend of the first hardware adapter in `backends` that satisfies
+    /// `gpu`, or `None` when the machine has no such adapter. A `Dedicated`
+    /// probe therefore fails on an integrated-only box, letting the ladder fall
+    /// through to the next rung instead of forcing a GPU that is not there.
+    fn hardware_backend(
+        &mut self,
+        backends: wgpu::Backends,
+        gpu: GpuTarget,
+    ) -> Option<wgpu::Backend> {
+        let key = (backends, gpu);
+        if let Some((_, hit)) = self.memo.iter().find(|(probed, _)| *probed == key) {
             return *hit;
         }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -125,19 +190,20 @@ impl Prober {
         let hit = pollster::block_on(instance.enumerate_adapters(backends))
             .into_iter()
             .map(|adapter| adapter.get_info())
-            .find(|info| info.device_type != wgpu::DeviceType::Cpu)
+            .find(|info| gpu.accepts(info.device_type))
             .map(|info| {
                 tracing::debug!(
-                    "wgpu adapter for {backends:?}: {} ({:?})",
+                    "wgpu adapter for {backends:?}/{gpu:?}: {} ({:?}, {:?})",
                     info.name,
-                    info.backend
+                    info.backend,
+                    info.device_type
                 );
                 info.backend
             });
         if hit.is_none() {
-            tracing::debug!("no hardware wgpu adapter for {backends:?}");
+            tracing::debug!("no hardware wgpu adapter for {backends:?}/{gpu:?}");
         }
-        self.memo.push((backends, hit));
+        self.memo.push((key, hit));
         hit
     }
 }
@@ -162,7 +228,7 @@ fn resolve(rungs: &[Rung], prober: &mut Prober) -> Option<(Rung, &'static str)> 
         if rung.renderer == eframe::Renderer::Glow {
             return Some((*rung, rung.label));
         }
-        if let Some(backend) = prober.hardware_backend(rung.backends) {
+        if let Some(backend) = prober.hardware_backend(rung.backends, rung.gpu) {
             return Some((*rung, label_for_backend(backend).unwrap_or(rung.label)));
         }
     }
@@ -179,6 +245,10 @@ fn preferred_rung(pref: RendererPreference) -> Option<Rung> {
         RendererPreference::Vulkan => Some(VULKAN),
         RendererPreference::Metal => Some(METAL),
         RendererPreference::OpenGl => Some(GLOW),
+        RendererPreference::Dx12Integrated => Some(DX12_IGPU),
+        RendererPreference::Dx12Dedicated => Some(DX12_DGPU),
+        RendererPreference::VulkanIntegrated => Some(VULKAN_IGPU),
+        RendererPreference::VulkanDedicated => Some(VULKAN_DGPU),
     }
 }
 
@@ -207,6 +277,7 @@ fn env_ladder() -> Option<Vec<Rung>> {
         label: "wgpu",
         renderer: eframe::Renderer::Wgpu,
         backends,
+        gpu: GpuTarget::MatchDisplay,
     };
     match std::env::var("HESTIA_RENDERER").as_deref() {
         Ok("glow") => return Some(vec![GLOW]),
@@ -320,6 +391,7 @@ pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
         return Selection {
             renderer: rung.renderer,
             backends: rung.backends,
+            gpu: rung.gpu,
             // Nothing a restart could change while the override is set.
             auto_label: label,
             breadcrumb_pending: false,
@@ -366,9 +438,116 @@ pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
     Selection {
         renderer: rung.renderer,
         backends: rung.backends,
+        gpu: rung.gpu,
         auto_label,
         breadcrumb_pending,
     }
+}
+
+/// Chooses the adapter eframe should create the device on, honoring the rung's
+/// [`GpuTarget`]. Wired into `WgpuSetupCreateNew::native_adapter_selector`, which
+/// hands us the adapters already filtered to the selected backend plus the
+/// window's surface. Never fails: an unsatisfiable target falls back to the
+/// first hardware adapter so the app still boots (the ladder already refused a
+/// rung whose GPU is absent, so this only bites on a fresh enumeration mismatch).
+///
+/// `display_pci` is the `(vendor, device)` of the GPU driving the window's
+/// monitor, used only by [`GpuTarget::MatchDisplay`] to keep the present on a
+/// single adapter. `None` (detection failed, or non-Windows) degrades Match to
+/// "prefer integrated", which is the safe default next to a running game.
+pub fn pick_adapter(
+    adapters: &[wgpu::Adapter],
+    gpu: GpuTarget,
+    display_pci: Option<(u32, u32)>,
+) -> Option<wgpu::Adapter> {
+    let infos: Vec<_> = adapters.iter().map(|a| a.get_info()).collect();
+    let index = select_adapter_index(&infos, gpu, display_pci)?;
+    let info = &infos[index];
+    tracing::info!(
+        "selected adapter for {gpu:?}: {} ({:?}, {:?})",
+        info.name,
+        info.backend,
+        info.device_type
+    );
+    Some(adapters[index].clone())
+}
+
+/// The adapter-choice logic behind [`pick_adapter`], split out to be testable
+/// without a live GPU. Never returns `None` for a non-empty list: an
+/// unsatisfiable target falls back to the first hardware adapter, then to the
+/// first adapter at all, so the app always has something to boot on.
+fn select_adapter_index(
+    infos: &[wgpu::AdapterInfo],
+    gpu: GpuTarget,
+    display_pci: Option<(u32, u32)>,
+) -> Option<usize> {
+    let first_hw = || (0..infos.len()).find(|&i| infos[i].device_type != wgpu::DeviceType::Cpu);
+    let first_of = |t: wgpu::DeviceType| (0..infos.len()).find(|&i| infos[i].device_type == t);
+
+    let chosen = match gpu {
+        GpuTarget::Integrated => first_of(wgpu::DeviceType::IntegratedGpu).or_else(first_hw),
+        GpuTarget::Dedicated => first_of(wgpu::DeviceType::DiscreteGpu).or_else(first_hw),
+        GpuTarget::MatchDisplay => display_pci
+            .and_then(|(vendor, device)| {
+                (0..infos.len()).find(|&i| {
+                    infos[i].device_type != wgpu::DeviceType::Cpu
+                        && infos[i].vendor == vendor
+                        && infos[i].device == device
+                })
+            })
+            // No display match: keep off the discrete GPU a game may want.
+            .or_else(|| first_of(wgpu::DeviceType::IntegratedGpu))
+            .or_else(first_hw),
+        GpuTarget::Any => first_hw(),
+    };
+    chosen.or_else(|| (!infos.is_empty()).then_some(0))
+}
+
+/// `(vendor, device)` PCI ids of the GPU that drives the monitor the window
+/// will open on, for [`GpuTarget::MatchDisplay`]. `window_pos` is the saved
+/// top-left in desktop coordinates; `None` (first run, or maximized) resolves to
+/// the primary monitor. Returns `None` if anything in the lookup fails, which
+/// [`pick_adapter`] treats as "prefer integrated".
+#[cfg(windows)]
+pub fn display_pci_for_window(window_pos: Option<(i32, i32)>) -> Option<(u32, u32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+    use windows::Win32::Graphics::Gdi::{
+        MonitorFromPoint, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
+    };
+
+    unsafe {
+        let target: HMONITOR = match window_pos {
+            Some((x, y)) => MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST),
+            None => MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+        };
+        if target.0.is_null() {
+            return None;
+        }
+
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let mut ai = 0u32;
+        while let Ok(adapter) = factory.EnumAdapters1(ai) {
+            ai += 1;
+            let mut oi = 0u32;
+            while let Ok(output) = adapter.EnumOutputs(oi) {
+                oi += 1;
+                let Ok(desc) = output.GetDesc() else { continue };
+                if desc.Monitor.0 == target.0 {
+                    return adapter
+                        .GetDesc1()
+                        .ok()
+                        .map(|adesc| (adesc.VendorId, adesc.DeviceId));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub fn display_pci_for_window(_window_pos: Option<(i32, i32)>) -> Option<(u32, u32)> {
+    None
 }
 
 /// True once enough passes have run that this renderer counts as working.
@@ -392,9 +571,96 @@ pub fn confirm_boot(portable: &PortablePaths) {
 mod tests {
     use super::*;
 
+    fn info(
+        device_type: wgpu::DeviceType,
+        vendor: u32,
+        device: u32,
+        name: &str,
+    ) -> wgpu::AdapterInfo {
+        wgpu::AdapterInfo {
+            name: name.to_owned(),
+            vendor,
+            device,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Dx12,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
+        }
+    }
+
     #[test]
     fn auto_ladder_ends_on_glow() {
         assert_eq!(AUTO_LADDER.last().map(|rung| rung.id), Some(GLOW.id));
+    }
+
+    #[test]
+    fn explicit_gpu_preferences_map_to_their_rungs() {
+        let cases = [
+            (RendererPreference::Dx12Integrated, DX12_IGPU),
+            (RendererPreference::Dx12Dedicated, DX12_DGPU),
+            (RendererPreference::VulkanIntegrated, VULKAN_IGPU),
+            (RendererPreference::VulkanDedicated, VULKAN_DGPU),
+        ];
+        for (pref, rung) in cases {
+            // Only assert on platforms where the preference is valid; elsewhere
+            // it deliberately behaves like Auto (no preferred rung).
+            if pref.valid_on_current_platform() {
+                assert_eq!(preferred_rung(pref), Some(rung));
+                assert_ne!(rung.id, DX12.id, "per-GPU rungs need distinct breadcrumb ids");
+            }
+        }
+    }
+
+    #[test]
+    fn integrated_and_dedicated_targets_pick_their_device_type() {
+        let igpu = info(wgpu::DeviceType::IntegratedGpu, 0x8086, 0x4680, "iGPU");
+        let dgpu = info(wgpu::DeviceType::DiscreteGpu, 0x10de, 0x2503, "dGPU");
+        let infos = [igpu, dgpu];
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::Integrated, None),
+            Some(0)
+        );
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::Dedicated, None),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn dedicated_falls_back_when_no_discrete_gpu_present() {
+        let infos = [info(wgpu::DeviceType::IntegratedGpu, 0x8086, 0x4680, "iGPU")];
+        // No discrete adapter: fall back to the one hardware adapter rather than
+        // failing to boot.
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::Dedicated, None),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn match_display_prefers_the_displays_gpu() {
+        let igpu = info(wgpu::DeviceType::IntegratedGpu, 0x8086, 0x4680, "iGPU");
+        let dgpu = info(wgpu::DeviceType::DiscreteGpu, 0x10de, 0x2503, "dGPU");
+        let infos = [igpu, dgpu];
+        // Window on the discrete GPU's monitor: render there, no cross-adapter.
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::MatchDisplay, Some((0x10de, 0x2503))),
+            Some(1)
+        );
+        // Unknown display GPU: stay on the integrated adapter, off the game's GPU.
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::MatchDisplay, None),
+            Some(0)
+        );
+        // Display GPU not among the backend's adapters: same integrated fallback.
+        assert_eq!(
+            select_adapter_index(&infos, GpuTarget::MatchDisplay, Some((0xdead, 0xbeef))),
+            Some(0)
+        );
     }
 
     #[test]

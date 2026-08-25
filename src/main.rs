@@ -133,14 +133,34 @@ fn main() -> anyhow::Result<()> {
     // eframe injects the display handle at instance creation time.
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup.instance_descriptor.backends = renderer_selection.backends;
-    // eframe defaults to `HighPerformance`, which puts a 2D UI on the discrete
-    // GPU. Hestia is meant to sit open next to a running game, so it should
-    // take neither that GPU's cycles nor its VRAM; on the usual hybrid-laptop
-    // wiring (display driven by the iGPU) rendering on the dGPU also costs a
-    // cross-adapter copy every present. `compatible_surface` filtering still
-    // keeps this correct when the display hangs off the discrete GPU.
-    wgpu_setup.power_preference = eframe::wgpu::PowerPreference::from_env()
-        .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
+    // Rendering on a GPU other than the one that drives the window's monitor
+    // costs a full cross-adapter copy every present, which pins both GPUs on a
+    // multi-GPU box. So instead of a blanket power-preference hint (which
+    // hardcoded the iGPU and produced exactly that copy whenever the window sat
+    // on a dedicated-GPU display), pick the adapter ourselves: `Auto` matches
+    // the display's GPU, and an explicit preference forces integrated/dedicated.
+    let renderer_gpu = renderer_selection.gpu;
+    let display_pci = if renderer_gpu == renderer::GpuTarget::MatchDisplay {
+        let pos = if state.static_prefs.window_maximized {
+            None
+        } else {
+            state
+                .static_prefs
+                .window_pos
+                .map(|[x, y]| (x as i32, y as i32))
+        };
+        renderer::display_pci_for_window(pos)
+    } else {
+        None
+    };
+    wgpu_setup.native_adapter_selector = Some(std::sync::Arc::new(
+        move |adapters: &[eframe::wgpu::Adapter],
+              _surface: Option<&eframe::wgpu::Surface>|
+              -> Result<eframe::wgpu::Adapter, String> {
+            renderer::pick_adapter(adapters, renderer_gpu, display_pci)
+                .ok_or_else(|| "no compatible GPU adapter found".to_string())
+        },
+    ));
     let options = eframe::NativeOptions {
         viewport,
         persist_window: false,
