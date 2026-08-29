@@ -1881,6 +1881,8 @@ const KEYBOARD_IDLE_REQUIRED: Duration = Duration::from_millis(350);
 const KEYBOARD_IDLE_POLL: Duration = Duration::from_millis(25);
 const RELOAD_KEY_SETTLE_UP_MS: u64 = 180;
 const RELOAD_KEY_HOLD_MS: u64 = 350;
+#[cfg(windows)]
+const RELOAD_KEY_HOLD_POLL_MS: u64 = 25;
 const RELOAD_KEY_PULSE_COUNT: u32 = 2;
 const RELOAD_KEY_PULSE_GAP_MS: u64 = 220;
 
@@ -2593,26 +2595,33 @@ fn rotate_d3dx_backup(path: &Path) -> Result<()> {
 /// `d3dx.ini`. Defaults to F10, the binding every supported importer ships with.
 #[cfg(windows)]
 fn reload_hotkey_vk(importer_root: &Path) -> u16 {
-    const VK_F1: u16 = 0x70;
     const DEFAULT: u16 = 0x79; // VK_F10
     let Ok(text) = fs::read_to_string(importer_root.join("d3dx.ini")) else {
         return DEFAULT;
     };
     for line in text.lines() {
         let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("reload_config") else {
+        let Some((key, binding)) = trimmed.split_once('=') else {
             continue;
         };
-        let Some((_, binding)) = rest.split_once('=') else {
+        if !key.trim().eq_ignore_ascii_case("reload_config") {
             continue;
-        };
+        }
         for token in binding.split_whitespace() {
-            let name = token.strip_prefix("VK_").unwrap_or(token);
-            if let Some(number) = name.strip_prefix(['F', 'f'])
-                && let Ok(index) = number.parse::<u16>()
-                && (1..=24).contains(&index)
+            let token_lc = token.to_ascii_lowercase();
+            if token_lc.starts_with("no_")
+                || matches!(
+                    token_lc.as_str(),
+                    "ctrl" | "control" | "alt" | "menu" | "shift"
+                )
             {
-                return VK_F1 + index - 1;
+                continue;
+            }
+            if let Some(vk) = vk_for_named_token(&token_lc) {
+                return vk;
+            }
+            if let Some((vk, _)) = vk_for_char_token(token) {
+                return vk;
             }
         }
     }
@@ -2742,6 +2751,7 @@ fn parse_key_spec(raw: &str) -> Option<KeySpec> {
 enum ReloadForeground {
     Hestia {
         title: String,
+        hwnd: windows::Win32::Foundation::HWND,
     },
     Game {
         title: String,
@@ -2757,7 +2767,7 @@ enum ReloadForeground {
 impl ReloadForeground {
     fn label(&self) -> String {
         match self {
-            Self::Hestia { title } => format!("Hestia foreground ({title:?})"),
+            Self::Hestia { title, .. } => format!("Hestia foreground ({title:?})"),
             Self::Game { title, .. } => format!("game foreground ({title:?})"),
             Self::Other { title } => format!("other foreground ({title:?})"),
             Self::None => "no foreground window".to_string(),
@@ -2874,7 +2884,7 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
         return ReloadForeground::None;
     };
     if title == HESTIA_WINDOW_TITLE {
-        return ReloadForeground::Hestia { title };
+        return ReloadForeground::Hestia { title, hwnd };
     }
     let candidates = game_exe_candidates(game);
     if candidates.is_empty() {
@@ -2998,8 +3008,18 @@ static SYNTHETIC_KEYS: std::sync::Mutex<SyntheticKeyRegistry> =
     });
 
 #[cfg(windows)]
+static SYNTHETIC_INPUT_SEQUENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(windows)]
 fn synthetic_keys() -> std::sync::MutexGuard<'static, SyntheticKeyRegistry> {
     SYNTHETIC_KEYS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
+fn synthetic_input_sequence() -> std::sync::MutexGuard<'static, ()> {
+    SYNTHETIC_INPUT_SEQUENCE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -3059,9 +3079,11 @@ impl HeldKey {
     }
 
     fn release(mut self, label: &str) -> Result<()> {
-        self.released = true;
         let result = send_keyboard_input(self.vk, true, label);
-        Self::unregister(self.vk);
+        if result.is_ok() {
+            self.released = true;
+            Self::unregister(self.vk);
+        }
         result
     }
 
@@ -3121,11 +3143,42 @@ pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>>
 }
 
 #[cfg(windows)]
-fn send_alt_foreground_unlock_tap() -> Result<bool> {
+#[derive(Clone, Copy)]
+enum AcceptedForeground {
+    Window(windows::Win32::Foundation::HWND),
+}
+
+#[cfg(windows)]
+fn accepted_foreground_still_active(accepted: AcceptedForeground) -> bool {
+    match accepted {
+        AcceptedForeground::Window(expected) => foreground_window_title_and_pid()
+            .is_some_and(|(foreground, _, _)| foreground == expected),
+    }
+}
+
+#[cfg(windows)]
+fn reload_modifier_guard_active() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU};
+
+    let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+    let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
+    ctrl_down || alt_down
+}
+
+#[cfg(windows)]
+fn unexpected_modifier_guard_active(allowed: &[u16]) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU,
+        GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
+
+    [VK_CONTROL.0, VK_MENU.0, VK_SHIFT.0]
+        .into_iter()
+        .any(|vk| !allowed.contains(&vk) && unsafe { GetAsyncKeyState(i32::from(vk)) } < 0)
+}
+
+#[cfg(windows)]
+fn send_alt_foreground_unlock_tap() -> Result<bool> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU};
 
     let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
     let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
@@ -3133,26 +3186,8 @@ fn send_alt_foreground_unlock_tap() -> Result<bool> {
         return Ok(false);
     }
 
-    let key_input = |flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(VK_MENU.0),
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-    let inputs = [key_input(KEYBD_EVENT_FLAGS(0)), key_input(KEYEVENTF_KEYUP)];
-    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-    if sent != inputs.len() as u32 {
-        return Err(anyhow!(
-            "foreground unlock Alt tap delivered {sent} of {} inputs",
-            inputs.len()
-        ));
-    }
+    let held = HeldKey::press(VK_MENU.0, "foreground unlock Alt down")?;
+    held.release("foreground unlock Alt up")?;
     std::thread::sleep(Duration::from_millis(80));
     Ok(true)
 }
@@ -3229,9 +3264,13 @@ fn wait_for_keyboard_idle(timeout: Duration) -> bool {
 }
 
 #[cfg(windows)]
-fn send_reload_hotkey_burst(importer_root: &Path, pulses: u32) -> Result<bool> {
+fn send_reload_hotkey_burst(
+    importer_root: &Path,
+    pulses: u32,
+    accepted_foreground: AcceptedForeground,
+) -> Result<bool> {
     for pulse in 0..pulses.max(1) {
-        match send_reload_hotkey(importer_root)? {
+        match send_reload_hotkey_unlocked(importer_root, accepted_foreground)? {
             true => {}
             false => return Ok(false),
         }
@@ -3239,6 +3278,61 @@ fn send_reload_hotkey_burst(importer_root: &Path, pulses: u32) -> Result<bool> {
             std::thread::sleep(Duration::from_millis(RELOAD_KEY_PULSE_GAP_MS));
         }
     }
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn hold_key_with_guards(
+    vk: u16,
+    key_down_label: &str,
+    key_up_label: &str,
+    interrupted_label: &str,
+    allowed_modifiers: &[u16],
+    accepted_foreground: AcceptedForeground,
+) -> Result<bool> {
+    if !accepted_foreground_still_active(accepted_foreground) {
+        return Ok(false);
+    }
+    if unexpected_modifier_guard_active(allowed_modifiers) {
+        return Ok(false);
+    }
+
+    let held = HeldKey::press(vk, key_down_label)?;
+    let started = std::time::Instant::now();
+    let hold = Duration::from_millis(RELOAD_KEY_HOLD_MS);
+    let poll = Duration::from_millis(RELOAD_KEY_HOLD_POLL_MS);
+    while started.elapsed() < hold {
+        if !accepted_foreground_still_active(accepted_foreground)
+            || unexpected_modifier_guard_active(allowed_modifiers)
+        {
+            held.release(interrupted_label)?;
+            return Ok(false);
+        }
+        std::thread::sleep(poll.min(hold.saturating_sub(started.elapsed())));
+    }
+    held.release(key_up_label)
+        .map_err(|err| anyhow!("{key_down_label} succeeded but release failed: {err:#}"))?;
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn hold_reload_key(vk: u16, accepted_foreground: AcceptedForeground) -> Result<bool> {
+    let held = HeldKey::press(vk, "reload key down")?;
+    let started = std::time::Instant::now();
+    let hold = Duration::from_millis(RELOAD_KEY_HOLD_MS);
+    let poll = Duration::from_millis(RELOAD_KEY_HOLD_POLL_MS);
+    while started.elapsed() < hold {
+        // Alt+Tab during the synthetic F10 hold is the high-risk path: release F10 before
+        // the foreground hand-off can leave the importer seeing a down event without an up.
+        if reload_modifier_guard_active() || !accepted_foreground_still_active(accepted_foreground)
+        {
+            held.release("reload key interrupted by guard")?;
+            return Ok(false);
+        }
+        std::thread::sleep(poll.min(hold.saturating_sub(started.elapsed())));
+    }
+    held.release("reload key up")
+        .map_err(|err| anyhow!("reload key was pressed but release failed: {err:#}"))?;
     Ok(true)
 }
 
@@ -3277,6 +3371,11 @@ fn send_reload_hotkey_via_hestia_focus_with_retry(
                     ));
                 }
                 continue;
+            }
+            if !foreground_is_game_or_hestia(restore_hwnd) {
+                return Err(anyhow!(
+                    "foreground changed away from the game/Hestia while waiting for keyboard idle"
+                ));
             }
         }
         match send_reload_hotkey_via_hestia_focus(importer_root, restore_hwnd) {
@@ -3338,7 +3437,11 @@ fn send_reload_hotkey_via_hestia_focus(
             "Hestia window did not become foreground before reload send"
         ));
     }
-    let sent = send_reload_hotkey_burst(importer_root, RELOAD_KEY_PULSE_COUNT)?;
+    let sent = send_reload_hotkey_burst(
+        importer_root,
+        RELOAD_KEY_PULSE_COUNT,
+        AcceptedForeground::Window(hestia_hwnd),
+    )?;
     std::thread::sleep(Duration::from_millis(80));
     let restored = set_foreground_window(restore_hwnd)
         && wait_for_foreground_window(restore_hwnd, None, FOREGROUND_SETTLE_TIMEOUT);
@@ -3381,6 +3484,7 @@ pub fn send_reload_hotkey_foreground_aware(
             message: "skipped: importer root was not found".to_string(),
         });
     };
+    let _sequence = synthetic_input_sequence();
 
     let mut last_foreground = ReloadForeground::None;
     for attempt in 1..=FOREGROUND_RELOAD_ATTEMPTS {
@@ -3389,12 +3493,18 @@ pub fn send_reload_hotkey_foreground_aware(
         match foreground {
             ReloadForeground::Game { hwnd, .. } => {
                 if !reload_hotkey_supported(&importer_root) {
-                    let sent = send_reload_hotkey_burst(&importer_root, RELOAD_KEY_PULSE_COUNT)?;
+                    let sent = send_reload_hotkey_burst(
+                        &importer_root,
+                        RELOAD_KEY_PULSE_COUNT,
+                        AcceptedForeground::Window(hwnd),
+                    )?;
                     return Ok(ReloadHotkeyReport {
                         message: if sent {
                             format!("sent reload hotkey; {label}; direct game foreground path")
                         } else {
-                            format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                            format!(
+                                "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
+                            )
                         },
                     });
                 }
@@ -3403,11 +3513,13 @@ pub fn send_reload_hotkey_foreground_aware(
                     message: if outcome.sent {
                         focus_route_message(outcome)
                     } else {
-                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                        format!(
+                            "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
+                        )
                     },
                 });
             }
-            ReloadForeground::Hestia { .. } => {
+            ReloadForeground::Hestia { hwnd, .. } => {
                 if !reload_hotkey_supported(&importer_root) {
                     return Ok(ReloadHotkeyReport {
                         message: format!(
@@ -3415,12 +3527,18 @@ pub fn send_reload_hotkey_foreground_aware(
                         ),
                     });
                 }
-                let sent = send_reload_hotkey_burst(&importer_root, RELOAD_KEY_PULSE_COUNT)?;
+                let sent = send_reload_hotkey_burst(
+                    &importer_root,
+                    RELOAD_KEY_PULSE_COUNT,
+                    AcceptedForeground::Window(hwnd),
+                )?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
                         format!("sent reload hotkey; {label}")
                     } else {
-                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                        format!(
+                            "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
+                        )
                     },
                 });
             }
@@ -3452,11 +3570,14 @@ pub fn send_reload_hotkey_foreground_aware(
 }
 
 #[cfg(windows)]
-fn send_key_spec(spec: KeySpec) -> Result<bool> {
+fn send_key_spec(spec: KeySpec, accepted_foreground: AcceptedForeground) -> Result<bool> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
 
+    if !accepted_foreground_still_active(accepted_foreground) {
+        return Ok(false);
+    }
     let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
     let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
     let shift_down = unsafe { GetAsyncKeyState(i32::from(VK_SHIFT.0)) } < 0;
@@ -3466,6 +3587,9 @@ fn send_key_spec(spec: KeySpec) -> Result<bool> {
 
     send_keyboard_input(spec.key, true, "hotkey settle-up")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
+    if !accepted_foreground_still_active(accepted_foreground) {
+        return Ok(false);
+    }
 
     let mut modifiers = Vec::new();
     if spec.ctrl {
@@ -3480,17 +3604,21 @@ fn send_key_spec(spec: KeySpec) -> Result<bool> {
     // Every `?` below drops whatever is already held, which releases it: a failed key-down
     // can no longer leave Ctrl/Alt/Shift stuck.
     let mut held_modifiers = Vec::with_capacity(modifiers.len());
-    for modifier in modifiers {
-        held_modifiers.push(HeldKey::press(modifier, "hotkey modifier down")?);
+    for modifier in &modifiers {
+        held_modifiers.push(HeldKey::press(*modifier, "hotkey modifier down")?);
     }
-    let held_key = HeldKey::press(spec.key, "hotkey key down")?;
-    std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_HOLD_MS));
-    let key_up_result = held_key.release("hotkey key up");
+    let key_result = hold_key_with_guards(
+        spec.key,
+        "hotkey key down",
+        "hotkey key up",
+        "hotkey key interrupted",
+        &modifiers,
+        accepted_foreground,
+    );
     for modifier in held_modifiers.into_iter().rev() {
         let _ = modifier.release("hotkey modifier up");
     }
-    key_up_result?;
-    Ok(true)
+    key_result
 }
 
 #[cfg(windows)]
@@ -3509,23 +3637,26 @@ pub fn send_mod_hotkey_foreground_aware(
             message: format!("skipped: unsupported hotkey binding {key_spec:?}"),
         });
     };
+    let _sequence = synthetic_input_sequence();
 
     let mut last_foreground = ReloadForeground::None;
     for attempt in 1..=FOREGROUND_RELOAD_ATTEMPTS {
         let foreground = foreground_for_reload(game);
         let label = foreground.label();
         match foreground {
-            ReloadForeground::Game { .. } => {
-                let sent = send_key_spec(spec)?;
+            ReloadForeground::Game { hwnd, .. } => {
+                let sent = send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
                         format!("sent mod hotkey; {label}; direct game foreground path")
                     } else {
-                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                        format!(
+                            "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
+                        )
                     },
                 });
             }
-            ReloadForeground::Hestia { .. } => {
+            ReloadForeground::Hestia { hwnd, .. } => {
                 if !reload_hotkey_supported(&importer_root) {
                     return Ok(ReloadHotkeyReport {
                         message: format!(
@@ -3533,12 +3664,14 @@ pub fn send_mod_hotkey_foreground_aware(
                         ),
                     });
                 }
-                let sent = send_key_spec(spec)?;
+                let sent = send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
                         format!("sent mod hotkey; {label}")
                     } else {
-                        format!("skipped on attempt {attempt}; modifier guard active; {label}")
+                        format!(
+                            "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
+                        )
                     },
                 });
             }
@@ -3575,15 +3708,16 @@ pub fn send_mod_hotkey_foreground_aware(
 ///
 /// Hard guard: `wipe_user_config = ctrl alt no_shift VK_F10` means an F10 delivered while
 /// Ctrl and Alt happen to be held erases every persisted setting for the importer, so the
-/// send is skipped outright whenever either modifier is physically down. A skipped reload
+/// send is skipped outright whenever either modifier is physically down, including when a
+/// modifier appears during the key hold. The active foreground is also watched while the
+/// key is held so Alt+Tab does not split the down/up pair across windows. A skipped reload
 /// is benign — the next launch reads the file anyway.
 #[cfg(windows)]
-pub fn send_reload_hotkey(importer_root: &Path) -> Result<bool> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU};
-
-    let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
-    let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
-    if ctrl_down || alt_down {
+fn send_reload_hotkey_unlocked(
+    importer_root: &Path,
+    accepted_foreground: AcceptedForeground,
+) -> Result<bool> {
+    if reload_modifier_guard_active() {
         return Ok(false);
     }
     let vk = reload_hotkey_vk(importer_root);
@@ -3591,22 +3725,11 @@ pub fn send_reload_hotkey(importer_root: &Path) -> Result<bool> {
     send_keyboard_input(vk, true, "reload key settle-up")?;
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
 
-    let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
-    let alt_down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
-    if ctrl_down || alt_down {
+    if reload_modifier_guard_active() {
         return Ok(false);
     }
 
-    let held = HeldKey::press(vk, "reload key down")?;
-    std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_HOLD_MS));
-    held.release("reload key up")
-        .map_err(|err| anyhow!("reload key was pressed but release failed: {err:#}"))?;
-    Ok(true)
-}
-
-#[cfg(not(windows))]
-pub fn send_reload_hotkey(_importer_root: &Path) -> Result<bool> {
-    Ok(false)
+    hold_reload_key(vk, accepted_foreground)
 }
 
 // ---------------------------------------------------------------------------
@@ -3636,6 +3759,32 @@ mod tests {
         }
         name.chars()
             .all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reload_hotkey_vk_parses_case_insensitive_binding() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join(D3DX_INI_FILE),
+            "[System]\r\nRELOAD_CONFIG = NO_CTRL no_alt no_shift vk_f12\r\n",
+        )
+        .unwrap();
+
+        assert_eq!(reload_hotkey_vk(temp.path()), 0x7b);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reload_hotkey_vk_skips_modifier_tokens() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join(D3DX_INI_FILE),
+            "[System]\r\nreload_config = ctrl alt no_shift VK_INSERT\r\n",
+        )
+        .unwrap();
+
+        assert_eq!(reload_hotkey_vk(temp.path()), 0x2d);
     }
 
     #[test]
