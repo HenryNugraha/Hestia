@@ -52,6 +52,10 @@ enum XxmiReloadEvent {
 /// shown live values self-correct within the autosave cadence without re-reading every frame.
 struct LiveStateWatch {
     mod_id: String,
+    game_id: String,
+    use_default: bool,
+    mods_path: Option<PathBuf>,
+    importer_root: Option<PathBuf>,
     /// Last observed `(mtime, len)` of `d3dx_user.ini`; `None` until the first poll (or when
     /// the file is absent). A different token means the DLL flushed new persist values.
     token: Option<(std::time::SystemTime, u64)>,
@@ -79,6 +83,9 @@ struct D3dxReloadPromptCandidate {
 
 struct D3dxReloadConfigWatch {
     game_id: String,
+    use_default: bool,
+    mods_path: Option<PathBuf>,
+    importer_root: Option<PathBuf>,
     token: Option<(SystemTime, u64)>,
     next_poll_at: f64,
     pending_unhealthy: Option<D3dxReloadPromptCandidate>,
@@ -379,6 +386,8 @@ pub struct HestiaApp {
     mod_detail_focus_requested: bool,
     browse_detail_focus_requested: bool,
     mod_detail_editing: bool,
+    selected_mod_detail_snapshot: Option<Arc<ModEntry>>,
+    library_detail_content_cache: Option<LibraryDetailContentCache>,
     mod_detail_edit_target_id: Option<String>,
     mod_detail_rename_focus_target_id: Option<String>,
     mod_detail_edit_name: String,
@@ -734,7 +743,7 @@ struct BrowseState {
     character_filter_focus_pending: bool,
     toggle_character_picker_requested: bool,
     selected_character_category: Option<BrowseCharacterCategory>,
-    details: HashMap<u64, BrowseDetailCache>,
+    details: HashMap<u64, Arc<BrowseDetailCache>>,
     loading_details: HashMap<u64, Instant>,
     pending_installs: Vec<PendingBrowseInstall>,
     file_prompt: Option<BrowseFilePrompt>,

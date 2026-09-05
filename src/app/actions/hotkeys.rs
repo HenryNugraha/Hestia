@@ -72,7 +72,36 @@ impl HestiaApp {
             self.hotkeys_write_block_cache = None;
             return false;
         };
-        if !game.is_xxmi() || self.xxmi_reload_hotkey_capable_for_game(&game) {
+        // This is a render-path guard. Do not fall back to `reload_config_status` here: that
+        // fallback resolves the importer root and would defeat the watch deadline after a path
+        // change invalidates the status cache. The d3dx watch refreshes this cache on its next
+        // due pass.
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let mods_path = game.mods_path(use_default);
+        let config_identity_matches = !importer_root_watch_identity_changed(
+            self.d3dx_reload_config_watch.as_ref().map(|watch| {
+                (
+                    watch.game_id.as_str(),
+                    watch.use_default,
+                    watch.mods_path.as_deref(),
+                )
+            }),
+            (
+                game.definition.id.as_str(),
+                use_default,
+                mods_path.as_deref(),
+            ),
+        ) && self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.importer_root.is_some());
+        let reload_hotkey_capable = config_identity_matches
+            && self
+                .d3dx_reload_status_cache
+                .as_ref()
+                .filter(|cache| cache.game_id == game.definition.id)
+                .is_some_and(|cache| cache.status.foreground_window_matches());
+        if !game.is_xxmi() || reload_hotkey_capable {
             self.hotkeys_write_block_cache = None;
             return false;
         }
@@ -290,51 +319,120 @@ impl HestiaApp {
             self.live_state_watch = None;
             return;
         };
-        if !(self.xxmi_live_readback_capable_for_game(&game)
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        // Do not use `xxmi_live_readback_capable_for_game` here: its cache-miss fallback resolves
+        // the importer root. The d3dx watch owns that deadline-gated resolution, so only consult
+        // its status once the cached identity matches this mod's current game path.
+        let mods_path = game.mods_path(use_default);
+        let config_identity_matches = !importer_root_watch_identity_changed(
+            self.d3dx_reload_config_watch.as_ref().map(|watch| {
+                (
+                    watch.game_id.as_str(),
+                    watch.use_default,
+                    watch.mods_path.as_deref(),
+                )
+            }),
+            (
+                game.definition.id.as_str(),
+                use_default,
+                mods_path.as_deref(),
+            ),
+        ) && self
+            .d3dx_reload_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.importer_root.is_some());
+        let live_readback_capable = config_identity_matches
+            && self
+                .d3dx_reload_status_cache
+                .as_ref()
+                .filter(|cache| cache.game_id == game.definition.id)
+                .is_some_and(|cache| cache.status.autosave_interval_matches());
+        if !(live_readback_capable
             && self.game_process_running_cached(&game, ctx, Duration::from_secs(1)))
         {
             self.live_state_watch = None;
             return;
         }
-        let use_default = self.state.static_prefs.use_default_mods_path;
-        let Some(importer_root) = xxmi_persist::importer_root_for(&game, use_default) else {
-            self.live_state_watch = None;
-            return;
-        };
 
         // Keep the frame loop alive so polling continues while the app is otherwise idle.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
         let now = ctx.input(|input| input.time);
-        // (Re)arm the watch when it targets a different mod; the initial values were already
-        // loaded by `select_hotkeys_source`, so just seed the token and wait for the next flush.
-        if self
+        // (Re)arm the watch when its mod, game, or effective Mods path changes. The initial
+        // values were already loaded by `select_hotkeys_source`, so just seed the token and wait
+        // for the next flush. Root discovery itself is cached and deadline-gated.
+        let identity_changed = self
             .live_state_watch
             .as_ref()
             .is_none_or(|watch| watch.mod_id != mod_id)
-        {
+            || importer_root_watch_identity_changed(
+                self.live_state_watch.as_ref().map(|watch| {
+                    (
+                        watch.game_id.as_str(),
+                        watch.use_default,
+                        watch.mods_path.as_deref(),
+                    )
+                }),
+                (
+                    game.definition.id.as_str(),
+                    use_default,
+                    mods_path.as_deref(),
+                ),
+            );
+        if identity_changed {
             self.live_state_watch = Some(LiveStateWatch {
-                mod_id,
-                token: xxmi_persist::user_ini_change_token(&importer_root),
-                next_poll_at: now + POLL_INTERVAL,
+                mod_id: mod_id.clone(),
+                game_id: game.definition.id.clone(),
+                use_default,
+                mods_path: mods_path.clone(),
+                importer_root: None,
+                token: None,
+                next_poll_at: now,
             });
-            return;
         }
-        if self
+
+        let root_changed = {
+            let watch = self
+                .live_state_watch
+                .as_mut()
+                .expect("live-state watch was initialized above");
+            let Some(root_changed) = refresh_importer_root_cache(
+                now,
+                POLL_INTERVAL,
+                identity_changed,
+                &mut watch.next_poll_at,
+                mods_path.as_deref(),
+                &mut watch.importer_root,
+                xxmi_persist::importer_root_from_mods_path,
+            ) else {
+                return;
+            };
+            root_changed
+        };
+        let importer_root = self
             .live_state_watch
             .as_ref()
-            .is_some_and(|watch| now < watch.next_poll_at)
-        {
+            .and_then(|watch| watch.importer_root.clone());
+        let Some(importer_root) = importer_root else {
+            if let Some(watch) = self.live_state_watch.as_mut() {
+                watch.token = None;
+            }
+            return;
+        };
+        if identity_changed {
+            if let Some(watch) = self.live_state_watch.as_mut() {
+                watch.token = xxmi_persist::user_ini_change_token(&importer_root);
+            }
             return;
         }
         let token = xxmi_persist::user_ini_change_token(&importer_root);
-        let changed = self
-            .live_state_watch
-            .as_ref()
-            .is_some_and(|watch| watch.token != token);
+        let changed = root_changed
+            || self
+                .live_state_watch
+                .as_ref()
+                .is_some_and(|watch| watch.token != token);
         if let Some(watch) = self.live_state_watch.as_mut() {
             watch.token = token;
-            watch.next_poll_at = now + POLL_INTERVAL;
         }
         if changed {
             // Re-read even though the mod's `ini_hash` is unchanged — the flush is off-disk

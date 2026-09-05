@@ -316,6 +316,223 @@ fn extract_image_urls_from_profile_json(raw_profile_json: &str) -> Vec<String> {
     extract_image_urls_from_html_like_text(html)
 }
 
+/// The Library detail pane keeps one small cache for the selected mod. HTML to Markdown
+/// conversion is pure and relatively expensive, while URL rewriting below it depends on files
+/// arriving in the mod metadata directory and the shared image cache. Keep those two stages
+/// separate so a prepared description can be reused without making a missing image permanent.
+#[derive(Clone, Default)]
+struct LibraryDetailContentCache {
+    mod_id: String,
+    prepared_markdown: Vec<LibraryDetailPreparedMarkdown>,
+    raw_profile: Option<LibraryDetailRawProfile>,
+    #[cfg(test)]
+    prepared_builds: usize,
+    #[cfg(test)]
+    raw_profile_parses: usize,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct LibraryDetailPreparedMarkdown {
+    key: LibraryDetailMarkdownKey,
+    markdown: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct LibraryDetailMarkdownKey {
+    content_hash: u64,
+    content_len: usize,
+    mod_root: Option<PathBuf>,
+    gb_id: Option<u64>,
+}
+
+#[derive(Clone)]
+struct LibraryDetailRawProfile {
+    content_hash: u64,
+    content_len: usize,
+    description: Option<String>,
+    preview_captions: Vec<Option<String>>,
+}
+
+impl LibraryDetailContentCache {
+    const MAX_PREPARED_VARIANTS: usize = 8;
+
+    fn reset_for_mod(&mut self, mod_id: &str) {
+        if self.mod_id == mod_id {
+            return;
+        }
+        self.mod_id.clear();
+        self.mod_id.push_str(mod_id);
+        self.prepared_markdown.clear();
+        self.raw_profile = None;
+    }
+
+    fn prepared_markdown(
+        &mut self,
+        mod_id: &str,
+        html: &str,
+        mod_root: Option<&Path>,
+        gb_id: Option<u64>,
+    ) -> String {
+        self.reset_for_mod(mod_id);
+        let key = LibraryDetailMarkdownKey {
+            content_hash: xxh3_64(html.as_bytes()),
+            content_len: html.len(),
+            mod_root: mod_root.map(Path::to_path_buf),
+            gb_id,
+        };
+        if let Some(cached) = self
+            .prepared_markdown
+            .iter()
+            .find(|cached| cached.key == key)
+        {
+            return cached.markdown.clone();
+        }
+
+        let markdown = prepare_markdown_content(html);
+        #[cfg(test)]
+        {
+            self.prepared_builds += 1;
+        }
+        if self.prepared_markdown.len() >= Self::MAX_PREPARED_VARIANTS {
+            self.prepared_markdown.remove(0);
+        }
+        self.prepared_markdown.push(LibraryDetailPreparedMarkdown {
+            key,
+            markdown: markdown.clone(),
+        });
+        markdown
+    }
+
+    fn raw_profile_description(&mut self, mod_id: &str, raw_profile_json: &str) -> Option<String> {
+        self.ensure_raw_profile(mod_id, raw_profile_json);
+        self.raw_profile
+            .as_ref()
+            .and_then(|profile| profile.description.clone())
+    }
+
+    fn raw_profile_preview_captions(
+        &mut self,
+        mod_id: &str,
+        raw_profile_json: &str,
+    ) -> Vec<Option<String>> {
+        self.ensure_raw_profile(mod_id, raw_profile_json);
+        self.raw_profile
+            .as_ref()
+            .map(|profile| profile.preview_captions.clone())
+            .unwrap_or_default()
+    }
+
+    fn ensure_raw_profile(&mut self, mod_id: &str, raw_profile_json: &str) {
+        self.reset_for_mod(mod_id);
+        let content_hash = xxh3_64(raw_profile_json.as_bytes());
+        let content_len = raw_profile_json.len();
+        if self.raw_profile.as_ref().is_some_and(|profile| {
+            profile.content_hash == content_hash && profile.content_len == content_len
+        }) {
+            return;
+        }
+
+        let (description, preview_captions) = serde_json::from_str::<serde_json::Value>(
+            raw_profile_json,
+        )
+        .ok()
+        .map(|value| {
+            let description = value
+                .get("_sText")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
+            let preview_captions = value
+                .get("_aPreviewMedia")
+                .and_then(|media| media.get("_aImages"))
+                .and_then(|images| images.as_array())
+                .map(|images| {
+                    images
+                        .iter()
+                        .map(|image| {
+                            image
+                                .get("_sCaption")
+                                .and_then(|caption| caption.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (description, preview_captions)
+        })
+        .unwrap_or_default();
+
+        #[cfg(test)]
+        {
+            self.raw_profile_parses += 1;
+        }
+        self.raw_profile = Some(LibraryDetailRawProfile {
+            content_hash,
+            content_len,
+            description,
+            preview_captions,
+        });
+    }
+}
+
+fn cached_library_prepared_markdown(
+    cache: &mut Option<LibraryDetailContentCache>,
+    mod_id: &str,
+    html: &str,
+    mod_root: Option<&Path>,
+    gb_id: Option<u64>,
+) -> String {
+    cache
+        .get_or_insert_with(LibraryDetailContentCache::default)
+        .prepared_markdown(mod_id, html, mod_root, gb_id)
+}
+
+/// Convert HTML to the Markdown form consumed by egui_commonmark. This deliberately excludes
+/// filesystem-dependent URL resolution; callers that render the result must still run
+/// `rewrite_markdown_urls` / `cached_rewrite_markdown_for_render` afterwards.
+fn prepare_markdown_content(html: &str) -> String {
+    let detective = "https://images.gamebanana.com/static/img/mascots/detective.png";
+    let iframe_sanitized_html = HTML_IFRAME_RE.replace_all(html, |caps: &regex::Captures| {
+        let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let src = HTML_SRC_RE
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or_default();
+        if let Some(video_id) = extract_youtube_video_id(src) {
+            format!("\n\n{{{{hestia-youtube:{video_id}}}}}\n\n")
+        } else {
+            String::new()
+        }
+    });
+
+    let sanitized_html =
+        HTML_IMAGE_RE.replace_all(&iframe_sanitized_html, |caps: &regex::Captures| {
+            let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let src = HTML_SRC_RE
+                .captures(attrs)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or_default();
+            let data = HTML_DATA_SRC_RE
+                .captures(attrs)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or_default();
+
+            let real_url = if src == detective || (src.is_empty() && !data.is_empty()) {
+                data
+            } else {
+                src
+            };
+            if real_url.is_empty() || real_url == detective {
+                return String::new();
+            }
+            format!(r#"<img src="{real_url}">"#)
+        });
+
+    html2md::parse_html(&sanitized_html)
+}
+
 fn mod_primary_description_markdown(
     mod_entry: &ModEntry,
     portable: &persistence::PortablePaths,
@@ -387,46 +604,7 @@ fn prepare_markdown_for_display(
     gb_id: Option<u64>,
     portable: &PortablePaths,
 ) -> String {
-    let detective = "https://images.gamebanana.com/static/img/mascots/detective.png";
-    let iframe_sanitized_html = HTML_IFRAME_RE.replace_all(html, |caps: &regex::Captures| {
-        let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let src = HTML_SRC_RE
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or_default();
-        if let Some(video_id) = extract_youtube_video_id(src) {
-            format!("\n\n{{{{hestia-youtube:{video_id}}}}}\n\n")
-        } else {
-            String::new()
-        }
-    });
-
-    let sanitized_html = HTML_IMAGE_RE.replace_all(&iframe_sanitized_html, |caps: &regex::Captures| {
-        let attrs = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let src = HTML_SRC_RE
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or_default();
-        let data = HTML_DATA_SRC_RE
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or_default();
-
-        let real_url = if src == detective || (src.is_empty() && !data.is_empty()) {
-            data
-        } else {
-            src
-        };
-        if real_url.is_empty() || real_url == detective {
-            return String::new();
-        }
-        format!(r#"<img src="{real_url}">"#)
-    });
-
-    let markdown = html2md::parse_html(&sanitized_html);
+    let markdown = prepare_markdown_content(html);
     rewrite_markdown_urls(&markdown, mod_root, gb_id, portable)
 }
 
@@ -982,5 +1160,141 @@ mod markdown_render_image_tests {
         );
 
         let _ = persistence::cache_remove(&portable, &cache_key);
+    }
+
+    #[test]
+    fn library_detail_prepared_content_reuses_unchanged_input_and_invalidates_inputs() {
+        let mut cache = LibraryDetailContentCache::default();
+        let html = "<p>same content</p>";
+        let root = PathBuf::from(r"C:\mods\example");
+
+        let first = cache.prepared_markdown("mod-1", html, Some(&root), Some(42));
+        let second = cache.prepared_markdown("mod-1", html, Some(&root), Some(42));
+        assert_eq!(first, second);
+        assert_eq!(cache.prepared_builds, 1);
+
+        cache.prepared_markdown("mod-1", "<p>changed content</p>", Some(&root), Some(42));
+        assert_eq!(cache.prepared_builds, 2);
+
+        let changed_root = PathBuf::from(r"C:\mods\moved");
+        cache.prepared_markdown("mod-1", "<p>changed content</p>", Some(&changed_root), Some(42));
+        assert_eq!(cache.prepared_builds, 3);
+    }
+
+    #[test]
+    fn library_detail_raw_profile_json_is_parsed_once_until_content_changes() {
+        let mut cache = LibraryDetailContentCache::default();
+        let raw = r#"{"_sText":"<p>description</p>","_aPreviewMedia":{"_aImages":[{"_sCaption":"first"}]}}"#;
+
+        assert_eq!(
+            cache.raw_profile_description("mod-1", raw).as_deref(),
+            Some("<p>description</p>")
+        );
+        assert_eq!(
+            cache.raw_profile_preview_captions("mod-1", raw),
+            vec![Some("first".to_string())]
+        );
+        assert_eq!(cache.raw_profile_parses, 1);
+
+        cache.raw_profile_description("mod-1", r#"{"_sText":"<p>changed</p>"}"#);
+        assert_eq!(cache.raw_profile_parses, 2);
+    }
+
+    #[test]
+    fn library_detail_cached_prepare_keeps_dynamic_local_image_resolution() {
+        let portable = dummy_portable_paths();
+        let root = tempfile::tempdir().expect("temp mod root should be created");
+        let url = "https://images.gamebanana.com/example/library-detail-dynamic-local-image.png";
+        let cache_key = format!("img:{}", hash64_hex(url.as_bytes()));
+        let _ = persistence::cache_remove(&portable, &cache_key);
+        let html = format!(r#"<p>body</p><img src="{url}">"#);
+        let mut cache = LibraryDetailContentCache::default();
+        let prepared = cache.prepared_markdown("mod-1", &html, Some(root.path()), Some(42));
+
+        let before = rewrite_markdown_urls(&prepared, Some(root.path()), Some(42), &portable);
+        let original_before = prepare_markdown_for_display(
+            &html,
+            Some(root.path()),
+            Some(42),
+            &portable,
+        );
+        assert_eq!(before, original_before);
+
+        let meta_dir = root.path().join(MOD_META_DIR);
+        fs::create_dir_all(&meta_dir).expect("metadata directory should be created");
+        let local_path = meta_dir.join(format!("gb_desc_42_{}.png", hash64_hex(url.as_bytes())));
+        fs::write(&local_path, b"persisted image").expect("local image should be written");
+        let after_appears = rewrite_markdown_urls(&prepared, Some(root.path()), Some(42), &portable);
+        let original_after_appears = prepare_markdown_for_display(
+            &html,
+            Some(root.path()),
+            Some(42),
+            &portable,
+        );
+        assert_eq!(after_appears, original_after_appears);
+        assert!(after_appears.contains(&path_to_file_uri(&local_path)));
+
+        fs::remove_file(&local_path).expect("local image should be removed");
+        let after_disappears = rewrite_markdown_urls(&prepared, Some(root.path()), Some(42), &portable);
+        let original_after_disappears = prepare_markdown_for_display(
+            &html,
+            Some(root.path()),
+            Some(42),
+            &portable,
+        );
+        assert_eq!(after_disappears, original_after_disappears);
+        assert_eq!(cache.prepared_builds, 1);
+    }
+
+    #[test]
+    #[ignore = "focused release-path evidence; run with --ignored --nocapture"]
+    fn library_detail_cache_release_path_evidence() {
+        use std::{hint::black_box, time::Instant};
+
+        let portable = dummy_portable_paths();
+        let html = format!(
+            "<article><h2>Large profile</h2>{}</article>",
+            "<p>Repeated profile prose with a link and an image marker.</p>".repeat(256)
+        );
+        let iterations = 24;
+        let _ = prepare_markdown_for_display(&html, None, Some(42), &portable);
+        let mut cache = LibraryDetailContentCache::default();
+        let prepared = cache.prepared_markdown("mod-1", &html, None, Some(42));
+        let _ = rewrite_markdown_urls(&prepared, None, Some(42), &portable);
+
+        let baseline_output = prepare_markdown_for_display(&html, None, Some(42), &portable);
+        let cached_output = rewrite_markdown_urls(
+            &cache.prepared_markdown("mod-1", &html, None, Some(42)),
+            None,
+            Some(42),
+            &portable,
+        );
+        assert_eq!(baseline_output, cached_output);
+
+        let baseline_start = Instant::now();
+        let mut baseline_bytes = 0usize;
+        for _ in 0..iterations {
+            baseline_bytes = baseline_bytes.wrapping_add(
+                black_box(prepare_markdown_for_display(&html, None, Some(42), &portable)).len(),
+            );
+        }
+        let baseline_elapsed = baseline_start.elapsed();
+
+        let cached_start = Instant::now();
+        let mut cached_bytes = 0usize;
+        for _ in 0..iterations {
+            let prepared = cache.prepared_markdown("mod-1", &html, None, Some(42));
+            cached_bytes = cached_bytes.wrapping_add(
+                black_box(rewrite_markdown_urls(&prepared, None, Some(42), &portable)).len(),
+            );
+        }
+        let cached_elapsed = cached_start.elapsed();
+
+        println!(
+            "library detail prepare evidence: baseline={baseline_elapsed:?} cached={cached_elapsed:?} baseline_bytes={baseline_bytes} cached_bytes={cached_bytes} prepared_builds={}",
+            cache.prepared_builds
+        );
+        assert_eq!(cache.prepared_builds, 1);
+        assert_eq!(baseline_bytes, cached_bytes);
     }
 }

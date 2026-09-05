@@ -1204,7 +1204,7 @@ pub enum MetadataSourceKind {
     Hotkeys,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ExtractedMetadata {
     pub description: Option<String>,
     pub hotkeys: Vec<String>,
@@ -1216,14 +1216,14 @@ pub struct ExtractedMetadata {
     pub requires_rabbitfx: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ExtractedMetadataTextSource {
     pub path: String,
     pub label: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct UserMetadata {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -1262,14 +1262,14 @@ pub struct UserMetadata {
     pub rail_thumb_generated_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ModMetadata {
     pub extracted: ExtractedMetadata,
     pub user: UserMetadata,
     pub prompt_for_missing_metadata: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModEntry {
     pub id: String,
     pub game_id: String,
@@ -1389,7 +1389,7 @@ pub enum LibraryCategoryDisplayMode {
     Folders,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ModSourceData {
     pub gamebanana: Option<GameBananaLink>,
     pub snapshot: Option<GameBananaSnapshot>,
@@ -1426,13 +1426,13 @@ pub struct AcceptedLocalChanges {
     pub accepted_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct GameBananaLink {
     pub mod_id: u64,
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct GameBananaSnapshot {
     pub title: String,
     pub authors: Vec<String>,
@@ -1454,7 +1454,7 @@ pub struct GameBananaSnapshot {
     pub unsafe_content: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct GameBananaFileMeta {
     pub file_id: u64,
     pub file_name: String,
@@ -1466,7 +1466,7 @@ pub struct GameBananaFileMeta {
     pub archived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct FileSetRecipe {
     #[serde(default)]
     pub selected_file_ids: Vec<u64>,
@@ -1521,10 +1521,10 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct UpdatePrefs {}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct InstallHistory {
     pub downloaded_at: Option<DateTime<Utc>>,
     pub installed_at: Option<DateTime<Utc>>,
@@ -1562,7 +1562,7 @@ pub struct ToolEntry {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DiscoveredTool {
     pub label: String,
     pub path: PathBuf,

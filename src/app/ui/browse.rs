@@ -574,13 +574,11 @@ impl HestiaApp {
             let columns = ((max_card_width + 8.0) / (BROWSE_PANEL_CARD_WIDTH + 8.0))
                 .floor()
                 .max(1.0) as usize;
-            let cards: Vec<BrowseCard> = self
-                .browse_cards_for_display()
-                .into_iter()
-                .cloned()
-                .collect();
+            // Keep filtering and layout calculations lightweight. The cards themselves are
+            // cloned only for rows that are close enough to the viewport to be rendered.
+            let card_indices = self.browse_card_indices_for_display();
 
-            if cards.is_empty() && self.browse_state.loading_page {
+            if card_indices.is_empty() && self.browse_state.loading_page {
                 ui.add_space(12.0);
                 ui.centered_and_justified(|ui| {
                     static_label(
@@ -599,8 +597,15 @@ impl HestiaApp {
             let card_spacing = 8.0;
             let row_height = BROWSE_CARD_HEIGHT + card_spacing;
             let buffer_rows = 2; // Render 2 extra rows above/below for smooth scrolling
+            // Delay these model/readiness scans until a row is actually rendered. Loading and
+            // empty states still need the footer/sentinel below, but have no card controls that
+            // need the snapshots.
+            let mut installed_mod_snapshot = BrowseInstalledModSnapshot::default();
+            let mut readiness_initialized = false;
+            let mut selected_game_ready = false;
+            let mut selected_game_setup_message = String::new();
 
-            for row in cards.chunks(columns) {
+            for row_indices in card_indices.chunks(columns) {
                 // Calculate row position
                 let row_top = ui.cursor().top();
                 let row_bottom = row_top + row_height;
@@ -615,9 +620,23 @@ impl HestiaApp {
                     continue;
                 }
 
+                if !readiness_initialized {
+                    selected_game_ready = self.selected_game_can_download_mods();
+                    selected_game_setup_message = self.selected_game_mod_setup_message();
+                    readiness_initialized = true;
+                }
+
+                // Borrowing cards while rendering also mutates app state for image requests,
+                // detail opens, and install actions. Clone only this visible row to keep those
+                // mutations borrow-safe without copying cards in culled rows.
+                let row: Vec<BrowseCard> = row_indices
+                    .iter()
+                    .filter_map(|index| self.browse_state.cards.get(*index).cloned())
+                    .collect();
+
                 ui.horizontal_top(|ui| {
                     ui.add_space(left_padding);
-                    for card in row {
+                    for card in &row {
                         let selected = self.browse_state.selected_mod_id == Some(card.id);
                         let frame_fill = if selected {
                             Color32::from_rgba_premultiplied(43, 44, 50, 242)
@@ -739,10 +758,8 @@ impl HestiaApp {
                                             ui.horizontal(|ui| {
                                                 ui.vertical(|ui| {
                                                     ui.add_space(4.0);
-                                                    let is_installed = self.is_browse_mod_installed(card);
-                                                    let selected_game_ready = self.selected_game_can_download_mods();
-                                                    let selected_game_setup_message =
-                                                        self.selected_game_mod_setup_message();
+                                                    let is_installed = installed_mod_snapshot
+                                                        .lookup(card, self.state.mods.as_slice());
                                                     ui.spacing_mut().button_padding.y = 4.0;
                                                     let install_response = ui.add_enabled(
                                                         card.has_files && selected_game_ready,
@@ -891,13 +908,11 @@ impl HestiaApp {
                             }
 
                             let detail = detail.expect("checked above");
-                            let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                            let profile = browse_detail_profile(&detail);
                             let install_disabled_reason =
                                 gamebanana::install_block_reason(profile)
                                     .unwrap_or_default();
                             let install_blocked = !install_disabled_reason.is_empty();
-                            let selected_game_ready = self.selected_game_can_download_mods();
-                            let selected_game_setup_message = self.selected_game_mod_setup_message();
 
                             let install_enabled = !install_blocked && selected_game_ready;
                             let install_response = Self::browse_card_install_context_menu_row(
@@ -1598,7 +1613,7 @@ impl HestiaApp {
                 
                 if let Some(detail) = self.browse_state.details.get(&mod_id).cloned() {
                     // Use translated profile if available, otherwise use original
-                    let profile = detail.translated_profile.as_ref().unwrap_or(&detail.profile);
+                    let profile = browse_detail_profile(&detail);
                     
                     let browse_game_id = card
                         .as_ref()
@@ -2680,10 +2695,7 @@ impl HestiaApp {
                 .selected_mod_id
                 .and_then(|mod_id| self.browse_state.details.get(&mod_id))
                 .and_then(|detail| {
-                    let profile = detail
-                        .translated_profile
-                        .as_ref()
-                        .unwrap_or(&detail.profile);
+                    let profile = browse_detail_profile(detail);
                     profile.preview_media.as_ref().map(|p| p.images.len())
                 })
                 .unwrap_or(0)
@@ -2694,10 +2706,7 @@ impl HestiaApp {
         if self.current_view == ViewMode::Browse {
             if let Some(mod_id) = self.browse_state.selected_mod_id {
                 if let Some(detail) = self.browse_state.details.get(&mod_id) {
-                    let profile = detail
-                        .translated_profile
-                        .as_ref()
-                        .unwrap_or(&detail.profile);
+                    let profile = browse_detail_profile(detail);
                     if let Some(preview) = &profile.preview_media {
                         for image in &preview.images {
                             let full_url = gamebanana::full_image_url(image);

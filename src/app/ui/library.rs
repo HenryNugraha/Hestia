@@ -22,6 +22,41 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn mod_detail_snapshot_matches(left: &ModEntry, right: &ModEntry) -> bool {
+    if left != right {
+        return false;
+    }
+
+    // TrackedFileMeta intentionally ignores labels for persisted update-signature compatibility.
+    // Labels are still part of the detail snapshot, so account for them here and refresh after a
+    // metadata-only label update.
+    let labels_match = |left: &[TrackedFileMeta], right: &[TrackedFileMeta]| {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| left.label == right.label)
+    };
+
+    match (left.source.as_ref(), right.source.as_ref()) {
+        (Some(left), Some(right)) => {
+            labels_match(
+                &left.file_set.selected_files_meta,
+                &right.file_set.selected_files_meta,
+            ) && match (
+                left.ignored_update_signature.as_ref(),
+                right.ignored_update_signature.as_ref(),
+            ) {
+                (Some(left), Some(right)) => labels_match(&left.files, &right.files),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 const AYAKA_NTE_BYPASSER_URL: &str =
     "https://ayakamods.com/mods/ayakantebypasser-nte-signature-bypass.2325/";
 const UNIVERSAL_SIG_BYPASSER_URL: &str = "https://gamebanana.com/tuts/19765";
@@ -459,25 +494,6 @@ const METADATA_SOURCE_POPUP_WIDTH: f32 = 132.0;
 static PERSONAL_NOTE_HTML_TAG_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<[a-z][a-z0-9-]*(?:\s[^>]*)?>").unwrap());
 
-fn personal_note_markdown_for_display(
-    text: &str,
-    mod_entry: &ModEntry,
-    portable: &PortablePaths,
-) -> String {
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let markdown = if PERSONAL_NOTE_HTML_TAG_RE.is_match(&normalized) {
-        prepare_markdown_for_display(
-            &normalized,
-            Some(&mod_entry.root_path),
-            Some(parse_gb_id_from_entry(mod_entry)),
-            portable,
-        )
-    } else {
-        normalized
-    };
-    preserve_personal_note_markdown_whitespace(&markdown)
-}
-
 fn preserve_personal_note_markdown_whitespace(markdown: &str) -> String {
     let mut preserved = String::new();
     let mut in_fenced_code = false;
@@ -737,6 +753,30 @@ mod metadata_source_resolver_tests {
 #[cfg(test)]
 mod library_selection_tests {
     use super::*;
+    use crate::model::ModMetadata;
+
+    fn detail_test_mod() -> ModEntry {
+        ModEntry {
+            id: "mod-1".to_string(),
+            game_id: "game-1".to_string(),
+            folder_name: "Mod 1".to_string(),
+            root_path: PathBuf::from(r"C:\mods\mod-1"),
+            status: ModStatus::Active,
+            metadata: ModMetadata::default(),
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: UnsafeContentPreference::Auto,
+            source: None,
+            update_state: ModUpdateState::Unlinked,
+        }
+    }
 
     #[test]
     fn personal_note_whitespace_preserves_extra_spaces_and_blank_lines() {
@@ -744,6 +784,83 @@ mod library_selection_tests {
         assert!(markdown.contains("one&nbsp;&nbsp;two"));
         assert!(markdown.contains("&nbsp;  \nthree"));
         assert!(markdown.contains("three&nbsp;&nbsp;&nbsp;&nbsp;four"));
+    }
+
+    #[test]
+    fn detail_snapshot_match_includes_tracked_file_labels() {
+        let mut left = detail_test_mod();
+        let mut right = left.clone();
+        left.source = Some(ModSourceData {
+            file_set: FileSetRecipe {
+                selected_files_meta: vec![TrackedFileMeta {
+                    file_id: 1,
+                    file_name: "main.zip".to_string(),
+                    label: Some("Main".to_string()),
+                    ..TrackedFileMeta::default()
+                }],
+                ..FileSetRecipe::default()
+            },
+            ..ModSourceData::default()
+        });
+        right.source = Some(ModSourceData {
+            file_set: FileSetRecipe {
+                selected_files_meta: vec![TrackedFileMeta {
+                    file_id: 1,
+                    file_name: "main.zip".to_string(),
+                    label: Some("Experimental".to_string()),
+                    ..TrackedFileMeta::default()
+                }],
+                ..FileSetRecipe::default()
+            },
+            ..ModSourceData::default()
+        });
+
+        assert!(!mod_detail_snapshot_matches(&left, &right));
+    }
+
+    #[test]
+    #[ignore = "focused release-path evidence; run with --ignored --nocapture"]
+    fn library_detail_snapshot_arc_release_path_evidence() {
+        use std::{hint::black_box, time::Instant};
+
+        let current = detail_test_mod();
+        let snapshot = Arc::new(current.clone());
+        assert!(mod_detail_snapshot_matches(&current, snapshot.as_ref()));
+        assert!(Arc::ptr_eq(&snapshot, &Arc::clone(&snapshot)));
+        const WARMUP_PASSES: usize = 10;
+        let iterations = 10_000;
+
+        for _ in 0..WARMUP_PASSES {
+            black_box(black_box(&current).clone());
+            black_box(mod_detail_snapshot_matches(
+                black_box(&current),
+                black_box(snapshot.as_ref()),
+            ));
+        }
+
+        let clone_start = Instant::now();
+        let mut cloned_entries = 0usize;
+        for _ in 0..iterations {
+            cloned_entries += black_box(black_box(&current).clone()).id.len();
+        }
+        let clone_elapsed = clone_start.elapsed();
+
+        let snapshot_start = Instant::now();
+        let mut matched_entries = 0usize;
+        for _ in 0..iterations {
+            if mod_detail_snapshot_matches(
+                black_box(&current),
+                black_box(snapshot.as_ref()),
+            ) {
+                matched_entries += black_box(Arc::clone(&snapshot)).id.len();
+            }
+        }
+        let snapshot_elapsed = snapshot_start.elapsed();
+
+        println!(
+            "library detail snapshot evidence: clone={clone_elapsed:?} snapshot_compare_arc={snapshot_elapsed:?} clone_bytes={cloned_entries} snapshot_bytes={matched_entries}"
+        );
+        assert_eq!(cloned_entries, matched_entries);
     }
 
     #[test]
@@ -9216,6 +9333,148 @@ impl HestiaApp {
         });
     }
 
+    fn library_detail_selected_snapshot(&mut self) -> Option<Arc<ModEntry>> {
+        let selected_id = self.selected_mod_id.as_ref()?;
+        let current = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| &mod_entry.id == selected_id)?;
+        let reuse_snapshot = self
+            .selected_mod_detail_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| mod_detail_snapshot_matches(current, snapshot));
+        if !reuse_snapshot {
+            self.selected_mod_detail_snapshot = Some(Arc::new(current.clone()));
+        }
+        self.selected_mod_detail_snapshot.clone()
+    }
+
+    fn cached_library_markdown(
+        &mut self,
+        mod_id: &str,
+        html: &str,
+        mod_root: Option<&Path>,
+        gb_id: Option<u64>,
+    ) -> String {
+        cached_library_prepared_markdown(
+            &mut self.library_detail_content_cache,
+            mod_id,
+            html,
+            mod_root,
+            gb_id,
+        )
+    }
+
+    fn cached_library_primary_description_markdown(
+        &mut self,
+        selected: &ModEntry,
+    ) -> (String, Option<PathBuf>, Option<u64>) {
+        let gb_id = Some(parse_gb_id_from_entry(selected));
+        if let Some(html) = selected
+            .metadata
+            .user
+            .description
+            .as_deref()
+            .filter(|description| !description.trim().is_empty())
+        {
+            return (
+                self.cached_library_markdown(
+                    &selected.id,
+                    html,
+                    Some(&selected.root_path),
+                    gb_id,
+                ),
+                Some(selected.root_path.clone()),
+                gb_id,
+            );
+        }
+
+        if let Some(raw_profile_json) = selected
+            .source
+            .as_ref()
+            .and_then(|source| source.raw_profile_json.as_deref())
+        {
+            let description = self
+                .library_detail_content_cache
+                .get_or_insert_with(LibraryDetailContentCache::default)
+                .raw_profile_description(&selected.id, raw_profile_json);
+            if let Some(description) = description {
+                return (
+                    self.cached_library_markdown(&selected.id, &description, None, gb_id),
+                    None,
+                    gb_id,
+                );
+            }
+        }
+
+        if let Some(html) = selected
+            .source
+            .as_ref()
+            .and_then(|source| source.snapshot.as_ref())
+            .and_then(|snapshot| snapshot.description.as_deref())
+            .filter(|description| !description.trim().is_empty())
+        {
+            return (
+                self.cached_library_markdown(
+                    &selected.id,
+                    html,
+                    Some(&selected.root_path),
+                    gb_id,
+                ),
+                Some(selected.root_path.clone()),
+                gb_id,
+            );
+        }
+
+        // Keep the empty-description result in the same bounded cache so the toolbar's
+        // availability check and the body use one stable prepared value.
+        self.cached_library_markdown(&selected.id, "", Some(&selected.root_path), gb_id);
+        (
+            "No description".to_string(),
+            Some(selected.root_path.clone()),
+            gb_id,
+        )
+    }
+
+    fn cached_library_profile_preview_captions(
+        &mut self,
+        mod_id: &str,
+        raw_profile_json: Option<&str>,
+    ) -> Vec<Option<String>> {
+        let Some(raw_profile_json) = raw_profile_json else {
+            return Vec::new();
+        };
+        self.library_detail_content_cache
+            .get_or_insert_with(LibraryDetailContentCache::default)
+            .raw_profile_preview_captions(mod_id, raw_profile_json)
+    }
+
+    fn cached_library_personal_note_markdown(
+        &mut self,
+        text: &str,
+        selected: &ModEntry,
+    ) -> String {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let markdown = if PERSONAL_NOTE_HTML_TAG_RE.is_match(&normalized) {
+            let markdown = self.cached_library_markdown(
+                &selected.id,
+                &normalized,
+                Some(&selected.root_path),
+                Some(parse_gb_id_from_entry(selected)),
+            );
+            rewrite_markdown_urls(
+                &markdown,
+                Some(&selected.root_path),
+                Some(parse_gb_id_from_entry(selected)),
+                &self.portable,
+            )
+        } else {
+            normalized
+        };
+        preserve_personal_note_markdown_whitespace(&markdown)
+    }
+
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {
         let text = self.text();
         // Use the available rect and extend it to fill the pane
@@ -9304,10 +9563,16 @@ impl HestiaApp {
             return;
         }
 
-        let Some(selected) = self.selected_mod().cloned() else {
+        let Some(selected_snapshot) = self.library_detail_selected_snapshot() else {
             self.render_browse_file_prompt(ui.ctx(), details_rect);
             return;
         };
+        let selected = selected_snapshot.as_ref();
+        // The expensive HTML sanitization and html2md conversion are pure. Resolve image URLs
+        // later, through the existing dependency-aware render cache, so files arriving in the
+        // metadata/cache directories are still observed.
+        let (primary_description_markdown, primary_markdown_root, primary_markdown_gb_id) = self
+            .cached_library_primary_description_markdown(selected);
 
         let details_offset = egui::vec2(0.0, 32.0);
         // Defaults only apply until egui has a rect for this id, so the saved layout
@@ -9611,7 +9876,7 @@ impl HestiaApp {
                         let detail_shows_personal_note = mod_detail_shows_personal_note(
                             &selected,
                             personal_note_editing,
-                            mod_primary_description_markdown(&selected, &self.portable) != "No description",
+                            primary_description_markdown != "No description",
                             hotkeys_available,
                         );
                         let has_unlinked_text_to_translate = !translation_is_linked
@@ -10365,18 +10630,13 @@ impl HestiaApp {
                                         rects.push(rect);
                                     }
                                 } else {
-                                    let captions: Vec<Option<String>> = selected.source.as_ref()
-                                        .and_then(|s| s.raw_profile_json.as_deref())
-                                        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                                        .and_then(|v| {
-                                            let media = v.get("_aPreviewMedia")?;
-                                            let images = media.get("_aImages")?;
-                                            let arr = images.as_array()?;
-                                            Some(arr.iter()
-                                                .map(|img| img.get("_sCaption").and_then(|c| c.as_str()).map(|s| s.to_string()))
-                                                .collect::<Vec<_>>())
-                                        })
-                                        .unwrap_or_default();
+                                    let captions = self.cached_library_profile_preview_captions(
+                                        &selected.id,
+                                        selected
+                                            .source
+                                            .as_ref()
+                                            .and_then(|source| source.raw_profile_json.as_deref()),
+                                    );
 
                                     for (idx, url) in snapshot_urls.iter().enumerate() {
                                         let key =
@@ -10615,32 +10875,52 @@ impl HestiaApp {
                             }
                         }
                     }
-                    let markdown = if let Some(translation_state) = self.my_mods_translation_state.get(&selected.id) {
+                    let (mut markdown, mut markdown_root, mut markdown_gb_id) = if let Some(translation_state) = self.my_mods_translation_state.get(&selected.id) {
                         if let Some(translated_profile) = &translation_state.translated_profile {
                             // Use translated description
                             if let Some(html) = translated_profile.html_text.as_deref() {
-                                prepare_markdown_for_display(
-                                    html,
+                                (
+                                    cached_library_prepared_markdown(
+                                        &mut self.library_detail_content_cache,
+                                        &selected.id,
+                                        html,
+                                        None,
+                                        Some(parse_gb_id_from_entry(&selected)),
+                                    ),
                                     None,
                                     Some(parse_gb_id_from_entry(&selected)),
-                                    &self.portable,
                                 )
                             } else {
-                                mod_primary_description_markdown(&selected, &self.portable)
+                                (
+                                    primary_description_markdown.clone(),
+                                    primary_markdown_root.clone(),
+                                    primary_markdown_gb_id,
+                                )
                             }
                         } else {
-                            mod_primary_description_markdown(&selected, &self.portable)
+                            (
+                                primary_description_markdown.clone(),
+                                primary_markdown_root.clone(),
+                                primary_markdown_gb_id,
+                            )
                         }
                     } else {
-                        mod_primary_description_markdown(&selected, &self.portable)
+                        (
+                            primary_description_markdown.clone(),
+                            primary_markdown_root.clone(),
+                            primary_markdown_gb_id,
+                        )
                     };
-                    let markdown = if selected
+                    if selected
                         .source
                         .as_ref()
                         .and_then(|source| source.gamebanana.as_ref())
                         .is_none()
                     {
-                        selected
+                        // The translation is stored in another HestiaApp field. Materialize only
+                        // the active translated value before mutably borrowing the prepared
+                        // content cache, keeping the normal no-translation path allocation-free.
+                        let translation = selected
                             .metadata
                             .user
                             .description
@@ -10648,18 +10928,19 @@ impl HestiaApp {
                             .and_then(|description| {
                                 self.unlinked_translation_for_content(&selected.id, description)
                             })
-                            .map(|translation| {
-                                prepare_markdown_for_display(
-                                    translation,
-                                    Some(&selected.root_path),
-                                    None,
-                                    &self.portable,
-                                )
-                            })
-                            .unwrap_or(markdown)
-                    } else {
-                        markdown
-                    };
+                            .map(str::to_owned);
+                        if let Some(translation) = translation {
+                            markdown = cached_library_prepared_markdown(
+                                &mut self.library_detail_content_cache,
+                                &selected.id,
+                                &translation,
+                                Some(&selected.root_path),
+                                None,
+                            );
+                            markdown_root = Some(selected.root_path.clone());
+                            markdown_gb_id = None;
+                        }
+                    }
                     let has_description = markdown != "No description";
                     let extracted_markdown = mod_extracted_description_markdown(&selected);
                     let personal_note_source_path = xxmi::personal_note_relative_path();
@@ -11110,6 +11391,15 @@ impl HestiaApp {
                             if gb_mod_id > 0 {
                                 self.render_my_mod_updates_section(ui, gb_mod_id);
                             }
+                            // Keep the filesystem-dependent URL resolution outside the prepared
+                            // content cache. This preserves local `.hestia` description images
+                            // and lets newly downloaded/deleted assets be observed normally.
+                            let markdown = rewrite_markdown_urls(
+                                &markdown,
+                                markdown_root.as_deref(),
+                                markdown_gb_id,
+                                &self.portable,
+                            );
                             self.queue_gif_previews_for_markdown(
                                 ui.ctx(),
                                 &markdown,
@@ -11143,10 +11433,9 @@ impl HestiaApp {
                                         .to_string()
                                 };
                                 if personal_note_selected {
-                                    let markdown = personal_note_markdown_for_display(
+                                    let markdown = self.cached_library_personal_note_markdown(
                                         &extracted,
-                                        &selected,
-                                        &self.portable,
+                                        selected,
                                     );
                                     let width = personal_note_content_width(ui);
                                     self.queue_gif_previews_for_markdown(

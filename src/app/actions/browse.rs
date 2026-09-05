@@ -14,6 +14,115 @@ fn browse_selected_files_for_queued_download(
     }
 }
 
+fn browse_card_indices_for_display(
+    cards: &[BrowseCard],
+    unsafe_content_mode: UnsafeContentMode,
+) -> Vec<usize> {
+    cards
+        .iter()
+        .enumerate()
+        .filter_map(|(index, card)| {
+            let hidden = matches!(
+                unsafe_content_mode,
+                UnsafeContentMode::HideNoCounter | UnsafeContentMode::HideShowCounter
+            ) && card.unsafe_content;
+            (!hidden).then_some(index)
+        })
+        .collect()
+}
+
+trait BrowseInstalledModSource {
+    fn len(&self) -> usize;
+    fn gamebanana_entry(&self, index: usize) -> Option<(&str, u64)>;
+}
+
+impl BrowseInstalledModSource for [ModEntry] {
+    fn len(&self) -> usize {
+        <[ModEntry]>::len(self)
+    }
+
+    fn gamebanana_entry(&self, index: usize) -> Option<(&str, u64)> {
+        let mod_entry = self.get(index)?;
+        let link = mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())?;
+        Some((mod_entry.game_id.as_str(), link.mod_id))
+    }
+}
+
+#[cfg(test)]
+impl BrowseInstalledModSource for [(String, u64)] {
+    fn len(&self) -> usize {
+        <[(String, u64)]>::len(self)
+    }
+
+    fn gamebanana_entry(&self, index: usize) -> Option<(&str, u64)> {
+        let (game_id, mod_id) = self.get(index)?;
+        Some((game_id.as_str(), *mod_id))
+    }
+}
+
+#[cfg(test)]
+impl<'a> BrowseInstalledModSource for [(&'a str, u64)] {
+    fn len(&self) -> usize {
+        <[(&'a str, u64)]>::len(self)
+    }
+
+    fn gamebanana_entry(&self, index: usize) -> Option<(&str, u64)> {
+        self.get(index).copied()
+    }
+}
+
+#[derive(Default)]
+struct BrowseInstalledModSnapshot {
+    seen_by_game: HashMap<String, HashSet<u64>>,
+    scanned_until: usize,
+}
+
+impl BrowseInstalledModSnapshot {
+    fn lookup<S: BrowseInstalledModSource + ?Sized>(
+        &mut self,
+        card: &BrowseCard,
+        source: &S,
+    ) -> bool {
+        if self
+            .seen_by_game
+            .get(&card.game_id)
+            .is_some_and(|mod_ids| mod_ids.contains(&card.id))
+        {
+            return true;
+        }
+
+        while self.scanned_until < source.len() {
+            let index = self.scanned_until;
+            self.scanned_until += 1;
+            let Some((game_id, mod_id)) = source.gamebanana_entry(index) else {
+                continue;
+            };
+
+            if let Some(mod_ids) = self.seen_by_game.get_mut(game_id) {
+                mod_ids.insert(mod_id);
+            } else {
+                self.seen_by_game
+                    .insert(game_id.to_string(), HashSet::from([mod_id]));
+            }
+
+            if game_id == card.game_id && mod_id == card.id {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn browse_detail_profile(detail: &BrowseDetailCache) -> &gamebanana::ProfileResponse {
+    detail
+        .translated_profile
+        .as_ref()
+        .unwrap_or(&detail.profile)
+}
+
 impl HestiaApp {
     fn is_imported_mod_placeholder_name(&self, sanitized: &str) -> bool {
         AppLanguage::ALL
@@ -649,13 +758,15 @@ impl HestiaApp {
     }
 
     fn request_browse_updates(&mut self, mod_id: u64) {
-        let Some(detail) = self.browse_state.details.get_mut(&mod_id) else {
+        let Some(detail) = self.browse_state.details.get(&mod_id) else {
             return;
         };
         if !matches!(detail.updates, BrowseUpdatesState::Unrequested) {
             return;
         }
-        detail.updates = BrowseUpdatesState::Loading;
+        if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+            Arc::make_mut(detail).updates = BrowseUpdatesState::Loading;
+        }
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
         if self
             .browse_request_tx
@@ -666,7 +777,10 @@ impl HestiaApp {
             })
             .is_err()
         {
-            detail.updates = BrowseUpdatesState::Failed("browse worker unavailable".to_string());
+            if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+                Arc::make_mut(detail).updates =
+                    BrowseUpdatesState::Failed("browse worker unavailable".to_string());
+            }
         }
     }
 
@@ -1086,26 +1200,20 @@ impl HestiaApp {
         }
     }
 
-    fn browse_cards_for_display(&self) -> Vec<&BrowseCard> {
-        self.browse_state
-            .cards
-            .iter()
-            .filter(|card| {
-                !(matches!(
-                    self.state.static_prefs.unsafe_content_mode,
-                    UnsafeContentMode::HideNoCounter | UnsafeContentMode::HideShowCounter
-                ) && card.unsafe_content)
-            })
-            .collect()
+    fn browse_card_indices_for_display(&self) -> Vec<usize> {
+        browse_card_indices_for_display(
+            &self.browse_state.cards,
+            self.state.static_prefs.unsafe_content_mode,
+        )
     }
 
     fn is_browse_mod_installed(&self, card: &BrowseCard) -> bool {
-        let game_id = &card.game_id;
-        self.state.mods.iter().any(|m| {
-            m.game_id == *game_id
-                && m.source
+        self.state.mods.iter().any(|mod_entry| {
+            mod_entry.game_id == card.game_id
+                && mod_entry
+                    .source
                     .as_ref()
-                    .and_then(|s| s.gamebanana.as_ref())
+                    .and_then(|source| source.gamebanana.as_ref())
                     .is_some_and(|link| link.mod_id == card.id)
         })
     }
@@ -1354,7 +1462,7 @@ impl HestiaApp {
                         translation_lang: None,
                         translation_loading: false,
                     };
-                    self.browse_state.details.insert(mod_id, cache);
+                    self.browse_state.details.insert(mod_id, Arc::new(cache));
                     self.prune_browse_detail_cache();
                     if let Some(card) = self
                         .browse_state
@@ -1430,6 +1538,7 @@ impl HestiaApp {
                 } => {
                     let entries = self.updates_to_entries(updates, mod_id);
                     if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+                        let detail = Arc::make_mut(detail);
                         detail.updates = if entries.is_empty() {
                             BrowseUpdatesState::Empty
                         } else {
@@ -1462,6 +1571,7 @@ impl HestiaApp {
                 BrowseEvent::UpdatesFailed { mod_id, error, .. } => {
                     let failed_label = self.text().could_not_load_updates().to_string();
                     if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+                        let detail = Arc::make_mut(detail);
                         detail.updates = BrowseUpdatesState::Failed(failed_label);
                     }
                     self.report_error_message(
@@ -2280,6 +2390,21 @@ impl HestiaApp {
 mod browse_file_prompt_tests {
     use super::*;
 
+    fn browse_card(id: u64, unsafe_content: bool) -> BrowseCard {
+        BrowseCard {
+            id,
+            game_id: "game".to_string(),
+            name: format!("mod-{id}"),
+            author_name: "author".to_string(),
+            like_count: id,
+            download_count: None,
+            updated_at: Utc::now(),
+            thumbnail_url: None,
+            has_files: true,
+            unsafe_content,
+        }
+    }
+
     fn mod_file(id: u64, file_name: &str) -> gamebanana::ModFile {
         gamebanana::ModFile {
             id,
@@ -2329,6 +2454,303 @@ mod browse_file_prompt_tests {
                 .iter()
                 .map(|file| (file.id, file.file_name.as_str()))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn browse_display_indices_preserve_order_and_unsafe_filtering() {
+        let cards = vec![
+            browse_card(11, false),
+            browse_card(22, true),
+            browse_card(33, false),
+            browse_card(44, true),
+        ];
+
+        assert_eq!(
+            browse_card_indices_for_display(&cards, UnsafeContentMode::HideShowCounter),
+            vec![0, 2]
+        );
+        assert_eq!(
+            browse_card_indices_for_display(&cards, UnsafeContentMode::Show),
+            vec![0, 1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn installed_mod_snapshot_is_game_specific_and_refreshable() {
+        let cards = vec![
+            browse_card(101, false),
+            BrowseCard {
+                game_id: "game-b".to_string(),
+                ..browse_card(101, false)
+            },
+        ];
+        let before_links = [("game", 101), ("game-b", 101)];
+        let mut before = BrowseInstalledModSnapshot::default();
+        assert!(before.lookup(&cards[0], before_links.as_slice()));
+        assert!(before.lookup(&cards[1], before_links.as_slice()));
+        assert!(before
+            .seen_by_game
+            .get("game")
+            .is_some_and(|ids| ids.contains(&101)));
+        assert!(before
+            .seen_by_game
+            .get("game-b")
+            .is_some_and(|ids| ids.contains(&101)));
+        assert!(!before
+            .seen_by_game
+            .get("game")
+            .is_some_and(|ids| ids.contains(&202)));
+
+        // A new frame receives a new snapshot, so model changes are reflected without
+        // requiring persistent-index invalidation.
+        let refreshed_cards = vec![BrowseCard {
+            id: 202,
+            ..cards[0].clone()
+        }];
+        let refreshed_links = [("game", 202), ("game-b", 101)];
+        let mut after = BrowseInstalledModSnapshot::default();
+        assert!(after.lookup(&refreshed_cards[0], refreshed_links.as_slice()));
+        assert!(after
+            .seen_by_game
+            .get("game")
+            .is_some_and(|ids| ids.contains(&202)));
+        assert!(!after
+            .seen_by_game
+            .get("game")
+            .is_some_and(|ids| ids.contains(&101)));
+    }
+
+    #[test]
+    fn installed_mod_snapshot_deduplicates_candidates_and_stops_after_matches() {
+        let cards = vec![
+            browse_card(3, false),
+            browse_card(3, false),
+            BrowseCard {
+                game_id: "other-game".to_string(),
+                ..browse_card(8, false)
+            },
+        ];
+        let links: Vec<(String, u64)> = (0..5_000)
+            .map(|id| ("game".to_string(), id))
+            .collect();
+        let mut links = links;
+        links.insert(8, ("other-game".to_string(), 8));
+        let mut snapshot = BrowseInstalledModSnapshot::default();
+        assert!(snapshot.lookup(&cards[0], links.as_slice()));
+        let scanned_after_first = snapshot.scanned_until;
+        assert!(snapshot.lookup(&cards[1], links.as_slice()));
+        assert_eq!(snapshot.scanned_until, scanned_after_first);
+        assert!(snapshot.lookup(&cards[2], links.as_slice()));
+
+        assert_eq!(snapshot.scanned_until, 9);
+        assert!(snapshot
+            .seen_by_game
+            .get("game")
+            .is_some_and(|ids| ids == &HashSet::from([0, 1, 2, 3, 4, 5, 6, 7])));
+        assert!(snapshot
+            .seen_by_game
+            .get("other-game")
+            .is_some_and(|ids| ids == &HashSet::from([8])));
+    }
+
+    #[test]
+    fn installed_mod_snapshot_scans_all_links_when_candidates_are_missing() {
+        let cards = vec![browse_card(50_000, false)];
+        let links: Vec<(String, u64)> = (0..128)
+            .map(|id| ("game".to_string(), id))
+            .collect();
+        let mut snapshot = BrowseInstalledModSnapshot::default();
+        assert!(!snapshot.lookup(&cards[0], links.as_slice()));
+
+        assert_eq!(snapshot.scanned_until, links.len());
+        assert!(snapshot.seen_by_game.contains_key("game"));
+    }
+
+    #[test]
+    fn arc_detail_clone_shares_heavy_profile_until_translation_updates_it() {
+        let original = BrowseDetailCache {
+            profile: gamebanana::ProfileResponse {
+                id: 77,
+                name: "Original".to_string(),
+                html_text: Some("long original description".to_string()),
+                ..Default::default()
+            },
+            markdown: "long original description".to_string(),
+            unsafe_content: false,
+            updates: BrowseUpdatesState::Unrequested,
+            translated_profile: None,
+            translation_lang: None,
+            translation_loading: false,
+        };
+        let mut writable = Arc::new(original);
+        let reader = Arc::clone(&writable);
+        let original_ptr = Arc::as_ptr(&writable);
+
+        let translated = gamebanana::ProfileResponse {
+            id: 77,
+            name: "Translated".to_string(),
+            html_text: Some("translated description".to_string()),
+            ..Default::default()
+        };
+        let detail = Arc::make_mut(&mut writable);
+        detail.translated_profile = Some(translated);
+        detail.translation_lang = Some("id".to_string());
+        detail.updates = BrowseUpdatesState::Loading;
+
+        assert_eq!(Arc::as_ptr(&reader), original_ptr);
+        assert_ne!(Arc::as_ptr(&writable), original_ptr);
+        assert_eq!(browse_detail_profile(&reader).name.as_str(), "Original");
+        assert_eq!(browse_detail_profile(&writable).name.as_str(), "Translated");
+        assert_eq!(writable.translation_lang.as_deref(), Some("id"));
+        assert!(matches!(&reader.updates, BrowseUpdatesState::Unrequested));
+        assert!(matches!(&writable.updates, BrowseUpdatesState::Loading));
+    }
+
+    #[test]
+    #[ignore = "manual release performance comparison"]
+    fn browse_grid_copy_and_installed_membership_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let cards: Vec<BrowseCard> = (0..1_000)
+            .map(|id| browse_card(id, id % 17 == 0))
+            .collect();
+        let page_cards: Vec<BrowseCard> = cards.iter().take(24).cloned().collect();
+
+        fn old_pass(
+            cards: &[BrowseCard],
+            local_links: &[(String, u64)],
+        ) -> (Vec<u64>, Vec<bool>) {
+            // Baseline shape: deep-copy every displayed card and scan local links for every
+            // visible card.
+            let displayed: Vec<BrowseCard> = cards
+                .iter()
+                .filter(|card| !card.unsafe_content)
+                .cloned()
+                .collect();
+            let visible = displayed.iter().take(24);
+            let ids = visible.clone().map(|card| card.id).collect();
+            let installed = visible
+                .map(|card| {
+                    local_links
+                        .iter()
+                        .any(|(game_id, mod_id)| game_id == &card.game_id && *mod_id == card.id)
+                })
+                .collect();
+            black_box(&displayed);
+            (ids, installed)
+        }
+
+        fn new_pass(
+            cards: &[BrowseCard],
+            local_links: &[(String, u64)],
+        ) -> (Vec<u64>, Vec<bool>) {
+            // Current shape: retain indices, snapshot membership once, and copy only visible
+            // cards.
+            let indices = browse_card_indices_for_display(cards, UnsafeContentMode::HideShowCounter);
+            let visible_cards: Vec<BrowseCard> = indices
+                .iter()
+                .take(24)
+                .filter_map(|index| cards.get(*index).cloned())
+                .collect();
+            let mut snapshot = BrowseInstalledModSnapshot::default();
+            let output = (
+                visible_cards.iter().map(|card| card.id).collect(),
+                visible_cards
+                    .iter()
+                    .map(|card| snapshot.lookup(card, local_links))
+                    .collect(),
+            );
+            black_box((&indices, &visible_cards, &snapshot));
+            output
+        }
+
+        let early_links: Vec<(String, u64)> = (0..5_000)
+            .map(|id| ("game".to_string(), id))
+            .collect();
+        let missing_links: Vec<(String, u64)> = (10_000..15_000)
+            .map(|id| ("game".to_string(), id))
+            .collect();
+        let mut late_links: Vec<(String, u64)> = (10_000..14_976)
+            .map(|id| ("game".to_string(), id))
+            .collect();
+        late_links.extend((0..24).map(|id| ("game".to_string(), id)));
+
+        let scenarios = [
+            ("early-hit", &early_links),
+            ("late-hit", &late_links),
+            ("missing", &missing_links),
+        ];
+        const WARMUP_PASSES: usize = 10;
+        const MEASURED_PASSES: usize = 100;
+
+        for (shape, benchmark_cards) in [
+            ("1000-card", cards.as_slice()),
+            ("24-card-page", page_cards.as_slice()),
+        ] {
+            for &(name, local_links) in &scenarios {
+                for _ in 0..WARMUP_PASSES {
+                    black_box(old_pass(benchmark_cards, local_links));
+                    black_box(new_pass(benchmark_cards, local_links));
+                }
+
+                let old_started = Instant::now();
+                let mut old_output = None;
+                for _ in 0..MEASURED_PASSES {
+                    old_output = Some(black_box(old_pass(benchmark_cards, local_links)));
+                }
+                let old_elapsed = old_started.elapsed();
+
+                let new_started = Instant::now();
+                let mut new_output = None;
+                for _ in 0..MEASURED_PASSES {
+                    new_output = Some(black_box(new_pass(benchmark_cards, local_links)));
+                }
+                let new_elapsed = new_started.elapsed();
+
+                assert_eq!(old_output, new_output);
+                println!(
+                    "browse benchmark {shape}/{name}: old {:.2} us/pass, new {:.2} us/pass",
+                    old_elapsed.as_secs_f64() * 1_000_000.0 / MEASURED_PASSES as f64,
+                    new_elapsed.as_secs_f64() * 1_000_000.0 / MEASURED_PASSES as f64,
+                );
+            }
+        }
+
+        let detail = BrowseDetailCache {
+            profile: gamebanana::ProfileResponse {
+                id: 77,
+                name: "benchmark".to_string(),
+                html_text: Some("description ".repeat(1_000)),
+                ..Default::default()
+            },
+            markdown: "markdown ".repeat(1_000),
+            unsafe_content: false,
+            updates: BrowseUpdatesState::Unrequested,
+            translated_profile: None,
+            translation_lang: None,
+            translation_loading: false,
+        };
+        let detail = Arc::new(detail);
+        for _ in 0..WARMUP_PASSES {
+            black_box((*detail).clone());
+            black_box(Arc::clone(&detail));
+        }
+        let deep_started = Instant::now();
+        for _ in 0..MEASURED_PASSES {
+            black_box((*detail).clone());
+        }
+        let deep_elapsed = deep_started.elapsed();
+        let shared_started = Instant::now();
+        for _ in 0..MEASURED_PASSES {
+            black_box(Arc::clone(&detail));
+        }
+        let shared_elapsed = shared_started.elapsed();
+        println!(
+            "browse detail benchmark: deep clone {:.2} us/pass, Arc clone {:.2} us/pass",
+            deep_elapsed.as_secs_f64() * 1_000_000.0 / MEASURED_PASSES as f64,
+            shared_elapsed.as_secs_f64() * 1_000_000.0 / MEASURED_PASSES as f64,
         );
     }
 }

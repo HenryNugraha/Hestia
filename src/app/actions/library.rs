@@ -21,21 +21,175 @@ struct XxmiNamespaceContext {
     prefixes_by_root: Vec<(PathBuf, Vec<String>)>,
 }
 
+/// Importer-root discovery is a filesystem walk, so it must be gated by the watch deadline.
+/// A changed watch identity bypasses the deadline so a newly selected/configured path is
+/// discovered immediately.
+fn importer_root_poll_due(now: f64, next_poll_at: f64, identity_changed: bool) -> bool {
+    identity_changed || now >= next_poll_at
+}
+
+fn importer_root_watch_identity_changed(
+    cached: Option<(&str, bool, Option<&Path>)>,
+    current: (&str, bool, Option<&Path>),
+) -> bool {
+    cached.is_none_or(|(game_id, use_default, mods_path)| {
+        game_id != current.0 || use_default != current.1 || mods_path != current.2
+    })
+}
+
+/// Refresh a cached importer root only when its watch is due or its identity changed. `None` is
+/// a cached result too: when a path is configured but no importer marker exists, the resolver is
+/// retried at the watch cadence instead of once per frame.
+fn refresh_importer_root_cache<R>(
+    now: f64,
+    poll_interval: f64,
+    identity_changed: bool,
+    next_poll_at: &mut f64,
+    mods_path: Option<&Path>,
+    importer_root: &mut Option<PathBuf>,
+    resolve: R,
+) -> Option<bool>
+where
+    R: FnOnce(&Path) -> Option<PathBuf>,
+{
+    if !importer_root_poll_due(now, *next_poll_at, identity_changed) {
+        return None;
+    }
+    let resolved = mods_path.and_then(resolve);
+    let changed = *importer_root != resolved;
+    *importer_root = resolved;
+    *next_poll_at = now + poll_interval;
+    Some(changed)
+}
+
+#[cfg(test)]
+mod importer_root_poll_tests {
+    use std::{
+        cell::Cell,
+        path::{Path, PathBuf},
+    };
+
+    use super::{importer_root_poll_due, refresh_importer_root_cache};
+
+    #[test]
+    fn resolver_calls_follow_deadline_and_retry_missing_root() {
+        let resolver_calls = Cell::new(0);
+        let mut next_poll_at = 10.0;
+        let mut importer_root = None;
+        let mods_path = PathBuf::from("Mods");
+        let resolve = |_: &Path| {
+            resolver_calls.set(resolver_calls.get() + 1);
+            None
+        };
+
+        assert!(
+            refresh_importer_root_cache(
+                1.0,
+                1.0,
+                true,
+                &mut next_poll_at,
+                Some(&mods_path),
+                &mut importer_root,
+                resolve,
+            )
+            .is_some()
+        );
+        assert_eq!(resolver_calls.get(), 1);
+        assert!(
+            refresh_importer_root_cache(
+                1.1,
+                1.0,
+                false,
+                &mut next_poll_at,
+                Some(&mods_path),
+                &mut importer_root,
+                |_| panic!("resolver must remain behind the deadline"),
+            )
+            .is_none()
+        );
+        assert_eq!(resolver_calls.get(), 1);
+        assert!(
+            refresh_importer_root_cache(
+                2.0,
+                1.0,
+                false,
+                &mut next_poll_at,
+                Some(&mods_path),
+                &mut importer_root,
+                |_| {
+                    resolver_calls.set(resolver_calls.get() + 1);
+                    None
+                },
+            )
+            .is_some()
+        );
+        assert_eq!(resolver_calls.get(), 2);
+    }
+
+    #[test]
+    fn identity_change_bypasses_existing_deadline() {
+        assert!(importer_root_poll_due(1.0, 10.0, true));
+        assert!(!importer_root_poll_due(1.0, 10.0, false));
+    }
+
+    #[test]
+    fn game_path_and_default_mode_are_watch_identity() {
+        let mods_path = PathBuf::from("Mods");
+        let other_path = PathBuf::from("Other Mods");
+        let cached = Some(("game", false, Some(mods_path.as_path())));
+
+        assert!(!super::importer_root_watch_identity_changed(
+            cached,
+            ("game", false, Some(mods_path.as_path())),
+        ));
+        assert!(super::importer_root_watch_identity_changed(
+            cached,
+            ("other-game", false, Some(mods_path.as_path())),
+        ));
+        assert!(super::importer_root_watch_identity_changed(
+            cached,
+            ("game", true, Some(mods_path.as_path())),
+        ));
+        assert!(super::importer_root_watch_identity_changed(
+            cached,
+            ("game", false, Some(other_path.as_path())),
+        ));
+    }
+}
+
 impl HestiaApp {
     fn current_d3dx_reload_status_for_game(
         &self,
         game: &GameInstall,
     ) -> Option<xxmi_persist::D3dxReloadConfigStatus> {
-        self.d3dx_reload_status_cache
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let mods_path = game.mods_path(use_default);
+        if let Some(watch) = self.d3dx_reload_config_watch.as_ref() {
+            let same_game = watch.game_id == game.definition.id;
+            let identity_matches = same_game
+                && watch.use_default == use_default
+                && watch.mods_path == mods_path;
+            if (same_game && !identity_matches)
+                || (identity_matches && watch.importer_root.is_none())
+            {
+                return None;
+            }
+        }
+
+        let cached_status = self
+            .d3dx_reload_status_cache
             .as_ref()
             .filter(|cache| cache.game_id == game.definition.id)
-            .map(|cache| cache.status.clone())
-            .or_else(|| {
-                xxmi_persist::reload_config_status(
-                    game,
-                    self.state.static_prefs.use_default_mods_path,
-                )
-            })
+            .map(|cache| cache.status.clone());
+        if cached_status.is_some() {
+            return cached_status;
+        }
+
+        // A matching watch with a cached missing root is authoritative until its next due
+        // retry. Avoid turning every render-path capability check into another upward filesystem
+        // walk while an unconfigured path remains absent. Calls made outside this watch identity
+        // still use the fresh resolver for action-time checks.
+        xxmi_persist::reload_config_status(game, use_default)
     }
 
     fn xxmi_reload_hotkey_capable_for_game(&self, game: &GameInstall) -> bool {
@@ -277,19 +431,19 @@ impl HestiaApp {
         let Some(game) = self.selected_game().cloned() else {
             self.d3dx_reload_config_watch = None;
             self.d3dx_reload_status_cache = None;
+            self.pending_d3dx_foreground_conflict = None;
             return;
         };
         if !game.is_xxmi() {
             self.d3dx_reload_config_watch = None;
             self.d3dx_reload_status_cache = None;
+            self.pending_d3dx_foreground_conflict = None;
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
-        let Some(importer_root) = xxmi_persist::importer_root_for(&game, use_default) else {
-            self.d3dx_reload_config_watch = None;
-            self.d3dx_reload_status_cache = None;
-            return;
-        };
+        // Deriving the effective Mods path only reads in-memory settings. Importer-root
+        // discovery below walks the filesystem and is intentionally deadline-gated.
+        let mods_path = game.mods_path(use_default);
 
         let running = self.selected_game_process_running_cached(&game, ctx);
         let poll_interval = if running {
@@ -300,36 +454,88 @@ impl HestiaApp {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(poll_interval));
 
         let now = ctx.input(|input| input.time);
-        if self
-            .d3dx_reload_config_watch
-            .as_ref()
-            .is_none_or(|watch| watch.game_id != game.definition.id)
-        {
+        let identity_changed = importer_root_watch_identity_changed(
+            self.d3dx_reload_config_watch.as_ref().map(|watch| {
+                (
+                    watch.game_id.as_str(),
+                    watch.use_default,
+                    watch.mods_path.as_deref(),
+                )
+            }),
+            (
+                game.definition.id.as_str(),
+                use_default,
+                mods_path.as_deref(),
+            ),
+        );
+        if identity_changed {
+            // Keep a watch alive when no importer root exists. The cached `None` prevents an
+            // unconfigured path from being searched on every frame while still allowing a
+            // later due poll to notice a newly created importer.
             self.d3dx_reload_config_watch = Some(D3dxReloadConfigWatch {
                 game_id: game.definition.id.clone(),
-                token: xxmi_persist::d3dx_ini_change_token(&importer_root),
+                use_default,
+                mods_path: mods_path.clone(),
+                importer_root: None,
+                token: None,
                 next_poll_at: now,
                 pending_unhealthy: None,
                 prompted_unhealthy: None,
             });
+            self.d3dx_reload_status_cache = None;
+            self.pending_d3dx_foreground_conflict = None;
         }
-        if self
+        let root_changed = {
+            let watch = self
+                .d3dx_reload_config_watch
+                .as_mut()
+                .expect("d3dx reload watch was initialized above");
+            let Some(root_changed) = refresh_importer_root_cache(
+                now,
+                poll_interval,
+                identity_changed,
+                &mut watch.next_poll_at,
+                mods_path.as_deref(),
+                &mut watch.importer_root,
+                xxmi_persist::importer_root_from_mods_path,
+            ) else {
+                return;
+            };
+            root_changed
+        };
+        let importer_root = self
             .d3dx_reload_config_watch
             .as_ref()
-            .is_some_and(|watch| now < watch.next_poll_at)
-        {
-            return;
+            .and_then(|watch| watch.importer_root.clone());
+        if root_changed {
+            self.d3dx_reload_status_cache = None;
+            if self
+                .pending_d3dx_foreground_conflict
+                .as_ref()
+                .is_some_and(|prompt| prompt.game_id == game.definition.id)
+            {
+                self.pending_d3dx_foreground_conflict = None;
+            }
+            if let Some(watch) = self.d3dx_reload_config_watch.as_mut() {
+                watch.token = None;
+                watch.pending_unhealthy = None;
+                watch.prompted_unhealthy = None;
+            }
         }
+        let Some(importer_root) = importer_root else {
+            return;
+        };
 
         let token = xxmi_persist::d3dx_ini_change_token(&importer_root);
         let cache_missing = self
             .d3dx_reload_status_cache
             .as_ref()
             .is_none_or(|cache| cache.game_id != game.definition.id);
-        let changed = self
-            .d3dx_reload_config_watch
-            .as_ref()
-            .is_some_and(|watch| watch.token != token);
+        let changed = root_changed
+            || self
+                .d3dx_reload_config_watch
+                .as_ref()
+                .is_some_and(|watch| watch.token != token);
         let prompt_sync_needs_fresh_read = self
             .d3dx_reload_config_watch
             .as_ref()
@@ -346,7 +552,6 @@ impl HestiaApp {
                 watch.prompted_unhealthy = None;
             }
             watch.token = token;
-            watch.next_poll_at = now + poll_interval;
         }
         let status = if changed || cache_missing || prompt_sync_needs_fresh_read {
             self.refresh_d3dx_reload_status_for_game(&game)

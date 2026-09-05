@@ -410,6 +410,7 @@ impl HestiaApp {
         profile: gamebanana::ProfileResponse,
     ) {
         if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+            let detail = Arc::make_mut(detail);
             let markdown = prepare_markdown_for_display(
                 profile.html_text.as_deref().unwrap_or_default(),
                 None,
@@ -451,7 +452,9 @@ impl HestiaApp {
 
     fn set_translation_loading_for_gamebanana_mod(&mut self, mod_id: u64, loading: bool) {
         if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
-            detail.translation_loading = loading;
+            if detail.translation_loading != loading {
+                Arc::make_mut(detail).translation_loading = loading;
+            }
         }
 
         let mod_ids_to_update: Vec<String> = self
@@ -562,7 +565,7 @@ impl HestiaApp {
     }
 
     pub(crate) fn toggle_browse_translation(&mut self, mod_id: u64) {
-        let Some(detail) = self.browse_state.details.get_mut(&mod_id) else {
+        let Some(detail) = self.browse_state.details.get(&mod_id) else {
             return;
         };
 
@@ -582,9 +585,12 @@ impl HestiaApp {
                 &self.portable,
             );
 
-            detail.translation_lang = None;
-            detail.translated_profile = None;
-            detail.markdown = markdown;
+            if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+                let detail = Arc::make_mut(detail);
+                detail.translation_lang = None;
+                detail.translated_profile = None;
+                detail.markdown = markdown;
+            }
             return;
         }
 
@@ -852,6 +858,7 @@ impl HestiaApp {
     pub(crate) fn clear_translation_caches(&mut self) {
         // Clear in-memory state
         for detail in self.browse_state.details.values_mut() {
+            let detail = Arc::make_mut(detail);
             detail.translated_profile = None;
             detail.translation_lang = None;
             detail.translation_loading = false;

@@ -437,6 +437,8 @@ impl HestiaApp {
             mod_detail_focus_requested: false,
             browse_detail_focus_requested: false,
             mod_detail_editing: false,
+            selected_mod_detail_snapshot: None,
+            library_detail_content_cache: None,
             mod_detail_edit_target_id: None,
             mod_detail_rename_focus_target_id: None,
             mod_detail_edit_name: String::new(),
@@ -3193,6 +3195,8 @@ impl HestiaApp {
 
         // self.selected_mod_id = mod_id;
         self.selected_mod_id = mod_id.clone();
+        self.selected_mod_detail_snapshot = None;
+        self.library_detail_content_cache = None;
         self.clear_mod_detail_rename();
         self.my_mod_overlay_images.clear();
         self.browse_state.screenshot_overlay = None;
