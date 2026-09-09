@@ -2848,9 +2848,13 @@ fn process_matches_game_candidates(
 }
 
 pub fn game_process_running_for_reload(game: &GameInstall) -> bool {
+    game_process_pid_for_reload(game).is_some()
+}
+
+fn game_process_pid_for_reload(game: &GameInstall) -> Option<u32> {
     let candidates = game_exe_candidates(game);
     if candidates.is_empty() {
-        return false;
+        return None;
     }
     let system = sysinfo::System::new_with_specifics(
         sysinfo::RefreshKind::nothing().with_processes(
@@ -2859,23 +2863,104 @@ pub fn game_process_running_for_reload(game: &GameInstall) -> bool {
                 .with_exe(UpdateKind::OnlyIfNotSet),
         ),
     );
-    system.processes().values().any(|process| {
-        process_matches_game_candidates(process.name(), process.cmd(), &candidates)
-            || process
-                .exe()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    let lower = name.to_ascii_lowercase();
-                    let stem = Path::new(name)
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .map(str::to_ascii_lowercase);
-                    candidates
-                        .iter()
-                        .any(|candidate| candidate == &lower || stem.as_ref() == Some(candidate))
-                })
-    })
+    system
+        .processes()
+        .iter()
+        .find(|(_, process)| {
+            process_matches_game_candidates(process.name(), process.cmd(), &candidates)
+                || process
+                    .exe()
+                    .and_then(|path| path.file_name())
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        let lower = name.to_ascii_lowercase();
+                        let stem = Path::new(name)
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(str::to_ascii_lowercase);
+                        candidates.iter().any(|candidate| {
+                            candidate == &lower || stem.as_ref() == Some(candidate)
+                        })
+                    })
+        })
+        .map(|(pid, _)| pid.as_u32())
+}
+
+/// Whether a process runs with an elevated (administrator) token. `Err(access_denied)` when
+/// the token could not be queried; from an unelevated Hestia, access denied is itself strong
+/// evidence that the target is elevated.
+#[cfg(windows)]
+fn process_is_elevated(pid: Option<u32>) -> std::result::Result<bool, bool> {
+    use windows::Win32::{
+        Foundation::{CloseHandle, E_ACCESSDENIED, HANDLE},
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{
+            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
+    };
+
+    let access_denied = |err: &windows::core::Error| err.code() == E_ACCESSDENIED;
+    let (process, owned) = match pid {
+        None => (unsafe { GetCurrentProcess() }, false),
+        Some(pid) => match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(handle) => (handle, true),
+            Err(err) => return Err(access_denied(&err)),
+        },
+    };
+    let mut token = HANDLE::default();
+    let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+    if owned {
+        let _ = unsafe { CloseHandle(process) };
+    }
+    if let Err(err) = opened {
+        return Err(access_denied(&err));
+    }
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut returned = 0u32;
+    let queried = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            Some((&mut elevation as *mut TOKEN_ELEVATION).cast()),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+    };
+    let _ = unsafe { CloseHandle(token) };
+    match queried {
+        Ok(()) => Ok(elevation.TokenIsElevated != 0),
+        Err(err) => Err(access_denied(&err)),
+    }
+}
+
+#[cfg(windows)]
+static ELEVATION_HINT_SHOWN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Report suffix for when the game runs elevated and Hestia does not. In that configuration
+/// UIPI drops a synthetic key-up whenever the game holds the foreground, which is the one
+/// remaining way the reload key can get stuck down (see `release_key_verified`). Shown once
+/// per session so the reload log does not repeat it on every send.
+#[cfg(windows)]
+fn reload_elevation_hint(game_pid: Option<u32>) -> Option<String> {
+    use std::sync::atomic::Ordering;
+
+    if ELEVATION_HINT_SHOWN.load(Ordering::Relaxed) || process_is_elevated(None).unwrap_or(true) {
+        return None;
+    }
+    let game_elevated = match process_is_elevated(Some(game_pid?)) {
+        Ok(elevated) => elevated,
+        Err(access_denied) => access_denied,
+    };
+    if !game_elevated {
+        return None;
+    }
+    ELEVATION_HINT_SHOWN.store(true, Ordering::Relaxed);
+    Some(
+        "note: the game runs elevated and Hestia does not, so a key release is dropped if the \
+         game takes focus mid-press; run Hestia as administrator to rule out a stuck reload key"
+            .to_string(),
+    )
 }
 
 #[cfg(windows)]
@@ -3079,7 +3164,7 @@ impl HeldKey {
     }
 
     fn release(mut self, label: &str) -> Result<()> {
-        let result = send_keyboard_input(self.vk, true, label);
+        let result = release_key_verified(self.vk, label);
         if result.is_ok() {
             self.released = true;
             Self::unregister(self.vk);
@@ -3101,9 +3186,120 @@ impl Drop for HeldKey {
         if self.released {
             return;
         }
-        let _ = send_keyboard_input(self.vk, true, "held key drop release");
+        if let Err(err) = release_key_verified(self.vk, "held key drop release") {
+            tracing::error!("{err:#}");
+        }
         Self::unregister(self.vk);
     }
+}
+
+#[cfg(windows)]
+const KEY_UP_VERIFY_TIMEOUT: Duration = Duration::from_millis(1_500);
+#[cfg(windows)]
+const KEY_UP_VERIFY_POLL: Duration = Duration::from_millis(25);
+#[cfg(windows)]
+const KEY_UP_SETTLE: Duration = Duration::from_millis(15);
+
+#[cfg(windows)]
+fn key_reported_down(vk: u16) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    (unsafe { GetAsyncKeyState(i32::from(vk)) }) < 0
+}
+
+/// Read back the OS async key table after a key-up, with one short settle re-check so a
+/// still-propagating injection is not mistaken for a stuck key.
+#[cfg(windows)]
+fn key_still_down_after_settle(vk: u16) -> bool {
+    if !key_reported_down(vk) {
+        return false;
+    }
+    std::thread::sleep(KEY_UP_SETTLE);
+    key_reported_down(vk)
+}
+
+#[cfg(windows)]
+fn vk_display_name(vk: u16) -> String {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_MENU, VK_SHIFT};
+
+    match vk {
+        0x70..=0x87 => format!("F{}", vk - 0x70 + 1),
+        vk if vk == VK_MENU.0 => "Alt".to_string(),
+        vk if vk == VK_CONTROL.0 => "Ctrl".to_string(),
+        vk if vk == VK_SHIFT.0 => "Shift".to_string(),
+        other => format!("VK 0x{other:02X}"),
+    }
+}
+
+/// Send a key-up and verify the OS actually recorded it. `SendInput` is subject to UIPI:
+/// while the foreground window belongs to a higher-integrity process (an elevated game the
+/// user just Alt+Tabbed into) the call is dropped, and it reports that only as a zero return
+/// with no distinguishing error. A key-down whose key-up was dropped stays down in the async
+/// key table until a physical press, which for the reload key means 3DMigoto reloads every
+/// frame. Recovery: bring Hestia's own window to the foreground (UIPI checks the foreground
+/// window, and Hestia can always inject into itself), resend the key-up, and hand the
+/// foreground back afterwards. Returns an error naming the key when the release could not be
+/// confirmed within the timeout.
+#[cfg(windows)]
+fn release_key_verified(vk: u16, label: &str) -> Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let first = send_keyboard_input(vk, true, label);
+    if first.is_ok() && !key_still_down_after_settle(vk) {
+        return Ok(());
+    }
+
+    let key_name = vk_display_name(vk);
+    let original_foreground = unsafe { GetForegroundWindow() };
+    let hestia_hwnd = hestia_window();
+    let started = std::time::Instant::now();
+    let mut last_error = first.err();
+    let mut refocused = false;
+    let mut resends = 0u32;
+    let recovered = loop {
+        if let Some(hestia) = hestia_hwnd
+            && unsafe { GetForegroundWindow() } != hestia
+            && set_foreground_window(hestia)
+        {
+            refocused = true;
+        }
+        resends += 1;
+        match send_keyboard_input(vk, true, label) {
+            Ok(()) if !key_still_down_after_settle(vk) => break true,
+            Ok(()) => {}
+            Err(err) => last_error = Some(err),
+        }
+        if started.elapsed() >= KEY_UP_VERIFY_TIMEOUT {
+            break false;
+        }
+        std::thread::sleep(KEY_UP_VERIFY_POLL);
+    };
+
+    if refocused && !original_foreground.0.is_null() && Some(original_foreground) != hestia_hwnd {
+        let _ = set_foreground_window(original_foreground);
+    }
+
+    if recovered {
+        tracing::warn!(
+            "{label}: {key_name} key-up was blocked (foreground window likely runs elevated), \
+             recovered after {resends} resend(s){}",
+            if refocused {
+                " by foregrounding Hestia"
+            } else {
+                ""
+            }
+        );
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{label}: {key_name} key-up is blocked and the key is still reported down after {}ms \
+         (the foreground window likely runs elevated and Hestia does not, so the release was \
+         dropped); the key stays down until it is pressed physically{}",
+        KEY_UP_VERIFY_TIMEOUT.as_millis(),
+        last_error
+            .map(|err| format!("; last error: {err:#}"))
+            .unwrap_or_default()
+    ))
 }
 
 /// Release every synthetic key Hestia still holds and refuse new presses. Call from every
@@ -3114,7 +3310,9 @@ pub fn release_synthetic_keys_for_shutdown() {
     let mut registry = synthetic_keys();
     registry.shutting_down = true;
     for vk in std::mem::take(&mut registry.held) {
-        let _ = send_keyboard_input(vk, true, "shutdown release");
+        if let Err(err) = release_key_verified(vk, "shutdown release") {
+            tracing::error!("{err:#}");
+        }
     }
 }
 
@@ -3127,13 +3325,11 @@ pub fn release_synthetic_keys_for_shutdown() {}
 /// release was sent.
 #[cfg(windows)]
 pub fn release_stuck_reload_hotkey(importer_root: &Path) -> Result<Option<u16>> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-
     let vk = reload_hotkey_vk(importer_root);
-    if unsafe { GetAsyncKeyState(i32::from(vk)) } >= 0 {
+    if !key_reported_down(vk) {
         return Ok(None);
     }
-    send_keyboard_input(vk, true, "stuck reload key release")?;
+    release_key_verified(vk, "stuck reload key release")?;
     Ok(Some(vk - 0x70 + 1))
 }
 
@@ -3485,6 +3681,11 @@ pub fn send_reload_hotkey_foreground_aware(
         });
     };
     let _sequence = synthetic_input_sequence();
+    let elevation_hint = reload_elevation_hint(game_process_pid_for_reload(game));
+    let with_hint = |message: String| match &elevation_hint {
+        Some(hint) => format!("{message}; {hint}"),
+        None => message,
+    };
 
     let mut last_foreground = ReloadForeground::None;
     for attempt in 1..=FOREGROUND_RELOAD_ATTEMPTS {
@@ -3500,7 +3701,9 @@ pub fn send_reload_hotkey_foreground_aware(
                     )?;
                     return Ok(ReloadHotkeyReport {
                         message: if sent {
-                            format!("sent reload hotkey; {label}; direct game foreground path")
+                            with_hint(format!(
+                                "sent reload hotkey; {label}; direct game foreground path"
+                            ))
                         } else {
                             format!(
                                 "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
@@ -3511,7 +3714,7 @@ pub fn send_reload_hotkey_foreground_aware(
                 let outcome = send_reload_hotkey_via_hestia_focus_with_retry(&importer_root, hwnd)?;
                 return Ok(ReloadHotkeyReport {
                     message: if outcome.sent {
-                        focus_route_message(outcome)
+                        with_hint(focus_route_message(outcome))
                     } else {
                         format!(
                             "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
@@ -3534,7 +3737,7 @@ pub fn send_reload_hotkey_foreground_aware(
                 )?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
-                        format!("sent reload hotkey; {label}")
+                        with_hint(format!("sent reload hotkey; {label}"))
                     } else {
                         format!(
                             "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
@@ -3638,6 +3841,11 @@ pub fn send_mod_hotkey_foreground_aware(
         });
     };
     let _sequence = synthetic_input_sequence();
+    let elevation_hint = reload_elevation_hint(game_process_pid_for_reload(game));
+    let with_hint = |message: String| match &elevation_hint {
+        Some(hint) => format!("{message}; {hint}"),
+        None => message,
+    };
 
     let mut last_foreground = ReloadForeground::None;
     for attempt in 1..=FOREGROUND_RELOAD_ATTEMPTS {
@@ -3648,7 +3856,9 @@ pub fn send_mod_hotkey_foreground_aware(
                 let sent = send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
-                        format!("sent mod hotkey; {label}; direct game foreground path")
+                        with_hint(format!(
+                            "sent mod hotkey; {label}; direct game foreground path"
+                        ))
                     } else {
                         format!(
                             "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
@@ -3667,7 +3877,7 @@ pub fn send_mod_hotkey_foreground_aware(
                 let sent = send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
-                        format!("sent mod hotkey; {label}")
+                        with_hint(format!("sent mod hotkey; {label}"))
                     } else {
                         format!(
                             "skipped on attempt {attempt}; modifier/foreground guard active; {label}"
