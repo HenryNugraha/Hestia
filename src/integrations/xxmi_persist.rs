@@ -3231,6 +3231,54 @@ fn vk_display_name(vk: u16) -> String {
     }
 }
 
+/// Outcome of a key-up that needed the recovery loop (see `release_key_with_recovery`).
+#[derive(Debug, PartialEq, Eq)]
+struct KeyReleaseRecovery {
+    resends: u32,
+    refocused: bool,
+}
+
+/// Platform-independent core of the verified key-up. `send_up` injects the key-up and fails
+/// when the OS refused it, `still_down` reads the key state back after a send, `focus_self`
+/// tries to bring Hestia's own window to the foreground and reports whether it did. Returns
+/// `Ok(None)` when the first plain send was confirmed, `Ok(Some(..))` when the recovery loop
+/// confirmed it, and `Err` with the last send error once `timeout` passes with the key still
+/// reported down. The first send never touches the foreground.
+fn release_key_with_recovery(
+    mut send_up: impl FnMut() -> Result<()>,
+    mut still_down: impl FnMut() -> bool,
+    mut focus_self: impl FnMut() -> bool,
+    timeout: Duration,
+    poll: Duration,
+) -> std::result::Result<Option<KeyReleaseRecovery>, (KeyReleaseRecovery, Option<anyhow::Error>)> {
+    let first = send_up();
+    if first.is_ok() && !still_down() {
+        return Ok(None);
+    }
+
+    let started = std::time::Instant::now();
+    let mut last_error = first.err();
+    let mut recovery = KeyReleaseRecovery {
+        resends: 0,
+        refocused: false,
+    };
+    loop {
+        if focus_self() {
+            recovery.refocused = true;
+        }
+        recovery.resends += 1;
+        match send_up() {
+            Ok(()) if !still_down() => return Ok(Some(recovery)),
+            Ok(()) => {}
+            Err(err) => last_error = Some(err),
+        }
+        if started.elapsed() >= timeout {
+            return Err((recovery, last_error));
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 /// Send a key-up and verify the OS actually recorded it. `SendInput` is subject to UIPI:
 /// while the foreground window belongs to a higher-integrity process (an elevated game the
 /// user just Alt+Tabbed into) the call is dropped, and it reports that only as a zero return
@@ -3244,62 +3292,51 @@ fn vk_display_name(vk: u16) -> String {
 fn release_key_verified(vk: u16, label: &str) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-    let first = send_keyboard_input(vk, true, label);
-    if first.is_ok() && !key_still_down_after_settle(vk) {
-        return Ok(());
-    }
-
-    let key_name = vk_display_name(vk);
     let original_foreground = unsafe { GetForegroundWindow() };
     let hestia_hwnd = hestia_window();
-    let started = std::time::Instant::now();
-    let mut last_error = first.err();
-    let mut refocused = false;
-    let mut resends = 0u32;
-    let recovered = loop {
-        if let Some(hestia) = hestia_hwnd
-            && unsafe { GetForegroundWindow() } != hestia
-            && set_foreground_window(hestia)
-        {
-            refocused = true;
-        }
-        resends += 1;
-        match send_keyboard_input(vk, true, label) {
-            Ok(()) if !key_still_down_after_settle(vk) => break true,
-            Ok(()) => {}
-            Err(err) => last_error = Some(err),
-        }
-        if started.elapsed() >= KEY_UP_VERIFY_TIMEOUT {
-            break false;
-        }
-        std::thread::sleep(KEY_UP_VERIFY_POLL);
-    };
+    let outcome = release_key_with_recovery(
+        || send_keyboard_input(vk, true, label),
+        || key_still_down_after_settle(vk),
+        || {
+            hestia_hwnd.is_some_and(|hestia| {
+                (unsafe { GetForegroundWindow() }) != hestia && set_foreground_window(hestia)
+            })
+        },
+        KEY_UP_VERIFY_TIMEOUT,
+        KEY_UP_VERIFY_POLL,
+    );
 
+    let refocused = match &outcome {
+        Ok(Some(recovery)) | Err((recovery, _)) => recovery.refocused,
+        Ok(None) => false,
+    };
     if refocused && !original_foreground.0.is_null() && Some(original_foreground) != hestia_hwnd {
         let _ = set_foreground_window(original_foreground);
     }
 
-    if recovered {
-        tracing::warn!(
-            "{label}: {key_name} key-up was blocked (foreground window likely runs elevated), \
-             recovered after {resends} resend(s){}",
-            if refocused {
-                " by foregrounding Hestia"
-            } else {
-                ""
-            }
-        );
-        return Ok(());
+    let key_name = vk_display_name(vk);
+    match outcome {
+        Ok(None) => Ok(()),
+        Ok(Some(recovery)) => {
+            tracing::warn!(
+                "{label}: {key_name} key-up was blocked (foreground window likely runs elevated),                  recovered after {} resend(s){}",
+                recovery.resends,
+                if recovery.refocused {
+                    " by foregrounding Hestia"
+                } else {
+                    ""
+                }
+            );
+            Ok(())
+        }
+        Err((_, last_error)) => Err(anyhow!(
+            "{label}: {key_name} key-up is blocked and the key is still reported down after {}ms              (the foreground window likely runs elevated and Hestia does not, so the release was              dropped); the key stays down until it is pressed physically{}",
+            KEY_UP_VERIFY_TIMEOUT.as_millis(),
+            last_error
+                .map(|err| format!("; last error: {err:#}"))
+                .unwrap_or_default()
+        )),
     }
-    Err(anyhow!(
-        "{label}: {key_name} key-up is blocked and the key is still reported down after {}ms \
-         (the foreground window likely runs elevated and Hestia does not, so the release was \
-         dropped); the key stays down until it is pressed physically{}",
-        KEY_UP_VERIFY_TIMEOUT.as_millis(),
-        last_error
-            .map(|err| format!("; last error: {err:#}"))
-            .unwrap_or_default()
-    ))
 }
 
 /// Release every synthetic key Hestia still holds and refuse new presses. Call from every
@@ -3949,6 +3986,143 @@ fn send_reload_hotkey_unlocked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- verified key-up (stuck reload key recovery) ---------------------------------
+
+    const FAST_TIMEOUT: Duration = Duration::from_millis(60);
+    const FAST_POLL: Duration = Duration::from_millis(2);
+
+    #[test]
+    fn verified_key_up_clean_release_never_touches_foreground() {
+        let mut sends = 0;
+        let mut focus_calls = 0;
+        let outcome = release_key_with_recovery(
+            || {
+                sends += 1;
+                Ok(())
+            },
+            || false,
+            || {
+                focus_calls += 1;
+                true
+            },
+            FAST_TIMEOUT,
+            FAST_POLL,
+        );
+        assert!(matches!(outcome, Ok(None)));
+        assert_eq!(sends, 1);
+        assert_eq!(focus_calls, 0);
+    }
+
+    #[test]
+    fn verified_key_up_recovers_when_uipi_blocks_until_hestia_is_foreground() {
+        // Models an elevated game holding the foreground: SendInput returns 0 (Err) until
+        // Hestia's own window is foregrounded, after which the key-up lands and reads as up.
+        let hestia_foreground = std::cell::Cell::new(false);
+        let key_down = std::cell::Cell::new(true);
+        let mut sends = 0;
+        let outcome = release_key_with_recovery(
+            || {
+                sends += 1;
+                if hestia_foreground.get() {
+                    key_down.set(false);
+                    Ok(())
+                } else {
+                    Err(anyhow!("SendInput delivered 0 of 1 key up input"))
+                }
+            },
+            || key_down.get(),
+            || {
+                // First recovery attempt fails to grab the foreground (Alt+Tab still in
+                // flight), the second succeeds.
+                if hestia_foreground.get() {
+                    return false;
+                }
+                static ATTEMPTS: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
+                let attempt = ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if attempt == 0 {
+                    return false;
+                }
+                hestia_foreground.set(true);
+                true
+            },
+            FAST_TIMEOUT,
+            FAST_POLL,
+        );
+        let recovery = outcome.expect("recovered").expect("needed recovery");
+        assert!(recovery.refocused);
+        assert_eq!(recovery.resends, 2);
+        assert_eq!(sends, 3, "first plain send + two recovery resends");
+        assert!(!key_down.get());
+    }
+
+    #[test]
+    fn verified_key_up_retries_when_send_succeeds_but_key_reads_down() {
+        // SendInput accepted the event but the async table still reports the key down on the
+        // first read-back; a later read-back confirms the release.
+        let mut reads = 0;
+        let outcome = release_key_with_recovery(
+            || Ok(()),
+            || {
+                reads += 1;
+                reads < 3
+            },
+            || false,
+            FAST_TIMEOUT,
+            FAST_POLL,
+        );
+        let recovery = outcome.expect("recovered").expect("needed recovery");
+        assert_eq!(
+            recovery,
+            KeyReleaseRecovery {
+                resends: 2,
+                refocused: false
+            }
+        );
+    }
+
+    #[test]
+    fn verified_key_up_reports_stuck_key_after_timeout() {
+        let mut sends = 0;
+        let started = std::time::Instant::now();
+        let outcome = release_key_with_recovery(
+            || {
+                sends += 1;
+                Err(anyhow!("SendInput delivered 0 of 1 key up input"))
+            },
+            || true,
+            || false,
+            FAST_TIMEOUT,
+            FAST_POLL,
+        );
+        let (recovery, last_error) = outcome.expect_err("must report the stuck key");
+        assert!(started.elapsed() >= FAST_TIMEOUT);
+        assert!(!recovery.refocused);
+        assert!(recovery.resends >= 2, "kept resending until the timeout");
+        assert_eq!(sends, recovery.resends + 1);
+        assert!(
+            last_error
+                .expect("last send error is surfaced")
+                .to_string()
+                .contains("SendInput delivered 0 of 1")
+        );
+    }
+
+    #[test]
+    fn verified_key_up_error_path_still_reports_refocus_for_restore() {
+        // Even when recovery fails, the caller must learn that the foreground was moved so it
+        // can hand it back to the game.
+        let outcome = release_key_with_recovery(
+            || Err(anyhow!("blocked")),
+            || true,
+            || true,
+            FAST_TIMEOUT,
+            FAST_POLL,
+        );
+        let (recovery, _) = outcome.expect_err("blocked");
+        assert!(recovery.refocused);
+    }
 
     fn mirror(namespace: &str, var: &str) -> MirrorVar {
         MirrorVar {
