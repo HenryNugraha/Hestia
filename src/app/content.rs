@@ -4,85 +4,23 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "xx September 2026",
-    "xx September 2026",
-    "2026年 9月 xx日",
-    "xx Сентябрь 2026",
+    "12 September 2026",
+    "12 September 2026",
+    "2026年 9月 12日",
+    "12 Сентябрь 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
-        concat!(
-            "Added a Hotkeys metadata section for mods\n",
-            "▸ Open a mod's details, click Description, then select Hotkeys from the dropdown\n",
-            "▸ If the game is not running, hotkeys are clickable and will take effect the next time the game is launched\n",
-            "▸ While the game is running, hotkey clicking is disabled unless you allow Hestia to modify d3dx.ini\n",
-            "▸ See Settings > General > Operational > Experimental",
-        ),
-        concat!(
-            "Menambahkan halaman baru untuk melihat hotkey mod\n",
-            "▸ Akses melalui detail Mod, klik Deskripsi, lalu pilih Hotkey dari dropdown\n",
-            "▸ Jika game mati, hotkey dapat diklik dan akan berlaku saat game dijalankan berikutnya\n",
-            "▸ Saat sedang bermain, hotkey tidak dapat diklik, kecuali jika Hestia diizinkan mengubah d3dx.ini\n",
-            "▸ Lihat Pengaturan > Umum > Operasional > Eksperimental",
-        ),
-        concat!(
-            "新增 Mod 快捷键元数据部分\n",
-            "▸ 打开 Mod 详情，点击描述，然后从下拉菜单选择快捷键\n",
-            "▸ 如果游戏未运行，快捷键可点击，并会在下次启动游戏时生效\n",
-            "▸ 游戏运行时，快捷键点击会被禁用，除非你允许 Hestia 修改 d3dx.ini\n",
-            "▸ 请查看 设置 > 常规 > 操作 > 实验性",
-        ),
-        concat!(
-            "Добавлен раздел метаданных с горячими клавишами модов\n",
-            "▸ Откройте сведения о моде, нажмите «Описание», затем выберите «Горячие клавиши» в раскрывающемся списке\n",
-            "▸ Если игра не запущена, горячие клавиши доступны для нажатия и сработают при следующем запуске игры\n",
-            "▸ Пока игра запущена, нажатие горячих клавиш отключено, если вы не разрешили Hestia изменять d3dx.ini\n",
-            "▸ См. Опции > Общие > Операции > Экспериментально",
-        ),
+        "Fixed the persistent bug that caused hestia to spam F10 in-game",
+        "Memperbaiki bug bandel di mana hestia mengirim F10 tanpa henti ke dalam game",
+        "修复了一个顽固错误，该错误会导致 hestia 在游戏中不停发送 F10",
+        "Исправлена упрямая ошибка, из-за которой hestia без остановки отправляла F10 в игру",
     ),
     l10n(
-        concat!(
-            "Added support for preserving mod in-game settings when enabling/disabling mods or switching profiles\n",
-            "▸ Works with limitations while the game is running\n",
-            "▸ Allow Hestia to modify d3dx.ini to remove this limitation\n",
-            "▸ See Settings > General > Operational > Experimental",
-        ),
-        concat!(
-            "Menambahkan dukungan untuk menyimpan pengaturan mod ketika mengganti mod dan profil\n",
-            "▸ Fitur ini mungkin terbatas saat game sedang berjalan\n",
-            "▸ Izinkan Hestia mengedit d3dx.ini agar lebih maksimal\n",
-            "▸ Lihat Pengaturan > Umum > Operasional > Eksperimental",
-        ),
-        concat!(
-            "新增在启用/禁用 Mod 或切换配置文件时保留 Mod 游戏内设置的支持\n",
-            "▸ 游戏运行时功能会受限\n",
-            "▸ 允许 Hestia 修改 d3dx.ini 可解除此限制\n",
-            "▸ 请查看 设置 > 常规 > 操作 > 实验性",
-        ),
-        concat!(
-            "Добавлена поддержка сохранения внутриигровых настроек модов при включении/отключении модов или переключении профилей\n",
-            "▸ Пока игра запущена, работает с ограничениями\n",
-            "▸ Разрешите Hestia изменять d3dx.ini, чтобы убрать это ограничение\n",
-            "▸ См. Опции > Общие > Операции > Экспериментально",
-        ),
-    ),
-    l10n(
-        "Changed the Settings hotkey from F10 to CTRL+P",
-        "Hotkey Setelan diubah dari F10 menjadi CTRL+P",
-        "设置快捷键已从 F10 改为 CTRL+P",
-        "Горячая клавиша «Опции» изменена с F10 на CTRL+P",
-    ),
-    l10n(
-        "Various visual and interface improvements",
-        "Beberapa peningkatan pada tampilan dan menu",
-        "多项视觉和界面改进",
-        "Разные улучшения внешнего вида и интерфейса",
-    ),
-    l10n(
-        "A few bug fixes and performance optimizations",
-        "Beberapa perbaikan bug dan optimasi kinerja",
-        "一些错误修复和性能优化",
-        "Несколько исправлений ошибок и оптимизаций производительности",
+        "A few more tiny performance optimizations",
+        "Sedikit optimasi performa tambahan",
+        "又做了一点额外的性能优化",
+        "Ещё немного дополнительных оптимизаций производительности",
     ),
 ];
 

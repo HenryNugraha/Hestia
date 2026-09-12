@@ -3,7 +3,10 @@
 ## [1.9.2] - 2026-09-xx
 
 ### Fixed
-- Fixed potential bugs where Hestia spam F10 into the game (this time for good).
+- Fixed a bug where Hestia spam F10 into the game (this time for good).
+
+### Changed
+- Optimized frame rendering loop for slight performance improve.
 
 ## [1.9.1] - 2026-08-25
 
