@@ -1882,7 +1882,10 @@ const KEYBOARD_IDLE_POLL: Duration = Duration::from_millis(25);
 const RELOAD_KEY_SETTLE_UP_MS: u64 = 180;
 const RELOAD_KEY_HOLD_MS: u64 = 350;
 #[cfg(windows)]
-const RELOAD_KEY_HOLD_POLL_MS: u64 = 25;
+// 5ms, not 25: the hold guard must catch Alt-down before the Alt+Tab switch lands, because
+// once an elevated game is foreground the release itself is dropped (see
+// `release_key_verified`).
+const RELOAD_KEY_HOLD_POLL_MS: u64 = 5;
 const RELOAD_KEY_PULSE_COUNT: u32 = 2;
 const RELOAD_KEY_PULSE_GAP_MS: u64 = 220;
 
@@ -2886,14 +2889,18 @@ fn game_process_pid_for_reload(game: &GameInstall) -> Option<u32> {
         .map(|(pid, _)| pid.as_u32())
 }
 
-/// Whether a process runs with an elevated (administrator) token. `Err(access_denied)` when
-/// the token could not be queried; from an unelevated Hestia, access denied is itself strong
-/// evidence that the target is elevated.
+/// Mandatory integrity level RID of a process token (0x1000 low, 0x2000 medium, 0x3000
+/// high/elevated, 0x4000 system). `None` queries Hestia itself. `Err(access_denied)` when the
+/// token could not be read; from a lower-integrity Hestia, access denied on the game process
+/// is itself strong evidence that the game sits above us.
 #[cfg(windows)]
-fn process_is_elevated(pid: Option<u32>) -> std::result::Result<bool, bool> {
+fn process_integrity_level(pid: Option<u32>) -> std::result::Result<u32, bool> {
     use windows::Win32::{
         Foundation::{CloseHandle, E_ACCESSDENIED, HANDLE},
-        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        Security::{
+            GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
+            TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
+        },
         System::Threading::{
             GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         },
@@ -2915,21 +2922,62 @@ fn process_is_elevated(pid: Option<u32>) -> std::result::Result<bool, bool> {
     if let Err(err) = opened {
         return Err(access_denied(&err));
     }
-    let mut elevation = TOKEN_ELEVATION::default();
-    let mut returned = 0u32;
-    let queried = unsafe {
-        GetTokenInformation(
-            token,
-            TokenElevation,
-            Some((&mut elevation as *mut TOKEN_ELEVATION).cast()),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut returned,
-        )
-    };
+    let result = (|| {
+        let mut needed = 0u32;
+        // First call only sizes the buffer and fails with ERROR_INSUFFICIENT_BUFFER.
+        let _ = unsafe { GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed) };
+        if needed == 0 {
+            return Err(false);
+        }
+        let mut buffer = vec![0u8; needed as usize];
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenIntegrityLevel,
+                Some(buffer.as_mut_ptr().cast()),
+                needed,
+                &mut needed,
+            )
+        }
+        .map_err(|err| access_denied(&err))?;
+        let label = unsafe { &*(buffer.as_ptr() as *const TOKEN_MANDATORY_LABEL) };
+        let sid = label.Label.Sid;
+        if sid.is_invalid() {
+            return Err(false);
+        }
+        let count = unsafe { *GetSidSubAuthorityCount(sid) };
+        if count == 0 {
+            return Err(false);
+        }
+        Ok(unsafe { *GetSidSubAuthority(sid, u32::from(count) - 1) })
+    })();
     let _ = unsafe { CloseHandle(token) };
-    match queried {
-        Ok(()) => Ok(elevation.TokenIsElevated != 0),
-        Err(err) => Err(access_denied(&err)),
+    result
+}
+
+/// Whether Hestia's synthetic input and key-state reads currently reach the OS. Both are
+/// gated on the foreground window: while it belongs to a process at a higher integrity level
+/// than Hestia (an elevated game), `SendInput` drops every event while still reporting
+/// success, and `GetAsyncKeyState` returns 0 for every key. Verified 2026-09-12 with a
+/// low-integrity probe against a medium-integrity foreground. Hestia's own window and any
+/// process at or below Hestia's level are trusted; a process whose token cannot be opened is
+/// assumed to sit above us.
+#[cfg(windows)]
+fn input_channel_trusted() -> bool {
+    // No foreground window (mid Alt+Tab, a window closing): nothing establishes trust, so
+    // treat the read as unconfirmable rather than confirm a key-up on a possibly blind read.
+    let Some((_, _, pid)) = foreground_window_title_and_pid() else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return true;
+    }
+    let Ok(mine) = process_integrity_level(None) else {
+        return true;
+    };
+    match process_integrity_level(Some(pid)) {
+        Ok(theirs) => theirs <= mine,
+        Err(access_denied) => !access_denied,
     }
 }
 
@@ -2945,20 +2993,22 @@ static ELEVATION_HINT_SHOWN: std::sync::atomic::AtomicBool =
 fn reload_elevation_hint(game_pid: Option<u32>) -> Option<String> {
     use std::sync::atomic::Ordering;
 
-    if ELEVATION_HINT_SHOWN.load(Ordering::Relaxed) || process_is_elevated(None).unwrap_or(true) {
+    if ELEVATION_HINT_SHOWN.load(Ordering::Relaxed) {
         return None;
     }
-    let game_elevated = match process_is_elevated(Some(game_pid?)) {
-        Ok(elevated) => elevated,
+    let mine = process_integrity_level(None).ok()?;
+    let game_above = match process_integrity_level(Some(game_pid?)) {
+        Ok(theirs) => theirs > mine,
         Err(access_denied) => access_denied,
     };
-    if !game_elevated {
+    if !game_above {
         return None;
     }
     ELEVATION_HINT_SHOWN.store(true, Ordering::Relaxed);
     Some(
-        "note: the game runs elevated and Hestia does not, so a key release is dropped if the \
-         game takes focus mid-press; run Hestia as administrator to rule out a stuck reload key"
+        "note: the game runs elevated and Hestia does not, so while the game is focused Hestia \
+         can neither send nor read keys; a reload key release is lost if the game takes focus \
+         mid-press. Run Hestia as administrator to rule out a stuck reload key"
             .to_string(),
     )
 }
@@ -3156,6 +3206,18 @@ impl HeldKey {
             return Err(anyhow!("{label}: skipped, Hestia is shutting down"));
         }
         send_keyboard_input(vk, false, label)?;
+        if !key_reported_down_after_settle(vk) {
+            // SendInput accepted the event but the key table never saw it: UIPI drops input
+            // silently while the foreground window runs at a higher integrity level. Best
+            // effort key-up in case the read raced a physical release, then report it, since a
+            // dropped reload press otherwise gets logged as sent.
+            let _ = send_keyboard_input(vk, true, label);
+            return Err(anyhow!(
+                "{label}: {} key-down was dropped by the OS (the foreground window likely runs \
+                 elevated and Hestia does not)",
+                vk_display_name(vk)
+            ));
+        }
         registry.held.push(vk);
         Ok(Self {
             vk,
@@ -3164,11 +3226,11 @@ impl HeldKey {
     }
 
     fn release(mut self, label: &str) -> Result<()> {
+        // On failure the key is now owned by the stuck-key retry thread, so the drop guard
+        // must not spend another verify timeout on it.
         let result = release_key_verified(self.vk, label);
-        if result.is_ok() {
-            self.released = true;
-            Self::unregister(self.vk);
-        }
+        self.released = true;
+        Self::unregister(self.vk);
         result
     }
 
@@ -3194,7 +3256,9 @@ impl Drop for HeldKey {
 }
 
 #[cfg(windows)]
-const KEY_UP_VERIFY_TIMEOUT: Duration = Duration::from_millis(1_500);
+const KEY_UP_VERIFY_TIMEOUT: Duration = Duration::from_millis(600);
+#[cfg(windows)]
+const STUCK_KEY_RETRY_POLL: Duration = Duration::from_millis(100);
 #[cfg(windows)]
 const KEY_UP_VERIFY_POLL: Duration = Duration::from_millis(25);
 #[cfg(windows)]
@@ -3213,6 +3277,16 @@ fn key_reported_down(vk: u16) -> bool {
 fn key_still_down_after_settle(vk: u16) -> bool {
     if !key_reported_down(vk) {
         return false;
+    }
+    std::thread::sleep(KEY_UP_SETTLE);
+    key_reported_down(vk)
+}
+
+/// Counterpart for a key-down: true once the key table shows the key down.
+#[cfg(windows)]
+fn key_reported_down_after_settle(vk: u16) -> bool {
+    if key_reported_down(vk) {
+        return true;
     }
     std::thread::sleep(KEY_UP_SETTLE);
     key_reported_down(vk)
@@ -3279,15 +3353,45 @@ fn release_key_with_recovery(
     }
 }
 
+/// A key-up Hestia could not confirm: the key is now owned by the stuck-key janitor. Typed so
+/// the reload route's retry loop can stop instead of burying this under focus errors.
+#[derive(Debug)]
+pub struct StuckKeyError(String);
+
+impl std::fmt::Display for StuckKeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StuckKeyError {}
+
+/// Read-back that only counts when it can be trusted: while the foreground process sits
+/// above Hestia, reads return 0 for every key, so an unconfirmable release is treated as
+/// still down.
+#[cfg(windows)]
+fn key_unconfirmed_or_down(vk: u16) -> bool {
+    !input_channel_trusted() || key_still_down_after_settle(vk)
+}
+
 /// Send a key-up and verify the OS actually recorded it. `SendInput` is subject to UIPI:
 /// while the foreground window belongs to a higher-integrity process (an elevated game the
-/// user just Alt+Tabbed into) the call is dropped, and it reports that only as a zero return
-/// with no distinguishing error. A key-down whose key-up was dropped stays down in the async
-/// key table until a physical press, which for the reload key means 3DMigoto reloads every
-/// frame. Recovery: bring Hestia's own window to the foreground (UIPI checks the foreground
-/// window, and Hestia can always inject into itself), resend the key-up, and hand the
-/// foreground back afterwards. Returns an error naming the key when the release could not be
-/// confirmed within the timeout.
+/// user just Alt+Tabbed into) the event is dropped and nothing reports it: the call still
+/// returns 1 delivered with no last-error, and `GetAsyncKeyState` reads 0 for every key from
+/// the same position, so the read-back cannot see the stuck key either (both verified
+/// 2026-09-12 with a low-integrity probe against a medium-integrity foreground). A key-down
+/// whose key-up was dropped stays down until a physical press, which for the reload key means
+/// 3DMigoto reloads every frame.
+///
+/// Confirmation therefore requires a trusted read: the foreground process at or below
+/// Hestia's integrity level. Recovery, in order: resend for a short while, trying to bring
+/// Hestia's own window to the foreground first (Hestia can always inject into and read from
+/// itself; this only works while Hestia still holds foreground rights). If the key is still
+/// unconfirmed after that, hand it to `stuck_key_janitor`, which keeps resending the key-up
+/// in the background: the probe showed the resend lands and reads back the moment the
+/// foreground is any window at Hestia's level or below, so the key clears as soon as the game
+/// loses focus instead of waiting for the user to press it physically. Returns
+/// `StuckKeyError` in that case so the caller logs it and stops retrying the route.
 #[cfg(windows)]
 fn release_key_verified(vk: u16, label: &str) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -3296,7 +3400,7 @@ fn release_key_verified(vk: u16, label: &str) -> Result<()> {
     let hestia_hwnd = hestia_window();
     let outcome = release_key_with_recovery(
         || send_keyboard_input(vk, true, label),
-        || key_still_down_after_settle(vk),
+        || key_unconfirmed_or_down(vk),
         || {
             hestia_hwnd.is_some_and(|hestia| {
                 (unsafe { GetForegroundWindow() }) != hestia && set_foreground_window(hestia)
@@ -3319,7 +3423,8 @@ fn release_key_verified(vk: u16, label: &str) -> Result<()> {
         Ok(None) => Ok(()),
         Ok(Some(recovery)) => {
             tracing::warn!(
-                "{label}: {key_name} key-up was blocked (foreground window likely runs elevated),                  recovered after {} resend(s){}",
+                "{label}: {key_name} key-up could not be confirmed at first (foreground window \
+                 likely runs elevated), confirmed after {} resend(s){}",
                 recovery.resends,
                 if recovery.refocused {
                     " by foregrounding Hestia"
@@ -3329,13 +3434,133 @@ fn release_key_verified(vk: u16, label: &str) -> Result<()> {
             );
             Ok(())
         }
-        Err((_, last_error)) => Err(anyhow!(
-            "{label}: {key_name} key-up is blocked and the key is still reported down after {}ms              (the foreground window likely runs elevated and Hestia does not, so the release was              dropped); the key stays down until it is pressed physically{}",
-            KEY_UP_VERIFY_TIMEOUT.as_millis(),
-            last_error
-                .map(|err| format!("; last error: {err:#}"))
-                .unwrap_or_default()
-        )),
+        Err((recovery, last_error)) => {
+            schedule_stuck_key_release(vk);
+            let message = format!(
+                "{label}: {key_name} key-up cannot be delivered or confirmed while the current \
+                 foreground window runs above Hestia's integrity level ({}ms, {} resend(s)); \
+                 Hestia keeps resending the key-up in the background and it lands as soon as \
+                 the game loses focus, or press {key_name} once to clear it now{}",
+                KEY_UP_VERIFY_TIMEOUT.as_millis(),
+                recovery.resends,
+                last_error
+                    .map(|err| format!("; last error: {err:#}"))
+                    .unwrap_or_default()
+            );
+            tracing::error!("{message}");
+            Err(anyhow::Error::new(StuckKeyError(message)))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stuck-key janitor: keys whose key-up the OS keeps dropping. One detached thread resends
+// every key-up on a slow poll until the key table shows the key up, then exits.
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+static STUCK_KEYS: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
+#[cfg(windows)]
+static STUCK_KEY_JANITOR_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+fn stuck_keys() -> std::sync::MutexGuard<'static, Vec<u16>> {
+    STUCK_KEYS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
+fn schedule_stuck_key_release(vk: u16) {
+    use std::sync::atomic::Ordering;
+
+    let mut stuck = stuck_keys();
+    if !stuck.contains(&vk) {
+        stuck.push(vk);
+    }
+    // Checked under the lock so the janitor's "list is empty, exiting" step cannot race a
+    // new entry.
+    if !STUCK_KEY_JANITOR_RUNNING.swap(true, Ordering::AcqRel)
+        && let Err(err) = std::thread::Builder::new()
+            .name("hestia-stuck-key-release".to_string())
+            .spawn(stuck_key_janitor)
+    {
+        STUCK_KEY_JANITOR_RUNNING.store(false, Ordering::Release);
+        tracing::error!("stuck key retry thread could not start: {err}");
+    }
+}
+
+/// One retry for one stuck key: nothing to do if the key already reads up (a physical press
+/// or another sender cleared it), otherwise resend the key-up and read back. Returns whether
+/// the key is now up.
+fn stuck_key_retry_step(
+    vk: u16,
+    send_up: &mut impl FnMut(u16) -> Result<()>,
+    still_down: &mut impl FnMut(u16) -> bool,
+) -> bool {
+    if !still_down(vk) {
+        return true;
+    }
+    let _ = send_up(vk);
+    !still_down(vk)
+}
+
+#[cfg(windows)]
+const STUCK_KEY_FOREGROUND_ATTEMPT_EVERY: Duration = Duration::from_secs(2);
+
+#[cfg(windows)]
+fn stuck_key_janitor() {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let started = std::time::Instant::now();
+    let mut last_foreground_attempt: Option<std::time::Instant> = None;
+    loop {
+        let pending = {
+            let stuck = stuck_keys();
+            if stuck.is_empty() {
+                STUCK_KEY_JANITOR_RUNNING.store(false, Ordering::Release);
+                return;
+            }
+            stuck.clone()
+        };
+        // While the foreground sits above Hestia nothing we send or read counts. Every couple
+        // of seconds try to take the foreground back (works only if Hestia still holds
+        // foreground rights; otherwise Windows just flashes Hestia's taskbar button, which is
+        // a usable "look at Hestia" cue), and hand it straight back once the key clears.
+        let mut restore_to: Option<windows::Win32::Foundation::HWND> = None;
+        if !input_channel_trusted()
+            && last_foreground_attempt
+                .is_none_or(|at| at.elapsed() >= STUCK_KEY_FOREGROUND_ATTEMPT_EVERY)
+        {
+            last_foreground_attempt = Some(std::time::Instant::now());
+            let previous = unsafe { GetForegroundWindow() };
+            if hestia_window().is_some_and(set_foreground_window) {
+                restore_to = Some(previous);
+            }
+        }
+        for vk in pending {
+            let released = stuck_key_retry_step(
+                vk,
+                &mut |vk| send_keyboard_input(vk, true, "stuck key retry"),
+                &mut key_unconfirmed_or_down,
+            );
+            if released {
+                stuck_keys().retain(|held| *held != vk);
+                tracing::warn!(
+                    "{} key-up confirmed after {:.1}s of background retries",
+                    vk_display_name(vk),
+                    started.elapsed().as_secs_f32()
+                );
+            }
+        }
+        if let Some(previous) = restore_to
+            && !previous.0.is_null()
+        {
+            let _ = set_foreground_window(previous);
+        }
+        std::thread::sleep(STUCK_KEY_RETRY_POLL);
     }
 }
 
@@ -3350,6 +3575,11 @@ pub fn release_synthetic_keys_for_shutdown() {
         if let Err(err) = release_key_verified(vk, "shutdown release") {
             tracing::error!("{err:#}");
         }
+    }
+    // Keys the janitor was still retrying: one last attempt, the thread dies with the process
+    // and the launch-time self-heal covers whatever is still down next start.
+    for vk in std::mem::take(&mut *stuck_keys()) {
+        let _ = send_keyboard_input(vk, true, "shutdown stuck key release");
     }
 }
 
@@ -3624,6 +3854,11 @@ fn send_reload_hotkey_via_hestia_focus_with_retry(
                 });
             }
             Err(error) => {
+                // A stuck key is owned by the janitor now; more focus attempts cannot help
+                // and would bury the message under focus errors.
+                if error.downcast_ref::<StuckKeyError>().is_some() {
+                    return Err(error);
+                }
                 last_error = Some(error);
                 if started.elapsed() >= FOCUS_ROUTE_RETRY_TIMEOUT {
                     break;
@@ -4107,6 +4342,194 @@ mod tests {
                 .to_string()
                 .contains("SendInput delivered 0 of 1")
         );
+    }
+
+    // Real-input probes: inject F24 (bound by nothing) through the production SendInput path.
+    // Run explicitly with `cargo test real_input -- --ignored --nocapture`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "injects F24 into the live desktop"]
+    fn real_input_f24_press_release_roundtrip() {
+        const F24: u16 = 0x87;
+        assert!(!key_reported_down(F24), "F24 must start up");
+        let held = HeldKey::press(F24, "probe down").expect("press");
+        assert!(
+            key_reported_down(F24),
+            "key table shows F24 down after press"
+        );
+        assert!(synthetic_keys().held.contains(&F24));
+        held.release("probe up").expect("release");
+        assert!(
+            !key_reported_down(F24),
+            "key table shows F24 up after release"
+        );
+        assert!(!synthetic_keys().held.contains(&F24));
+    }
+
+    /// Run from a copy of the test binary labelled low integrity while a medium-integrity
+    /// launcher already holds F24 down and releases it a few seconds later. Models Hestia
+    /// (lower) against an elevated game (higher) that owns the foreground: from here Hestia
+    /// can neither inject nor read, so every step must be detected through the trust gate.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs a low-integrity launch with F24 pre-held by the launcher"]
+    fn real_input_f24_low_integrity_scenario() {
+        const F24: u16 = 0x87;
+        let mine = process_integrity_level(None).expect("own integrity level");
+        eprintln!("own integrity level: 0x{mine:X}");
+        assert_eq!(mine, 0x1000, "this scenario must run at low integrity");
+        assert!(
+            !input_channel_trusted(),
+            "the foreground window must sit above this process"
+        );
+        assert!(
+            !key_reported_down(F24),
+            "blind read: F24 is held by the launcher but reads up from here"
+        );
+
+        // 1. A key-down from the lower-integrity side is dropped silently and reported.
+        let press_err = match HeldKey::press(F24, "probe down") {
+            Ok(_) => panic!("press must fail at low integrity against a higher foreground"),
+            Err(err) => format!("{err:#}"),
+        };
+        eprintln!("press: {press_err}");
+        assert!(press_err.contains("dropped by the OS"), "{press_err}");
+        assert!(!synthetic_keys().held.contains(&F24));
+
+        // 2. A key-up cannot be confirmed, is handed to the janitor, and is typed.
+        let started = std::time::Instant::now();
+        let release_err = match release_key_verified(F24, "probe up") {
+            Ok(()) => panic!("release must fail at low integrity against a higher foreground"),
+            Err(err) => {
+                assert!(
+                    err.downcast_ref::<StuckKeyError>().is_some(),
+                    "typed: {err:#}"
+                );
+                format!("{err:#}")
+            }
+        };
+        eprintln!("release after {:?}: {release_err}", started.elapsed());
+        assert!(
+            release_err.contains("cannot be delivered or confirmed"),
+            "{release_err}"
+        );
+        assert!(stuck_keys().contains(&F24), "janitor owns the key");
+        assert!(
+            STUCK_KEY_JANITOR_RUNNING.load(std::sync::atomic::Ordering::Acquire),
+            "janitor thread running"
+        );
+
+        // 3. The launcher releases F24 meanwhile, but from here that is invisible: the
+        //    janitor must keep the key pending rather than confirm on a blind read. (The
+        //    confirm-once-trusted transition is covered by the medium-integrity roundtrip and
+        //    the recovery-core unit tests; this process has no window to take the foreground
+        //    with.)
+        //    The desktop is live, so sample the gate meanwhile: if a window at or below this
+        //    level took the foreground for a moment after the launcher's release, a
+        //    confirmation in that moment is correct, not false.
+        let wait_until = std::time::Instant::now() + Duration::from_millis(4_000);
+        let mut trusted_samples = 0u32;
+        let mut samples = 0u32;
+        while std::time::Instant::now() < wait_until {
+            samples += 1;
+            if input_channel_trusted() {
+                trusted_samples += 1;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pending = stuck_keys().contains(&F24);
+        let janitor_running = STUCK_KEY_JANITOR_RUNNING.load(std::sync::atomic::Ordering::Acquire);
+        eprintln!(
+            "after {:?}: trusted {trusted_samples}/{samples} samples, pending={pending}, janitor={janitor_running}",
+            started.elapsed()
+        );
+        if trusted_samples == 0 {
+            assert!(pending, "no false confirmation while blind");
+            assert!(janitor_running, "janitor still running");
+        }
+    }
+
+    /// Diagnostic: sample the trust gate and the foreground identity for 6s and print every
+    /// change. Run at low integrity to see what the gate does during a launcher's key events.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "diagnostic sampler"]
+    fn real_input_trust_monitor() {
+        let mine = process_integrity_level(None);
+        eprintln!("own IL: {mine:?}, own pid {}", std::process::id());
+        let started = std::time::Instant::now();
+        let mut last = String::new();
+        let mut samples = 0u32;
+        while started.elapsed() < Duration::from_secs(6) {
+            samples += 1;
+            let fg = foreground_window_title_and_pid();
+            let state = match &fg {
+                None => "foreground: NONE".to_string(),
+                Some((hwnd, title, pid)) => format!(
+                    "foreground: hwnd={:?} pid={pid} il={:?} title={title:?}",
+                    hwnd.0,
+                    process_integrity_level(Some(*pid))
+                ),
+            };
+            let line = format!(
+                "trusted={} f24_down={} {state}",
+                input_channel_trusted(),
+                key_reported_down(0x87)
+            );
+            if line != last {
+                eprintln!("[{:>6.3}s] {line}", started.elapsed().as_secs_f32());
+                last = line;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!("{samples} samples");
+    }
+
+    #[test]
+    fn stuck_key_retry_step_skips_send_when_key_already_reads_up() {
+        let mut sends = 0;
+        let released = stuck_key_retry_step(
+            0x79,
+            &mut |_| {
+                sends += 1;
+                Ok(())
+            },
+            &mut |_| false,
+        );
+        assert!(released);
+        assert_eq!(sends, 0, "a physically cleared key must not be resent");
+    }
+
+    #[test]
+    fn stuck_key_retry_step_releases_once_the_send_lands() {
+        // Models the game losing focus: the resend is no longer dropped and the read-back
+        // shows the key up.
+        let down = std::cell::Cell::new(true);
+        let released = stuck_key_retry_step(
+            0x79,
+            &mut |_| {
+                down.set(false);
+                Ok(())
+            },
+            &mut |_| down.get(),
+        );
+        assert!(released);
+    }
+
+    #[test]
+    fn stuck_key_retry_step_keeps_key_pending_while_send_is_dropped() {
+        // SendInput "succeeds" but the OS dropped it (UIPI): the key still reads down.
+        let mut sends = 0;
+        let released = stuck_key_retry_step(
+            0x79,
+            &mut |_| {
+                sends += 1;
+                Ok(())
+            },
+            &mut |_| true,
+        );
+        assert!(!released);
+        assert_eq!(sends, 1);
     }
 
     #[test]
