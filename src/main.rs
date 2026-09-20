@@ -5,6 +5,7 @@ mod importing;
 mod integrations;
 mod manifest_cli;
 mod model;
+mod overlay_preview;
 mod persistence;
 #[cfg(feature = "profile")]
 mod profiler;
@@ -46,6 +47,11 @@ fn main() -> anyhow::Result<()> {
     if manifest_cli::try_run()? {
         return Ok(());
     }
+    // Keep layout experiments independent of the normal startup, saved state,
+    // single-instance guard, and game integrations.
+    if std::env::args_os().any(|arg| arg == "--overlay-preview") {
+        return overlay_preview::run();
+    }
     // A main-thread panic takes the process down without `on_exit`, which must not leave a
     // synthetic XXMI reload/hotkey press stuck (3DMigoto would keep reloading every frame).
     // Worker-thread panics unwind through the sender's own drop guard, so only the main
@@ -64,8 +70,21 @@ fn main() -> anyhow::Result<()> {
     let after_elevated_restart = std::env::args_os().any(|arg| arg == "--after-elevated-restart");
     let skip_instance_guard = after_update_launch || after_proxy_restart || after_elevated_restart;
 
-    let portable =
-        persistence::PortablePaths::discover().context("failed to discover portable paths")?;
+    let mut launch_args = std::env::args_os();
+    let portable = if launch_args.any(|arg| arg == "--restore-from-overlay") {
+        let state_path =
+            std::path::PathBuf::from(launch_args.next().context("missing overlay profile path")?)
+                .canonicalize()
+                .context("could not open overlay profile")?;
+        anyhow::ensure!(state_path.is_file(), "overlay profile must be a file");
+        persistence::PortablePaths {
+            history_db: state_path.with_extension("dat"),
+            state_archive: state_path,
+            state_source: None,
+        }
+    } else {
+        persistence::PortablePaths::discover().context("failed to discover portable paths")?
+    };
     portable.ensure_layout()?;
 
     let state =

@@ -1,6 +1,17 @@
 # Changelog
 
-## [1.9.2] - 2026-09-xx
+## [1.10.0-alpha] - 2026-09-xx
+
+### Added
+- 
+
+### Fixed
+- 
+
+### Changed
+- 
+
+## [1.9.2] - 2026-09-12
 
 ### Fixed
 - Fixed a bug where Hestia spam F10 into the game (this time for good).

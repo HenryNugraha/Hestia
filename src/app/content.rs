@@ -4,18 +4,12 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "12 September 2026",
-    "12 September 2026",
-    "2026年 9月 12日",
-    "12 Сентябрь 2026",
+    "xx xx 2026",
+    "xx xx 2026",
+    "2026年 xx月 xx日",
+    "xx xx 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
-    l10n(
-        "Fixed the persistent bug that caused hestia to spam F10 in-game",
-        "Memperbaiki bug bandel di mana hestia mengirim F10 tanpa henti ke dalam game",
-        "修复了一个顽固错误，该错误会导致 hestia 在游戏中不停发送 F10",
-        "Исправлена упрямая ошибка, из-за которой hestia без остановки отправляла F10 в игру",
-    ),
     l10n(
         "A few more tiny performance optimizations",
         "Sedikit optimasi performa tambahan",
