@@ -1542,6 +1542,7 @@ mod tests {
                 game_id: "test".to_string(),
                 name: "Gameplay/Illegal?.txt".to_string(),
                 order: 3,
+                gamebanana_character: None,
             }]),
             tools: None,
             tool_blacklist: None,

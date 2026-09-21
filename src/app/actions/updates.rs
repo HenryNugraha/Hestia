@@ -943,6 +943,8 @@ fn profile_to_response(snapshot: Option<&GameBananaSnapshot>) -> gamebanana::Pro
             is_trashed: s.is_trashed,
             is_withheld: s.is_withheld,
             date_updated: s.update_ts,
+            category: s.category.as_ref().map(|category| gamebanana::SubmissionCategory { id: category.id, name: category.name.clone() }),
+            super_category: s.super_category_id.map(|id| gamebanana::SubmissionCategory { id, name: String::new() }),
             ..Default::default()
         })
         .unwrap_or_default()
@@ -987,6 +989,11 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
             .map(|preview| preview.images.iter().map(gamebanana::full_image_url).collect())
             .unwrap_or_default(),
         files,
+        category: profile.category.as_ref().filter(|category| category.id != 0).map(|category| crate::model::GameBananaCategoryLink {
+            id: category.id,
+            name: category.name.clone(),
+        }),
+        super_category_id: profile.super_category.as_ref().map(|category| category.id).filter(|id| *id != 0),
         is_private: profile.is_private,
         is_deleted: profile.is_deleted,
         is_trashed: profile.is_trashed,
@@ -2471,14 +2478,22 @@ impl HestiaApp {
             return;
         };
 
-        let (category_id, category_name) = if let Some(existing) = self
+        // A unique explicit link survives local renames. Several local folders
+        // can share a character, so do not arbitrarily choose between them.
+        let remote_category_id = gb_profile.and_then(|profile| profile.category.as_ref()).map(|category| category.id).filter(|id| *id != 0);
+        let mut linked_categories = self.state.categories.iter().filter(|category| {
+            category.game_id == meta.game_id && category.gamebanana_character.as_ref().is_some_and(|link| Some(link.id) == remote_category_id)
+        });
+        let first_linked = linked_categories.next();
+        let unique_linked = first_linked.filter(|_| linked_categories.next().is_none());
+        let (category_id, category_name) = if let Some(existing) = unique_linked.or_else(|| self
             .state
             .categories
             .iter()
             .find(|category| {
                 category.game_id == meta.game_id
                     && category.name.eq_ignore_ascii_case(category_name.as_str())
-            })
+            }))
         {
             (existing.id.clone(), existing.name.clone())
         } else {
@@ -2497,6 +2512,7 @@ impl HestiaApp {
                 game_id: meta.game_id.clone(),
                 name: category_name.clone(),
                 order,
+                gamebanana_character: None,
             });
             let text = self.text();
             self.log_action(text.category_action(), &text.category_created(&category_name));

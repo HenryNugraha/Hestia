@@ -965,6 +965,132 @@ pub struct ModCategory {
     pub name: String,
     #[serde(default)]
     pub order: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gamebanana_character: Option<GameBananaCategoryLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameBananaCategoryLink {
+    pub id: u64,
+    pub name: String,
+}
+
+impl ModCategory {
+    /// Custom local labels do not establish remote identity. Prefer an explicit
+    /// link, otherwise accept only consistent character metadata from this game.
+    pub fn resolved_gamebanana_character<'a>(
+        &self,
+        snapshots: impl IntoIterator<Item = &'a GameBananaSnapshot>,
+        character_super_category_id: Option<u64>,
+    ) -> Option<GameBananaCategoryLink> {
+        if let Some(link) = self
+            .gamebanana_character
+            .as_ref()
+            .filter(|link| link.id != 0)
+        {
+            return Some(link.clone());
+        }
+        let super_id = character_super_category_id?;
+        let mut resolved: Option<GameBananaCategoryLink> = None;
+        for snapshot in snapshots {
+            let Some(link) = snapshot.category.as_ref().filter(|link| link.id != 0) else {
+                continue;
+            };
+            if snapshot.super_category_id != Some(super_id) {
+                return None;
+            }
+            if resolved
+                .as_ref()
+                .is_some_and(|previous| previous.id != link.id)
+            {
+                return None;
+            }
+            resolved = Some(link.clone());
+        }
+        resolved
+    }
+}
+
+#[cfg(test)]
+mod category_identity_tests {
+    use super::*;
+
+    fn custom_category() -> ModCategory {
+        serde_json::from_str(
+            r#"{"id":"local","game_id":"endfield","name":"My favorites","order":0}"#,
+        )
+        .unwrap()
+    }
+
+    fn snapshot(id: u64, super_id: u64) -> GameBananaSnapshot {
+        GameBananaSnapshot {
+            category: Some(GameBananaCategoryLink {
+                id,
+                name: format!("Character {id}"),
+            }),
+            super_category_id: Some(super_id),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn old_categories_load_without_link_and_keep_custom_label() {
+        let category = custom_category();
+        assert!(category.gamebanana_character.is_none());
+        let snapshots = [
+            snapshot(10, 20),
+            GameBananaSnapshot::default(),
+            snapshot(10, 20),
+        ];
+        assert_eq!(
+            category
+                .resolved_gamebanana_character(&snapshots, Some(20))
+                .unwrap()
+                .id,
+            10
+        );
+        assert_eq!(category.name, "My favorites");
+    }
+
+    #[test]
+    fn mixed_or_wrong_game_metadata_does_not_guess_a_character() {
+        let category = custom_category();
+        assert!(
+            category
+                .resolved_gamebanana_character(&[snapshot(10, 20), snapshot(11, 20)], Some(20))
+                .is_none()
+        );
+        assert!(
+            category
+                .resolved_gamebanana_character(&[snapshot(10, 21)], Some(20))
+                .is_none()
+        );
+        assert!(
+            category
+                .resolved_gamebanana_character(&[GameBananaSnapshot::default()], Some(20))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn explicit_link_survives_rename_and_round_trip_and_overrides_mixed_metadata() {
+        let mut category = custom_category();
+        category.gamebanana_character = Some(GameBananaCategoryLink {
+            id: 10,
+            name: "Ardelia".into(),
+        });
+        category.name = "Another custom label".into();
+        let saved = serde_json::to_string(&category).unwrap();
+        let loaded: ModCategory = serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded, category);
+        assert_eq!(
+            loaded
+                .resolved_gamebanana_character(&[snapshot(11, 20)], Some(20))
+                .unwrap()
+                .id,
+            10
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1442,6 +1568,10 @@ pub struct GameBananaSnapshot {
     pub description: Option<String>,
     pub preview_urls: Vec<String>,
     pub files: Vec<GameBananaFileMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<GameBananaCategoryLink>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub super_category_id: Option<u64>,
     #[serde(default)]
     pub is_private: bool,
     #[serde(default)]

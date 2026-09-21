@@ -2633,6 +2633,12 @@ impl HestiaApp {
                                                 )
                                                 .inner;
                                             label_response.on_hover_text(&category.name);
+                                            if gamebanana::character_super_category_id_for_hestia(&category.game_id).is_some() {
+                                                let character_label = self.category_character_label();
+                                                ui.menu_button(icon_rich(Icon::Link, 12.0, Color32::from_gray(145)), |ui| {
+                                                    self.render_category_character_picker(ui, category);
+                                                }).response.on_hover_text(character_label);
+                                            }
                                             ui.add_space(-8.0);
                                             ui.add_sized(
                                                 [34.0, 20.0],

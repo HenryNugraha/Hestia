@@ -229,6 +229,8 @@ pub struct WithholdNotice {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SubmissionCategory {
+    #[serde(rename = "_idRow", default)]
+    pub id: u64,
     #[serde(rename = "_sName", default)]
     pub name: String,
 }

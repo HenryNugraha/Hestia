@@ -3,20 +3,14 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // l10n order: English, Bahasa Indonesia, Simplified Chinese, Russian.
 // Add empty string "" to skip a language.
 
-pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "xx xx 2026",
-    "xx xx 2026",
-    "2026年 xx月 xx日",
-    "xx xx 2026",
-);
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
-    l10n(
-        "A few more tiny performance optimizations",
-        "Sedikit optimasi performa tambahan",
-        "又做了一点额外的性能优化",
-        "Ещё немного дополнительных оптимизаций производительности",
-    ),
-];
+pub(crate) const WHATS_NEW_DATE: L10n =
+    l10n("xx xx 2026", "xx xx 2026", "2026年 xx月 xx日", "xx xx 2026");
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
+    "A few more tiny performance optimizations",
+    "Sedikit optimasi performa tambahan",
+    "又做了一点额外的性能优化",
+    "Ещё немного дополнительных оптимизаций производительности",
+)];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
 pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 32;

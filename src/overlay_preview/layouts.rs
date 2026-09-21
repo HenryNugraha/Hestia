@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::VecDeque,
     path::{Path, PathBuf},
 };
 
@@ -9,34 +9,109 @@ use egui::{
 };
 
 use super::data::{Catalog, Category};
+use super::thumbnails::ThumbnailCache;
 
 const OVERLAY_OPACITY_MIN: u8 = 50;
 const OVERLAY_OPACITY_MAX: u8 = 94;
 const CAROUSEL_HEIGHT: f32 = 266.0;
 const FOCUSED_CARD_SIZE: Vec2 = Vec2::new(214.0, 246.0);
-const NEIGHBOR_CARD_SIZE: Vec2 = Vec2::new(78.0, 188.0);
+const NEIGHBOR_CARD_SIZE: Vec2 = Vec2::new(133.0, 153.0);
 const CAROUSEL_CARD_GAP: f32 = 12.0;
 const CATEGORY_STRIP_HEIGHT: f32 = 78.0;
 const CATEGORY_ITEM_HEIGHT: f32 = 64.0;
-const CATEGORY_SELECTED_WIDTH: f32 = 146.0;
+const CATEGORY_SELECTED_WIDTH: f32 = 154.0;
 const CATEGORY_ITEM_WIDTH: f32 = 56.0;
 const CATEGORY_GAP: f32 = 6.0;
 const ACCENT: Color32 = Color32::from_rgb(196, 91, 52);
+const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
+const ACTIVE_FEEDBACK_SECS: f64 = 0.15;
+const CATEGORY_SPRITE_SIZE: f32 = 30.0;
+const CATEGORY_SELECTED_SPRITE_SIZE: f32 = 38.0;
+const CARD_TITLE_BOTTOM_PADDING: f32 = 8.0;
 
 // Keep one physical wheel notch from selecting several entries when egui exposes its
 // smoothing tail over multiple frames.
 const WHEEL_POINTS_PER_STEP: f32 = 50.0;
 const WHEEL_IDLE_RESET_SECS: f64 = 0.35;
 const WHEEL_STEP_COOLDOWN_SECS: f64 = 0.12;
+const TOOLTIP_SUPPRESS_SECS: f64 = 0.50;
+const REVEAL_INTERACTION_THRESHOLD: f32 = 0.92;
+const REVEAL_OFFSET: f32 = 10.0;
+
+fn tooltip_suppress_id() -> egui::Id {
+    egui::Id::new("overlay-preview-tooltip-suppress-until")
+}
+
+/// Add a delayed tooltip unless a scroll/collapse has just dismissed transient UI.
+/// egui still applies its normal still-pointer delay on top of this guard.
+pub(super) fn delayed_tooltip(
+    response: egui::Response,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let now = response.ctx.input(|input| input.time);
+    let suppressed_until = response.ctx.data(|data| {
+        data.get_temp::<f64>(tooltip_suppress_id())
+            .unwrap_or(f64::NEG_INFINITY)
+    });
+    if now >= suppressed_until {
+        response.on_hover_text(text)
+    } else {
+        response
+    }
+}
+
+/// Suppress transient tooltips for a short settling period after a scroll/collapse.
+pub(super) fn suppress_tooltips(ctx: &egui::Context) {
+    let until = ctx.input(|input| input.time) + TOOLTIP_SUPPRESS_SECS;
+    ctx.data_mut(|data| data.insert_temp(tooltip_suppress_id(), until));
+}
+
+#[derive(Clone)]
+struct CarouselTransition {
+    from: Vec<CarouselCardPlacement>,
+    started_at: f64,
+}
+
+#[derive(Clone, Copy)]
+struct CarouselCardPlacement {
+    index: usize,
+    rect: Rect,
+    focused: bool,
+    /// Fixed visual slot: left, center, or right. This is carried through a
+    /// transition instead of being inferred from an interpolated rectangle.
+    slot: usize,
+}
+
+/// The card that won the pointer press. Keep its original rectangle until release so a
+/// carousel transition cannot make a click activate a different card underneath the cursor.
+#[derive(Clone)]
+struct CarouselPointerPress {
+    category_index: usize,
+    costume_index: usize,
+    rect: Rect,
+    placements: Vec<CarouselCardPlacement>,
+}
+
+#[derive(Clone, Copy)]
+struct HeldPreview {
+    category_index: usize,
+    costume_index: usize,
+}
+
+enum PendingCommand {
+    Mod(i32),
+    Category(i32),
+    Activate,
+}
 
 /// In-memory state for the native costume switcher preview.
 pub(super) struct Layouts {
     catalog: Catalog,
     selected_category: usize,
     carousel_focus: usize,
+    carousel_focus_by_category: Vec<usize>,
     active_images: Vec<Option<PathBuf>>,
-    textures: HashMap<PathBuf, egui::TextureHandle>,
-    failed_images: HashSet<PathBuf>,
+    thumbnails: ThumbnailCache,
     reveal_category: bool,
     category_wheel_accum: f32,
     category_wheel_last_event_at: f64,
@@ -46,6 +121,16 @@ pub(super) struct Layouts {
     carousel_wheel_last_event_at: f64,
     carousel_wheel_last_step_at: f64,
     carousel_wheel_suppress_until: f64,
+    carousel_transition: Option<CarouselTransition>,
+    carousel_pointer_press: Option<CarouselPointerPress>,
+    held_preview: Option<HeldPreview>,
+    reveal_progress: f32,
+    visible_card_rects: Vec<Rect>,
+    active_feedback_until: f64,
+    active_feedback_costume: Option<usize>,
+    boundary_feedback_until: f64,
+    boundary_feedback_edge: Option<i32>,
+    pending_commands: VecDeque<PendingCommand>,
 }
 
 impl Layouts {
@@ -56,6 +141,11 @@ impl Layouts {
             .get(selected_category)
             .map(active_costume_index)
             .unwrap_or(0);
+        let carousel_focus_by_category = catalog
+            .categories
+            .iter()
+            .map(active_costume_index)
+            .collect::<Vec<_>>();
         let active_images = catalog
             .categories
             .iter()
@@ -66,9 +156,9 @@ impl Layouts {
             catalog,
             selected_category,
             carousel_focus,
+            carousel_focus_by_category,
             active_images,
-            textures: HashMap::new(),
-            failed_images: HashSet::new(),
+            thumbnails: ThumbnailCache::new(),
             reveal_category: true,
             category_wheel_accum: 0.0,
             category_wheel_last_event_at: f64::NEG_INFINITY,
@@ -78,13 +168,53 @@ impl Layouts {
             carousel_wheel_last_event_at: f64::NEG_INFINITY,
             carousel_wheel_last_step_at: f64::NEG_INFINITY,
             carousel_wheel_suppress_until: f64::NEG_INFINITY,
+            carousel_transition: None,
+            carousel_pointer_press: None,
+            held_preview: None,
+            reveal_progress: 1.0,
+            visible_card_rects: Vec::new(),
+            active_feedback_until: f64::NEG_INFINITY,
+            active_feedback_costume: None,
+            boundary_feedback_until: f64::NEG_INFINITY,
+            boundary_feedback_edge: None,
+            pending_commands: VecDeque::new(),
         }
+    }
+
+    pub(super) fn prepare_thumbnails(&mut self, ctx: &egui::Context) {
+        self.thumbnails.poll(ctx);
+        let mut paths = Vec::new();
+        // Prioritize the current carousel, then its next cards and adjacent
+        // characters. The mini strip also calls this to warm the first view.
+        if let Some(category) = self.catalog.categories.get(self.selected_category) {
+            append_nearby_mod_images(&mut paths, category, self.carousel_focus, 2);
+        }
+        for index in self.selected_category.saturating_sub(4)
+            ..self
+                .selected_category
+                .saturating_add(5)
+                .min(self.catalog.categories.len())
+        {
+            let category = &self.catalog.categories[index];
+            paths.extend(
+                category
+                    .image
+                    .clone()
+                    .or_else(|| self.active_images[index].clone()),
+            );
+            if index != self.selected_category && index.abs_diff(self.selected_category) <= 1 {
+                append_nearby_mod_images(&mut paths, category, active_costume_index(category), 1);
+            }
+        }
+        self.thumbnails.prefetch(ctx, paths);
     }
 
     /// Draw the centered mod carousel. The parent reserves approximately 560x266 for it.
     pub(super) fn show_carousel(&mut self, ui: &mut Ui, overlay_opacity: u8) {
+        self.visible_card_rects.clear();
         if self.catalog.categories.is_empty() {
-            self.show_empty_catalog(ui, overlay_opacity);
+            let empty_rects = self.show_empty_catalog(ui, overlay_opacity);
+            self.visible_card_rects.extend(empty_rects);
             return;
         }
 
@@ -93,72 +223,494 @@ impl Layouts {
         let width = available.x.max(1.0);
         let height = available.y.min(CAROUSEL_HEIGHT).max(1.0);
         let (carousel_rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+        let now = ui.input(|input| input.time);
+        self.consume_pending_commands(ui.ctx(), carousel_rect, now);
+        self.clamp_selection();
         let category_index = self.selected_category;
         let costume_count = self.catalog.categories[category_index].costumes.len();
         if costume_count == 0 {
+            let text = "No installed mods";
+            let font = FontId::proportional(15.0);
+            let galley = ui.painter().layout_no_wrap(
+                text.to_owned(),
+                font.clone(),
+                content_gray(235, overlay_opacity),
+            );
             ui.painter().text(
                 carousel_rect.center(),
                 Align2::CENTER_CENTER,
-                "No installed mods",
-                FontId::proportional(15.0),
+                text,
+                font,
                 content_gray(235, overlay_opacity),
             );
+            self.visible_card_rects
+                .push(Rect::from_center_size(carousel_rect.center(), galley.size()).expand(2.0));
             return;
         }
 
-        if let Some(direction) = self.consume_carousel_input(ui, carousel_rect, costume_count) {
-            self.carousel_focus = next_focus_index(costume_count, self.carousel_focus, direction);
+        if self.carousel_pointer_press.is_some()
+            && ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::PointerGone))
+                    || (input.pointer.latest_pos().is_none()
+                        && !input.pointer.primary_down()
+                        && !input.pointer.primary_released())
+            })
+        {
+            // A lost pointer cannot produce a trustworthy release target. Drop the capture so
+            // a later click after Alt/collapse cannot activate a stale card.
+            self.cancel_pointer_interaction();
+        }
+        let mut placements = self.current_carousel_placements(carousel_rect, costume_count, now);
+        let wheel_direction = self.consume_carousel_input(ui, carousel_rect, costume_count);
+        if let Some(direction) = wheel_direction {
+            self.advance_mod_focus(carousel_rect, costume_count, direction, now);
+            placements = self.current_carousel_placements(carousel_rect, costume_count, now);
             ui.ctx().request_repaint();
         }
 
-        let focus = self.carousel_focus.min(costume_count - 1);
-        let left = if costume_count > 2 {
-            Some(previous_focus_index(costume_count, focus))
-        } else if costume_count == 2 && focus == 1 {
-            Some(0)
-        } else {
-            None
-        };
-        let right = if costume_count > 2 {
-            Some(next_focus_index(costume_count, focus, 1))
-        } else if costume_count == 2 && focus == 0 {
-            Some(1)
-        } else {
-            None
-        };
+        self.update_held_preview(ui, category_index, &placements);
 
-        let focused_rect = Rect::from_center_size(
-            egui::pos2(carousel_rect.center().x, carousel_rect.center().y),
-            FOCUSED_CARD_SIZE,
+        if self.held_preview.is_none() {
+            self.capture_carousel_press(ui, category_index, &placements, costume_count);
+            if self
+                .carousel_pointer_press
+                .as_ref()
+                .is_some_and(|press| press.category_index == category_index)
+                && ui
+                    .input(|input| input.pointer.primary_down() || input.pointer.primary_released())
+            {
+                // Keep the pressed card under the cursor through release. This makes a concurrent
+                // repaint or carousel transition harmless to the pending click and its release frame.
+                if let Some(press) = &self.carousel_pointer_press {
+                    placements = press.placements.clone();
+                }
+            }
+        }
+
+        if self.held_preview.is_none() {
+            for placement in &placements {
+                // The carousel is a visual slot layout: when the category changes, a
+                // different costume can occupy the same left/center/right rectangle. Use
+                // that stable slot for egui's interaction id so its widget-rect identity
+                // does not change underneath the pointer between passes.
+                let reveal = card_reveal_progress(placement, self.reveal_progress, costume_count);
+                self.show_carousel_card(
+                    ui,
+                    category_index,
+                    placement.index,
+                    placement.rect,
+                    placement.focused,
+                    placement.slot,
+                    reveal,
+                    overlay_opacity,
+                );
+            }
+        }
+        if self.held_preview.is_none() {
+            if let Some(costume_index) =
+                self.release_carousel_press(ui, category_index, carousel_rect, costume_count, now)
+            {
+                // A click activates in place. The focused card remains focused, so a side-card
+                // click never moves the target away from the pointer before the next action.
+                self.activate_costume_in_place(category_index, costume_index, now);
+                ui.ctx().request_repaint();
+            }
+        }
+        self.request_animation_repaint(ui.ctx(), now);
+    }
+
+    /// Set the staged expansion progress used by the parent overlay animation.
+    /// The focused card appears first; neighbors are staggered by
+    /// `card_reveal_progress`. Invisible cards keep their stable slot IDs but do not
+    /// accept activation until they are almost fully revealed.
+    pub(super) fn set_reveal(&mut self, progress: f32) {
+        self.reveal_progress = progress.clamp(0.0, 1.0);
+        if self.reveal_progress <= 0.0 {
+            self.visible_card_rects.clear();
+            self.held_preview = None;
+            self.carousel_pointer_press = None;
+        }
+    }
+
+    /// Queue a mod navigation command for the next carousel pass, when its current geometry is
+    /// available. This keeps keyboard navigation on the same animated path as the wheel.
+    pub(super) fn navigate_mod(&mut self, ctx: &egui::Context, direction: i32) {
+        if direction == 0 || self.pointer_gesture_active_in_context(ctx) {
+            return;
+        }
+        self.pending_commands
+            .push_back(PendingCommand::Mod(direction.signum()));
+        ctx.request_repaint();
+    }
+
+    /// Navigate categories using the same clamped order as the category wheel.
+    pub(super) fn navigate_category(&mut self, ctx: &egui::Context, direction: i32) {
+        if direction == 0
+            || self.pointer_gesture_active_in_context(ctx)
+            || self.catalog.categories.is_empty()
+        {
+            return;
+        }
+        self.pending_commands
+            .push_back(PendingCommand::Category(direction.signum()));
+        suppress_tooltips(ctx);
+        ctx.request_repaint();
+    }
+
+    /// Activate or toggle the focused mod using the same in-memory selection rule as a card
+    /// click. The root hotkey path calls this directly because it already owns the context.
+    pub(super) fn activate_focused(&mut self, ctx: &egui::Context) {
+        if self.pointer_gesture_active_in_context(ctx) {
+            return;
+        }
+        self.pending_commands.push_back(PendingCommand::Activate);
+        ctx.request_repaint();
+    }
+
+    /// Return the current painted card/preview bounds for the native click-through mask.
+    pub(super) fn visible_card_rects(&self) -> &[Rect] {
+        &self.visible_card_rects
+    }
+
+    fn pointer_gesture_active(&self) -> bool {
+        self.held_preview.is_some() || self.carousel_pointer_press.is_some()
+    }
+
+    fn pointer_gesture_active_in_context(&self, ctx: &egui::Context) -> bool {
+        self.pointer_gesture_active()
+            || ctx.input(|input| input.pointer.any_down() || input.pointer.any_pressed())
+    }
+
+    /// Clear press/preview state and defer transient tooltip display after collapse or mode
+    /// changes. Active costume state is deliberately untouched.
+    pub(super) fn dismiss_transient_ui(&mut self, ctx: &egui::Context) {
+        self.carousel_pointer_press = None;
+        self.held_preview = None;
+        self.visible_card_rects.clear();
+        self.pending_commands.clear();
+        suppress_tooltips(ctx);
+    }
+
+    /// Paint the original image held by the secondary mouse button. The preview contains the
+    /// source image without cropping and marks only its actual image bounds.
+    pub(super) fn show_held_preview(
+        &mut self,
+        ui: &mut Ui,
+        available_rect: Rect,
+        overlay_opacity: u8,
+    ) {
+        let Some(preview) = self.held_preview else {
+            return;
+        };
+        let Some(costume) = self
+            .catalog
+            .categories
+            .get(preview.category_index)
+            .and_then(|category| category.costumes.get(preview.costume_index))
+        else {
+            self.held_preview = None;
+            return;
+        };
+        let image_path = costume.image.clone();
+        let texture = self.texture_for(ui, image_path.as_deref());
+        let area = available_rect.shrink(18.0);
+        let image_rect = texture
+            .as_ref()
+            .map(|texture| fitted_image_rect(area, texture.size_vec2()))
+            .unwrap_or(area);
+        let backdrop = image_rect.expand(10.0).intersect(available_rect);
+        self.visible_card_rects.clear();
+        self.visible_card_rects.push(backdrop);
+        // Keep the game visible through the preview. The margin is only a subtle boundary;
+        // filling it would effectively stack a second opaque window behind the image.
+        ui.painter().rect_stroke(
+            backdrop,
+            CornerRadius::ZERO,
+            Stroke::new(1.0, content_black_alpha(120, overlay_opacity)),
+            StrokeKind::Inside,
         );
-        if let Some(index) = left {
-            let rect = Rect::from_center_size(
-                egui::pos2(
-                    focused_rect.min.x - CAROUSEL_CARD_GAP - NEIGHBOR_CARD_SIZE.x * 0.5,
-                    carousel_rect.center().y,
-                ),
-                NEIGHBOR_CARD_SIZE,
-            );
-            self.show_carousel_card(ui, category_index, index, rect, false, overlay_opacity);
-        }
-        if let Some(index) = right {
-            let rect = Rect::from_center_size(
-                egui::pos2(
-                    focused_rect.max.x + CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x * 0.5,
-                    carousel_rect.center().y,
-                ),
-                NEIGHBOR_CARD_SIZE,
-            );
-            self.show_carousel_card(ui, category_index, index, rect, false, overlay_opacity);
-        }
-        self.show_carousel_card(
+        paint_thumbnail_tinted(
             ui,
-            category_index,
-            focus,
-            focused_rect,
+            image_rect,
+            texture.as_ref(),
+            false,
             true,
-            overlay_opacity,
+            image_alpha(overlay_opacity),
         );
+    }
+
+    fn update_held_preview(
+        &mut self,
+        ui: &Ui,
+        category_index: usize,
+        placements: &[CarouselCardPlacement],
+    ) {
+        let (pressed_pos, released, down) = ui.input(|input| {
+            let pressed_pos = input.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            });
+            (
+                pressed_pos,
+                input.pointer.secondary_released(),
+                input.pointer.secondary_down(),
+            )
+        });
+        if released || !down {
+            self.held_preview = None;
+        }
+        if released || !down {
+            return;
+        }
+        let Some(pointer_pos) = pressed_pos else {
+            return;
+        };
+        let Some(card) = placements.iter().rev().find(|placement| {
+            card_reveal_progress(
+                placement,
+                self.reveal_progress,
+                self.catalog.categories[category_index].costumes.len(),
+            ) >= REVEAL_INTERACTION_THRESHOLD
+                && placement.rect.contains(pointer_pos)
+        }) else {
+            return;
+        };
+        self.held_preview = Some(HeldPreview {
+            category_index,
+            costume_index: card.index,
+        });
+    }
+
+    fn capture_carousel_press(
+        &mut self,
+        ui: &Ui,
+        category_index: usize,
+        placements: &[CarouselCardPlacement],
+        costume_count: usize,
+    ) {
+        let Some(pointer_pos) = ui.input(|input| {
+            if !input.pointer.primary_pressed() {
+                return None;
+            }
+            input
+                .events
+                .iter()
+                .find_map(|event| match event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        ..
+                    } => Some(*pos),
+                    _ => None,
+                })
+                .or_else(|| input.pointer.press_origin())
+        }) else {
+            return;
+        };
+        let Some(card) = placements.iter().rev().find(|placement| {
+            card_reveal_progress(placement, self.reveal_progress, costume_count)
+                >= REVEAL_INTERACTION_THRESHOLD
+                && placement.rect.contains(pointer_pos)
+        }) else {
+            return;
+        };
+        self.carousel_pointer_press = Some(CarouselPointerPress {
+            category_index,
+            costume_index: card.index,
+            rect: card.rect,
+            placements: placements.to_vec(),
+        });
+    }
+
+    fn release_carousel_press(
+        &mut self,
+        ui: &Ui,
+        category_index: usize,
+        carousel_rect: Rect,
+        costume_count: usize,
+        now: f64,
+    ) -> Option<usize> {
+        if !ui.input(|input| input.pointer.primary_released()) {
+            return None;
+        }
+        let press = self.carousel_pointer_press.take()?;
+        let pointer_pos = ui.input(|input| {
+            input
+                .pointer
+                .interact_pos()
+                .or_else(|| input.pointer.latest_pos())
+        });
+        let can_click = ui.input(|input| input.pointer.could_any_button_be_click());
+        // Resume from the exact geometry shown while the button was held. This prevents a
+        // long-held press from snapping to a transition's settled destination on release.
+        self.begin_carousel_transition(press.placements.clone(), carousel_rect, costume_count, now);
+        valid_carousel_release(&press, category_index, pointer_pos, can_click)
+    }
+
+    pub(super) fn cancel_pointer_interaction(&mut self) {
+        self.carousel_pointer_press = None;
+    }
+
+    fn current_carousel_placements(
+        &mut self,
+        carousel_rect: Rect,
+        costume_count: usize,
+        now: f64,
+    ) -> Vec<CarouselCardPlacement> {
+        if let Some(press) = &self.carousel_pointer_press {
+            // The pointer target owns the geometry until release, even if the original
+            // transition would have completed while the button was held.
+            return press.placements.clone();
+        }
+        let target = carousel_card_placements(carousel_rect, costume_count, self.carousel_focus);
+        let Some(transition) = self.carousel_transition.clone() else {
+            return target;
+        };
+        let progress = ((now - transition.started_at) / CAROUSEL_TRANSITION_SECS).clamp(0.0, 1.0);
+        if progress >= 1.0 {
+            self.carousel_transition = None;
+            return target;
+        }
+
+        let eased = (progress * progress * (3.0 - 2.0 * progress)) as f32;
+        let mut current = Vec::with_capacity(target.len());
+        for target_card in target {
+            let from_card = transition
+                .from
+                .iter()
+                .find(|card| card.index == target_card.index)
+                .copied()
+                .unwrap_or(target_card);
+            current.push(CarouselCardPlacement {
+                index: target_card.index,
+                rect: lerp_rect(from_card.rect, target_card.rect, eased),
+                focused: target_card.focused,
+                slot: target_card.slot,
+            });
+        }
+        current
+    }
+
+    fn begin_carousel_transition(
+        &mut self,
+        from: Vec<CarouselCardPlacement>,
+        carousel_rect: Rect,
+        costume_count: usize,
+        now: f64,
+    ) {
+        let to = carousel_card_placements(carousel_rect, costume_count, self.carousel_focus);
+        if same_card_geometry(&from, &to) {
+            self.carousel_transition = None;
+        } else {
+            self.carousel_transition = Some(CarouselTransition {
+                from,
+                started_at: now,
+            });
+        }
+    }
+
+    fn consume_pending_commands(&mut self, ctx: &egui::Context, carousel_rect: Rect, now: f64) {
+        while let Some(command) = self.pending_commands.pop_front() {
+            if self.pointer_gesture_active_in_context(ctx) {
+                continue;
+            }
+            match command {
+                PendingCommand::Category(direction) => {
+                    let visible = (0..self.catalog.categories.len()).collect::<Vec<_>>();
+                    if let Some(index) =
+                        next_visible_category(&visible, self.selected_category, direction)
+                    {
+                        self.select_category(index);
+                    }
+                }
+                PendingCommand::Mod(direction) => {
+                    let costume_count = self.catalog.categories[self.selected_category]
+                        .costumes
+                        .len();
+                    if costume_count > 0 {
+                        self.advance_mod_focus(carousel_rect, costume_count, direction, now);
+                    }
+                }
+                PendingCommand::Activate => {
+                    if self.reveal_progress < REVEAL_INTERACTION_THRESHOLD {
+                        self.pending_commands.push_front(PendingCommand::Activate);
+                        break;
+                    }
+                    self.activate_focused_costume(now);
+                }
+            }
+        }
+    }
+
+    fn advance_mod_focus(
+        &mut self,
+        carousel_rect: Rect,
+        costume_count: usize,
+        direction: i32,
+        now: f64,
+    ) {
+        if direction == 0 || costume_count == 0 || self.pointer_gesture_active() {
+            return;
+        }
+        let from = self.current_carousel_placements(carousel_rect, costume_count, now);
+        let next_focus = next_focus_index(costume_count, self.carousel_focus, direction);
+        if next_focus == self.carousel_focus {
+            self.boundary_feedback_until = now + ACTIVE_FEEDBACK_SECS;
+            self.boundary_feedback_edge = Some(direction.signum());
+        } else {
+            self.boundary_feedback_until = f64::NEG_INFINITY;
+            self.boundary_feedback_edge = None;
+        }
+        self.carousel_focus = next_focus;
+        if let Some(focus) = self
+            .carousel_focus_by_category
+            .get_mut(self.selected_category)
+        {
+            *focus = next_focus;
+        }
+        self.begin_carousel_transition(from, carousel_rect, costume_count, now);
+    }
+
+    fn request_animation_repaint(&self, ctx: &egui::Context, now: f64) {
+        let transition_remaining = self
+            .carousel_transition
+            .as_ref()
+            .map(|transition| (CAROUSEL_TRANSITION_SECS - (now - transition.started_at)).max(0.0));
+        let feedback_remaining = (self.active_feedback_until - now).max(0.0);
+        let boundary_remaining = (self.boundary_feedback_until - now).max(0.0);
+        let remaining = transition_remaining
+            .unwrap_or(0.0)
+            .max(feedback_remaining)
+            .max(boundary_remaining);
+        if remaining > 0.0 {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining.min(0.016)));
+        }
+    }
+
+    pub(super) fn animation_pending(&self, now: f64) -> bool {
+        self.carousel_transition
+            .as_ref()
+            .is_some_and(|transition| now - transition.started_at < CAROUSEL_TRANSITION_SECS)
+            || now < self.active_feedback_until
+            || now < self.boundary_feedback_until
+    }
+
+    fn activate_costume_in_place(&mut self, category_index: usize, costume_index: usize, now: f64) {
+        if let Some(category) = self.catalog.categories.get_mut(category_index) {
+            select_costume(category, costume_index);
+            self.active_images[category_index] = active_image(category);
+        }
+        self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
+        self.active_feedback_costume = Some(costume_index);
     }
 
     /// Draw the horizontally scrollable category strip. The parent paints its neutral base.
@@ -180,10 +732,12 @@ impl Layouts {
             self.select_category(index);
         }
 
-        egui::ScrollArea::horizontal()
+        let mut content_ui =
+            ui.new_child(egui::UiBuilder::new().max_rect(strip_rect.shrink2(Vec2::new(12.0, 0.0))));
+        let output = egui::ScrollArea::horizontal()
             .id_salt("overlay-preview-category-strip")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show(&mut content_ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.set_height(CATEGORY_ITEM_HEIGHT);
                     for &index in &visible_indices {
@@ -193,19 +747,46 @@ impl Layouts {
                     }
                 });
             });
+        let clipped = output.content_size.x > output.inner_rect.width() + 1.0;
+        if clipped {
+            let left = output.state.offset.x > 1.0;
+            let right =
+                output.state.offset.x + output.inner_rect.width() < output.content_size.x - 1.0;
+            let chevron_color = content_gray(190, overlay_opacity);
+            if left {
+                ui.painter().text(
+                    egui::pos2(strip_rect.min.x + 5.0, output.inner_rect.center().y),
+                    Align2::CENTER_CENTER,
+                    char::from(lucide_icons::Icon::ChevronLeft).to_string(),
+                    FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
+                    chevron_color,
+                );
+            }
+            if right {
+                ui.painter().text(
+                    egui::pos2(strip_rect.max.x - 5.0, output.inner_rect.center().y),
+                    Align2::CENTER_CENTER,
+                    char::from(lucide_icons::Icon::ChevronRight).to_string(),
+                    FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
+                    chevron_color,
+                );
+            }
+        }
     }
 
-    fn show_empty_catalog(&mut self, ui: &mut Ui, overlay_opacity: u8) {
+    fn show_empty_catalog(&mut self, ui: &mut Ui, overlay_opacity: u8) -> Vec<Rect> {
+        let mut visible_rects = Vec::new();
         ui.vertical_centered(|ui| {
             ui.add_space(68.0);
-            ui.label(
+            let title = ui.label(
                 RichText::new("No installed mods")
                     .size(16.0)
                     .strong()
                     .color(content_gray(255, overlay_opacity)),
             );
+            visible_rects.push(title.rect.expand(2.0));
             ui.add_space(5.0);
-            ui.add(
+            let note = ui.add(
                 Label::new(
                     RichText::new(
                         self.catalog
@@ -218,7 +799,9 @@ impl Layouts {
                 )
                 .wrap(),
             );
+            visible_rects.push(note.rect.expand(2.0));
         });
+        visible_rects
     }
 
     fn clamp_selection(&mut self) {
@@ -240,9 +823,33 @@ impl Layouts {
         if index >= self.catalog.categories.len() || self.selected_category == index {
             return;
         }
+        if let Some(previous_focus) = self
+            .carousel_focus_by_category
+            .get_mut(self.selected_category)
+        {
+            *previous_focus = self.carousel_focus;
+        }
         self.selected_category = index;
-        self.carousel_focus = active_costume_index(&self.catalog.categories[index]);
+        self.carousel_focus = self
+            .carousel_focus_by_category
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| active_costume_index(&self.catalog.categories[index]));
+        self.carousel_focus = self.carousel_focus.min(
+            self.catalog.categories[index]
+                .costumes
+                .len()
+                .saturating_sub(1),
+        );
         self.reveal_category = true;
+        self.carousel_transition = None;
+        self.carousel_pointer_press = None;
+        self.held_preview = None;
+        self.visible_card_rects.clear();
+        self.active_feedback_until = f64::NEG_INFINITY;
+        self.active_feedback_costume = None;
+        self.boundary_feedback_until = f64::NEG_INFINITY;
+        self.boundary_feedback_edge = None;
     }
 
     fn show_category_item(
@@ -265,12 +872,17 @@ impl Layouts {
         };
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width, CATEGORY_ITEM_HEIGHT), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             self.select_category(index);
+            ui.ctx().request_repaint();
         }
         if selected && self.reveal_category {
             ui.scroll_to_rect(rect, Some(Align::Center));
             self.reveal_category = false;
+        }
+        if !ui.is_rect_visible(rect) {
+            return;
         }
 
         let fill = if selected {
@@ -283,16 +895,16 @@ impl Layouts {
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
 
         if selected {
-            let image_rect = Rect::from_min_size(
-                rect.min + Vec2::new(5.0, 5.0),
-                Vec2::splat(CATEGORY_ITEM_HEIGHT - 10.0),
+            let image_rect = Rect::from_center_size(
+                egui::pos2(rect.min.x + 25.0, rect.min.y + 23.0),
+                Vec2::splat(CATEGORY_SELECTED_SPRITE_SIZE),
             );
             let texture = self.texture_for(ui, image.as_deref());
             paint_thumbnail_tinted(
                 ui,
                 image_rect,
                 texture.as_ref(),
-                true,
+                false,
                 false,
                 image_alpha(overlay_opacity),
             );
@@ -300,7 +912,7 @@ impl Layouts {
                 egui::pos2(image_rect.max.x + 8.0, rect.min.y + 9.0),
                 egui::pos2(rect.max.x - 6.0, rect.max.y - 9.0),
             );
-            paint_text(
+            let truncated = paint_text(
                 ui,
                 text_rect,
                 &name,
@@ -308,6 +920,9 @@ impl Layouts {
                 content_gray(242, overlay_opacity),
                 2,
             );
+            if truncated {
+                let _ = delayed_tooltip(response, name.clone());
+            }
             ui.painter().rect_stroke(
                 rect.shrink(0.5),
                 CornerRadius::same(4),
@@ -316,31 +931,32 @@ impl Layouts {
             );
         } else {
             let image_rect = Rect::from_min_size(
-                egui::pos2(rect.center().x - 14.0, rect.min.y + 5.0),
-                Vec2::splat(28.0),
+                egui::pos2(
+                    rect.center().x - CATEGORY_SPRITE_SIZE * 0.5,
+                    rect.min.y + 8.0,
+                ),
+                Vec2::splat(CATEGORY_SPRITE_SIZE),
             );
             let texture = self.texture_for(ui, image.as_deref());
             paint_thumbnail_tinted(
                 ui,
                 image_rect,
                 texture.as_ref(),
-                true,
+                false,
                 false,
                 image_alpha(overlay_opacity),
             );
-            paint_text(
+            let truncated = paint_category_name(
                 ui,
-                Rect::from_min_max(
-                    egui::pos2(rect.min.x + 3.0, rect.min.y + 37.0),
-                    egui::pos2(rect.max.x - 3.0, rect.max.y - 3.0),
-                ),
+                Rect::from_min_max(egui::pos2(rect.min.x + 3.0, rect.min.y + 40.0), rect.max),
                 &name,
-                FontId::proportional(9.0),
+                FontId::proportional(10.0),
                 content_gray(220, overlay_opacity),
-                2,
             );
+            if truncated {
+                let _ = delayed_tooltip(response, name.clone());
+            }
         }
-        response.on_hover_text(category_name);
     }
 
     fn show_carousel_card(
@@ -350,82 +966,124 @@ impl Layouts {
         costume_index: usize,
         rect: Rect,
         focused: bool,
+        slot: usize,
+        reveal: f32,
         overlay_opacity: u8,
     ) {
         let (name, image, active) = {
             let costume = &self.catalog.categories[category_index].costumes[costume_index];
             (costume.name.clone(), costume.image.clone(), costume.active)
         };
+        let interactable = reveal >= REVEAL_INTERACTION_THRESHOLD;
         let response = ui
             .interact(
                 rect,
-                ui.id().with((
-                    "overlay-preview-carousel-card",
-                    category_index,
-                    costume_index,
-                )),
-                Sense::click(),
+                ui.id().with(("overlay-preview-carousel-card-slot", slot)),
+                if interactable {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
             )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        if response.clicked() {
-            self.carousel_focus = costume_index;
-            select_costume(&mut self.catalog.categories[category_index], costume_index);
-            let new_active_image = active_image(&self.catalog.categories[category_index]);
-            self.active_images[category_index] = new_active_image;
-            ui.ctx().request_repaint();
-        }
+            .on_hover_cursor(if interactable {
+                egui::CursorIcon::PointingHand
+            } else {
+                egui::CursorIcon::Default
+            });
 
-        let hovered = response.hovered();
-        let border = if active {
-            content_color(ACCENT, overlay_opacity)
-        } else if focused || hovered {
-            content_gray(178, overlay_opacity)
+        let hovered = interactable && response.hovered();
+        let now = ui.input(|input| input.time);
+        let border = if focused {
+            content_gray(232, overlay_opacity)
+        } else if hovered {
+            content_gray(180, overlay_opacity)
+        } else if active {
+            content_gray(132, overlay_opacity)
         } else {
             content_gray(82, overlay_opacity)
         };
-        let image_rect = rect.shrink(1.0);
+        let visual_rect = rect.translate(Vec2::new(0.0, (1.0 - reveal) * REVEAL_OFFSET));
+        if reveal > 0.01 {
+            self.visible_card_rects.push(visual_rect);
+        }
+        let image_rect = visual_rect.shrink(1.0);
         let texture = self.texture_for(ui, image.as_deref());
+        let name_rect = card_name_rect(image_rect, focused);
+        let (name_size, _) = measure_card_name(ui, name_rect, &name, overlay_opacity, focused);
         paint_thumbnail_tinted(
             ui,
             image_rect,
             texture.as_ref(),
             true,
             false,
-            image_alpha(overlay_opacity),
+            scaled_alpha(image_alpha(overlay_opacity), reveal),
         );
-        paint_bottom_gradient(ui, image_rect, overlay_opacity);
+        paint_bottom_gradient(
+            ui,
+            image_rect,
+            overlay_opacity,
+            name_size.y + CARD_TITLE_BOTTOM_PADDING + 8.0,
+            reveal,
+        );
         ui.painter().rect_stroke(
-            rect.shrink(0.5),
+            visual_rect.shrink(0.5),
             CornerRadius::ZERO,
-            Stroke::new(if active || focused { 1.5 } else { 1.0 }, border),
+            Stroke::new(
+                if active || focused { 1.5 } else { 1.0 },
+                scale_color_alpha(border, reveal),
+            ),
             StrokeKind::Inside,
         );
+        if focused && now < self.boundary_feedback_until && self.boundary_feedback_edge.is_some() {
+            let edge_x = if self.boundary_feedback_edge == Some(-1) {
+                visual_rect.min.x + 3.0
+            } else {
+                visual_rect.max.x - 3.0
+            };
+            ui.painter().line_segment(
+                [
+                    egui::pos2(edge_x, visual_rect.min.y + 10.0),
+                    egui::pos2(edge_x, visual_rect.max.y - 10.0),
+                ],
+                Stroke::new(1.5, content_gray(180, overlay_opacity)),
+            );
+        }
 
         if active {
-            let badge_rect = Rect::from_min_size(rect.min + Vec2::new(8.0, 8.0), Vec2::splat(21.0));
+            let feedback = now < self.active_feedback_until
+                && self.active_feedback_costume == Some(costume_index);
+            if feedback {
+                self.request_animation_repaint(ui.ctx(), now);
+            }
+            let badge_rect =
+                Rect::from_min_size(visual_rect.min + Vec2::new(8.0, 8.0), Vec2::splat(21.0));
             ui.painter().rect_filled(
                 badge_rect,
                 CornerRadius::ZERO,
-                Color32::from_black_alpha(chrome_alpha(185, overlay_opacity)),
+                scale_color_alpha(
+                    Color32::from_black_alpha(chrome_alpha(
+                        if feedback { 215 } else { 185 },
+                        overlay_opacity,
+                    )),
+                    reveal,
+                ),
             );
             ui.painter().text(
                 badge_rect.center(),
                 Align2::CENTER_CENTER,
                 char::from(lucide_icons::Icon::Check).to_string(),
                 FontId::new(14.0, egui::FontFamily::Name("preview-icons".into())),
-                content_color(ACCENT, overlay_opacity),
+                scale_color_alpha(content_color(ACCENT, overlay_opacity), reveal),
             );
         }
 
-        let name_rect = Rect::from_min_max(
-            egui::pos2(
-                image_rect.min.x + 8.0,
-                image_rect.max.y - if focused { 48.0 } else { 39.0 },
-            ),
-            egui::pos2(image_rect.max.x - 8.0, image_rect.max.y - 7.0),
-        );
-        paint_card_name(ui, name_rect, &name, overlay_opacity, focused);
-        response.on_hover_text(name);
+        if reveal > 0.01 {
+            let truncated =
+                paint_card_name_revealed(ui, name_rect, &name, overlay_opacity, focused, reveal);
+            if truncated && interactable {
+                let _ = delayed_tooltip(response, clean_display_name(&name));
+            }
+        }
     }
 
     fn consume_carousel_input(
@@ -439,16 +1097,17 @@ impl Layouts {
         }
         let hovered = ui.rect_contains_pointer(rect);
         let now = ui.input(|input| input.time);
+        let gesture_blocked = self.pointer_gesture_active();
         let mut direction = None;
+        let mut consumed_wheel = false;
         ui.input_mut(|input| {
-            let mut consumed_wheel = false;
             input.events.retain(|event| match event {
                 egui::Event::MouseWheel {
                     unit,
                     delta,
                     modifiers,
                     phase,
-                } if hovered && !modifiers.ctrl && !modifiers.command => {
+                } if hovered && !gesture_blocked && !modifiers.ctrl && !modifiers.command => {
                     consumed_wheel = true;
                     if *phase == egui::TouchPhase::Move {
                         self.carousel_wheel_accum += wheel_units(*unit, delta.y);
@@ -460,7 +1119,7 @@ impl Layouts {
                     pressed: true,
                     modifiers,
                     ..
-                } if navigation_modifiers(*modifiers) => {
+                } if !gesture_blocked && navigation_modifiers(*modifiers) => {
                     match key {
                         egui::Key::ArrowLeft | egui::Key::ArrowUp => direction = Some(-1),
                         egui::Key::ArrowRight | egui::Key::ArrowDown => direction = Some(1),
@@ -478,14 +1137,25 @@ impl Layouts {
                         if hovered && !modifiers.ctrl && !modifiers.command
                 )
             });
-            if consumed_wheel || now < self.carousel_wheel_suppress_until {
+            if hovered && (consumed_wheel || now < self.carousel_wheel_suppress_until) {
                 input.smooth_scroll_delta = Vec2::ZERO;
             }
         });
 
-        if self.carousel_wheel_accum != 0.0 {
+        if !hovered {
+            // A fractional notch belongs to the region where it started. Do not let it
+            // complete later after the pointer has moved to the rail or game window.
+            self.carousel_wheel_accum = 0.0;
+        }
+        if consumed_wheel {
             self.carousel_wheel_last_event_at = now;
             self.carousel_wheel_suppress_until = now + WHEEL_IDLE_RESET_SECS;
+            suppress_tooltips(ui.ctx());
+        }
+        if now - self.carousel_wheel_last_event_at > WHEEL_IDLE_RESET_SECS {
+            self.carousel_wheel_accum = 0.0;
+        }
+        if hovered && self.carousel_wheel_accum != 0.0 {
             if now - self.carousel_wheel_last_step_at >= WHEEL_STEP_COOLDOWN_SECS
                 && self.carousel_wheel_accum.abs() >= 1.0
             {
@@ -496,13 +1166,16 @@ impl Layouts {
                 });
                 self.carousel_wheel_accum = 0.0;
                 self.carousel_wheel_last_step_at = now;
+            } else if consumed_wheel {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(
+                        WHEEL_STEP_COOLDOWN_SECS,
+                    ));
             }
-        } else if now - self.carousel_wheel_last_event_at > WHEEL_IDLE_RESET_SECS {
-            self.carousel_wheel_accum = 0.0;
         }
 
         if direction == Some(0) {
-            self.activate_focused_costume();
+            self.activate_focused_costume(now);
             None
         } else {
             direction
@@ -515,7 +1188,12 @@ impl Layouts {
         rect: Rect,
         visible_indices: &[usize],
     ) -> Option<usize> {
-        if visible_indices.is_empty() || !ui.rect_contains_pointer(rect) {
+        if visible_indices.is_empty() {
+            return None;
+        }
+        if !ui.rect_contains_pointer(rect) {
+            // A partial wheel notch must never leak into the category rail after leaving it.
+            self.category_wheel_accum = 0.0;
             return None;
         }
         let now = ui.input(|input| input.time);
@@ -555,6 +1233,7 @@ impl Layouts {
         if consumed_wheel {
             self.category_wheel_last_event_at = now;
             self.category_wheel_suppress_until = now + WHEEL_IDLE_RESET_SECS;
+            suppress_tooltips(ui.ctx());
         }
         if now - self.category_wheel_last_event_at > WHEEL_IDLE_RESET_SECS {
             self.category_wheel_accum = 0.0;
@@ -580,45 +1259,46 @@ impl Layouts {
         next_visible_category(visible_indices, self.selected_category, direction)
     }
 
-    fn activate_focused_costume(&mut self) {
+    fn activate_focused_costume(&mut self, now: f64) {
         let category_index = self.selected_category;
         let costume_index = self.carousel_focus;
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
             select_costume(category, costume_index);
             let new_active_image = active_image(category);
             self.active_images[category_index] = new_active_image;
+            self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
+            self.active_feedback_costume = Some(costume_index);
         }
     }
 
     fn texture_for(&mut self, ui: &Ui, path: Option<&Path>) -> Option<egui::TextureHandle> {
-        let path = path?;
-        if let Some(texture) = self.textures.get(path) {
-            return Some(texture.clone());
-        }
-        if self.failed_images.contains(path) {
-            return None;
-        }
+        self.thumbnails.get(ui.ctx(), path?)
+    }
+}
 
-        let image = match image::open(path) {
-            Ok(image) => image.thumbnail(640, 640).to_rgba8(),
-            Err(_) => {
-                self.failed_images.insert(path.to_path_buf());
-                return None;
+fn append_nearby_mod_images(
+    paths: &mut Vec<PathBuf>,
+    category: &Category,
+    focus: usize,
+    radius: usize,
+) {
+    let count = category.costumes.len();
+    if count == 0 {
+        return;
+    }
+    let focus = focus.min(count - 1);
+    paths.extend(category.costumes[focus].image.clone());
+    for distance in 1..=radius.min(count - 1) {
+        for index in [
+            (focus + distance) % count,
+            (focus + count - distance) % count,
+        ] {
+            if let Some(path) = &category.costumes[index].image {
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
             }
-        };
-        let size = [image.width() as usize, image.height() as usize];
-        if size[0] == 0 || size[1] == 0 {
-            self.failed_images.insert(path.to_path_buf());
-            return None;
         }
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-        let texture = ui.ctx().load_texture(
-            format!("overlay-preview-image:{}", path.display()),
-            color_image,
-            egui::TextureOptions::LINEAR,
-        );
-        self.textures.insert(path.to_path_buf(), texture.clone());
-        Some(texture)
     }
 }
 
@@ -669,15 +1349,158 @@ fn next_focus_index(len: usize, current: usize, direction: i32) -> usize {
     }
     let current = current.min(len - 1);
     match direction.signum() {
-        -1 if current == 0 => len - 1,
+        -1 if current == 0 => 0,
         -1 => current - 1,
-        1 => (current + 1) % len,
+        1 => (current + 1).min(len - 1),
         _ => current,
     }
 }
 
-fn previous_focus_index(len: usize, current: usize) -> usize {
-    next_focus_index(len, current, -1)
+fn card_reveal_progress(
+    placement: &CarouselCardPlacement,
+    progress: f32,
+    costume_count: usize,
+) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    // Reveal the focused card first, then bring in its neighbors with a small stagger.
+    // Two-card carousels have no center slot, so their first card still appears promptly.
+    let delay = if placement.focused {
+        0.0
+    } else if costume_count <= 2 {
+        0.10
+    } else if placement.slot == 0 {
+        0.22
+    } else {
+        0.40
+    };
+    let local = ((progress - delay) / (1.0 - delay)).clamp(0.0, 1.0);
+    local * local * (3.0 - 2.0 * local)
+}
+
+fn carousel_card_placements(
+    carousel_rect: Rect,
+    costume_count: usize,
+    focus: usize,
+) -> Vec<CarouselCardPlacement> {
+    if costume_count == 0 {
+        return Vec::new();
+    }
+    let focus = focus.min(costume_count - 1);
+    let center_y = carousel_rect.center().y;
+    let center_x = carousel_rect.center().x;
+    let focused_center_x = if costume_count == 2 {
+        // Keep a two-card group centered as a whole, regardless of which card is focused.
+        let offset = (CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x) * 0.5;
+        if focus == 0 {
+            center_x - offset
+        } else {
+            center_x + offset
+        }
+    } else {
+        center_x
+    };
+    let focused_rect =
+        Rect::from_center_size(egui::pos2(focused_center_x, center_y), FOCUSED_CARD_SIZE);
+    let mut placements = Vec::with_capacity(costume_count.min(3));
+    if costume_count > 2 && focus > 0 {
+        let left = focus - 1;
+        placements.push(CarouselCardPlacement {
+            index: left,
+            rect: Rect::from_center_size(
+                egui::pos2(
+                    focused_rect.min.x - CAROUSEL_CARD_GAP - NEIGHBOR_CARD_SIZE.x * 0.5,
+                    center_y,
+                ),
+                NEIGHBOR_CARD_SIZE,
+            ),
+            focused: false,
+            slot: 0,
+        });
+    } else if costume_count == 2 && focus == 1 {
+        placements.push(CarouselCardPlacement {
+            index: 0,
+            rect: Rect::from_center_size(
+                egui::pos2(
+                    focused_rect.min.x - CAROUSEL_CARD_GAP - NEIGHBOR_CARD_SIZE.x * 0.5,
+                    center_y,
+                ),
+                NEIGHBOR_CARD_SIZE,
+            ),
+            focused: false,
+            slot: 0,
+        });
+    }
+    if costume_count > 2 && focus + 1 < costume_count {
+        let right = focus + 1;
+        placements.push(CarouselCardPlacement {
+            index: right,
+            rect: Rect::from_center_size(
+                egui::pos2(
+                    focused_rect.max.x + CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x * 0.5,
+                    center_y,
+                ),
+                NEIGHBOR_CARD_SIZE,
+            ),
+            focused: false,
+            slot: 2,
+        });
+    } else if costume_count == 2 && focus == 0 {
+        placements.push(CarouselCardPlacement {
+            index: 1,
+            rect: Rect::from_center_size(
+                egui::pos2(
+                    focused_rect.max.x + CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x * 0.5,
+                    center_y,
+                ),
+                NEIGHBOR_CARD_SIZE,
+            ),
+            focused: false,
+            slot: 2,
+        });
+    }
+    placements.push(CarouselCardPlacement {
+        index: focus,
+        rect: focused_rect,
+        focused: true,
+        slot: if costume_count == 2 {
+            if focus == 0 { 0 } else { 2 }
+        } else {
+            1
+        },
+    });
+    placements
+}
+
+fn lerp_rect(from: Rect, to: Rect, t: f32) -> Rect {
+    Rect::from_min_max(lerp_pos(from.min, to.min, t), lerp_pos(from.max, to.max, t))
+}
+
+fn lerp_pos(from: egui::Pos2, to: egui::Pos2, t: f32) -> egui::Pos2 {
+    from + (to - from) * t
+}
+
+fn same_card_geometry(from: &[CarouselCardPlacement], to: &[CarouselCardPlacement]) -> bool {
+    from.len() == to.len()
+        && to.iter().all(|target| {
+            from.iter().any(|source| {
+                source.index == target.index
+                    && source.rect.min.distance(target.rect.min) < 0.5
+                    && source.rect.max.distance(target.rect.max) < 0.5
+                    && source.focused == target.focused
+            })
+        })
+}
+
+fn valid_carousel_release(
+    press: &CarouselPointerPress,
+    category_index: usize,
+    pointer_pos: Option<egui::Pos2>,
+    can_click: bool,
+) -> Option<usize> {
+    (press.category_index == category_index)
+        .then_some(press)
+        .filter(|press| can_click && pointer_pos.is_some_and(|pos| press.rect.contains(pos)))
+        .map(|press| press.costume_index)
 }
 
 fn active_costume_index(category: &Category) -> usize {
@@ -731,13 +1554,38 @@ fn character_name(name: &str) -> &str {
     name.strip_prefix("Operators: ").unwrap_or(name)
 }
 
-fn paint_text(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32, max_rows: usize) {
+fn paint_text(
+    ui: &Ui,
+    rect: Rect,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_rows: usize,
+) -> bool {
     let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, rect.width());
     job.wrap.max_rows = max_rows;
     job.wrap.break_anywhere = false;
+    job.wrap.overflow_character = Some('…');
     let galley = ui.painter().layout_job(job);
+    let elided = galley.elided;
     let position = egui::pos2(rect.min.x, rect.center().y - galley.size().y * 0.5);
     ui.painter().galley(position, galley, color);
+    elided
+}
+
+fn paint_category_name(ui: &Ui, rect: Rect, name: &str, font: FontId, color: Color32) -> bool {
+    let mut job = egui::text::LayoutJob::simple(name.to_owned(), font, color, rect.width());
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = false;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.painter().layout_job(job);
+    let position = egui::pos2(
+        rect.center().x - galley.size().x * 0.5,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    let elided = galley.elided;
+    ui.painter().galley(position, galley, color);
+    elided
 }
 
 fn clean_display_name(name: &str) -> String {
@@ -764,6 +1612,16 @@ fn opacity_unit(overlay_opacity: u8) -> f32 {
 
 fn image_alpha(overlay_opacity: u8) -> u8 {
     (opacity_unit(overlay_opacity) * 255.0).round() as u8
+}
+
+fn scaled_alpha(alpha: u8, factor: f32) -> u8 {
+    (f32::from(alpha) * factor.clamp(0.0, 1.0)).round() as u8
+}
+
+fn scale_color_alpha(color: Color32, factor: f32) -> Color32 {
+    // Color32 already stores premultiplied channels. Scale them together so
+    // a completed reveal is exactly the original color, without a second tint.
+    color.gamma_multiply(factor.clamp(0.0, 1.0))
 }
 
 fn chrome_opacity_unit(overlay_opacity: u8) -> f32 {
@@ -886,30 +1744,44 @@ fn paint_fitted_image_tinted(
         return;
     };
     let source_size = texture.size_vec2();
-    let scale = (rect.width() / source_size.x).min(rect.height() / source_size.y);
-    let fitted = source_size * scale;
-    let image_rect = Rect::from_center_size(rect.center(), fitted);
+    let image_rect = fitted_image_rect(rect, source_size);
     egui::Image::from_texture(texture)
         .tint(Color32::from_white_alpha(tint_alpha))
         .corner_radius(CornerRadius::ZERO)
         .paint_at(ui, image_rect);
 }
 
-fn paint_bottom_gradient(ui: &mut Ui, rect: Rect, overlay_opacity: u8) {
-    const STOPS: [(f32, u8); 5] = [(0.0, 0), (0.28, 10), (0.52, 34), (0.77, 108), (1.0, 218)];
-    let gradient_height = rect.height() * 0.43;
+fn fitted_image_rect(rect: Rect, source_size: Vec2) -> Rect {
+    if source_size.x <= 0.0 || source_size.y <= 0.0 {
+        return rect;
+    }
+    let scale = (rect.width() / source_size.x).min(rect.height() / source_size.y);
+    Rect::from_center_size(rect.center(), source_size * scale)
+}
+
+fn paint_bottom_gradient(
+    ui: &mut Ui,
+    rect: Rect,
+    overlay_opacity: u8,
+    requested_height: f32,
+    reveal: f32,
+) {
+    let gradient_height = (requested_height + 22.0).clamp(24.0, rect.height() * 0.56);
+    // Fade above the title block, keeping the title itself on a dark base.
+    let fade_end = ((gradient_height - requested_height) / gradient_height).max(0.01);
+    let stops: [(f32, u8); 4] = [(0.0, 0), (fade_end * 0.4, 20), (fade_end, 150), (1.0, 218)];
     let start_y = rect.max.y - gradient_height;
     let mut mesh = egui::Mesh::default();
     for row in 0..=64 {
         let stop = row as f32 / 64.0;
-        let interval = STOPS.windows(2).find(|pair| stop <= pair[1].0).unwrap();
+        let interval = stops.windows(2).find(|pair| stop <= pair[1].0).unwrap();
         let blend = (stop - interval[0].0) / (interval[1].0 - interval[0].0);
         let alpha = (f32::from(interval[0].1)
             + blend * (f32::from(interval[1].1) - f32::from(interval[0].1)))
             as u8;
         let y = start_y + gradient_height * stop;
         let base = mesh.vertices.len() as u32;
-        let color = content_black_alpha(alpha, overlay_opacity);
+        let color = scale_color_alpha(content_black_alpha(alpha, overlay_opacity), reveal);
         mesh.vertices.push(egui::epaint::Vertex::untextured(
             egui::pos2(rect.min.x, y),
             color,
@@ -926,19 +1798,70 @@ fn paint_bottom_gradient(ui: &mut Ui, rect: Rect, overlay_opacity: u8) {
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
-fn paint_card_name(ui: &Ui, rect: Rect, name: &str, overlay_opacity: u8, focused: bool) {
+fn card_name_rect(image_rect: Rect, focused: bool) -> Rect {
+    let max_text_height = if focused { 34.0 } else { 29.0 };
+    Rect::from_min_max(
+        egui::pos2(
+            image_rect.min.x + 8.0,
+            image_rect.max.y - CARD_TITLE_BOTTOM_PADDING - max_text_height,
+        ),
+        egui::pos2(
+            image_rect.max.x - 8.0,
+            image_rect.max.y - CARD_TITLE_BOTTOM_PADDING,
+        ),
+    )
+}
+
+fn measure_card_name(
+    ui: &Ui,
+    rect: Rect,
+    name: &str,
+    overlay_opacity: u8,
+    focused: bool,
+) -> (Vec2, bool) {
+    let galley = ui
+        .painter()
+        .layout_job(card_name_job(rect, name, overlay_opacity, focused));
+    (galley.size(), galley.elided)
+}
+
+fn card_name_job(
+    rect: Rect,
+    name: &str,
+    overlay_opacity: u8,
+    focused: bool,
+) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::simple(
         clean_display_name(name),
-        FontId::proportional(if focused { 12.5 } else { 9.5 }),
+        FontId::proportional(if focused { 12.5 } else { 10.5 }),
         content_gray(255, overlay_opacity),
         rect.width(),
     );
-    job.wrap.max_rows = if focused { 2 } else { 3 };
-    job.wrap.break_anywhere = true;
-    let galley = ui.painter().layout_job(job);
+    job.wrap.max_rows = 2;
+    job.wrap.break_anywhere = false;
+    job.wrap.overflow_character = Some('…');
+    job
+}
+
+fn paint_card_name_revealed(
+    ui: &Ui,
+    rect: Rect,
+    name: &str,
+    overlay_opacity: u8,
+    focused: bool,
+    reveal: f32,
+) -> bool {
+    let galley = ui
+        .painter()
+        .layout_job(card_name_job(rect, name, overlay_opacity, focused));
+    let elided = galley.elided;
     let position = egui::pos2(rect.min.x, rect.max.y - galley.size().y);
-    ui.painter()
-        .galley(position, galley, content_gray(255, overlay_opacity));
+    ui.painter().galley(
+        position,
+        galley,
+        scale_color_alpha(content_gray(255, overlay_opacity), reveal),
+    );
+    elided
 }
 
 /// Select a costume according to the switcher's exclusivity rule.
@@ -957,7 +1880,7 @@ fn select_costume(category: &mut Category, index: usize) {
             costume.active = costume_index == index;
         }
     } else {
-        category.costumes[index].active = true;
+        category.costumes[index].active = !category.costumes[index].active;
     }
 }
 
@@ -1008,12 +1931,520 @@ mod tests {
     }
 
     #[test]
-    fn carousel_focus_wraps_without_duplicate_neighbors() {
-        assert_eq!(next_focus_index(3, 0, -1), 2);
-        assert_eq!(next_focus_index(3, 2, 1), 0);
+    fn carousel_focus_stops_at_boundaries_without_wrapping() {
+        assert_eq!(next_focus_index(3, 0, -1), 0);
+        assert_eq!(next_focus_index(3, 2, 1), 2);
         assert_eq!(next_focus_index(1, 0, -1), 0);
         assert_eq!(next_focus_index(2, 0, 1), 1);
         assert_eq!(next_focus_index(2, 1, -1), 0);
+    }
+
+    #[test]
+    fn endpoint_carousel_placements_show_only_real_neighbors() {
+        let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
+        let first = carousel_card_placements(carousel, 4, 0);
+        let last = carousel_card_placements(carousel, 4, 3);
+        assert_eq!(
+            first.iter().map(|card| card.index).collect::<Vec<_>>(),
+            vec![1, 0]
+        );
+        assert_eq!(
+            last.iter().map(|card| card.index).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(first.iter().all(|card| card.index != 3));
+        assert!(last.iter().all(|card| card.index != 0));
+    }
+
+    #[test]
+    fn staged_reveal_makes_focused_card_available_before_neighbors() {
+        let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
+        let cards = carousel_card_placements(carousel, 3, 1);
+        let focused = cards.iter().find(|card| card.focused).unwrap();
+        let left = cards.iter().find(|card| card.slot == 0).unwrap();
+        let right = cards.iter().find(|card| card.slot == 2).unwrap();
+        assert!(card_reveal_progress(focused, 0.15, 3) > 0.0);
+        assert_eq!(card_reveal_progress(left, 0.15, 3), 0.0);
+        assert_eq!(card_reveal_progress(right, 0.30, 3), 0.0);
+        assert!(card_reveal_progress(left, 0.30, 3) > 0.0);
+        assert!(card_reveal_progress(right, 0.50, 3) > 0.0);
+    }
+
+    #[test]
+    fn two_card_carousel_stays_balanced_when_focus_changes() {
+        let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
+        for focus in [0, 1] {
+            let cards = carousel_card_placements(carousel, 2, focus);
+            let min_x = cards
+                .iter()
+                .map(|card| card.rect.min.x)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = cards
+                .iter()
+                .map(|card| card.rect.max.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(((min_x + max_x) * 0.5 - carousel.center().x).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn focused_and_neighbor_cards_keep_the_same_aspect_ratio() {
+        let focused_ratio = FOCUSED_CARD_SIZE.x / FOCUSED_CARD_SIZE.y;
+        let neighbor_ratio = NEIGHBOR_CARD_SIZE.x / NEIGHBOR_CARD_SIZE.y;
+        assert!((focused_ratio - neighbor_ratio).abs() < 0.01);
+    }
+
+    #[test]
+    fn rapid_carousel_retarget_keeps_current_positions() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, false, false])],
+            note: None,
+        });
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        let start = layouts.current_carousel_placements(rect, 3, 1.0);
+        layouts.carousel_focus = 1;
+        layouts.begin_carousel_transition(start, rect, 3, 1.0);
+        let midway = layouts.current_carousel_placements(rect, 3, 1.07);
+        layouts.carousel_focus = 2;
+        layouts.begin_carousel_transition(midway.clone(), rect, 3, 1.07);
+        let retargeted = layouts.current_carousel_placements(rect, 3, 1.07);
+        for before in &midway {
+            if let Some(after) = retargeted.iter().find(|card| card.index == before.index) {
+                assert_eq!(before.rect, after.rect);
+            }
+        }
+        let settled = layouts.current_carousel_placements(rect, 3, 2.0);
+        assert!(same_card_geometry(
+            &settled,
+            &carousel_card_placements(rect, 3, 2)
+        ));
+        assert!(layouts.carousel_transition.is_none());
+    }
+
+    #[test]
+    fn carousel_widget_ids_follow_visual_slots_across_category_changes() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, false]), category(&[true, false])],
+            note: None,
+        });
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 266.0);
+
+        // Different categories reuse the same two-card layout.
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), false);
+        let left_before = context
+            .read_response(carousel_slot_id(0))
+            .expect("left carousel slot should be registered")
+            .rect;
+        let right_before = context
+            .read_response(carousel_slot_id(2))
+            .expect("right carousel slot should be registered")
+            .rect;
+
+        layouts.select_category(1);
+        run_layout_frame(&context, &mut layouts, size, 1.1, Vec::new(), false);
+
+        // If IDs were based on category/costume indices, these responses would
+        // disappear when a different category replaced the cards in-place. This
+        // is the same stable-rect condition egui uses for its warning.
+        let left_after = context
+            .read_response(carousel_slot_id(0))
+            .expect("left carousel slot id must survive category changes")
+            .rect;
+        let right_after = context
+            .read_response(carousel_slot_id(2))
+            .expect("right carousel slot id must survive category changes")
+            .rect;
+        assert_eq!(left_before, left_after);
+        assert_eq!(right_before, right_after);
+    }
+
+    #[test]
+    fn carousel_slots_stay_unique_during_wrapping_animations() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        for count in 1..=5 {
+            let mut layouts = Layouts::new(Catalog {
+                game: "Test".into(),
+                categories: vec![category(&vec![false; count])],
+                note: None,
+            });
+            for focus in 0..count {
+                let from = carousel_card_placements(rect, count, focus);
+                layouts.carousel_focus = (focus + 1) % count;
+                layouts.begin_carousel_transition(from, rect, count, 1.0);
+                for step in 0..=14 {
+                    let cards =
+                        layouts.current_carousel_placements(rect, count, 1.0 + step as f64 * 0.01);
+                    let slots: std::collections::HashSet<_> =
+                        cards.iter().map(|card| card.slot).collect();
+                    assert_eq!(
+                        slots.len(),
+                        cards.len(),
+                        "duplicate ids with {count} cards at step {step}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_card_activation_keeps_focus_and_transition_in_place() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, false, false])],
+            note: None,
+        });
+        layouts.carousel_focus = 0;
+        layouts.carousel_transition = Some(CarouselTransition {
+            from: carousel_card_placements(
+                Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
+                3,
+                0,
+            ),
+            started_at: 1.0,
+        });
+
+        layouts.activate_costume_in_place(0, 2, 1.05);
+
+        assert_eq!(layouts.carousel_focus, 0);
+        assert!(layouts.carousel_transition.is_some());
+        assert_eq!(layouts.catalog.categories[0].costumes[2].active, true);
+        assert_eq!(layouts.catalog.categories[0].costumes[0].active, false);
+        assert_eq!(layouts.active_feedback_costume, Some(2));
+    }
+
+    #[test]
+    fn release_uses_the_pressed_card_even_if_current_geometry_moved() {
+        let press = CarouselPointerPress {
+            category_index: 0,
+            costume_index: 2,
+            rect: Rect::from_min_size(egui::pos2(20.0, 30.0), Vec2::new(80.0, 90.0)),
+            placements: Vec::new(),
+        };
+        assert_eq!(
+            valid_carousel_release(&press, 0, Some(egui::pos2(35.0, 45.0)), true),
+            Some(2)
+        );
+        assert_eq!(
+            valid_carousel_release(&press, 0, Some(egui::pos2(200.0, 200.0)), true),
+            None
+        );
+        assert_eq!(
+            valid_carousel_release(&press, 0, Some(egui::pos2(35.0, 45.0)), false),
+            None
+        );
+        assert_eq!(
+            valid_carousel_release(&press, 1, Some(egui::pos2(35.0, 45.0)), true),
+            None
+        );
+    }
+
+    #[test]
+    fn frame_click_activates_side_card_without_recentering() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        let side = carousel_card_placements(
+            Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
+            3,
+            0,
+        )
+        .into_iter()
+        .find(|card| card.index == 1)
+        .expect("right side card");
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            vec![
+                pointer_button_event(side.rect.center(), true),
+                pointer_button_event(side.rect.center(), false),
+            ],
+            false,
+        );
+
+        assert_eq!(layouts.carousel_focus, 0);
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+    }
+
+    #[test]
+    fn frame_release_resumes_an_animation_from_the_frozen_press_geometry() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        let carousel = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        let start = carousel_card_placements(carousel, 3, 0);
+        layouts.carousel_focus = 1;
+        layouts.begin_carousel_transition(start, carousel, 3, 1.0);
+        let midway = layouts.current_carousel_placements(carousel, 3, 1.12);
+        let side = midway
+            .iter()
+            .find(|card| card.index == 2)
+            .expect("visible side card");
+        // At this point the side card has cleared the focused card's hit rectangle. This
+        // keeps the fixture about frozen geometry rather than the topmost-overlap rule.
+        let side_pos = side.rect.right_center() - Vec2::new(4.0, 0.0);
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.12,
+            vec![pointer_button_event(side_pos, true)],
+            false,
+        );
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.25,
+            vec![pointer_button_event(side_pos, false)],
+            false,
+        );
+
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![2]);
+        let transition = layouts
+            .carousel_transition
+            .as_ref()
+            .expect("the prior transition should continue");
+        assert_eq!(
+            transition
+                .from
+                .iter()
+                .find(|card| card.index == 2)
+                .unwrap()
+                .rect,
+            side.rect
+        );
+        assert_eq!(transition.started_at, 1.25);
+    }
+
+    #[test]
+    fn frame_drag_cancels_a_pending_card_activation() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        let side = carousel_card_placements(
+            Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
+            3,
+            0,
+        )
+        .into_iter()
+        .find(|card| card.index == 1)
+        .expect("right side card");
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            vec![pointer_button_event(side.rect.center(), true)],
+            false,
+        );
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.05,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(40.0, 40.0)),
+                pointer_button_event(egui::pos2(40.0, 40.0), false),
+            ],
+            false,
+        );
+
+        assert_eq!(layouts.carousel_focus, 0);
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
+    }
+
+    #[test]
+    fn frame_secondary_hold_does_not_activate_or_follow_the_pointer_target() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        let side = carousel_card_placements(
+            Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
+            3,
+            0,
+        )
+        .into_iter()
+        .find(|card| card.index == 1)
+        .expect("right side card");
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            vec![pointer_button_event_with_button(
+                side.rect.center(),
+                egui::PointerButton::Secondary,
+                true,
+            )],
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
+        assert_eq!(
+            layouts.held_preview.map(|preview| preview.costume_index),
+            Some(1)
+        );
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.1,
+            vec![pointer_button_event_with_button(
+                egui::pos2(540.0, 260.0),
+                egui::PointerButton::Secondary,
+                false,
+            )],
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
+        assert!(layouts.held_preview.is_none());
+    }
+
+    #[test]
+    fn frame_wheel_routes_to_the_region_under_the_pointer() {
+        let mut layouts = test_layouts(2);
+        let context = egui::Context::default();
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            1.0,
+            wheel_events(egui::pos2(280.0, 133.0), -1.0),
+            true,
+        );
+        assert_eq!(layouts.carousel_focus, 1);
+        assert_eq!(layouts.selected_category, 0);
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            1.2,
+            wheel_events(egui::pos2(280.0, 300.0), -1.0),
+            true,
+        );
+        assert_eq!(layouts.selected_category, 1);
+        assert_eq!(
+            layouts.carousel_focus,
+            active_costume_index(&layouts.catalog.categories[1])
+        );
+    }
+
+    #[test]
+    fn fractional_wheel_input_does_not_leak_after_leaving_its_region() {
+        let mut layouts = test_layouts(2);
+        let context = egui::Context::default();
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            1.0,
+            wheel_events_with_unit(egui::pos2(280.0, 133.0), -25.0, egui::MouseWheelUnit::Point),
+            true,
+        );
+        assert_eq!(layouts.carousel_focus, 0);
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            1.2,
+            vec![egui::Event::PointerMoved(egui::pos2(280.0, 300.0))],
+            true,
+        );
+        assert_eq!(layouts.carousel_focus, 0);
+        assert_eq!(layouts.selected_category, 0);
+    }
+
+    fn test_layouts(category_count: usize) -> Layouts {
+        Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: (0..category_count)
+                .map(|index| category(&[index == 0, false, false]))
+                .collect(),
+            note: None,
+        })
+    }
+
+    fn run_layout_frame(
+        context: &egui::Context,
+        layouts: &mut Layouts,
+        size: Vec2,
+        time: f64,
+        events: Vec<egui::Event>,
+        show_category_strip: bool,
+    ) {
+        let mut input = egui::RawInput::default();
+        input.screen_rect = Some(Rect::from_min_size(egui::Pos2::ZERO, size));
+        input.time = Some(time);
+        input.events = events;
+        super::super::apply_preview_style(context);
+        let _ = context.run_ui(input, |ui| {
+            layouts.show_carousel(ui, 94);
+            if show_category_strip {
+                layouts.show_category_strip(ui, 94);
+            }
+        });
+    }
+
+    fn pointer_button_event(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        pointer_button_event_with_button(pos, egui::PointerButton::Primary, pressed)
+    }
+
+    fn pointer_button_event_with_button(
+        pos: egui::Pos2,
+        button: egui::PointerButton,
+        pressed: bool,
+    ) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    fn carousel_slot_id(slot: usize) -> egui::Id {
+        egui::Id::new((egui::ViewportId::ROOT, "__top_ui"))
+            .with(("overlay-preview-carousel-card-slot", slot))
+    }
+
+    fn wheel_events(pos: egui::Pos2, delta_y: f32) -> Vec<egui::Event> {
+        wheel_events_with_unit(pos, delta_y, egui::MouseWheelUnit::Line)
+    }
+
+    fn wheel_events_with_unit(
+        pos: egui::Pos2,
+        delta_y: f32,
+        unit: egui::MouseWheelUnit,
+    ) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            // Keep the constructor in one place so the routing test exercises the same event
+            // shape produced by winit, including a touch phase.
+            egui::Event::MouseWheel {
+                unit,
+                delta: Vec2::new(0.0, delta_y),
+                modifiers: egui::Modifiers::default(),
+                phase: egui::TouchPhase::Move,
+            },
+        ]
+    }
+
+    fn active_indices(category: &Category) -> Vec<usize> {
+        category
+            .costumes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, costume)| costume.active.then_some(index))
+            .collect()
     }
 
     fn category(active: &[bool]) -> Category {
@@ -1072,5 +2503,93 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![true, true, true]
         );
+    }
+
+    #[test]
+    fn selecting_an_active_costume_with_multiple_active_costumes_toggles_only_it() {
+        let mut character = category(&[true, true, false]);
+        select_costume(&mut character, 1);
+        assert_eq!(
+            character
+                .costumes
+                .iter()
+                .map(|costume| costume.active)
+                .collect::<Vec<_>>(),
+            vec![true, false, false]
+        );
+    }
+
+    #[test]
+    fn switching_categories_restores_each_category_focus() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![
+                category(&[true, false, false]),
+                category(&[true, false, false]),
+            ],
+            note: None,
+        });
+        layouts.carousel_focus = 2;
+        layouts.select_category(1);
+        assert_eq!(layouts.carousel_focus, 0);
+        layouts.carousel_focus = 1;
+        layouts.select_category(0);
+        assert_eq!(layouts.carousel_focus, 2);
+        layouts.select_category(1);
+        assert_eq!(layouts.carousel_focus, 1);
+    }
+
+    #[test]
+    fn queued_mod_navigation_moves_focus_without_activation() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        layouts.navigate_mod(&context, 1);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.carousel_focus, 1);
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
+    }
+
+    #[test]
+    fn direct_focused_activation_uses_the_same_selection_rule() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        layouts.navigate_mod(&context, 1);
+        layouts.activate_focused(&context);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+    }
+
+    #[test]
+    fn queued_category_mod_activation_applies_in_order() {
+        let mut layouts = test_layouts(2);
+        let context = egui::Context::default();
+        layouts.navigate_category(&context, 1);
+        layouts.navigate_mod(&context, 1);
+        layouts.activate_focused(&context);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.selected_category, 1);
+        assert_eq!(layouts.carousel_focus, 1);
+        assert_eq!(active_indices(&layouts.catalog.categories[1]), vec![1]);
     }
 }

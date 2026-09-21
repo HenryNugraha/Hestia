@@ -2,8 +2,12 @@
 //! Launch with `hestia --overlay-preview`; normal startup never enters this module.
 
 mod data;
+mod keyboard;
 mod layouts;
+mod motion;
+mod platform;
 mod restore;
+mod thumbnails;
 
 use std::{
     path::PathBuf,
@@ -17,6 +21,9 @@ const OVERLAY_OPACITY_MAX: u8 = 94;
 const DEFAULT_OVERLAY_OPACITY: u8 = 78;
 const EXPANDED_SIZE: egui::Vec2 = egui::vec2(560.0, 392.0);
 const IDLE_SIZE: egui::Vec2 = egui::vec2(280.0, 48.0);
+// Reserve the hold-preview space without resizing or recentering the native
+// window during interaction. Native regions remove all unused hit-test space.
+const CANVAS_SIZE: egui::Vec2 = egui::vec2(560.0, 660.0);
 const CAROUSEL_HEIGHT: f32 = 266.0;
 const HEADER_HEIGHT: f32 = 46.0;
 
@@ -24,6 +31,22 @@ pub fn run() -> anyhow::Result<()> {
     let catalog = data::load_catalog();
     let game = catalog.game.clone();
     let capture = std::env::var_os("HESTIA_OVERLAY_PREVIEW_CAPTURE").map(PathBuf::from);
+    let capture_frame = std::env::var("HESTIA_OVERLAY_PREVIEW_CAPTURE_FRAME")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(24);
+    let capture_at = capture.as_ref().and_then(|_| {
+        std::env::var("HESTIA_OVERLAY_PREVIEW_CAPTURE_MS")
+            .ok()?
+            .parse::<u64>()
+            .ok()
+            .map(Duration::from_millis)
+    });
+    let capture_button = if std::env::var_os("HESTIA_OVERLAY_PREVIEW_SECONDARY").is_some() {
+        egui::PointerButton::Secondary
+    } else {
+        egui::PointerButton::Primary
+    };
     let pinned = std::env::var_os("HESTIA_OVERLAY_PREVIEW_PINNED").is_some();
     let capture_alt = capture.is_some() && std::env::var_os("HESTIA_OVERLAY_PREVIEW_ALT").is_some();
     let capture_alt_release = capture.as_ref().and_then(|_| {
@@ -43,9 +66,19 @@ pub fn run() -> anyhow::Result<()> {
         let (x, y) = value.split_once(',')?;
         Some(egui::pos2(x.parse().ok()?, y.parse().ok()?))
     });
+    let capture_release = capture_click.and_then(|pos| {
+        let frame = std::env::var("HESTIA_OVERLAY_PREVIEW_RELEASE_FRAME")
+            .ok()?
+            .parse::<u32>()
+            .ok()?;
+        Some((frame, pos))
+    });
     let capture_text = capture
         .as_ref()
         .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_TEXT").ok());
+    let capture_keys = capture
+        .as_ref()
+        .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_KEYS").ok());
     let capture_wheel = capture.as_ref().and_then(|_| {
         let value = std::env::var("HESTIA_OVERLAY_PREVIEW_WHEEL").ok()?;
         let mut parts = value.split(',');
@@ -61,10 +94,11 @@ pub fn run() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hestia — Overlay preview")
-            .with_inner_size(if pinned { EXPANDED_SIZE } else { IDLE_SIZE })
+            .with_inner_size(CANVAS_SIZE)
             .with_decorations(false)
             .with_resizable(false)
             .with_transparent(true)
+            .with_active(false)
             .with_always_on_top()
             .with_icon(app_icon),
         // The prototype deliberately does not load or alter the normal renderer preference.
@@ -76,6 +110,7 @@ pub fn run() -> anyhow::Result<()> {
         "Hestia overlay preview",
         options,
         Box::new(move |cc| {
+            platform::configure(cc)?;
             #[cfg(windows)]
             if let Some(window) = cc.winit_window() {
                 use winit::platform::windows::WindowExtWindows;
@@ -87,31 +122,42 @@ pub fn run() -> anyhow::Result<()> {
             }
             apply_preview_style(&cc.egui_ctx);
             let alt_monitor = if capture.is_none() {
-                Some(AltMonitor::new(cc.egui_ctx.clone())?)
+                Some(keyboard::Monitor::new(cc.egui_ctx.clone())?)
             } else {
                 None
             };
             Ok(Box::new(OverlayPreview {
                 game,
+                #[cfg(windows)]
+                native_window: cc.winit_window().cloned(),
                 brand: None,
                 brand_source,
                 brand_pixels: 0,
                 restore_error: None,
+                region_update_failed: false,
                 samples: layouts::Layouts::new(catalog),
                 opacity,
                 pinned,
                 expanded: pinned,
+                motion: motion::ExpansionMotion::new(pinned),
                 suppress_alt_until_release: false,
+                pointer_completion: PointerCompletion::default(),
                 capture_alt,
                 capture_alt_release,
                 alt_monitor,
                 capture,
                 capture_click,
-                capture_hold: capture_text.is_none()
-                    && std::env::var_os("HESTIA_OVERLAY_PREVIEW_HOLD").is_some(),
+                capture_button,
+                capture_at,
+                capture_release,
+                capture_hold: capture_release.is_some()
+                    || (capture_text.is_none()
+                        && std::env::var_os("HESTIA_OVERLAY_PREVIEW_HOLD").is_some()),
                 capture_text,
+                capture_keys,
                 capture_wheel,
                 capture_requested: false,
+                capture_frame,
                 frames_drawn: 0,
                 started: Instant::now(),
             }))
@@ -122,24 +168,34 @@ pub fn run() -> anyhow::Result<()> {
 
 struct OverlayPreview {
     game: String,
+    #[cfg(windows)]
+    native_window: Option<std::sync::Arc<winit::window::Window>>,
     brand: Option<egui::TextureHandle>,
     brand_source: image::RgbaImage,
     brand_pixels: u32,
     restore_error: Option<String>,
+    region_update_failed: bool,
     samples: layouts::Layouts,
     opacity: u8,
     pinned: bool,
     expanded: bool,
+    motion: motion::ExpansionMotion,
     suppress_alt_until_release: bool,
+    pointer_completion: PointerCompletion,
     capture_alt: bool,
     capture_alt_release: Option<u32>,
-    alt_monitor: Option<AltMonitor>,
+    alt_monitor: Option<keyboard::Monitor>,
     capture: Option<PathBuf>,
     capture_click: Option<egui::Pos2>,
+    capture_button: egui::PointerButton,
+    capture_at: Option<Duration>,
+    capture_release: Option<(u32, egui::Pos2)>,
     capture_hold: bool,
     capture_text: Option<String>,
+    capture_keys: Option<String>,
     capture_wheel: Option<(egui::Pos2, f32)>,
     capture_requested: bool,
+    capture_frame: u32,
     frames_drawn: u32,
     started: Instant,
 }
@@ -160,7 +216,7 @@ impl eframe::App for OverlayPreview {
                     }
                     input.events.push(egui::Event::PointerButton {
                         pos,
-                        button: egui::PointerButton::Primary,
+                        button: self.capture_button,
                         pressed,
                         modifiers: egui::Modifiers::NONE,
                     });
@@ -172,7 +228,41 @@ impl eframe::App for OverlayPreview {
                 input.events.push(egui::Event::Text(text));
             }
         }
+        if self
+            .capture_release
+            .is_some_and(|(frame, _)| self.frames_drawn >= frame)
+        {
+            let (_, pos) = self.capture_release.take().expect("checked release frame");
+            input.events.push(egui::Event::PointerButton {
+                pos,
+                button: self.capture_button,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
         if self.frames_drawn >= 20 {
+            if let Some(keys) = self.capture_keys.take() {
+                for key in keys.split_whitespace().filter_map(|key| {
+                    match key.to_ascii_uppercase().as_str() {
+                        "A" => Some(egui::Key::A),
+                        "D" => Some(egui::Key::D),
+                        "W" => Some(egui::Key::W),
+                        "S" => Some(egui::Key::S),
+                        "SPACE" => Some(egui::Key::Space),
+                        _ => None,
+                    }
+                }) {
+                    for pressed in [true, false] {
+                        input.events.push(egui::Event::Key {
+                            key,
+                            physical_key: Some(key),
+                            pressed,
+                            repeat: false,
+                            modifiers: egui::Modifiers::ALT,
+                        });
+                    }
+                }
+            }
             if let Some((pos, delta)) = self.capture_wheel.take() {
                 input.events.push(egui::Event::PointerMoved(pos));
                 input.events.push(egui::Event::MouseWheel {
@@ -224,7 +314,19 @@ impl eframe::App for OverlayPreview {
 
     fn ui(&mut self, root: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
-        let brand_pixels = (28.0 * ctx.pixels_per_point()).round().max(1.0) as u32;
+        let now = ctx.input(|input| input.time);
+        if ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+        }) {
+            layouts::suppress_tooltips(&ctx);
+        }
+        // Warm the small neighboring set even while the overlay is collapsed.
+        self.samples.prepare_thumbnails(&ctx);
+        let brand_size = if self.expanded { 24.0 } else { 28.0 };
+        let brand_pixels = (brand_size * ctx.pixels_per_point()).round().max(1.0) as u32;
         if self.brand_pixels != brand_pixels {
             let icon_image = filtered_icon(&self.brand_source, brand_pixels);
             self.brand =
@@ -248,75 +350,164 @@ impl eframe::App for OverlayPreview {
         if escape {
             self.pinned = false;
             self.suppress_alt_until_release = alt;
+            self.pointer_completion.cancel();
+            self.samples.cancel_pointer_interaction();
         }
-        let expanded = self.pinned || (alt && !self.suppress_alt_until_release);
+        // Keep the release frame in the expanded layout so its original card or
+        // slider receives the completed gesture before the viewport moves.
+        let (pressed_inside, pointer_down) = ctx.input(|input| {
+            (
+                input.pointer.any_pressed()
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|pos| root.max_rect().contains(pos)),
+                input.pointer.any_down(),
+            )
+        });
+        let completing_pointer = self
+            .pointer_completion
+            .begin_frame(self.expanded && !escape, pressed_inside);
+        let expanded =
+            self.pinned || (alt && !self.suppress_alt_until_release) || completing_pointer;
         if expanded != self.expanded {
-            let size = if expanded { EXPANDED_SIZE } else { IDLE_SIZE };
-            if let Some(outer) = ctx.input(|input| input.viewport().outer_rect) {
-                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(
-                    outer.center().x - size.x / 2.0,
-                    outer.bottom() - size.y,
-                )));
+            self.samples.dismiss_transient_ui(&ctx);
+            if !expanded {
+                self.samples.cancel_pointer_interaction();
             }
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
             self.expanded = expanded;
             ctx.request_repaint();
         }
+        self.motion.advance(now, expanded);
+        if self.motion.animating() {
+            layouts::suppress_tooltips(&ctx);
+            ctx.request_repaint_after(Duration::from_millis(8));
+        }
+        self.samples.set_reveal(self.motion.cards());
+        let mut commands = self
+            .alt_monitor
+            .as_ref()
+            .map(|monitor| monitor.drain())
+            .unwrap_or_default();
+        // Capture runs and non-Windows previews receive ordinary egui key events.
+        // The native Windows hook consumes its own chords before they reach egui.
+        if ctx.current_pass_index() == 0 && (self.alt_monitor.is_none() || !cfg!(windows)) {
+            ctx.input_mut(|input| {
+                input.events.retain(|event| {
+                    let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat,
+                        modifiers,
+                        ..
+                    } = event
+                    else {
+                        return true;
+                    };
+                    if !modifiers.alt || modifiers.ctrl || modifiers.mac_cmd {
+                        return true;
+                    }
+                    let command = match key {
+                        egui::Key::A => keyboard::Command::Mod(-1),
+                        egui::Key::D => keyboard::Command::Mod(1),
+                        egui::Key::W => keyboard::Command::Category(-1),
+                        egui::Key::S => keyboard::Command::Category(1),
+                        egui::Key::Space if !repeat => keyboard::Command::Activate,
+                        _ => return true,
+                    };
+                    commands.push(command);
+                    false
+                });
+            });
+        }
+        if expanded && !self.suppress_alt_until_release {
+            for command in commands {
+                match command {
+                    keyboard::Command::Mod(direction) => self.samples.navigate_mod(&ctx, direction),
+                    keyboard::Command::Category(direction) => {
+                        self.samples.navigate_category(&ctx, direction)
+                    }
+                    keyboard::Command::Activate => self.samples.activate_focused(&ctx),
+                }
+            }
+        }
+        let mut visible_regions = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(root, |ui| {
                 let bounds = ui.max_rect();
-                if self.expanded {
-                    let gallery = egui::Rect::from_min_size(
-                        bounds.min,
-                        egui::vec2(bounds.width(), CAROUSEL_HEIGHT),
-                    );
-                    let header = egui::Rect::from_min_size(
-                        egui::pos2(bounds.left(), bounds.top() + CAROUSEL_HEIGHT),
-                        egui::vec2(bounds.width(), HEADER_HEIGHT),
-                    );
-                    let strip = egui::Rect::from_min_max(
-                        egui::pos2(bounds.left(), header.bottom()),
-                        bounds.max,
-                    );
-                    // Artwork is drawn directly over the game. Only the bottom strip has a base.
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_max(header.min, bounds.max),
-                        0,
-                        Color32::from_rgba_unmultiplied(32, 32, 32, base_alpha(self.opacity)),
-                    );
-                    let mut gallery_ui = ui.new_child(egui::UiBuilder::new().max_rect(gallery));
+                let opening = self.motion.strip();
+                let layout = motion::geometry(bounds, opening);
+                visible_regions.push(layout.base);
+                ui.painter().rect_filled(
+                    layout.base,
+                    0,
+                    Color32::from_rgba_unmultiplied(32, 32, 32, base_alpha(self.opacity)),
+                );
+                if opening > 0.5 {
                     let mut header_ui = ui.new_child(
-                        egui::UiBuilder::new().max_rect(header.shrink2(egui::vec2(10.0, 8.0))),
+                        egui::UiBuilder::new()
+                            .id_salt("expanded-header")
+                            .max_rect(layout.header.shrink2(egui::vec2(10.0, 8.0))),
                     );
+                    header_ui.set_clip_rect(layout.base);
+                    header_ui.multiply_opacity(((opening - 0.5) * 2.0).clamp(0.0, 1.0));
                     self.show_header(&mut header_ui, self.opacity);
                     let mut strip_ui = ui.new_child(
-                        egui::UiBuilder::new().max_rect(strip.shrink2(egui::vec2(10.0, 3.0))),
+                        egui::UiBuilder::new()
+                            .id_salt("category-rail")
+                            .max_rect(layout.rail.shrink2(egui::vec2(10.0, 3.0))),
                     );
+                    strip_ui.set_clip_rect(layout.rail.intersect(layout.base));
+                    strip_ui.multiply_opacity(((opening - 0.5) * 2.0).clamp(0.0, 1.0));
                     self.samples
                         .show_category_strip(&mut strip_ui, self.opacity);
-                    // Header inputs consume their keys first; category changes update the
-                    // carousel in the same frame.
-                    self.samples.show_carousel(&mut gallery_ui, self.opacity);
-                } else {
-                    let drag =
-                        ui.interact(bounds, ui.id().with("mini-strip-drag"), egui::Sense::drag());
+                }
+                if opening < 0.5 {
+                    let drag = ui.interact(
+                        layout.base,
+                        ui.id().with("mini-strip-drag"),
+                        egui::Sense::drag(),
+                    );
                     if drag.drag_started() {
-                        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                        self.start_window_drag(&ctx);
                     }
-                    ui.painter().rect_filled(
-                        bounds,
-                        0,
-                        Color32::from_rgba_unmultiplied(32, 32, 32, base_alpha(self.opacity)),
+                    let idle_rect = egui::Rect::from_center_size(
+                        egui::pos2(
+                            layout.base.center().x,
+                            layout.base.top() + IDLE_SIZE.y / 2.0,
+                        ),
+                        IDLE_SIZE,
                     );
                     let mut idle_ui = ui.new_child(
-                        egui::UiBuilder::new().max_rect(bounds.shrink2(egui::vec2(10.0, 8.0))),
+                        egui::UiBuilder::new()
+                            .id_salt("mini-header")
+                            .max_rect(idle_rect.shrink2(egui::vec2(10.0, 8.0))),
                     );
+                    idle_ui.multiply_opacity((1.0 - opening * 2.0).clamp(0.0, 1.0));
                     self.show_idle(&mut idle_ui);
                 }
+                if self.motion.cards() > 0.001 {
+                    let mut gallery_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("gallery")
+                            .max_rect(layout.gallery),
+                    );
+                    self.samples.show_carousel(&mut gallery_ui, self.opacity);
+                    let preview_rect = egui::Rect::from_min_max(
+                        bounds.min + egui::vec2(10.0, 10.0),
+                        egui::pos2(bounds.right() - 10.0, layout.base.top() - 10.0),
+                    );
+                    self.samples
+                        .show_held_preview(ui, preview_rect, self.opacity);
+                    visible_regions.extend_from_slice(self.samples.visible_card_rects());
+                }
                 if let Some(error) = &self.restore_error {
-                    let warning =
-                        egui::Rect::from_min_size(bounds.min, egui::vec2(bounds.width(), 40.0));
+                    let warning = egui::Rect::from_min_size(
+                        layout.base.min - egui::vec2(0.0, 40.0),
+                        egui::vec2(layout.base.width(), 40.0),
+                    );
+                    visible_regions.push(warning);
                     ui.painter().rect_filled(warning, 0, Color32::from_gray(32));
                     let mut warning_ui =
                         ui.new_child(egui::UiBuilder::new().max_rect(warning.shrink(5.0)));
@@ -327,9 +518,38 @@ impl eframe::App for OverlayPreview {
                     );
                 }
             });
+        ctx.memory(|memory| {
+            for layer in memory.areas().visible_layer_ids() {
+                if layer.order == egui::Order::Tooltip {
+                    if let Some(rect) = memory.area_rect(layer.id) {
+                        visible_regions.push(rect);
+                    }
+                }
+            }
+        });
+        match platform::update_input_regions(&ctx, &visible_regions) {
+            Ok(()) => self.region_update_failed = false,
+            Err(error) => {
+                if !self.region_update_failed {
+                    tracing::warn!(%error, "Could not update overlay input regions");
+                }
+                self.region_update_failed = true;
+            }
+        }
+        if self.pointer_completion.finish_frame(pointer_down) {
+            ctx.request_repaint();
+        }
         if self.capture.is_some() {
             // Allow the native surface and its initial layout to settle before readback.
-            if !self.capture_requested && self.frames_drawn >= 24 {
+            let capture_ready = self.capture_at.map_or_else(
+                || {
+                    self.frames_drawn >= self.capture_frame
+                        && (self.capture_frame != 24
+                            || (!self.motion.animating() && !self.samples.animation_pending(now)))
+                },
+                |at| self.started.elapsed() >= at,
+            );
+            if !self.capture_requested && capture_ready {
                 ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
                 self.capture_requested = true;
             }
@@ -343,7 +563,77 @@ impl eframe::App for OverlayPreview {
     }
 }
 
+/// Defer collapsing through the release frame of a gesture begun on the overlay.
+/// It does not keep a window open for buttons held elsewhere before it appeared.
+#[derive(Default)]
+struct PointerCompletion {
+    active: bool,
+}
+
+impl PointerCompletion {
+    fn begin_frame(&mut self, was_expanded: bool, pressed_inside: bool) -> bool {
+        self.active |= was_expanded && pressed_inside;
+        self.active
+    }
+
+    fn finish_frame(&mut self, pointer_down: bool) -> bool {
+        let completed = self.active && !pointer_down;
+        self.active &= pointer_down;
+        completed
+    }
+
+    fn cancel(&mut self) {
+        self.active = false;
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::PointerCompletion;
+
+    #[test]
+    fn alt_release_keeps_click_or_drag_until_its_release_frame() {
+        let mut interaction = PointerCompletion::default();
+        assert!(interaction.begin_frame(true, true));
+        assert!(!interaction.finish_frame(true));
+        // Alt is no longer held, but the pointer gesture is still in progress.
+        assert!(interaction.begin_frame(true, false));
+        assert!(!interaction.finish_frame(true));
+        // Paint/process the expanded widgets on release, then allow collapse.
+        assert!(interaction.begin_frame(true, false));
+        assert!(interaction.finish_frame(false));
+        assert!(!interaction.begin_frame(true, false));
+    }
+
+    #[test]
+    fn outside_press_and_escape_do_not_latch_expansion() {
+        let mut interaction = PointerCompletion::default();
+        assert!(!interaction.begin_frame(false, true));
+        assert!(!interaction.begin_frame(true, false));
+        assert!(interaction.begin_frame(true, true));
+        interaction.cancel();
+        assert!(!interaction.begin_frame(false, false));
+    }
+}
+
 impl OverlayPreview {
+    fn start_window_drag(&self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        {
+            let _ = ctx;
+            // egui-winit gates StartDrag on has_focus() for X11 safety. This
+            // Windows overlay intentionally never takes focus, so use winit's
+            // native caption-drag path directly instead of that shared guard.
+            if let Some(window) = &self.native_window {
+                if let Err(error) = window.drag_window() {
+                    tracing::warn!(%error, "Could not drag the overlay window");
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+    }
+
     fn show_idle(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
@@ -356,9 +646,24 @@ impl OverlayPreview {
                 );
             }
             ui.add_space(8.0);
-            ui.add(
-                egui::Label::new(RichText::new("ALT").strong().size(11.0))
-                    .sense(egui::Sense::hover()),
+            let (key_rect, _) =
+                ui.allocate_exact_size(egui::vec2(30.0, 20.0), egui::Sense::hover());
+            ui.painter().rect(
+                key_rect,
+                3,
+                Color32::from_white_alpha(content_alpha(8, self.opacity)),
+                egui::Stroke::new(
+                    1.0,
+                    Color32::from_white_alpha(content_alpha(36, self.opacity)),
+                ),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                key_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "ALT",
+                egui::FontId::proportional(10.0),
+                content_gray(220, self.opacity),
             );
             ui.add(
                 egui::Label::new(
@@ -373,13 +678,8 @@ impl OverlayPreview {
                 {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                 }
-                if header_button(
-                    ui,
-                    lucide_icons::Icon::Maximize2,
-                    "Keep expanded",
-                    self.opacity,
-                )
-                .clicked()
+                if header_button(ui, lucide_icons::Icon::Pin, "Keep expanded", self.opacity)
+                    .clicked()
                 {
                     self.pinned = true;
                     ui.ctx().request_repaint();
@@ -391,15 +691,16 @@ impl OverlayPreview {
     fn show_header(&mut self, ui: &mut egui::Ui, opacity: u8) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
             ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
             ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
             ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
             let (brand_rect, drag) =
-                ui.allocate_exact_size(egui::vec2(88.0, 30.0), egui::Sense::drag());
+                ui.allocate_exact_size(egui::vec2(78.0, 30.0), egui::Sense::drag());
             if let Some(brand) = &self.brand {
                 let logo_rect = egui::Rect::from_center_size(
-                    brand_rect.left_center() + egui::vec2(14.0, 0.0),
-                    egui::vec2(28.0, 28.0),
+                    brand_rect.left_center() + egui::vec2(12.0, 0.0),
+                    egui::vec2(24.0, 24.0),
                 );
                 ui.painter().image(
                     brand.id(),
@@ -409,41 +710,51 @@ impl OverlayPreview {
                 );
             }
             ui.painter().text(
-                brand_rect.left_center() + egui::vec2(36.0, 0.0),
+                brand_rect.left_center() + egui::vec2(31.0, 0.0),
                 egui::Align2::LEFT_CENTER,
                 "Hestia",
-                egui::FontId::proportional(16.0),
+                egui::FontId::proportional(14.0),
                 content_color(Color32::from_rgb(210, 189, 156), opacity),
             );
             if drag.drag_started() {
-                ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                self.start_window_drag(&ctx);
             }
-            let game = ui.add(
+            // Keep long game names from pushing the fixed controls off the edge.
+            let game_width = ui
+                .painter()
+                .layout_no_wrap(
+                    self.game.clone(),
+                    egui::FontId::proportional(10.5),
+                    content_gray(155, opacity),
+                )
+                .size()
+                .x
+                .min((ui.available_width() - 195.0).clamp(0.0, 160.0));
+            let game = ui.add_sized(
+                egui::vec2(game_width, 30.0),
                 egui::Label::new(
                     RichText::new(&self.game)
-                        .size(11.0)
+                        .size(10.5)
                         .color(content_gray(155, opacity)),
                 )
+                .truncate()
                 .sense(egui::Sense::drag()),
             );
             if game.drag_started() {
-                ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                self.start_window_drag(&ctx);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if header_button(ui, lucide_icons::Icon::X, "Close overlay", opacity).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
-                let pin_icon = if self.pinned {
-                    lucide_icons::Icon::PinOff
-                } else {
-                    lucide_icons::Icon::Pin
-                };
                 let pin_help = if self.pinned {
                     "Unpin · return to hold Alt"
                 } else {
                     "Keep expanded"
                 };
-                if header_button(ui, pin_icon, pin_help, opacity).clicked() {
+                if header_button_state(ui, lucide_icons::Icon::Pin, pin_help, opacity, self.pinned)
+                    .clicked()
+                {
                     self.pinned = !self.pinned;
                     ctx.request_repaint();
                 }
@@ -469,7 +780,7 @@ impl OverlayPreview {
                     egui::Sense::drag(),
                 );
                 if drag.drag_started() {
-                    ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                    self.start_window_drag(&ctx);
                 }
             });
         });
@@ -482,22 +793,51 @@ fn header_button(
     help: &str,
     opacity: u8,
 ) -> egui::Response {
+    header_button_state(ui, glyph, help, opacity, false)
+}
+
+fn header_button_state(
+    ui: &mut egui::Ui,
+    glyph: lucide_icons::Icon,
+    help: &str,
+    opacity: u8,
+    selected: bool,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
     let emphasis = ui.ctx().animate_bool_with_time(
         response.id.with("emphasis"),
         response.hovered() || response.is_pointer_button_down_on(),
         0.1,
     );
+    let accent = Color32::from_rgb(210, 125, 85);
+    if selected || emphasis > 0.0 {
+        ui.painter().rect_filled(
+            rect.shrink(2.0),
+            3,
+            Color32::from_white_alpha(content_alpha(
+                if selected {
+                    16
+                } else {
+                    (12.0 * emphasis) as u8
+                },
+                opacity,
+            )),
+        );
+    }
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         char::from(glyph).to_string(),
         egui::FontId::new(14.0, egui::FontFamily::Name("preview-icons".into())),
-        content_gray((120.0 + 115.0 * emphasis) as u8, opacity),
+        if selected {
+            content_color(accent, opacity)
+        } else {
+            content_gray((120.0 + 115.0 * emphasis) as u8, opacity)
+        },
     );
     response
-        .on_hover_text(help)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), help));
+    layouts::delayed_tooltip(response, help).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn filtered_icon(source: &image::RgbaImage, side: u32) -> egui::ColorImage {
@@ -620,77 +960,6 @@ fn content_opacity_unit(opacity: u8) -> f32 {
     0.90 + 0.10 * (opacity_unit(opacity) - 0.50) / 0.44
 }
 
-/// Read the physical key off the UI thread; repaint only when it changes.
-/// No synthetic input, focus changes, or global hotkey registration are involved.
-struct AltMonitor {
-    #[cfg(windows)]
-    held: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    #[cfg(windows)]
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    #[cfg(windows)]
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl AltMonitor {
-    fn new(ctx: egui::Context) -> std::io::Result<Self> {
-        #[cfg(windows)]
-        {
-            use std::sync::{
-                Arc,
-                atomic::{AtomicBool, Ordering},
-            };
-            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
-            let held = Arc::new(AtomicBool::new(false));
-            let stop = Arc::new(AtomicBool::new(false));
-            let thread_held = held.clone();
-            let thread_stop = stop.clone();
-            let thread = std::thread::Builder::new()
-                .name("hestia-overlay-alt".into())
-                .spawn(move || {
-                    while !thread_stop.load(Ordering::Relaxed) {
-                        let down = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) < 0 };
-                        if thread_held.swap(down, Ordering::Relaxed) != down {
-                            ctx.request_repaint();
-                        }
-                        std::thread::sleep(Duration::from_millis(16));
-                    }
-                })?;
-            Ok(Self {
-                held,
-                stop,
-                thread: Some(thread),
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = ctx;
-            Ok(Self {})
-        }
-    }
-
-    fn held(&self, ctx: &egui::Context) -> bool {
-        #[cfg(windows)]
-        {
-            let _ = ctx;
-            self.held.load(std::sync::atomic::Ordering::Relaxed)
-        }
-        #[cfg(not(windows))]
-        ctx.input(|input| input.modifiers.alt)
-    }
-}
-
-impl Drop for AltMonitor {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
-        }
-    }
-}
-
 fn content_alpha(base_alpha: u8, opacity: u8) -> u8 {
     (f32::from(base_alpha) * content_opacity_unit(opacity)).round() as u8
 }
@@ -724,6 +993,9 @@ fn apply_preview_style(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     // Text belongs to its enclosing character row/costume card click target.
     style.interaction.selectable_labels = false;
+    style.interaction.tooltip_delay = 0.5;
+    style.interaction.tooltip_grace_time = 0.0;
+    style.interaction.show_tooltips_only_when_still = true;
     style.spacing.item_spacing = egui::vec2(5.0, 5.0);
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
     style.spacing.interact_size.y = 28.0;

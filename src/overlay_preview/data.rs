@@ -91,6 +91,8 @@ fn read_catalog() -> anyhow::Result<Catalog> {
             costumes: Vec::new(),
         })
         .collect();
+    let mut source_categories: Vec<Vec<crate::model::GameBananaSnapshot>> =
+        vec![Vec::new(); categories.len()];
     let mut walk = walkdir::WalkDir::new(&root)
         .max_depth(6)
         .follow_links(false)
@@ -196,6 +198,20 @@ fn read_catalog() -> anyhow::Result<Catalog> {
                 .find(|path| path.is_file())
             });
         let category = &mut categories[category_index];
+        if source_categories.len() <= category_index {
+            source_categories.resize_with(category_index + 1, Vec::new);
+        }
+        if let Some(snapshot) = metadata
+            .source
+            .as_ref()
+            .and_then(|source| source.snapshot.as_ref())
+        {
+            source_categories[category_index].push(crate::model::GameBananaSnapshot {
+                category: snapshot.category.clone(),
+                super_category_id: snapshot.super_category_id,
+                ..Default::default()
+            });
+        }
         if category.image.is_none() || (active && image.is_some()) {
             category.image = image.clone();
         }
@@ -210,7 +226,21 @@ fn read_catalog() -> anyhow::Result<Catalog> {
             .costumes
             .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     }
-    apply_character_portraits(&mut categories, &game.definition.id);
+    let character_links: Vec<_> = categories
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            definitions.get(index).and_then(|category| {
+                category.resolved_gamebanana_character(
+                    source_categories[index].iter(),
+                    crate::integrations::gamebanana::character_super_category_id_for_hestia(
+                        &game.definition.id,
+                    ),
+                )
+            })
+        })
+        .collect();
+    apply_character_portraits(&mut categories, &game.definition.id, &character_links);
     if !state.static_prefs.library_show_empty_category_folders {
         categories.retain(|category| !category.costumes.is_empty());
     }
@@ -260,7 +290,11 @@ fn resolve_image(root: &Path, value: &str) -> Option<PathBuf> {
 
 /// Use the preview's downloaded category icons without touching Hestia's cache or state.
 /// Startup stays offline; absent icons simply retain the existing local-cover fallback.
-fn apply_character_portraits(categories: &mut [Category], game_id: &str) {
+fn apply_character_portraits(
+    categories: &mut [Category],
+    game_id: &str,
+    character_links: &[Option<crate::model::GameBananaCategoryLink>],
+) {
     let mut roots = Vec::new();
     if let Some(root) = std::env::var_os("HESTIA_OVERLAY_PREVIEW_PORTRAITS") {
         roots.push(PathBuf::from(root));
@@ -278,28 +312,75 @@ fn apply_character_portraits(categories: &mut [Category], game_id: &str) {
         let Some(manifest) = std::fs::read(directory.join("manifest.json"))
             .ok()
             .and_then(|bytes| {
-                serde_json::from_slice::<std::collections::BTreeMap<String, String>>(&bytes).ok()
+                serde_json::from_slice::<std::collections::BTreeMap<String, PortraitManifestEntry>>(
+                    &bytes,
+                )
+                .ok()
             })
         else {
             continue;
         };
-        for category in categories.iter_mut() {
-            let name = category
-                .name
-                .strip_prefix("Operators: ")
-                .unwrap_or(&category.name);
-            if let Some((_, file)) = manifest
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            {
-                let portrait = directory.join(file);
-                if portrait.is_file() {
+        for (index, category) in categories.iter_mut().enumerate() {
+            let link = character_links.get(index).and_then(Option::as_ref);
+            let name = link.map(|link| link.name.as_str()).unwrap_or_else(|| {
+                category
+                    .name
+                    .strip_prefix("Operators: ")
+                    .unwrap_or(&category.name)
+            });
+            if let Some((_, entry)) = manifest.iter().find(|(key, entry)| {
+                link.is_some_and(|link| entry.files().0 == format!("category_{}.webp", link.id))
+                    || key.eq_ignore_ascii_case(name)
+            }) {
+                if let Some(portrait) = resolve_portrait(&directory, entry) {
                     category.image = Some(portrait);
                 }
             }
         }
         break;
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum PortraitManifestEntry {
+    File(String),
+    WithHighResolution {
+        file: String,
+        high_res: Option<String>,
+    },
+}
+
+impl PortraitManifestEntry {
+    fn files(&self) -> (&str, Option<&str>) {
+        match self {
+            Self::File(file) => (file, None),
+            Self::WithHighResolution { file, high_res } => (file, high_res.as_deref()),
+        }
+    }
+}
+
+// High-resolution replacements are opt-in manifest data. Never probe arbitrary
+// sibling names: a same-stem costume or unrelated image must not replace the
+// category's source sprite by accident.
+fn resolve_portrait(directory: &Path, entry: &PortraitManifestEntry) -> Option<PathBuf> {
+    let (file, high_res) = entry.files();
+    let source = directory.join(file);
+    let source_dimensions = image::image_dimensions(&source).ok();
+    let high_res = high_res
+        .map(|file| directory.join(file))
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            let Some((width, height)) = image::image_dimensions(path).ok() else {
+                return false;
+            };
+            let Some((source_width, source_height)) = source_dimensions else {
+                return true;
+            };
+            u64::from(width) * u64::from(height)
+                > u64::from(source_width) * u64::from(source_height)
+        });
+    high_res.or_else(|| source.is_file().then_some(source))
 }
 
 pub(super) fn state_path() -> Option<PathBuf> {

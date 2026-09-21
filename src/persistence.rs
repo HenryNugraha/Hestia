@@ -1470,6 +1470,7 @@ mod tests {
             game_id: game_with_category.clone(),
             name: "Existing".to_string(),
             order: 0,
+            gamebanana_character: None,
         }];
 
         let (prefs, changed) = normalize_create_downloaded_mod_category_by_game(
@@ -1508,6 +1509,7 @@ mod tests {
             game_id: missing_game_with_category.clone(),
             name: "Existing".to_string(),
             order: 0,
+            gamebanana_character: None,
         }];
         let mut saved = HashMap::with_capacity(1);
         saved.insert(saved_game.clone(), true);
@@ -1589,6 +1591,7 @@ games = []
                         game_id: "wuwa".to_string(),
                         name: "Profile category".to_string(),
                         order: 0,
+                        gamebanana_character: None,
                     }]),
                     tools: None,
                     tool_blacklist: None,
@@ -1658,6 +1661,7 @@ games = []
             game_id: game_id.clone(),
             name: "Legacy category".to_string(),
             order: 0,
+            gamebanana_character: None,
         }];
         assert!(migrate_profile_categories(&mut profiles, &categories));
         let migrated = &profiles[&game_id].profiles;
