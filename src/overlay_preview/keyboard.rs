@@ -61,7 +61,7 @@ pub(super) enum Command {
     Category(i32),
     EnableExclusive,
     EnableAdditive,
-    Disable,
+    Toggle,
 }
 
 /// Physical state machine shared by the Windows hook and its tests.
@@ -158,7 +158,7 @@ impl Router {
                 || !self.alt_active(alt_context)
                 || blocked_windows
                 || self.windows_down != 0
-                || (matches!(command, Command::Disable) && self.ctrl_active())
+                || (matches!(command, Command::Toggle) && self.ctrl_active())
             {
                 return false;
             }
@@ -244,7 +244,7 @@ fn activation_key(vk: u32) -> Option<(u8, Command)> {
         VK_CONTROL => Some((0x0C, Command::EnableExclusive)),
         VK_LCONTROL => Some((0x04, Command::EnableExclusive)),
         VK_RCONTROL => Some((0x08, Command::EnableExclusive)),
-        VK_X => Some((0x10, Command::Disable)),
+        VK_X => Some((0x10, Command::Toggle)),
         _ => None,
     }
 }
@@ -697,11 +697,11 @@ mod tests {
     }
 
     #[test]
-    fn disable_key_is_edge_triggered_and_captured_until_release() {
+    fn toggle_key_is_edge_triggered_and_captured_until_release() {
         let mut router = Router::new(1, 0);
         assert!(router.event(VK_X, true, false, false, t(0)));
         assert!(router.event(VK_X, true, false, false, t(1)));
-        assert_eq!(router.take_commands(), vec![Command::Disable]);
+        assert_eq!(router.take_commands(), vec![Command::Toggle]);
         assert!(!router.event(VK_LMENU, false, false, false, t(2)));
         assert!(router.event(VK_X, false, false, false, t(3)));
         assert!(router.take_commands().is_empty());
@@ -729,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_held_disable_reaches_the_game() {
+    fn ctrl_held_toggle_reaches_the_game() {
         let mut router = Router::new(0, 0);
         assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
         assert!(!router.event(VK_LMENU, true, false, false, t(1)));
@@ -782,7 +782,7 @@ mod tests {
             (VK_RSHIFT, Command::EnableAdditive),
             (VK_LCONTROL, Command::EnableExclusive),
             (VK_RCONTROL, Command::EnableExclusive),
-            (VK_X, Command::Disable),
+            (VK_X, Command::Toggle),
         ] {
             let mut router = Router::new(1, 0);
             assert!(router.event(key, true, false, false, t(0)));

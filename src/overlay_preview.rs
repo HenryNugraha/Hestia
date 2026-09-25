@@ -437,7 +437,7 @@ impl eframe::App for OverlayPreview {
                             if *repeat {
                                 return false;
                             }
-                            keyboard::Command::Disable
+                            keyboard::Command::Toggle
                         }
                         _ => return true,
                     };
@@ -465,9 +465,9 @@ impl eframe::App for OverlayPreview {
                     keyboard::Command::EnableAdditive => self
                         .samples
                         .apply_focused_action(&ctx, layouts::ModAction::Additive),
-                    keyboard::Command::Disable => self
+                    keyboard::Command::Toggle => self
                         .samples
-                        .apply_focused_action(&ctx, layouts::ModAction::Disable),
+                        .apply_focused_action(&ctx, layouts::ModAction::Toggle),
                 }
             }
         }
@@ -856,7 +856,9 @@ fn shortcut_hints(
     available: layouts::ShortcutAvailability,
 ) -> egui::Response {
     // The clipped lane stays fixed while a continuous train of hints moves through it.
-    let width = (ui.available_width() - 195.0).clamp(0.0, 248.0);
+    // Reserve exactly the right-hand controls: three 28pt buttons, the 92pt
+    // slider, and their four 3pt gaps. The lane ends at the slider's hit rect.
+    let width = (ui.available_width() - 188.0).max(0.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::drag());
     let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
     let entries: Vec<_> = hints::SEQUENCE
@@ -867,13 +869,13 @@ fn shortcut_hints(
                 hints::Hint::Mods => (&["Q", "E"], "Browse mods", available.mods),
                 hints::Hint::Exclusive => (
                     &["Ctrl"],
-                    "Enable this, disable others",
+                    "Enable this mod, disable others",
                     available.exclusive,
                 ),
                 hints::Hint::Additive => {
-                    (&["Shift"], "Enable this, keep others", available.additive)
+                    (&["Shift"], "Enable this mod, keep others", available.additive)
                 }
-                hints::Hint::Disable => (&["X"], "Disable this mod", available.disable),
+                hints::Hint::Toggle => (&["X"], "Toggle Enable/Disable", available.toggle),
             };
             let key_width = if keys.len() > 1 || keys[0].len() == 1 {
                 19.0

@@ -6,7 +6,7 @@ pub(super) enum Hint {
     Mods,
     Exclusive,
     Additive,
-    Disable,
+    Toggle,
 }
 
 pub(super) const SEQUENCE: [Hint; 5] = [
@@ -14,7 +14,7 @@ pub(super) const SEQUENCE: [Hint; 5] = [
     Hint::Mods,
     Hint::Exclusive,
     Hint::Additive,
-    Hint::Disable,
+    Hint::Toggle,
 ];
 
 const SPEED: f64 = 55.0;

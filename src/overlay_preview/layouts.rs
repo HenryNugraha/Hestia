@@ -108,7 +108,7 @@ enum PendingCommand {
 pub(super) enum ModAction {
     Exclusive,
     Additive,
-    Disable,
+    Toggle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +117,7 @@ pub(super) struct ShortcutAvailability {
     pub mods: bool,
     pub exclusive: bool,
     pub additive: bool,
-    pub disable: bool,
+    pub toggle: bool,
 }
 
 /// In-memory state for the native costume switcher preview.
@@ -396,7 +396,7 @@ impl Layouts {
                 mods: false,
                 exclusive: false,
                 additive: false,
-                disable: false,
+                toggle: false,
             };
         };
         let Some(focused) = category.costumes.get(self.carousel_focus) else {
@@ -405,7 +405,7 @@ impl Layouts {
                 mods: category.costumes.len() > 1,
                 exclusive: false,
                 additive: false,
-                disable: false,
+                toggle: false,
             };
         };
         let active_count = category
@@ -418,7 +418,7 @@ impl Layouts {
             mods: category.costumes.len() > 1,
             exclusive: !(focused.active && active_count == 1),
             additive: !focused.active,
-            disable: focused.active,
+            toggle: true,
         }
     }
 
@@ -1473,10 +1473,11 @@ impl Layouts {
                     changed = !costume.active;
                     costume.active = true;
                 }
-                ModAction::Disable => {
+                // Enabling through the toggle keeps the others, like Additive.
+                ModAction::Toggle => {
                     let costume = &mut category.costumes[costume_index];
-                    changed = costume.active;
-                    costume.active = false;
+                    costume.active = !costume.active;
+                    changed = true;
                 }
             }
             self.active_images[category_index] = active_image(category);
@@ -2810,7 +2811,7 @@ mod tests {
     }
 
     #[test]
-    fn disable_action_can_remove_the_last_active_mod() {
+    fn toggle_action_can_remove_the_last_active_mod() {
         let mut layouts = Layouts::new(Catalog {
             game: "Test".into(),
             categories: vec![category(&[false, true, false])],
@@ -2818,7 +2819,7 @@ mod tests {
         });
         let context = egui::Context::default();
         layouts.carousel_focus = 1;
-        layouts.apply_focused_action(&context, ModAction::Disable);
+        layouts.apply_focused_action(&context, ModAction::Toggle);
         run_layout_frame(
             &context,
             &mut layouts,
@@ -2850,9 +2851,29 @@ mod tests {
             false,
         );
         assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+    }
 
+    #[test]
+    fn toggle_action_enables_an_inactive_mod_without_disabling_others() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[false, true, false])],
+            note: None,
+        });
+        let context = egui::Context::default();
         layouts.carousel_focus = 0;
-        layouts.apply_focused_action(&context, ModAction::Disable);
+        layouts.apply_focused_action(&context, ModAction::Toggle);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0, 1]);
+
+        layouts.apply_focused_action(&context, ModAction::Toggle);
         run_layout_frame(
             &context,
             &mut layouts,
@@ -2898,7 +2919,7 @@ mod tests {
                 mods: true,
                 exclusive: false,
                 additive: false,
-                disable: true,
+                toggle: true,
             }
         );
 
@@ -2910,7 +2931,7 @@ mod tests {
                 mods: true,
                 exclusive: true,
                 additive: true,
-                disable: false,
+                toggle: true,
             }
         );
     }
@@ -2927,7 +2948,7 @@ mod tests {
         assert!(!availability.mods);
         assert!(!availability.exclusive);
         assert!(!availability.additive);
-        assert!(!availability.disable);
+        assert!(!availability.toggle);
     }
 
     #[test]
@@ -2942,7 +2963,7 @@ mod tests {
         assert!(availability.mods);
         assert!(availability.exclusive);
         assert!(!availability.additive);
-        assert!(availability.disable);
+        assert!(availability.toggle);
     }
 
     #[test]
