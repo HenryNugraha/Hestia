@@ -2,6 +2,7 @@
 //! Launch with `hestia --overlay-preview`; normal startup never enters this module.
 
 mod data;
+mod hints;
 mod keyboard;
 mod layouts;
 mod motion;
@@ -140,6 +141,7 @@ pub fn run() -> anyhow::Result<()> {
                 pinned,
                 expanded: pinned,
                 motion: motion::ExpansionMotion::new(pinned),
+                hint_ticker: hints::Ticker::default(),
                 suppress_alt_until_release: false,
                 pointer_completion: PointerCompletion::default(),
                 capture_alt,
@@ -155,6 +157,7 @@ pub fn run() -> anyhow::Result<()> {
                         && std::env::var_os("HESTIA_OVERLAY_PREVIEW_HOLD").is_some()),
                 capture_text,
                 capture_keys,
+                previous_navigation_modifiers: egui::Modifiers::NONE,
                 capture_wheel,
                 capture_requested: false,
                 capture_frame,
@@ -180,6 +183,7 @@ struct OverlayPreview {
     pinned: bool,
     expanded: bool,
     motion: motion::ExpansionMotion,
+    hint_ticker: hints::Ticker,
     suppress_alt_until_release: bool,
     pointer_completion: PointerCompletion,
     capture_alt: bool,
@@ -193,6 +197,7 @@ struct OverlayPreview {
     capture_hold: bool,
     capture_text: Option<String>,
     capture_keys: Option<String>,
+    previous_navigation_modifiers: egui::Modifiers,
     capture_wheel: Option<(egui::Pos2, f32)>,
     capture_requested: bool,
     capture_frame: u32,
@@ -242,16 +247,31 @@ impl eframe::App for OverlayPreview {
         }
         if self.frames_drawn >= 20 {
             if let Some(keys) = self.capture_keys.take() {
-                for key in keys.split_whitespace().filter_map(|key| {
-                    match key.to_ascii_uppercase().as_str() {
+                for token in keys.split_whitespace() {
+                    let key = match token.to_ascii_uppercase().as_str() {
+                        "Q" => Some(egui::Key::Q),
+                        "E" => Some(egui::Key::E),
                         "A" => Some(egui::Key::A),
                         "D" => Some(egui::Key::D),
+                        "X" => Some(egui::Key::X),
                         "W" => Some(egui::Key::W),
                         "S" => Some(egui::Key::S),
                         "SPACE" => Some(egui::Key::Space),
+                        "SHIFT" => {
+                            input.modifiers.alt = true;
+                            input.modifiers.shift = true;
+                            None
+                        }
+                        "CTRL" => {
+                            input.modifiers.alt = true;
+                            input.modifiers.ctrl = true;
+                            None
+                        }
                         _ => None,
-                    }
-                }) {
+                    };
+                    let Some(key) = key else {
+                        continue;
+                    };
                     for pressed in [true, false] {
                         input.events.push(egui::Event::Key {
                             key,
@@ -378,6 +398,7 @@ impl eframe::App for OverlayPreview {
             self.expanded = expanded;
             ctx.request_repaint();
         }
+        self.hint_ticker.update(expanded, now);
         self.motion.advance(now, expanded);
         if self.motion.animating() {
             layouts::suppress_tooltips(&ctx);
@@ -408,16 +429,27 @@ impl eframe::App for OverlayPreview {
                         return true;
                     }
                     let command = match key {
-                        egui::Key::A => keyboard::Command::Mod(-1),
-                        egui::Key::D => keyboard::Command::Mod(1),
-                        egui::Key::W => keyboard::Command::Category(-1),
-                        egui::Key::S => keyboard::Command::Category(1),
-                        egui::Key::Space if !repeat => keyboard::Command::Activate,
+                        egui::Key::Q => keyboard::Command::Mod(-1),
+                        egui::Key::E => keyboard::Command::Mod(1),
+                        egui::Key::A => keyboard::Command::Category(-1),
+                        egui::Key::D => keyboard::Command::Category(1),
+                        egui::Key::X => {
+                            if *repeat {
+                                return false;
+                            }
+                            keyboard::Command::Disable
+                        }
                         _ => return true,
                     };
                     commands.push(command);
                     false
                 });
+                commands.extend(
+                    modifier_commands(self.previous_navigation_modifiers, input.modifiers)
+                        .into_iter()
+                        .flatten(),
+                );
+                self.previous_navigation_modifiers = input.modifiers;
             });
         }
         if expanded && !self.suppress_alt_until_release {
@@ -427,7 +459,15 @@ impl eframe::App for OverlayPreview {
                     keyboard::Command::Category(direction) => {
                         self.samples.navigate_category(&ctx, direction)
                     }
-                    keyboard::Command::Activate => self.samples.activate_focused(&ctx),
+                    keyboard::Command::EnableExclusive => self
+                        .samples
+                        .apply_focused_action(&ctx, layouts::ModAction::Exclusive),
+                    keyboard::Command::EnableAdditive => self
+                        .samples
+                        .apply_focused_action(&ctx, layouts::ModAction::Additive),
+                    keyboard::Command::Disable => self
+                        .samples
+                        .apply_focused_action(&ctx, layouts::ModAction::Disable),
                 }
             }
         }
@@ -570,6 +610,19 @@ struct PointerCompletion {
     active: bool,
 }
 
+fn modifier_commands(
+    previous: egui::Modifiers,
+    current: egui::Modifiers,
+) -> [Option<keyboard::Command>; 2] {
+    if !current.alt || current.mac_cmd {
+        return [None, None];
+    }
+    [
+        (current.ctrl && !previous.ctrl).then_some(keyboard::Command::EnableExclusive),
+        (current.shift && !previous.shift).then_some(keyboard::Command::EnableAdditive),
+    ]
+}
+
 impl PointerCompletion {
     fn begin_frame(&mut self, was_expanded: bool, pressed_inside: bool) -> bool {
         self.active |= was_expanded && pressed_inside;
@@ -589,7 +642,28 @@ impl PointerCompletion {
 
 #[cfg(test)]
 mod interaction_tests {
-    use super::PointerCompletion;
+    use super::{PointerCompletion, keyboard::Command, modifier_commands};
+
+    #[test]
+    fn activation_modifiers_trigger_once_and_not_when_held_before_alt() {
+        let alt = egui::Modifiers::ALT;
+        for (modifier, expected) in [
+            (
+                egui::Modifiers::SHIFT,
+                [None, Some(Command::EnableAdditive)],
+            ),
+            (
+                egui::Modifiers::CTRL,
+                [Some(Command::EnableExclusive), None],
+            ),
+        ] {
+            let chord = alt | modifier;
+            assert_eq!(modifier_commands(alt, chord), expected);
+            assert_eq!(modifier_commands(chord, chord), [None, None]);
+            assert_eq!(modifier_commands(modifier, chord), [None, None]);
+            assert_eq!(modifier_commands(chord, alt), [None, None]);
+        }
+    }
 
     #[test]
     fn alt_release_keeps_click_or_drag_until_its_release_frame() {
@@ -719,28 +793,15 @@ impl OverlayPreview {
             if drag.drag_started() {
                 self.start_window_drag(&ctx);
             }
-            // Keep long game names from pushing the fixed controls off the edge.
-            let game_width = ui
-                .painter()
-                .layout_no_wrap(
-                    self.game.clone(),
-                    egui::FontId::proportional(10.5),
-                    content_gray(155, opacity),
-                )
-                .size()
-                .x
-                .min((ui.available_width() - 195.0).clamp(0.0, 160.0));
-            let game = ui.add_sized(
-                egui::vec2(game_width, 30.0),
-                egui::Label::new(
-                    RichText::new(&self.game)
-                        .size(10.5)
-                        .color(content_gray(155, opacity)),
-                )
-                .truncate()
-                .sense(egui::Sense::drag()),
+            let _ = layouts::delayed_tooltip(drag, self.game.clone());
+            let hints = shortcut_hints(
+                ui,
+                opacity,
+                &self.hint_ticker,
+                self.expanded,
+                self.samples.shortcut_availability(),
             );
-            if game.drag_started() {
+            if hints.drag_started() {
                 self.start_window_drag(&ctx);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -785,6 +846,97 @@ impl OverlayPreview {
             });
         });
     }
+}
+
+fn shortcut_hints(
+    ui: &mut egui::Ui,
+    opacity: u8,
+    ticker: &hints::Ticker,
+    expanded: bool,
+    available: layouts::ShortcutAvailability,
+) -> egui::Response {
+    // The clipped lane stays fixed while a continuous train of hints moves through it.
+    let width = (ui.available_width() - 195.0).clamp(0.0, 248.0);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::drag());
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    let entries: Vec<_> = hints::SEQUENCE
+        .iter()
+        .map(|hint| {
+            let (keys, label, enabled): (&[&str], &str, bool) = match hint {
+                hints::Hint::Categories => (&["A", "D"], "Browse categories", available.categories),
+                hints::Hint::Mods => (&["Q", "E"], "Browse mods", available.mods),
+                hints::Hint::Exclusive => (
+                    &["Ctrl"],
+                    "Enable this, disable others",
+                    available.exclusive,
+                ),
+                hints::Hint::Additive => {
+                    (&["Shift"], "Enable this, keep others", available.additive)
+                }
+                hints::Hint::Disable => (&["X"], "Disable this mod", available.disable),
+            };
+            let key_width = if keys.len() > 1 || keys[0].len() == 1 {
+                19.0
+            } else {
+                36.0
+            };
+            let group_width = key_width * keys.len() as f32 + 3.0 * (keys.len() - 1) as f32;
+            let label = painter.layout_no_wrap(
+                label.to_owned(),
+                egui::FontId::proportional(11.0),
+                content_gray(if enabled { 165 } else { 112 }, opacity),
+            );
+            let span = group_width + 8.0 + label.size().x + 28.0;
+            (keys, key_width, group_width, label, enabled, span)
+        })
+        .collect();
+    let cycle_width = entries.iter().map(|entry| entry.5).sum();
+    let frame = ticker.frame(
+        ui.input(|input| input.time),
+        ui.style().animation_time > 0.0,
+        cycle_width,
+    );
+    if expanded {
+        ui.ctx().request_repaint_after(frame.repaint_after);
+    }
+    let mut origin = rect.left() + 8.0 - frame.offset;
+    // A second copy makes the last hint flow directly into the first without a reset gap.
+    for _ in 0..2 {
+        for (keys, key_width, group_width, label, enabled, span) in &entries {
+            if origin + span >= rect.left() && origin < rect.right() {
+                let mut x = origin;
+                for key in *keys {
+                    let key_rect = egui::Rect::from_center_size(
+                        egui::pos2(x + key_width * 0.5, rect.center().y),
+                        egui::vec2(*key_width, 20.0),
+                    );
+                    painter.rect_filled(
+                        key_rect,
+                        3,
+                        content_gray(if *enabled { 43 } else { 36 }, opacity),
+                    );
+                    painter.text(
+                        key_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        *key,
+                        egui::FontId::proportional(11.0),
+                        content_gray(if *enabled { 210 } else { 112 }, opacity),
+                    );
+                    x += key_width + 3.0;
+                }
+                painter.galley(
+                    egui::pos2(
+                        origin + group_width + 8.0,
+                        rect.center().y - label.size().y * 0.5,
+                    ),
+                    label.clone(),
+                    Color32::WHITE,
+                );
+            }
+            origin += span;
+        }
+    }
+    response
 }
 
 fn header_button(

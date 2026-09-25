@@ -19,14 +19,14 @@ const NEIGHBOR_CARD_SIZE: Vec2 = Vec2::new(133.0, 153.0);
 const CAROUSEL_CARD_GAP: f32 = 12.0;
 const CATEGORY_STRIP_HEIGHT: f32 = 78.0;
 const CATEGORY_ITEM_HEIGHT: f32 = 64.0;
-const CATEGORY_SELECTED_WIDTH: f32 = 154.0;
-const CATEGORY_ITEM_WIDTH: f32 = 56.0;
+const CATEGORY_ITEM_WIDTH: f32 = 64.0;
+const CATEGORY_NAV_WIDTH: f32 = 40.0;
 const CATEGORY_GAP: f32 = 6.0;
 const ACCENT: Color32 = Color32::from_rgb(196, 91, 52);
 const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
 const ACTIVE_FEEDBACK_SECS: f64 = 0.15;
 const CATEGORY_SPRITE_SIZE: f32 = 30.0;
-const CATEGORY_SELECTED_SPRITE_SIZE: f32 = 38.0;
+const CATEGORY_SELECTED_SPRITE_SIZE: f32 = 40.0;
 const CARD_TITLE_BOTTOM_PADDING: f32 = 8.0;
 
 // Keep one physical wheel notch from selecting several entries when egui exposes its
@@ -101,7 +101,23 @@ struct HeldPreview {
 enum PendingCommand {
     Mod(i32),
     Category(i32),
-    Activate,
+    Action(ModAction),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModAction {
+    Exclusive,
+    Additive,
+    Disable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ShortcutAvailability {
+    pub categories: bool,
+    pub mods: bool,
+    pub exclusive: bool,
+    pub additive: bool,
+    pub disable: bool,
 }
 
 /// In-memory state for the native costume switcher preview.
@@ -360,14 +376,50 @@ impl Layouts {
         ctx.request_repaint();
     }
 
-    /// Activate or toggle the focused mod using the same in-memory selection rule as a card
-    /// click. The root hotkey path calls this directly because it already owns the context.
-    pub(super) fn activate_focused(&mut self, ctx: &egui::Context) {
+    /// Queue an explicit action for the focused mod. The command is applied on the next
+    /// carousel pass, alongside ordinary activation, so navigation and actions retain FIFO order
+    /// and reveal/gesture guards.
+    pub(super) fn apply_focused_action(&mut self, ctx: &egui::Context, action: ModAction) {
         if self.pointer_gesture_active_in_context(ctx) {
             return;
         }
-        self.pending_commands.push_back(PendingCommand::Activate);
+        self.pending_commands
+            .push_back(PendingCommand::Action(action));
         ctx.request_repaint();
+    }
+
+    pub(super) fn shortcut_availability(&self) -> ShortcutAvailability {
+        let categories = self.catalog.categories.len() > 1;
+        let Some(category) = self.catalog.categories.get(self.selected_category) else {
+            return ShortcutAvailability {
+                categories,
+                mods: false,
+                exclusive: false,
+                additive: false,
+                disable: false,
+            };
+        };
+        let Some(focused) = category.costumes.get(self.carousel_focus) else {
+            return ShortcutAvailability {
+                categories,
+                mods: category.costumes.len() > 1,
+                exclusive: false,
+                additive: false,
+                disable: false,
+            };
+        };
+        let active_count = category
+            .costumes
+            .iter()
+            .filter(|costume| costume.active)
+            .count();
+        ShortcutAvailability {
+            categories,
+            mods: category.costumes.len() > 1,
+            exclusive: !(focused.active && active_count == 1),
+            additive: !focused.active,
+            disable: focused.active,
+        }
     }
 
     /// Return the current painted card/preview bounds for the native click-through mask.
@@ -640,12 +692,13 @@ impl Layouts {
                         self.advance_mod_focus(carousel_rect, costume_count, direction, now);
                     }
                 }
-                PendingCommand::Activate => {
+                PendingCommand::Action(action) => {
                     if self.reveal_progress < REVEAL_INTERACTION_THRESHOLD {
-                        self.pending_commands.push_front(PendingCommand::Activate);
+                        self.pending_commands
+                            .push_front(PendingCommand::Action(action));
                         break;
                     }
-                    self.activate_focused_costume(now);
+                    self.apply_focused_costume_action(action, now);
                 }
             }
         }
@@ -732,9 +785,13 @@ impl Layouts {
             self.select_category(index);
         }
 
-        let mut content_ui =
-            ui.new_child(egui::UiBuilder::new().max_rect(strip_rect.shrink2(Vec2::new(12.0, 0.0))));
-        let output = egui::ScrollArea::horizontal()
+        let rail_rect = strip_rect.shrink2(Vec2::new(12.0, 0.0));
+        // Let the category rail run beneath the navigation controls. The controls are
+        // painted over the rail below, so reserving side gutters would leave an
+        // unnecessary gap before the first and after the last category.
+        let scroll_rect = rail_rect;
+        let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(scroll_rect));
+        egui::ScrollArea::horizontal()
             .id_salt("overlay-preview-category-strip")
             .auto_shrink([false, false])
             .show(&mut content_ui, |ui| {
@@ -747,31 +804,152 @@ impl Layouts {
                     }
                 });
             });
-        let clipped = output.content_size.x > output.inner_rect.width() + 1.0;
-        if clipped {
-            let left = output.state.offset.x > 1.0;
-            let right =
-                output.state.offset.x + output.inner_rect.width() < output.content_size.x - 1.0;
-            let chevron_color = content_gray(190, overlay_opacity);
-            if left {
-                ui.painter().text(
-                    egui::pos2(strip_rect.min.x + 5.0, output.inner_rect.center().y),
-                    Align2::CENTER_CENTER,
-                    char::from(lucide_icons::Icon::ChevronLeft).to_string(),
-                    FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
-                    chevron_color,
-                );
-            }
-            if right {
-                ui.painter().text(
-                    egui::pos2(strip_rect.max.x - 5.0, output.inner_rect.center().y),
-                    Align2::CENTER_CENTER,
-                    char::from(lucide_icons::Icon::ChevronRight).to_string(),
-                    FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
-                    chevron_color,
-                );
+        let left_enabled =
+            next_visible_category(&visible_indices, self.selected_category, -1).is_some();
+        let right_enabled =
+            next_visible_category(&visible_indices, self.selected_category, 1).is_some();
+        self.show_category_nav_button(
+            ui,
+            Rect::from_min_size(
+                egui::pos2(strip_rect.min.x + 4.0, rail_rect.min.y + 9.0),
+                Vec2::new(CATEGORY_NAV_WIDTH, 28.0),
+            ),
+            -1,
+            'A',
+            left_enabled,
+            &visible_indices,
+            overlay_opacity,
+        );
+        self.show_category_nav_button(
+            ui,
+            Rect::from_min_size(
+                egui::pos2(
+                    strip_rect.max.x - CATEGORY_NAV_WIDTH - 4.0,
+                    rail_rect.min.y + 9.0,
+                ),
+                Vec2::new(CATEGORY_NAV_WIDTH, 28.0),
+            ),
+            1,
+            'D',
+            right_enabled,
+            &visible_indices,
+            overlay_opacity,
+        );
+    }
+
+    fn show_category_nav_button(
+        &mut self,
+        ui: &mut Ui,
+        rect: Rect,
+        direction: i32,
+        shortcut: char,
+        enabled: bool,
+        visible_indices: &[usize],
+        overlay_opacity: u8,
+    ) {
+        // At either end, leave the category beneath the unavailable control unobscured.
+        if !enabled {
+            return;
+        }
+        let sense = Sense::click();
+        let response = ui
+            .interact(
+                rect,
+                ui.id().with(("overlay-preview-category-nav", direction)),
+                sense,
+            )
+            .on_hover_cursor(if enabled {
+                egui::CursorIcon::PointingHand
+            } else {
+                egui::CursorIcon::Default
+            });
+        let response = delayed_tooltip(
+            response,
+            if direction < 0 {
+                "Previous category"
+            } else {
+                "Next category"
+            },
+        );
+        let hover = ui.ctx().animate_bool_with_time(
+            response.id.with("hover"),
+            enabled && response.hovered(),
+            0.12,
+        );
+        let pressed = ui.ctx().animate_bool_with_time(
+            response.id.with("pressed"),
+            enabled && response.is_pointer_button_down_on(),
+            0.06,
+        );
+        let shade = (24.0 + 14.0 * hover - 12.0 * pressed).round() as u8;
+        let alpha = if enabled {
+            (224.0 + 12.0 * hover).round() as u8
+        } else {
+            180
+        };
+        let button_fill = rgba_alpha(shade, shade, shade, alpha, overlay_opacity);
+        let visual_rect = rect;
+        ui.painter()
+            .rect_filled(visual_rect, CornerRadius::same(8), button_fill);
+        ui.painter().rect_stroke(
+            visual_rect,
+            CornerRadius::same(8),
+            Stroke::new(
+                1.0,
+                rgba_alpha(
+                    190,
+                    190,
+                    190,
+                    (56.0 + 24.0 * hover).round() as u8,
+                    overlay_opacity,
+                ),
+            ),
+            StrokeKind::Inside,
+        );
+        if enabled && response.clicked() {
+            if let Some(index) =
+                next_visible_category(visible_indices, self.selected_category, direction)
+            {
+                self.select_category(index);
+                ui.ctx().request_repaint();
             }
         }
+
+        let emphasis = if enabled { 1.0 } else { 0.38 };
+        let arrow_color = scale_color_alpha(
+            content_gray((220.0 + 30.0 * hover).round() as u8, overlay_opacity),
+            emphasis,
+        );
+        let shortcut_color = scale_color_alpha(
+            content_gray((164.0 + 20.0 * hover).round() as u8, overlay_opacity),
+            emphasis,
+        );
+        let center = visual_rect.center();
+        let icon = char::from(if direction < 0 {
+            lucide_icons::Icon::ChevronLeft
+        } else {
+            lucide_icons::Icon::ChevronRight
+        })
+        .to_string();
+        let (icon_pos, shortcut_pos) = if direction < 0 {
+            (center.x - 8.0, center.x + 8.0)
+        } else {
+            (center.x + 8.0, center.x - 8.0)
+        };
+        ui.painter().text(
+            egui::pos2(shortcut_pos, center.y),
+            Align2::CENTER_CENTER,
+            shortcut.to_string(),
+            FontId::proportional(10.0),
+            shortcut_color,
+        );
+        ui.painter().text(
+            egui::pos2(icon_pos, center.y),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::new(16.0, egui::FontFamily::Name("preview-icons".into())),
+            arrow_color,
+        );
     }
 
     fn show_empty_catalog(&mut self, ui: &mut Ui, overlay_opacity: u8) -> Vec<Rect> {
@@ -865,13 +1043,10 @@ impl Layouts {
             .image
             .clone()
             .or_else(|| self.active_images[index].clone());
-        let width = if selected {
-            CATEGORY_SELECTED_WIDTH
-        } else {
-            CATEGORY_ITEM_WIDTH
-        };
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(width, CATEGORY_ITEM_HEIGHT), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(CATEGORY_ITEM_WIDTH, CATEGORY_ITEM_HEIGHT),
+            Sense::click(),
+        );
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             self.select_category(index);
@@ -886,7 +1061,7 @@ impl Layouts {
         }
 
         let fill = if selected {
-            rgba_alpha(65, 65, 65, 118, overlay_opacity)
+            rgba_alpha(65, 65, 65, 92, overlay_opacity)
         } else if response.hovered() {
             white_alpha(15, overlay_opacity)
         } else {
@@ -895,8 +1070,11 @@ impl Layouts {
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
 
         if selected {
-            let image_rect = Rect::from_center_size(
-                egui::pos2(rect.min.x + 25.0, rect.min.y + 23.0),
+            let image_rect = Rect::from_min_size(
+                egui::pos2(
+                    rect.center().x - CATEGORY_SELECTED_SPRITE_SIZE * 0.5,
+                    rect.min.y + 2.0,
+                ),
                 Vec2::splat(CATEGORY_SELECTED_SPRITE_SIZE),
             );
             let texture = self.texture_for(ui, image.as_deref());
@@ -908,26 +1086,26 @@ impl Layouts {
                 false,
                 image_alpha(overlay_opacity),
             );
-            let text_rect = Rect::from_min_max(
-                egui::pos2(image_rect.max.x + 8.0, rect.min.y + 9.0),
-                egui::pos2(rect.max.x - 6.0, rect.max.y - 9.0),
-            );
-            let truncated = paint_text(
+            let truncated = paint_category_name(
                 ui,
-                text_rect,
+                Rect::from_min_max(
+                    egui::pos2(rect.min.x + 3.0, rect.min.y + 42.0),
+                    egui::pos2(rect.max.x - 3.0, rect.max.y - 3.0),
+                ),
                 &name,
-                FontId::proportional(12.0),
+                FontId::proportional(10.0),
                 content_gray(242, overlay_opacity),
-                2,
             );
             if truncated {
                 let _ = delayed_tooltip(response, name.clone());
             }
-            ui.painter().rect_stroke(
-                rect.shrink(0.5),
-                CornerRadius::same(4),
-                Stroke::new(1.0, content_rgba(223, 119, 73, 180, overlay_opacity)),
-                StrokeKind::Inside,
+            ui.painter().rect_filled(
+                Rect::from_min_max(
+                    egui::pos2(rect.min.x + 10.0, rect.max.y - 2.0),
+                    egui::pos2(rect.max.x - 10.0, rect.max.y),
+                ),
+                CornerRadius::same(1),
+                content_rgba(223, 119, 73, 220, overlay_opacity),
             );
         } else {
             let image_rect = Rect::from_min_size(
@@ -948,7 +1126,10 @@ impl Layouts {
             );
             let truncated = paint_category_name(
                 ui,
-                Rect::from_min_max(egui::pos2(rect.min.x + 3.0, rect.min.y + 40.0), rect.max),
+                Rect::from_min_max(
+                    egui::pos2(rect.min.x + 3.0, rect.min.y + 42.0),
+                    egui::pos2(rect.max.x - 3.0, rect.max.y - 3.0),
+                ),
                 &name,
                 FontId::proportional(10.0),
                 content_gray(220, overlay_opacity),
@@ -1271,6 +1452,41 @@ impl Layouts {
         }
     }
 
+    fn apply_focused_costume_action(&mut self, action: ModAction, now: f64) {
+        let category_index = self.selected_category;
+        let costume_index = self.carousel_focus;
+        let mut changed = false;
+        if let Some(category) = self.catalog.categories.get_mut(category_index) {
+            if costume_index >= category.costumes.len() {
+                return;
+            }
+            match action {
+                ModAction::Exclusive => {
+                    for (index, costume) in category.costumes.iter_mut().enumerate() {
+                        let active = index == costume_index;
+                        changed |= costume.active != active;
+                        costume.active = active;
+                    }
+                }
+                ModAction::Additive => {
+                    let costume = &mut category.costumes[costume_index];
+                    changed = !costume.active;
+                    costume.active = true;
+                }
+                ModAction::Disable => {
+                    let costume = &mut category.costumes[costume_index];
+                    changed = costume.active;
+                    costume.active = false;
+                }
+            }
+            self.active_images[category_index] = active_image(category);
+        }
+        if changed {
+            self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
+            self.active_feedback_costume = Some(costume_index);
+        }
+    }
+
     fn texture_for(&mut self, ui: &Ui, path: Option<&Path>) -> Option<egui::TextureHandle> {
         self.thumbnails.get(ui.ctx(), path?)
     }
@@ -1552,25 +1768,6 @@ fn preferred_category(catalog: &Catalog) -> usize {
 
 fn character_name(name: &str) -> &str {
     name.strip_prefix("Operators: ").unwrap_or(name)
-}
-
-fn paint_text(
-    ui: &Ui,
-    rect: Rect,
-    text: &str,
-    font: FontId,
-    color: Color32,
-    max_rows: usize,
-) -> bool {
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, rect.width());
-    job.wrap.max_rows = max_rows;
-    job.wrap.break_anywhere = false;
-    job.wrap.overflow_character = Some('…');
-    let galley = ui.painter().layout_job(job);
-    let elided = galley.elided;
-    let position = egui::pos2(rect.min.x, rect.center().y - galley.size().y * 0.5);
-    ui.painter().galley(position, galley, color);
-    elided
 }
 
 fn paint_category_name(ui: &Ui, rect: Rect, name: &str, font: FontId, color: Color32) -> bool {
@@ -2557,11 +2754,11 @@ mod tests {
     }
 
     #[test]
-    fn direct_focused_activation_uses_the_same_selection_rule() {
+    fn direct_focused_exclusive_action_uses_the_same_selection_rule() {
         let mut layouts = test_layouts(1);
         let context = egui::Context::default();
         layouts.navigate_mod(&context, 1);
-        layouts.activate_focused(&context);
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
         run_layout_frame(
             &context,
             &mut layouts,
@@ -2574,12 +2771,187 @@ mod tests {
     }
 
     #[test]
-    fn queued_category_mod_activation_applies_in_order() {
+    fn exclusive_action_enables_focused_mod_and_disables_the_rest() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, true, false])],
+            note: None,
+        });
+        let context = egui::Context::default();
+        layouts.carousel_focus = 2;
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![2]);
+    }
+
+    #[test]
+    fn additive_action_enables_without_disabling_and_is_idempotent() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        layouts.carousel_focus = 1;
+        layouts.apply_focused_action(&context, ModAction::Additive);
+        layouts.apply_focused_action(&context, ModAction::Additive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0, 1]);
+    }
+
+    #[test]
+    fn disable_action_can_remove_the_last_active_mod() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[false, true, false])],
+            note: None,
+        });
+        let context = egui::Context::default();
+        layouts.carousel_focus = 1;
+        layouts.apply_focused_action(&context, ModAction::Disable);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert!(active_indices(&layouts.catalog.categories[0]).is_empty());
+    }
+
+    #[test]
+    fn explicit_actions_are_noops_when_the_requested_state_already_holds() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[false, true, false])],
+            note: None,
+        });
+        let context = egui::Context::default();
+        layouts.carousel_focus = 1;
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
+        layouts.apply_focused_action(&context, ModAction::Additive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+
+        layouts.carousel_focus = 0;
+        layouts.apply_focused_action(&context, ModAction::Disable);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.1,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+    }
+
+    #[test]
+    fn queued_navigation_and_action_are_applied_in_fifo_order() {
         let mut layouts = test_layouts(2);
         let context = egui::Context::default();
         layouts.navigate_category(&context, 1);
         layouts.navigate_mod(&context, 1);
-        layouts.activate_focused(&context);
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.selected_category, 1);
+        assert_eq!(layouts.carousel_focus, 1);
+        assert_eq!(active_indices(&layouts.catalog.categories[1]), vec![1]);
+    }
+
+    #[test]
+    fn shortcut_availability_reflects_focused_mod_state() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, false, false]), category(&[false, false])],
+            note: None,
+        });
+        assert_eq!(
+            layouts.shortcut_availability(),
+            ShortcutAvailability {
+                categories: true,
+                mods: true,
+                exclusive: false,
+                additive: false,
+                disable: true,
+            }
+        );
+
+        layouts.carousel_focus = 1;
+        assert_eq!(
+            layouts.shortcut_availability(),
+            ShortcutAvailability {
+                categories: true,
+                mods: true,
+                exclusive: true,
+                additive: true,
+                disable: false,
+            }
+        );
+    }
+
+    #[test]
+    fn shortcut_availability_handles_empty_category() {
+        let layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[])],
+            note: None,
+        });
+        let availability = layouts.shortcut_availability();
+        assert!(!availability.categories);
+        assert!(!availability.mods);
+        assert!(!availability.exclusive);
+        assert!(!availability.additive);
+        assert!(!availability.disable);
+    }
+
+    #[test]
+    fn shortcut_availability_marks_multiple_enabled_focus_as_actionable() {
+        let mut layouts = Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![category(&[true, true, false])],
+            note: None,
+        });
+        layouts.carousel_focus = 1;
+        let availability = layouts.shortcut_availability();
+        assert!(availability.mods);
+        assert!(availability.exclusive);
+        assert!(!availability.additive);
+        assert!(availability.disable);
+    }
+
+    #[test]
+    fn queued_category_mod_exclusive_action_applies_in_order() {
+        let mut layouts = test_layouts(2);
+        let context = egui::Context::default();
+        layouts.navigate_category(&context, 1);
+        layouts.navigate_mod(&context, 1);
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
         run_layout_frame(
             &context,
             &mut layouts,

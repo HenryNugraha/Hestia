@@ -2,8 +2,9 @@
 //!
 //! Windows uses a low-level keyboard hook because the transparent, no-activate
 //! overlay deliberately does not take focus from the game.  The hook only
-//! consumes the four navigation keys and Space when Alt is held.  Alt itself
-//! and every other key continue through the normal Windows input path.
+//! consumes the four navigation keys and activation keys when Alt is
+//! held. Alt itself and every other key continue through the normal Windows
+//! input path.
 
 #[cfg(any(windows, test))]
 use std::{
@@ -21,11 +22,27 @@ const VK_A: u32 = 0x41;
 #[cfg(any(windows, test))]
 const VK_D: u32 = 0x44;
 #[cfg(any(windows, test))]
-const VK_S: u32 = 0x53;
+const VK_E: u32 = 0x45;
 #[cfg(any(windows, test))]
-const VK_W: u32 = 0x57;
+const VK_X: u32 = 0x58;
 #[cfg(any(windows, test))]
-const VK_SPACE: u32 = 0x20;
+const VK_Q: u32 = 0x51;
+#[cfg(any(windows, test))]
+const VK_SHIFT: u32 = 0x10;
+#[cfg(any(windows, test))]
+const VK_LSHIFT: u32 = 0xA0;
+#[cfg(any(windows, test))]
+const VK_RSHIFT: u32 = 0xA1;
+#[cfg(any(windows, test))]
+const VK_CONTROL: u32 = 0x11;
+#[cfg(any(windows, test))]
+const VK_LCONTROL: u32 = 0xA2;
+#[cfg(any(windows, test))]
+const VK_RCONTROL: u32 = 0xA3;
+#[cfg(any(windows, test))]
+const VK_LWIN: u32 = 0x5B;
+#[cfg(any(windows, test))]
+const VK_RWIN: u32 = 0x5C;
 #[cfg(any(windows, test))]
 const VK_LMENU: u32 = 0xA4;
 #[cfg(any(windows, test))]
@@ -42,7 +59,9 @@ const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
 pub(super) enum Command {
     Mod(i32),
     Category(i32),
-    Activate,
+    EnableExclusive,
+    EnableAdditive,
+    Disable,
 }
 
 /// Physical state machine shared by the Windows hook and its tests.
@@ -56,7 +75,10 @@ struct Router {
     alt_keys: u8,
     down: u8,
     captured: u8,
-    next_repeat: [Option<Instant>; 5],
+    activation_down: u8,
+    activation_captured: u8,
+    windows_down: u8,
+    next_repeat: [Option<Instant>; 4],
     commands: VecDeque<Command>,
 }
 
@@ -67,7 +89,10 @@ impl Router {
             alt_keys,
             down,
             captured: 0,
-            next_repeat: [None; 5],
+            activation_down: 0,
+            activation_captured: 0,
+            windows_down: 0,
+            next_repeat: [None; 4],
             commands: VecDeque::new(),
         }
     }
@@ -76,13 +101,18 @@ impl Router {
         self.alt_keys != 0 || alt_context
     }
 
+    fn ctrl_active(&self) -> bool {
+        self.activation_down & 0x0C != 0
+    }
+
     /// Routes one physical keyboard event and returns whether it is consumed.
-    /// `blocked_modifier` means Ctrl or either Windows key is down.
+    /// Ctrl is an activation key, but it also blocks navigation while held so
+    /// Ctrl combinations continue to reach the game as complete key pairs.
     fn event(
         &mut self,
         vk: u32,
         pressed: bool,
-        blocked_modifier: bool,
+        blocked_windows: bool,
         alt_context: bool,
         now: Instant,
     ) -> bool {
@@ -93,6 +123,49 @@ impl Router {
                 self.alt_keys &= !alt_bit;
             }
             return false;
+        }
+
+        if let Some(window_bit) = windows_bit(vk) {
+            if pressed {
+                self.windows_down |= window_bit;
+            } else {
+                self.windows_down &= !window_bit;
+            }
+            return false;
+        }
+
+        if let Some((activation_bit, command)) = activation_key(vk) {
+            if !pressed {
+                let was_captured = self.activation_captured & activation_bit != 0;
+                self.activation_down &= !activation_bit;
+                self.activation_captured &= !activation_bit;
+                return was_captured;
+            }
+
+            let was_down = self.activation_down & activation_bit != 0;
+            self.activation_down |= activation_bit;
+
+            if self.activation_captured & activation_bit != 0 {
+                // Activation is edge-triggered. Repeated modifier-down events
+                // stay swallowed while the matching physical key is held.
+                return true;
+            }
+
+            // A modifier already held before Alt belongs to the game. This
+            // also keeps the normal AltGr sequence (synthetic Ctrl down,
+            // followed by right Alt) out of the activation path.
+            if was_down
+                || !self.alt_active(alt_context)
+                || blocked_windows
+                || self.windows_down != 0
+                || (matches!(command, Command::Disable) && self.ctrl_active())
+            {
+                return false;
+            }
+
+            self.activation_captured |= activation_bit;
+            self.commands.push_back(command);
+            return true;
         }
 
         let Some(index) = navigation_index(vk) else {
@@ -114,9 +187,10 @@ impl Router {
         self.down |= bit;
 
         if self.captured & bit != 0 {
-            if vk != VK_SPACE
-                && self.alt_active(alt_context)
-                && !blocked_modifier
+            if self.alt_active(alt_context)
+                && !blocked_windows
+                && self.windows_down == 0
+                && !self.ctrl_active()
                 && self.next_repeat[index].is_some_and(|next| now >= next)
             {
                 self.commands.push_back(command_for(vk));
@@ -130,18 +204,18 @@ impl Router {
 
         // A key that was already down before Alt was pressed belongs to the
         // game.  Do not steal it when its auto-repeat happens under Alt.
-        if was_down || !self.alt_active(alt_context) || blocked_modifier {
+        if was_down
+            || !self.alt_active(alt_context)
+            || blocked_windows
+            || self.windows_down != 0
+            || self.ctrl_active()
+        {
             return false;
         }
 
         self.captured |= bit;
-        if vk == VK_SPACE {
-            self.commands.push_back(Command::Activate);
-            self.next_repeat[index] = None;
-        } else {
-            self.commands.push_back(command_for(vk));
-            self.next_repeat[index] = Some(now + REPEAT_DELAY);
-        }
+        self.commands.push_back(command_for(vk));
+        self.next_repeat[index] = Some(now + REPEAT_DELAY);
         true
     }
 
@@ -153,11 +227,33 @@ impl Router {
 #[cfg(any(windows, test))]
 fn navigation_index(vk: u32) -> Option<usize> {
     match vk {
-        VK_A => Some(0),
-        VK_D => Some(1),
-        VK_W => Some(2),
-        VK_S => Some(3),
-        VK_SPACE => Some(4),
+        VK_Q => Some(0),
+        VK_E => Some(1),
+        VK_A => Some(2),
+        VK_D => Some(3),
+        _ => None,
+    }
+}
+
+#[cfg(any(windows, test))]
+fn activation_key(vk: u32) -> Option<(u8, Command)> {
+    match vk {
+        VK_SHIFT => Some((0x03, Command::EnableAdditive)),
+        VK_LSHIFT => Some((0x01, Command::EnableAdditive)),
+        VK_RSHIFT => Some((0x02, Command::EnableAdditive)),
+        VK_CONTROL => Some((0x0C, Command::EnableExclusive)),
+        VK_LCONTROL => Some((0x04, Command::EnableExclusive)),
+        VK_RCONTROL => Some((0x08, Command::EnableExclusive)),
+        VK_X => Some((0x10, Command::Disable)),
+        _ => None,
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_bit(vk: u32) -> Option<u8> {
+    match vk {
+        VK_LWIN => Some(0x01),
+        VK_RWIN => Some(0x02),
         _ => None,
     }
 }
@@ -175,10 +271,10 @@ fn alt_bit(vk: u32) -> Option<u8> {
 #[cfg(any(windows, test))]
 fn command_for(vk: u32) -> Command {
     match vk {
-        VK_A => Command::Mod(-1),
-        VK_D => Command::Mod(1),
-        VK_W => Command::Category(-1),
-        VK_S => Command::Category(1),
+        VK_Q => Command::Mod(-1),
+        VK_E => Command::Mod(1),
+        VK_A => Command::Category(-1),
+        VK_D => Command::Category(1),
         _ => unreachable!("command requested for a non-navigation key"),
     }
 }
@@ -258,7 +354,7 @@ impl HookState {
         &self,
         vk: u32,
         pressed: bool,
-        blocked_modifier: bool,
+        blocked_windows: bool,
         alt_context: bool,
         now: Instant,
     ) -> bool {
@@ -266,7 +362,7 @@ impl HookState {
             return false;
         };
         let old_alt = self.alt_held.load(std::sync::atomic::Ordering::Acquire);
-        let consumed = router.event(vk, pressed, blocked_modifier, alt_context, now);
+        let consumed = router.event(vk, pressed, blocked_windows, alt_context, now);
         let new_alt = router.alt_keys != 0;
         self.alt_held
             .store(new_alt, std::sync::atomic::Ordering::Release);
@@ -404,21 +500,31 @@ fn keyboard_thread(
 #[cfg(windows)]
 fn initialize_physical_state(state: &HookState) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_A, VK_D, VK_LMENU, VK_RMENU, VK_S, VK_SPACE, VK_W,
+        GetAsyncKeyState, VK_A, VK_D, VK_E, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_Q,
+        VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_X,
     };
 
-    let down = [VK_A, VK_D, VK_W, VK_S, VK_SPACE]
+    let down = [VK_Q, VK_E, VK_A, VK_D]
         .into_iter()
         .enumerate()
         .fold(0u8, |mask, (index, key)| {
             let pressed = unsafe { GetAsyncKeyState(i32::from(key.0)) } < 0;
             mask | (u8::from(pressed) << index)
         });
+    let activation_down = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LSHIFT.0)) } < 0)
+        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RSHIFT.0)) } < 0) << 1)
+        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LCONTROL.0)) } < 0) << 2)
+        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RCONTROL.0)) } < 0) << 3)
+        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_X.0)) } < 0) << 4);
+    let windows_down = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LWIN.0)) } < 0)
+        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RWIN.0)) } < 0) << 1);
     let alt_keys = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LMENU.0)) } < 0)
         | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RMENU.0)) } < 0) << 1);
     if let Ok(mut router) = state.router.lock() {
         router.alt_keys = alt_keys;
         router.down = down;
+        router.activation_down = activation_down;
+        router.windows_down = windows_down;
         state
             .alt_held
             .store(alt_keys != 0, std::sync::atomic::Ordering::Release);
@@ -474,18 +580,16 @@ unsafe extern "system" fn keyboard_hook(
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
 
-    let blocked_modifier = {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{
-            GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_RWIN,
-        };
-        [VK_CONTROL, VK_LWIN, VK_RWIN]
+    let blocked_windows = {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LWIN, VK_RWIN};
+        [VK_LWIN, VK_RWIN]
             .into_iter()
             .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) } < 0)
     };
     let consumed = state.route(
         event.vkCode,
         pressed,
-        blocked_modifier,
+        blocked_windows,
         event.flags.contains(LLKHF_ALTDOWN),
         Instant::now(),
     );
@@ -544,10 +648,10 @@ mod tests {
     #[test]
     fn alt_navigation_maps_to_expected_commands() {
         let mut router = Router::new(1, 0);
+        assert!(router.event(VK_Q, true, false, false, t(0)));
+        assert!(router.event(VK_E, true, false, false, t(0)));
         assert!(router.event(VK_A, true, false, false, t(0)));
         assert!(router.event(VK_D, true, false, false, t(0)));
-        assert!(router.event(VK_W, true, false, false, t(0)));
-        assert!(router.event(VK_S, true, false, false, t(0)));
         assert_eq!(
             router.take_commands(),
             vec![
@@ -560,27 +664,150 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_or_windows_chords_reach_the_game() {
+    fn old_w_s_and_space_bindings_reach_the_game() {
         let mut router = Router::new(1, 0);
-        assert!(!router.event(VK_A, true, true, false, t(0)));
-        assert!(!router.event(VK_D, true, true, false, t(0)));
+        assert!(!router.event(0x57, true, false, false, t(0)));
+        assert!(!router.event(0x53, true, false, false, t(0)));
+        assert!(!router.event(0x20, true, false, false, t(0)));
         assert!(router.take_commands().is_empty());
     }
 
     #[test]
-    fn pre_alt_keyup_is_never_consumed() {
+    fn activation_modifiers_are_alternatives_and_edge_triggered() {
+        let mut router = Router::new(1, 0);
+        assert!(router.event(VK_LSHIFT, true, false, false, t(0)));
+        assert!(router.event(VK_LSHIFT, true, false, false, t(1)));
+        assert_eq!(router.take_commands(), vec![Command::EnableAdditive]);
+        assert!(router.event(VK_LSHIFT, false, false, false, t(2)));
+
+        assert!(router.event(VK_RSHIFT, true, false, false, t(3)));
+        assert!(router.event(VK_RSHIFT, true, false, false, t(4)));
+        assert_eq!(router.take_commands(), vec![Command::EnableAdditive]);
+        assert!(router.event(VK_RSHIFT, false, false, false, t(5)));
+
+        assert!(router.event(VK_LCONTROL, true, false, false, t(6)));
+        assert!(router.event(VK_LCONTROL, true, false, false, t(7)));
+        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
+        assert!(router.event(VK_LCONTROL, false, false, false, t(8)));
+
+        assert!(router.event(VK_RCONTROL, true, false, false, t(9)));
+        assert!(router.event(VK_RCONTROL, true, false, false, t(10)));
+        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
+        assert!(router.event(VK_RCONTROL, false, false, false, t(11)));
+    }
+
+    #[test]
+    fn disable_key_is_edge_triggered_and_captured_until_release() {
+        let mut router = Router::new(1, 0);
+        assert!(router.event(VK_X, true, false, false, t(0)));
+        assert!(router.event(VK_X, true, false, false, t(1)));
+        assert_eq!(router.take_commands(), vec![Command::Disable]);
+        assert!(!router.event(VK_LMENU, false, false, false, t(2)));
+        assert!(router.event(VK_X, false, false, false, t(3)));
+        assert!(router.take_commands().is_empty());
+    }
+
+    #[test]
+    fn windows_chords_reach_the_game_and_block_capture() {
+        let mut router = Router::new(1, 0);
+        assert!(!router.event(VK_LWIN, true, false, false, t(0)));
+        assert!(!router.event(VK_Q, true, true, false, t(1)));
+        assert!(!router.event(VK_LSHIFT, true, true, false, t(2)));
+        assert!(!router.event(VK_LWIN, false, false, false, t(3)));
+        assert!(router.take_commands().is_empty());
+    }
+
+    #[test]
+    fn ctrl_held_navigation_reaches_the_game() {
+        let mut router = Router::new(0, 0);
+        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
+        assert!(!router.event(VK_LMENU, true, false, false, t(1)));
+        assert!(!router.event(VK_Q, true, false, false, t(2)));
+        assert!(!router.event(VK_Q, false, false, false, t(3)));
+        assert!(!router.event(VK_LCONTROL, false, false, false, t(4)));
+        assert!(router.take_commands().is_empty());
+    }
+
+    #[test]
+    fn ctrl_held_disable_reaches_the_game() {
+        let mut router = Router::new(0, 0);
+        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
+        assert!(!router.event(VK_LMENU, true, false, false, t(1)));
+        assert!(!router.event(VK_X, true, false, false, t(2)));
+        assert!(!router.event(VK_X, false, false, false, t(3)));
+        assert!(!router.event(VK_LCONTROL, false, false, false, t(4)));
+        assert!(router.take_commands().is_empty());
+
+        let mut router = Router::new(0, 0);
+        assert!(!router.event(VK_LCONTROL, true, false, false, t(5)));
+        assert!(!router.event(VK_RMENU, true, false, false, t(6)));
+        assert!(!router.event(VK_X, true, false, false, t(7)));
+        assert!(!router.event(VK_X, false, false, false, t(8)));
+        assert!(!router.event(VK_LCONTROL, false, false, false, t(9)));
+        assert!(!router.event(VK_RMENU, false, false, false, t(10)));
+        assert!(router.take_commands().is_empty());
+    }
+
+    #[test]
+    fn pre_alt_navigation_and_activation_keyups_reach_the_game() {
         let mut router = Router::new(0, 1 << 0);
-        assert!(!router.event(VK_A, true, false, false, t(0)));
+        router.activation_down = 0x01;
+        assert!(!router.event(VK_Q, true, false, false, t(0)));
         assert!(!router.event(VK_LMENU, true, false, false, t(0)));
-        assert!(!router.event(VK_A, false, false, false, t(0)));
+        assert!(!router.event(VK_Q, false, false, false, t(0)));
+        assert!(!router.event(VK_LSHIFT, true, false, false, t(0)));
+        assert!(!router.event(VK_LSHIFT, false, false, false, t(0)));
+        assert!(router.take_commands().is_empty());
+
+        let mut router = Router::new(0, 0);
+        router.activation_down = 0x10;
+        assert!(!router.event(VK_X, true, false, false, t(0)));
+        assert!(!router.event(VK_LMENU, true, false, false, t(0)));
+        assert!(!router.event(VK_X, false, false, false, t(0)));
+        assert!(router.take_commands().is_empty());
     }
 
     #[test]
     fn captured_keyup_stays_consumed_after_alt_release() {
         let mut router = Router::new(1, 0);
-        assert!(router.event(VK_A, true, false, false, t(0)));
+        assert!(router.event(VK_Q, true, false, false, t(0)));
         assert!(!router.event(VK_LMENU, false, false, false, t(1)));
-        assert!(router.event(VK_A, false, false, false, t(2)));
+        assert!(router.event(VK_Q, false, false, false, t(2)));
+    }
+
+    #[test]
+    fn captured_activation_keyup_stays_consumed_after_alt_release() {
+        for (key, command) in [
+            (VK_LSHIFT, Command::EnableAdditive),
+            (VK_RSHIFT, Command::EnableAdditive),
+            (VK_LCONTROL, Command::EnableExclusive),
+            (VK_RCONTROL, Command::EnableExclusive),
+            (VK_X, Command::Disable),
+        ] {
+            let mut router = Router::new(1, 0);
+            assert!(router.event(key, true, false, false, t(0)));
+            assert_eq!(router.take_commands(), vec![command]);
+            assert!(!router.event(VK_LMENU, false, false, false, t(1)));
+            assert!(router.event(key, false, false, false, t(2)));
+        }
+    }
+
+    #[test]
+    fn altgr_does_not_activate_through_synthetic_control() {
+        let mut router = Router::new(0, 0);
+        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
+        assert!(!router.event(VK_RMENU, true, false, false, t(1)));
+        assert!(!router.event(VK_LCONTROL, false, false, false, t(2)));
+        assert!(!router.event(VK_RMENU, false, false, false, t(3)));
+        assert!(router.take_commands().is_empty());
+
+        let mut router = Router::new(0, 0);
+        assert!(!router.event(VK_RMENU, true, false, false, t(0)));
+        assert!(router.event(VK_LCONTROL, true, false, false, t(1)));
+        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
+        assert!(router.event(VK_LCONTROL, false, false, false, t(2)));
+        assert!(!router.event(VK_RMENU, false, false, false, t(3)));
+        assert!(router.take_commands().is_empty());
     }
 
     #[cfg(windows)]
@@ -594,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn navigation_repeats_after_delay_but_space_is_edge_only() {
+    fn navigation_repeats_after_delay() {
         let mut router = Router::new(1, 0);
         let start = Instant::now();
         assert!(router.event(VK_D, true, false, false, start));
@@ -618,12 +845,11 @@ mod tests {
         ));
         assert_eq!(
             router.take_commands(),
-            vec![Command::Mod(1), Command::Mod(1), Command::Mod(1)]
+            vec![
+                Command::Category(1),
+                Command::Category(1),
+                Command::Category(1),
+            ]
         );
-
-        let mut router = Router::new(1, 0);
-        assert!(router.event(VK_SPACE, true, false, false, start));
-        assert!(router.event(VK_SPACE, true, false, false, start + Duration::from_secs(1)));
-        assert_eq!(router.take_commands(), vec![Command::Activate]);
     }
 }
