@@ -331,7 +331,7 @@ fn reorder_category_ids_for_drag(
     }
 }
 
-fn sort_categories_with_counts<F>(
+pub(crate) fn sort_categories_with_counts<F>(
     categories: &mut [ModCategory],
     mode: ModCategorySortMode,
     mut member_count: F,

@@ -8,10 +8,12 @@ mod layouts;
 mod motion;
 mod platform;
 mod restore;
+mod search;
 mod session;
 mod thumbnails;
 
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -28,6 +30,7 @@ const IDLE_SIZE: egui::Vec2 = egui::vec2(280.0, 48.0);
 const CANVAS_SIZE: egui::Vec2 = egui::vec2(560.0, 660.0);
 const CAROUSEL_HEIGHT: f32 = 266.0;
 const HEADER_HEIGHT: f32 = 46.0;
+const SEARCH_SIZE: egui::Vec2 = egui::vec2(120.0, 22.0);
 /// Win32 `ERROR_HOTKEY_ALREADY_REGISTERED`.
 const HOTKEY_ALREADY_REGISTERED: i32 = 1409;
 const HOTKEY_TAKEN: &str = "Another app already uses Alt+H, so only the pin can open the overlay.";
@@ -58,9 +61,12 @@ pub fn run() -> anyhow::Result<()> {
         egui::PointerButton::Primary
     };
     let pinned = std::env::var_os("HESTIA_OVERLAY_PREVIEW_PINNED").is_some();
-    let capture_alt = capture.is_some() && std::env::var_os("HESTIA_OVERLAY_PREVIEW_ALT").is_some();
-    let capture_alt_release = capture.as_ref().and_then(|_| {
-        std::env::var("HESTIA_OVERLAY_PREVIEW_ALT_RELEASE_FRAME")
+    // Capture runs press Alt+H through egui: on the first frame to open the
+    // overlay, and on the close frame to close it.
+    let capture_open =
+        capture.is_some() && std::env::var_os("HESTIA_OVERLAY_PREVIEW_OPEN").is_some();
+    let capture_close = capture.as_ref().and_then(|_| {
+        std::env::var("HESTIA_OVERLAY_PREVIEW_CLOSE_FRAME")
             .ok()?
             .parse()
             .ok()
@@ -86,9 +92,12 @@ pub fn run() -> anyhow::Result<()> {
     let capture_text = capture
         .as_ref()
         .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_TEXT").ok());
-    let capture_keys = capture
+    // Keys such as `F text:vow Enter`, pressed one per frame.
+    let capture_keys: VecDeque<String> = capture
         .as_ref()
-        .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_KEYS").ok());
+        .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_KEYS").ok())
+        .map(|keys| keys.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default();
     let capture_wheel = capture.as_ref().and_then(|_| {
         let value = std::env::var("HESTIA_OVERLAY_PREVIEW_WHEEL").ok()?;
         let mut parts = value.split(',');
@@ -103,6 +112,10 @@ pub fn run() -> anyhow::Result<()> {
             .expect("valid embedded app icon");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            // 3DMigoto also listens to keys pressed in a window titled
+            // "Hestia".  If the overlay ever takes that title, for example to
+            // send the F10 reload, it must drop it while a search is open, or
+            // typing would fire mod hotkeys.
             .with_title("Hestia — Overlay preview")
             .with_inner_size(CANVAS_SIZE)
             .with_decorations(false)
@@ -139,6 +152,11 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 None
             };
+            // On Windows, the window procedure routes the overlay's keys
+            // before egui sees them.  Capture runs and other platforms read
+            // the same keys from egui instead.
+            let egui_keys =
+                (keyboard.is_none() || !cfg!(windows)).then(keyboard::EguiKeys::default);
             Ok(Box::new(OverlayPreview {
                 game,
                 #[cfg(windows)]
@@ -154,12 +172,13 @@ pub fn run() -> anyhow::Result<()> {
                 expanded: pinned,
                 motion: motion::ExpansionMotion::new(pinned),
                 hint_ticker: hints::Ticker::default(),
-                suppress_alt_until_release: false,
                 pointer_completion: PointerCompletion::default(),
-                capture_alt,
-                capture_alt_release,
+                capture_open,
+                capture_close,
                 keyboard,
+                egui_keys,
                 session: session::Session::default(),
+                search: search::Search::default(),
                 focus_return_pending: false,
                 hotkey_warning,
                 focus_warning: None,
@@ -173,7 +192,6 @@ pub fn run() -> anyhow::Result<()> {
                         && std::env::var_os("HESTIA_OVERLAY_PREVIEW_HOLD").is_some()),
                 capture_text,
                 capture_keys,
-                previous_navigation_modifiers: egui::Modifiers::NONE,
                 capture_wheel,
                 capture_requested: false,
                 capture_frame,
@@ -200,12 +218,13 @@ struct OverlayPreview {
     expanded: bool,
     motion: motion::ExpansionMotion,
     hint_ticker: hints::Ticker,
-    suppress_alt_until_release: bool,
     pointer_completion: PointerCompletion,
-    capture_alt: bool,
-    capture_alt_release: Option<u32>,
+    capture_open: bool,
+    capture_close: Option<u32>,
     keyboard: Option<keyboard::Keyboard>,
+    egui_keys: Option<keyboard::EguiKeys>,
     session: session::Session,
+    search: search::Search,
     /// Hand the keyboard back once no key pressed in the overlay is held.
     focus_return_pending: bool,
     hotkey_warning: Option<&'static str>,
@@ -217,8 +236,7 @@ struct OverlayPreview {
     capture_release: Option<(u32, egui::Pos2)>,
     capture_hold: bool,
     capture_text: Option<String>,
-    capture_keys: Option<String>,
-    previous_navigation_modifiers: egui::Modifiers,
+    capture_keys: VecDeque<String>,
     capture_wheel: Option<(egui::Pos2, f32)>,
     capture_requested: bool,
     capture_frame: u32,
@@ -228,10 +246,15 @@ struct OverlayPreview {
 
 impl eframe::App for OverlayPreview {
     fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
-        if self.capture.is_some() && self.capture_alt {
-            input.modifiers.alt = self
-                .capture_alt_release
-                .is_none_or(|frame| self.frames_drawn < frame);
+        if std::mem::take(&mut self.capture_open) {
+            push_capture_key(input, egui::Key::H, egui::Modifiers::ALT);
+        }
+        if self
+            .capture_close
+            .is_some_and(|frame| self.frames_drawn >= frame)
+        {
+            self.capture_close = None;
+            push_capture_key(input, egui::Key::H, egui::Modifiers::ALT);
         }
         if self.frames_drawn >= 12 {
             if let Some(pos) = self.capture_click.take() {
@@ -267,40 +290,14 @@ impl eframe::App for OverlayPreview {
             });
         }
         if self.frames_drawn >= 20 {
-            if let Some(keys) = self.capture_keys.take() {
-                for token in keys.split_whitespace() {
-                    let key = match token.to_ascii_uppercase().as_str() {
-                        "Q" => Some(egui::Key::Q),
-                        "E" => Some(egui::Key::E),
-                        "A" => Some(egui::Key::A),
-                        "D" => Some(egui::Key::D),
-                        "X" => Some(egui::Key::X),
-                        "W" => Some(egui::Key::W),
-                        "S" => Some(egui::Key::S),
-                        "SPACE" => Some(egui::Key::Space),
-                        "SHIFT" => {
-                            input.modifiers.alt = true;
-                            input.modifiers.shift = true;
-                            None
-                        }
-                        "CTRL" => {
-                            input.modifiers.alt = true;
-                            input.modifiers.ctrl = true;
-                            None
-                        }
-                        _ => None,
-                    };
-                    let Some(key) = key else {
-                        continue;
-                    };
-                    for pressed in [true, false] {
-                        input.events.push(egui::Event::Key {
-                            key,
-                            physical_key: Some(key),
-                            pressed,
-                            repeat: false,
-                            modifiers: egui::Modifiers::ALT,
-                        });
+            // One key per frame, so each one lands on what the last one showed.
+            if let Some(token) = self.capture_keys.pop_front() {
+                if let Some(text) = token.strip_prefix("text:") {
+                    push_capture_text(input, text);
+                } else {
+                    match capture_key(&token) {
+                        Some((key, modifiers)) => push_capture_key(input, key, modifiers),
+                        None => tracing::warn!(%token, "Unknown capture key"),
                     }
                 }
             }
@@ -313,6 +310,9 @@ impl eframe::App for OverlayPreview {
                     modifiers: egui::Modifiers::NONE,
                 });
             }
+        }
+        if let Some(keys) = &mut self.egui_keys {
+            keys.filter(&mut input.events);
         }
     }
 
@@ -374,52 +374,61 @@ impl eframe::App for OverlayPreview {
                 Some(ctx.load_texture("hestia-brand", icon_image, egui::TextureOptions::LINEAR));
             self.brand_pixels = brand_pixels;
         }
-        // Capture runs and non-Windows previews read Alt and its chords from
-        // egui.  On Windows, the window procedure swallows the overlay's keys
-        // before egui sees them and reports them through `keyboard`.
-        let fallback_input = self.keyboard.is_none() || !cfg!(windows);
-        let alt = fallback_input && ctx.input(|input| input.modifiers.alt);
-        if !alt {
-            self.suppress_alt_until_release = false;
-        }
-        let mut escape = ctx.input_mut(|input| {
-            let modifiers = input.modifiers;
-            input.consume_key(modifiers, egui::Key::Escape)
-        });
-        if escape {
-            self.pinned = false;
-            self.suppress_alt_until_release = alt;
-        }
-        let mut commands = Vec::new();
-        let events = self
+        let mut events = self
             .keyboard
             .as_ref()
             .map(keyboard::Keyboard::drain)
             .unwrap_or_default();
+        if let Some(keys) = &mut self.egui_keys {
+            events.extend(keys.drain());
+        }
+        let mut escape = false;
+        let mut commands = Vec::new();
         for event in events {
             let transition = match event {
-                keyboard::Event::Hotkey {
-                    at,
-                    focused,
-                    alt_down,
-                } => {
+                keyboard::Event::Hotkey { focused } => {
                     self.focus_warning = (!focused).then_some(FOCUS_TAKE_FAILED);
-                    self.session.hotkey(at, focused, alt_down)
+                    self.session.hotkey()
                 }
                 keyboard::Event::Command(command) => {
-                    self.session.command();
                     // Gate on the state when the key arrived: a command and the
-                    // Alt release that ends the session can share a frame.
+                    // key that ends the session can share a frame.  Rows are
+                    // settled here for the same reason, since opening and
+                    // closing reset them.
                     if self.session.is_open() || self.pinned {
-                        commands.push(command);
+                        match command {
+                            keyboard::Command::Row(direction) => self.samples.switch_row(direction),
+                            keyboard::Command::Move(direction) => {
+                                commands.push(move_in_row(self.samples.row(), direction))
+                            }
+                            command => commands.push(command),
+                        }
                     }
                     session::Transition::None
                 }
-                keyboard::Event::AltReleased(at) => self.session.alt_released(at),
+                keyboard::Event::Search => {
+                    if self.session.is_open() || self.pinned {
+                        self.search.toggle();
+                        ctx.memory_mut(|memory| {
+                            if self.search.typing() {
+                                memory.request_focus(search_id());
+                            } else {
+                                memory.surrender_focus(search_id());
+                            }
+                        });
+                    }
+                    session::Transition::None
+                }
                 keyboard::Event::Escape => {
-                    escape = true;
-                    self.pinned = false;
-                    self.session.escape()
+                    // Esc clears a search first, then closes.
+                    if self.search.escape() {
+                        ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
+                        session::Transition::None
+                    } else {
+                        escape = true;
+                        self.pinned = false;
+                        self.session.escape()
+                    }
                 }
                 keyboard::Event::Deactivated => {
                     self.focus_return_pending = false;
@@ -429,7 +438,7 @@ impl eframe::App for OverlayPreview {
                     self.session.deactivated()
                 }
             };
-            self.apply_transition(transition);
+            self.apply_transition(&ctx, transition);
         }
         if self.focus_return_pending {
             if self
@@ -469,69 +478,25 @@ impl eframe::App for OverlayPreview {
         let completing_pointer = self
             .pointer_completion
             .begin_frame(self.expanded && !escape, pressed_inside);
-        let expanded = self.pinned
-            || self.session.is_open()
-            || (alt && !self.suppress_alt_until_release)
-            || completing_pointer;
+        let expanded = self.pinned || self.session.is_open() || completing_pointer;
         if expanded != self.expanded {
             self.samples.dismiss_transient_ui(&ctx);
             if !expanded {
                 self.samples.cancel_pointer_interaction();
+                self.clear_search(&ctx);
             }
             self.expanded = expanded;
             ctx.request_repaint();
         }
-        self.hint_ticker.update(expanded, now);
+        // Before the queued keys below, which move through the results.
+        self.samples.set_search(self.search.query());
+        self.hint_ticker.update(expanded, self.hint_mode(), now);
         self.motion.advance(now, expanded);
         if self.motion.animating() {
             layouts::suppress_tooltips(&ctx);
             ctx.request_repaint_after(Duration::from_millis(8));
         }
         self.samples.set_reveal(self.motion.cards());
-        if fallback_input && ctx.current_pass_index() == 0 {
-            let mut chords = Vec::new();
-            ctx.input_mut(|input| {
-                input.events.retain(|event| {
-                    let egui::Event::Key {
-                        key,
-                        pressed: true,
-                        repeat,
-                        modifiers,
-                        ..
-                    } = event
-                    else {
-                        return true;
-                    };
-                    if !modifiers.alt || modifiers.ctrl || modifiers.mac_cmd {
-                        return true;
-                    }
-                    let command = match key {
-                        egui::Key::Q => keyboard::Command::Mod(-1),
-                        egui::Key::E => keyboard::Command::Mod(1),
-                        egui::Key::A => keyboard::Command::Category(-1),
-                        egui::Key::D => keyboard::Command::Category(1),
-                        egui::Key::X => {
-                            if *repeat {
-                                return false;
-                            }
-                            keyboard::Command::Toggle
-                        }
-                        _ => return true,
-                    };
-                    chords.push(command);
-                    false
-                });
-                chords.extend(
-                    modifier_commands(self.previous_navigation_modifiers, input.modifiers)
-                        .into_iter()
-                        .flatten(),
-                );
-                self.previous_navigation_modifiers = input.modifiers;
-            });
-            if expanded && !self.suppress_alt_until_release {
-                commands.extend(chords);
-            }
-        }
         // Queue after the expansion change above, which clears queued commands.
         for command in commands {
             match command {
@@ -539,15 +504,14 @@ impl eframe::App for OverlayPreview {
                 keyboard::Command::Category(direction) => {
                     self.samples.navigate_category(&ctx, direction)
                 }
-                keyboard::Command::EnableExclusive => self
+                keyboard::Command::Exclusive => self
                     .samples
                     .apply_focused_action(&ctx, layouts::ModAction::Exclusive),
-                keyboard::Command::EnableAdditive => self
-                    .samples
-                    .apply_focused_action(&ctx, layouts::ModAction::Additive),
                 keyboard::Command::Toggle => self
                     .samples
                     .apply_focused_action(&ctx, layouts::ModAction::Toggle),
+                // Settled when the key arrived.
+                keyboard::Command::Row(_) | keyboard::Command::Move(_) => {}
             }
         }
         let mut visible_regions = Vec::new();
@@ -663,16 +627,26 @@ impl eframe::App for OverlayPreview {
         if self.pointer_completion.finish_frame(pointer_down) {
             ctx.request_repaint();
         }
+        // Letters and Space type only while the search is being typed.
+        let typing = self.search.typing();
+        if let Some(keyboard) = &self.keyboard {
+            keyboard.set_typing(typing);
+        }
+        if let Some(keys) = &mut self.egui_keys {
+            keys.set_typing(typing);
+        }
         if self.capture.is_some() {
             // Allow the native surface and its initial layout to settle before readback.
-            let capture_ready = self.capture_at.map_or_else(
-                || {
-                    self.frames_drawn >= self.capture_frame
-                        && (self.capture_frame != 24
-                            || (!self.motion.animating() && !self.samples.animation_pending(now)))
-                },
-                |at| self.started.elapsed() >= at,
-            );
+            let capture_ready = self.capture_keys.is_empty()
+                && self.capture_at.map_or_else(
+                    || {
+                        self.frames_drawn >= self.capture_frame
+                            && (self.capture_frame != 24
+                                || (!self.motion.animating()
+                                    && !self.samples.animation_pending(now)))
+                    },
+                    |at| self.started.elapsed() >= at,
+                );
             if !self.capture_requested && capture_ready {
                 ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
                 self.capture_requested = true;
@@ -707,17 +681,68 @@ struct PointerCompletion {
     active: bool,
 }
 
-fn modifier_commands(
-    previous: egui::Modifiers,
-    current: egui::Modifiers,
-) -> [Option<keyboard::Command>; 2] {
-    if !current.alt || current.mac_cmd {
-        return [None, None];
+/// A/D and the side arrows step through mods or categories, by row.
+fn move_in_row(row: layouts::Row, direction: i32) -> keyboard::Command {
+    match row {
+        layouts::Row::Mods => keyboard::Command::Mod(direction),
+        layouts::Row::Categories => keyboard::Command::Category(direction),
     }
-    [
-        (current.ctrl && !previous.ctrl).then_some(keyboard::Command::EnableExclusive),
-        (current.shift && !previous.shift).then_some(keyboard::Command::EnableAdditive),
-    ]
+}
+
+/// Reads a capture key such as `E`, `Space`, or `Shift+Enter`.
+fn capture_key(token: &str) -> Option<(egui::Key, egui::Modifiers)> {
+    let (modifier_names, name) = token.rsplit_once('+').unwrap_or(("", token));
+    let mut modifiers = egui::Modifiers::NONE;
+    for modifier in modifier_names.split('+').filter(|name| !name.is_empty()) {
+        match modifier.to_ascii_lowercase().as_str() {
+            "shift" => modifiers.shift = true,
+            "ctrl" => modifiers = modifiers | egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+            "alt" => modifiers.alt = true,
+            _ => return None,
+        }
+    }
+    Some((egui::Key::from_name(name)?, modifiers))
+}
+
+/// Presses and releases a key in a capture run.
+fn push_capture_key(input: &mut egui::RawInput, key: egui::Key, modifiers: egui::Modifiers) {
+    for pressed in [true, false] {
+        input.events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
+            modifiers,
+        });
+    }
+}
+
+/// Types text in a capture run like a keyboard does: each character between
+/// the press and release of its key, where egui has one.
+fn push_capture_text(input: &mut egui::RawInput, text: &str) {
+    for character in text.chars() {
+        let key = match character {
+            ' ' => Some(egui::Key::Space),
+            _ => egui::Key::from_name(&character.to_string()),
+        };
+        let key_event = |pressed| {
+            key.map(|key| egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            })
+        };
+        input.events.extend(key_event(true));
+        input.events.push(egui::Event::Text(character.to_string()));
+        input.events.extend(key_event(false));
+    }
+}
+
+/// The search field's id, so keys can move the keyboard focus to it.
+fn search_id() -> egui::Id {
+    egui::Id::new("overlay-preview-search")
 }
 
 impl PointerCompletion {
@@ -739,35 +764,81 @@ impl PointerCompletion {
 
 #[cfg(test)]
 mod interaction_tests {
-    use super::{PointerCompletion, keyboard::Command, modifier_commands};
+    use super::{
+        PointerCompletion, capture_key, keyboard::Command, layouts::Row, move_in_row,
+        push_capture_text,
+    };
 
     #[test]
-    fn activation_modifiers_trigger_once_and_not_when_held_before_alt() {
-        let alt = egui::Modifiers::ALT;
-        for (modifier, expected) in [
-            (
-                egui::Modifiers::SHIFT,
-                [None, Some(Command::EnableAdditive)],
-            ),
-            (
-                egui::Modifiers::CTRL,
-                [Some(Command::EnableExclusive), None],
-            ),
-        ] {
-            let chord = alt | modifier;
-            assert_eq!(modifier_commands(alt, chord), expected);
-            assert_eq!(modifier_commands(chord, chord), [None, None]);
-            assert_eq!(modifier_commands(modifier, chord), [None, None]);
-            assert_eq!(modifier_commands(chord, alt), [None, None]);
-        }
+    fn side_steps_follow_the_row() {
+        assert_eq!(move_in_row(Row::Mods, -1), Command::Mod(-1));
+        assert_eq!(move_in_row(Row::Mods, 1), Command::Mod(1));
+        assert_eq!(move_in_row(Row::Categories, -1), Command::Category(-1));
+        assert_eq!(move_in_row(Row::Categories, 1), Command::Category(1));
     }
 
     #[test]
-    fn alt_release_keeps_click_or_drag_until_its_release_frame() {
+    fn capture_keys_read_names_and_modifiers() {
+        use egui::{Key, Modifiers};
+
+        assert_eq!(capture_key("e"), Some((Key::E, Modifiers::NONE)));
+        assert_eq!(capture_key("Space"), Some((Key::Space, Modifiers::NONE)));
+        assert_eq!(capture_key("Up"), Some((Key::ArrowUp, Modifiers::NONE)));
+        assert_eq!(
+            capture_key("Shift+Enter"),
+            Some((Key::Enter, Modifiers::SHIFT))
+        );
+        assert_eq!(
+            capture_key("ctrl+F"),
+            Some((Key::F, Modifiers::CTRL | Modifiers::COMMAND))
+        );
+        assert_eq!(
+            capture_key("Alt+Shift+H"),
+            Some((Key::H, Modifiers::ALT | Modifiers::SHIFT))
+        );
+        assert_eq!(capture_key("Hyper+E"), None);
+        assert_eq!(capture_key("Shift+"), None);
+        assert_eq!(capture_key("Nope"), None);
+    }
+
+    #[test]
+    fn capture_text_types_each_character_between_its_key_press_and_release() {
+        use egui::{Event, Key, Modifiers, RawInput};
+
+        let key = |key, pressed| Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let text = |text: &str| Event::Text(text.to_owned());
+        let mut input = RawInput::default();
+        push_capture_text(&mut input, "v W界");
+        assert_eq!(
+            input.events,
+            [
+                key(Key::V, true),
+                text("v"),
+                key(Key::V, false),
+                key(Key::Space, true),
+                text(" "),
+                key(Key::Space, false),
+                key(Key::W, true),
+                text("W"),
+                key(Key::W, false),
+                // No key types this one, as with an input method.
+                text("界"),
+            ]
+        );
+    }
+
+    #[test]
+    fn closing_keeps_click_or_drag_until_its_release_frame() {
         let mut interaction = PointerCompletion::default();
         assert!(interaction.begin_frame(true, true));
         assert!(!interaction.finish_frame(true));
-        // Alt is no longer held, but the pointer gesture is still in progress.
+        // The overlay has closed, but the pointer gesture is still in progress.
         assert!(interaction.begin_frame(true, false));
         assert!(!interaction.finish_frame(true));
         // Paint/process the expanded widgets on release, then allow collapse.
@@ -788,15 +859,29 @@ mod interaction_tests {
 }
 
 impl OverlayPreview {
-    fn apply_transition(&mut self, transition: session::Transition) {
+    fn apply_transition(&mut self, ctx: &egui::Context, transition: session::Transition) {
         match transition {
             session::Transition::None => return,
             session::Transition::Opened => self.focus_return_pending = false,
             session::Transition::Closed { return_focus } => {
-                self.focus_return_pending = return_focus;
+                // Only the Alt+H path takes the keyboard from another window.
+                self.focus_return_pending = return_focus && self.keyboard.is_some();
             }
         }
+        // Each session starts on the categories row without a search, and a
+        // pinned overlay goes back to that once the keyboard is gone.
+        self.samples.reset_row();
+        self.clear_search(ctx);
         tracing::info!(?transition, session = ?self.session, "Overlay session changed");
+    }
+
+    fn clear_search(&mut self, ctx: &egui::Context) {
+        self.search.clear();
+        ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
+    }
+
+    fn hint_mode(&self) -> hints::Mode {
+        hints::Mode::new(self.search.typing(), self.search.active())
     }
 
     fn start_window_drag(&self, ctx: &egui::Context) {
@@ -894,16 +979,30 @@ impl OverlayPreview {
                 self.start_window_drag(&ctx);
             }
             let _ = layouts::delayed_tooltip(drag, self.game.clone());
-            let hints = shortcut_hints(
+            // The lane holds the search field and the hints.  Reserve exactly
+            // the right-hand controls: three 28pt buttons, the 92pt slider,
+            // and their four 3pt gaps.  The lane ends at the slider's hit rect.
+            let (lane, lane_drag) = ui.allocate_exact_size(
+                egui::vec2((ui.available_width() - 188.0).max(0.0), 30.0),
+                egui::Sense::drag(),
+            );
+            if lane_drag.drag_started() {
+                self.start_window_drag(&ctx);
+            }
+            let hints_rect = self.show_search(ui, lane, opacity);
+            // A click can end typing in the field, so the hints follow now.
+            let mode = self.hint_mode();
+            self.hint_ticker
+                .update(self.expanded, mode, ui.input(|input| input.time));
+            shortcut_hints(
                 ui,
+                hints_rect,
                 opacity,
                 &self.hint_ticker,
                 self.expanded,
+                mode,
                 self.samples.shortcut_availability(),
             );
-            if hints.drag_started() {
-                self.start_window_drag(&ctx);
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if header_button(ui, lucide_icons::Icon::X, "Close overlay", opacity).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -946,53 +1045,114 @@ impl OverlayPreview {
             });
         });
     }
+
+    /// The search field, at the start of the hint lane while a search is
+    /// typed or shown.  Returns the rest of the lane, for the hints.
+    fn show_search(&mut self, ui: &mut egui::Ui, lane: egui::Rect, opacity: u8) -> egui::Rect {
+        let active = self.search.active();
+        let chip = egui::Rect::from_min_size(
+            egui::pos2(lane.left(), lane.center().y - SEARCH_SIZE.y / 2.0),
+            egui::vec2(if active { SEARCH_SIZE.x } else { 0.0 }, SEARCH_SIZE.y),
+        );
+        // Always add the child, so the ids of the widgets after it stay put.
+        let mut search_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("overlay-preview-search-lane")
+                .max_rect(chip),
+        );
+        if !active {
+            return lane;
+        }
+        let painter = search_ui.painter().clone();
+        // Painted once the field has settled whether it is being typed in.
+        let background = painter.add(egui::Shape::Noop);
+        painter.text(
+            egui::pos2(chip.left() + 11.0, chip.center().y),
+            egui::Align2::CENTER_CENTER,
+            char::from(lucide_icons::Icon::Search).to_string(),
+            egui::FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
+            content_gray(150, opacity),
+        );
+        let font = egui::FontId::proportional(12.0);
+        let row_height = search_ui.fonts_mut(|fonts| fonts.row_height(&font));
+        let field = egui::Rect::from_min_max(
+            egui::pos2(chip.left() + 22.0, chip.center().y - row_height / 2.0),
+            egui::pos2(chip.right() - 6.0, chip.center().y + row_height / 2.0),
+        );
+        // Give the field the keyboard before it reads this frame's keys.  It
+        // loses it while hidden, for example as the overlay opens.
+        if self.search.typing() && !search_ui.memory(|memory| memory.has_focus(search_id())) {
+            search_ui.memory_mut(|memory| memory.request_focus(search_id()));
+        }
+        search_ui.visuals_mut().weak_text_color = Some(content_gray(125, opacity));
+        let response = search_ui.put(
+            field,
+            egui::TextEdit::singleline(self.search.query_mut())
+                .id(search_id())
+                .frame(egui::Frame::NONE)
+                .font(font)
+                .text_color(content_gray(235, opacity))
+                .hint_text("Type to search")
+                .char_limit(64)
+                .return_key(None)
+                .desired_width(field.width()),
+        );
+        if self.search.typing() {
+            // A click elsewhere takes the keyboard, and ends typing like Tab.
+            if !search_ui.memory(|memory| memory.has_focus(search_id())) {
+                self.search.stop_typing();
+            }
+        } else if response.has_focus() {
+            // A click on the field goes back to typing.
+            self.search.start_typing();
+        }
+        let typing = self.search.typing();
+        painter.set(
+            background,
+            egui::epaint::RectShape::new(
+                chip,
+                3,
+                Color32::from_white_alpha(content_alpha(if typing { 14 } else { 8 }, opacity)),
+                egui::Stroke::new(1.0, content_gray(if typing { 150 } else { 70 }, opacity)),
+                egui::StrokeKind::Inside,
+            ),
+        );
+        self.samples.set_search(self.search.query());
+        lane.with_min_x(chip.right() + 8.0)
+    }
 }
 
+/// Paints the hints into `rect`, the part of the header lane beside the search
+/// field.  The clipped rect stays fixed while a continuous train of hints
+/// moves through it.
 fn shortcut_hints(
-    ui: &mut egui::Ui,
+    ui: &egui::Ui,
+    rect: egui::Rect,
     opacity: u8,
     ticker: &hints::Ticker,
     expanded: bool,
+    mode: hints::Mode,
     available: layouts::ShortcutAvailability,
-) -> egui::Response {
-    // The clipped lane stays fixed while a continuous train of hints moves through it.
-    // Reserve exactly the right-hand controls: three 28pt buttons, the 92pt
-    // slider, and their four 3pt gaps. The lane ends at the slider's hit rect.
-    let width = (ui.available_width() - 188.0).max(0.0);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::drag());
+) {
     let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-    let entries: Vec<_> = hints::SEQUENCE
+    let entries: Vec<_> = mode
+        .sequence()
         .iter()
         .map(|hint| {
-            let (keys, label, enabled): (&[&str], &str, bool) = match hint {
-                hints::Hint::Categories => (&["A", "D"], "Browse categories", available.categories),
-                hints::Hint::Mods => (&["Q", "E"], "Browse mods", available.mods),
-                hints::Hint::Exclusive => (
-                    &["Ctrl"],
-                    "Enable this mod, disable others",
-                    available.exclusive,
-                ),
-                hints::Hint::Additive => {
-                    (&["Shift"], "Enable this mod, keep others", available.additive)
-                }
-                hints::Hint::Toggle => (&["X"], "Toggle Enable/Disable", available.toggle),
-            };
-            let key_width = if keys.len() > 1 || keys[0].len() == 1 {
-                19.0
-            } else {
-                36.0
-            };
-            let group_width = key_width * keys.len() as f32 + 3.0 * (keys.len() - 1) as f32;
+            let keys = hint.keys();
+            let enabled = hint.enabled(available);
+            let group_width = keys.iter().map(|key| hints::key_width(key)).sum::<f32>()
+                + 3.0 * (keys.len() - 1) as f32;
             let label = painter.layout_no_wrap(
-                label.to_owned(),
+                hint.label().to_owned(),
                 egui::FontId::proportional(11.0),
                 content_gray(if enabled { 165 } else { 112 }, opacity),
             );
             let span = group_width + 8.0 + label.size().x + 28.0;
-            (keys, key_width, group_width, label, enabled, span)
+            (keys, group_width, label, enabled, span)
         })
         .collect();
-    let cycle_width = entries.iter().map(|entry| entry.5).sum();
+    let cycle_width = entries.iter().map(|entry| entry.4).sum();
     let frame = ticker.frame(
         ui.input(|input| input.time),
         ui.style().animation_time > 0.0,
@@ -1004,13 +1164,14 @@ fn shortcut_hints(
     let mut origin = rect.left() + 8.0 - frame.offset;
     // A second copy makes the last hint flow directly into the first without a reset gap.
     for _ in 0..2 {
-        for (keys, key_width, group_width, label, enabled, span) in &entries {
+        for (keys, group_width, label, enabled, span) in &entries {
             if origin + span >= rect.left() && origin < rect.right() {
                 let mut x = origin;
                 for key in *keys {
+                    let key_width = hints::key_width(key);
                     let key_rect = egui::Rect::from_center_size(
                         egui::pos2(x + key_width * 0.5, rect.center().y),
-                        egui::vec2(*key_width, 20.0),
+                        egui::vec2(key_width, 20.0),
                     );
                     painter.rect_filled(
                         key_rect,
@@ -1038,7 +1199,6 @@ fn shortcut_hints(
             origin += span;
         }
     }
-    response
 }
 
 fn idle_keycap(ui: &mut egui::Ui, key: &str, width: f32, opacity: u8) {
@@ -1255,6 +1415,27 @@ fn apply_preview_style(ctx: &egui::Context) {
         "preview-icons".into(),
         egui::FontData::from_static(lucide_icons::LUCIDE_FONT_BYTES).into(),
     );
+    // Search text can be Chinese, Japanese or Korean.  The bundled font has
+    // no Hangul, so Korean comes from Windows.
+    fonts.font_data.insert(
+        "preview-cjk".into(),
+        egui::FontData::from_static(crate::app::CJK_FONT_BYTES).into(),
+    );
+    let mut fallbacks = vec!["preview-cjk".to_owned()];
+    if let Some(korean) = korean_font() {
+        fonts.font_data.insert(
+            "preview-korean".into(),
+            egui::FontData::from_owned(korean).into(),
+        );
+        fallbacks.push("preview-korean".to_owned());
+    }
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .extend(fallbacks.iter().cloned());
+    }
     let mut icon_fonts = fonts.families[&egui::FontFamily::Proportional].clone();
     icon_fonts.insert(0, "preview-icons".into());
     fonts
@@ -1294,4 +1475,14 @@ fn apply_preview_style(ctx: &egui::Context) {
         widget.corner_radius = egui::CornerRadius::same(7);
     }
     ctx.set_style_of(egui::Theme::Dark, style);
+}
+
+#[cfg(windows)]
+fn korean_font() -> Option<Vec<u8>> {
+    std::fs::read(r"C:\Windows\Fonts\malgun.ttf").ok()
+}
+
+#[cfg(not(windows))]
+fn korean_font() -> Option<Vec<u8>> {
+    None
 }

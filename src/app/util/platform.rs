@@ -7,6 +7,12 @@ struct SystemFontCandidate {
 const CLASSIC_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeui.ttf";
 const CLASSIC_BOLD_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeuib.ttf";
 
+/// Shared with the overlay preview, so the binary embeds the font once.
+pub(crate) static CJK_FONT_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/asset/font/NotoSansSC-Regular.ttf"
+));
+
 fn hinted_font_data(font_data: FontData) -> FontData {
     font_data.tweak(egui::FontTweak {
         hinting: Some(true),
@@ -66,11 +72,7 @@ fn install_app_fonts(ctx: &egui::Context, preferred_style: AppFontStyle) {
     );
     fonts.font_data.insert(
         CJK_FONT_FAMILY.to_string(),
-        hinted_font_data(FontData::from_static(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/asset/font/NotoSansSC-Regular.ttf"
-        ))))
-        .into(),
+        hinted_font_data(FontData::from_static(CJK_FONT_BYTES)).into(),
     );
     fonts.font_data.insert(
         CJK_BOLD_FONT_FAMILY.to_string(),

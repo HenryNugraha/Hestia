@@ -107,8 +107,16 @@ enum PendingCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ModAction {
     Exclusive,
-    Additive,
     Toggle,
+}
+
+/// The row that A/D and the side arrows move in. The overlay opens on the
+/// categories row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Row {
+    Mods,
+    #[default]
+    Categories,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,8 +124,59 @@ pub(super) struct ShortcutAvailability {
     pub categories: bool,
     pub mods: bool,
     pub exclusive: bool,
-    pub additive: bool,
     pub toggle: bool,
+}
+
+/// What a search shows.  A category whose name matches shows all its mods,
+/// any other category shows only the mods that match, and categories with no
+/// match are hidden.  An empty search shows everything.
+struct Filter {
+    /// The search as typed.
+    query: String,
+    /// Visible categories, in catalog order.
+    categories: Vec<usize>,
+    /// Each category's visible mods, in catalog order.  Indexed like the
+    /// catalog, so a hidden category has an empty list.
+    mods: Vec<Vec<usize>>,
+}
+
+impl Filter {
+    fn new(catalog: &Catalog, query: &str) -> Self {
+        let needle = search_key(query);
+        let mut categories = Vec::new();
+        let mut mods = Vec::with_capacity(catalog.categories.len());
+        for (index, category) in catalog.categories.iter().enumerate() {
+            let all =
+                needle.is_empty() || search_key(character_name(&category.name)).contains(&needle);
+            let visible: Vec<usize> = category
+                .costumes
+                .iter()
+                .enumerate()
+                .filter(|(_, costume)| all || search_key(&costume.name).contains(&needle))
+                .map(|(costume_index, _)| costume_index)
+                .collect();
+            if all || !visible.is_empty() {
+                categories.push(index);
+            }
+            mods.push(visible);
+        }
+        Self {
+            query: query.to_owned(),
+            categories,
+            mods,
+        }
+    }
+}
+
+/// Text as a search compares it: underscores read as spaces, runs of spaces
+/// count as one, and case does not matter.  A mod's raw name holds its
+/// displayed name, so matching the raw name also matches what is shown.
+fn search_key(text: &str) -> String {
+    text.replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// In-memory state for the native costume switcher preview.
@@ -147,11 +206,14 @@ pub(super) struct Layouts {
     boundary_feedback_until: f64,
     boundary_feedback_edge: Option<i32>,
     pending_commands: VecDeque<PendingCommand>,
+    row: Row,
+    filter: Filter,
 }
 
 impl Layouts {
     pub(super) fn new(catalog: Catalog) -> Self {
-        let selected_category = preferred_category(&catalog);
+        // Start at the leftmost category.
+        let selected_category = 0;
         let carousel_focus = catalog
             .categories
             .get(selected_category)
@@ -167,6 +229,7 @@ impl Layouts {
             .iter()
             .map(active_image)
             .collect::<Vec<_>>();
+        let filter = Filter::new(&catalog, "");
 
         Self {
             catalog,
@@ -194,6 +257,8 @@ impl Layouts {
             boundary_feedback_until: f64::NEG_INFINITY,
             boundary_feedback_edge: None,
             pending_commands: VecDeque::new(),
+            row: Row::default(),
+            filter,
         }
     }
 
@@ -203,13 +268,24 @@ impl Layouts {
         // Prioritize the current carousel, then its next cards and adjacent
         // characters. The mini strip also calls this to warm the first view.
         if let Some(category) = self.catalog.categories.get(self.selected_category) {
-            append_nearby_mod_images(&mut paths, category, self.carousel_focus, 2);
+            append_nearby_mod_images(
+                &mut paths,
+                category,
+                self.visible_mods(),
+                self.carousel_focus,
+                2,
+            );
         }
-        for index in self.selected_category.saturating_sub(4)
-            ..self
-                .selected_category
-                .saturating_add(5)
-                .min(self.catalog.categories.len())
+        let visible = &self.filter.categories;
+        let selected = visible
+            .iter()
+            .position(|&index| index == self.selected_category)
+            .unwrap_or(0);
+        for (position, &index) in visible
+            .iter()
+            .enumerate()
+            .take(selected + 5)
+            .skip(selected.saturating_sub(4))
         {
             let category = &self.catalog.categories[index];
             paths.extend(
@@ -218,8 +294,14 @@ impl Layouts {
                     .clone()
                     .or_else(|| self.active_images[index].clone()),
             );
-            if index != self.selected_category && index.abs_diff(self.selected_category) <= 1 {
-                append_nearby_mod_images(&mut paths, category, active_costume_index(category), 1);
+            if index != self.selected_category && position.abs_diff(selected) <= 1 {
+                append_nearby_mod_images(
+                    &mut paths,
+                    category,
+                    &self.filter.mods[index],
+                    active_costume_index(category),
+                    1,
+                );
             }
         }
         self.thumbnails.prefetch(ctx, paths);
@@ -243,9 +325,9 @@ impl Layouts {
         self.consume_pending_commands(ui.ctx(), carousel_rect, now);
         self.clamp_selection();
         let category_index = self.selected_category;
-        let costume_count = self.catalog.categories[category_index].costumes.len();
-        if costume_count == 0 {
-            let text = "No installed mods";
+        let visible_count = self.visible_mods().len();
+        if visible_count == 0 {
+            let text = self.empty_carousel_text();
             let font = FontId::proportional(15.0);
             let galley = ui.painter().layout_no_wrap(
                 text.to_owned(),
@@ -279,18 +361,18 @@ impl Layouts {
             // a later click after Alt/collapse cannot activate a stale card.
             self.cancel_pointer_interaction();
         }
-        let mut placements = self.current_carousel_placements(carousel_rect, costume_count, now);
-        let wheel_direction = self.consume_carousel_input(ui, carousel_rect, costume_count);
+        let mut placements = self.current_carousel_placements(carousel_rect, now);
+        let wheel_direction = self.consume_carousel_wheel(ui, carousel_rect, visible_count);
         if let Some(direction) = wheel_direction {
-            self.advance_mod_focus(carousel_rect, costume_count, direction, now);
-            placements = self.current_carousel_placements(carousel_rect, costume_count, now);
+            self.advance_mod_focus(carousel_rect, direction, now);
+            placements = self.current_carousel_placements(carousel_rect, now);
             ui.ctx().request_repaint();
         }
 
-        self.update_held_preview(ui, category_index, &placements);
+        self.update_held_preview(ui, category_index, &placements, visible_count);
 
         if self.held_preview.is_none() {
-            self.capture_carousel_press(ui, category_index, &placements, costume_count);
+            self.capture_carousel_press(ui, category_index, &placements, visible_count);
             if self
                 .carousel_pointer_press
                 .as_ref()
@@ -312,7 +394,7 @@ impl Layouts {
                 // different costume can occupy the same left/center/right rectangle. Use
                 // that stable slot for egui's interaction id so its widget-rect identity
                 // does not change underneath the pointer between passes.
-                let reveal = card_reveal_progress(placement, self.reveal_progress, costume_count);
+                let reveal = card_reveal_progress(placement, self.reveal_progress, visible_count);
                 self.show_carousel_card(
                     ui,
                     category_index,
@@ -327,7 +409,7 @@ impl Layouts {
         }
         if self.held_preview.is_none() {
             if let Some(costume_index) =
-                self.release_carousel_press(ui, category_index, carousel_rect, costume_count, now)
+                self.release_carousel_press(ui, category_index, carousel_rect, now)
             {
                 // A click activates in place. The focused card remains focused, so a side-card
                 // click never moves the target away from the pointer before the next action.
@@ -388,26 +470,49 @@ impl Layouts {
         ctx.request_repaint();
     }
 
+    pub(super) fn row(&self) -> Row {
+        self.row
+    }
+
+    /// Up to the mods row for a negative direction, down to the categories row
+    /// for a positive one.
+    pub(super) fn switch_row(&mut self, direction: i32) {
+        self.row = match direction.signum() {
+            -1 => Row::Mods,
+            1 => Row::Categories,
+            _ => return,
+        };
+    }
+
+    pub(super) fn reset_row(&mut self) {
+        self.row = Row::default();
+    }
+
     pub(super) fn shortcut_availability(&self) -> ShortcutAvailability {
-        let categories = self.catalog.categories.len() > 1;
+        let categories = self.filter.categories.len() > 1;
         let Some(category) = self.catalog.categories.get(self.selected_category) else {
             return ShortcutAvailability {
                 categories,
                 mods: false,
                 exclusive: false,
-                additive: false,
                 toggle: false,
             };
         };
-        let Some(focused) = category.costumes.get(self.carousel_focus) else {
+        let visible = self.visible_mods();
+        let mods = visible.len() > 1;
+        let Some(focused) = category
+            .costumes
+            .get(self.carousel_focus)
+            .filter(|_| visible.contains(&self.carousel_focus))
+        else {
             return ShortcutAvailability {
                 categories,
-                mods: category.costumes.len() > 1,
+                mods,
                 exclusive: false,
-                additive: false,
                 toggle: false,
             };
         };
+        // Exclusive also disables mods the search hides, so count them all.
         let active_count = category
             .costumes
             .iter()
@@ -415,10 +520,61 @@ impl Layouts {
             .count();
         ShortcutAvailability {
             categories,
-            mods: category.costumes.len() > 1,
+            mods,
             exclusive: !(focused.active && active_count == 1),
-            additive: !focused.active,
             toggle: true,
+        }
+    }
+
+    /// Show only what `query` matches.  Keeps the selected category and mod
+    /// while the search still shows them, otherwise moves to the first match.
+    pub(super) fn set_search(&mut self, query: &str) {
+        if self.filter.query == query {
+            return;
+        }
+        self.filter = Filter::new(&self.catalog, query);
+        self.reveal_category = true;
+        self.carousel_transition = None;
+        self.carousel_pointer_press = None;
+        self.held_preview = None;
+        if self.filter.categories.contains(&self.selected_category) {
+            self.carousel_focus = self.visible_focus(self.selected_category, self.carousel_focus);
+            if let Some(focus) = self
+                .carousel_focus_by_category
+                .get_mut(self.selected_category)
+            {
+                *focus = self.carousel_focus;
+            }
+        } else if let Some(&first) = self.filter.categories.first() {
+            self.select_category(first);
+        }
+    }
+
+    /// What the carousel says when it has no cards.  A search that matches
+    /// nothing leaves the selection on a category it hides.
+    fn empty_carousel_text(&self) -> &'static str {
+        if self.filter.categories.contains(&self.selected_category) {
+            "No installed mods"
+        } else {
+            "No matches"
+        }
+    }
+
+    /// The selected category's mods that the search shows.
+    fn visible_mods(&self) -> &[usize] {
+        self.filter
+            .mods
+            .get(self.selected_category)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// `focus` when the search shows it in `category`, otherwise the first
+    /// mod the search shows there.
+    fn visible_focus(&self, category: usize, focus: usize) -> usize {
+        match self.filter.mods.get(category) {
+            Some(visible) if !visible.is_empty() && !visible.contains(&focus) => visible[0],
+            _ => focus,
         }
     }
 
@@ -499,6 +655,7 @@ impl Layouts {
         ui: &Ui,
         category_index: usize,
         placements: &[CarouselCardPlacement],
+        card_count: usize,
     ) {
         let (pressed_pos, released, down) = ui.input(|input| {
             let pressed_pos = input.events.iter().find_map(|event| match event {
@@ -526,11 +683,8 @@ impl Layouts {
             return;
         };
         let Some(card) = placements.iter().rev().find(|placement| {
-            card_reveal_progress(
-                placement,
-                self.reveal_progress,
-                self.catalog.categories[category_index].costumes.len(),
-            ) >= REVEAL_INTERACTION_THRESHOLD
+            card_reveal_progress(placement, self.reveal_progress, card_count)
+                >= REVEAL_INTERACTION_THRESHOLD
                 && placement.rect.contains(pointer_pos)
         }) else {
             return;
@@ -546,7 +700,7 @@ impl Layouts {
         ui: &Ui,
         category_index: usize,
         placements: &[CarouselCardPlacement],
-        costume_count: usize,
+        card_count: usize,
     ) {
         let Some(pointer_pos) = ui.input(|input| {
             if !input.pointer.primary_pressed() {
@@ -569,7 +723,7 @@ impl Layouts {
             return;
         };
         let Some(card) = placements.iter().rev().find(|placement| {
-            card_reveal_progress(placement, self.reveal_progress, costume_count)
+            card_reveal_progress(placement, self.reveal_progress, card_count)
                 >= REVEAL_INTERACTION_THRESHOLD
                 && placement.rect.contains(pointer_pos)
         }) else {
@@ -588,7 +742,6 @@ impl Layouts {
         ui: &Ui,
         category_index: usize,
         carousel_rect: Rect,
-        costume_count: usize,
         now: f64,
     ) -> Option<usize> {
         if !ui.input(|input| input.pointer.primary_released()) {
@@ -604,7 +757,7 @@ impl Layouts {
         let can_click = ui.input(|input| input.pointer.could_any_button_be_click());
         // Resume from the exact geometry shown while the button was held. This prevents a
         // long-held press from snapping to a transition's settled destination on release.
-        self.begin_carousel_transition(press.placements.clone(), carousel_rect, costume_count, now);
+        self.begin_carousel_transition(press.placements.clone(), carousel_rect, now);
         valid_carousel_release(&press, category_index, pointer_pos, can_click)
     }
 
@@ -615,7 +768,6 @@ impl Layouts {
     fn current_carousel_placements(
         &mut self,
         carousel_rect: Rect,
-        costume_count: usize,
         now: f64,
     ) -> Vec<CarouselCardPlacement> {
         if let Some(press) = &self.carousel_pointer_press {
@@ -623,7 +775,8 @@ impl Layouts {
             // transition would have completed while the button was held.
             return press.placements.clone();
         }
-        let target = carousel_card_placements(carousel_rect, costume_count, self.carousel_focus);
+        let target =
+            visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
         let Some(transition) = self.carousel_transition.clone() else {
             return target;
         };
@@ -656,10 +809,9 @@ impl Layouts {
         &mut self,
         from: Vec<CarouselCardPlacement>,
         carousel_rect: Rect,
-        costume_count: usize,
         now: f64,
     ) {
-        let to = carousel_card_placements(carousel_rect, costume_count, self.carousel_focus);
+        let to = visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
         if same_card_geometry(&from, &to) {
             self.carousel_transition = None;
         } else {
@@ -677,20 +829,16 @@ impl Layouts {
             }
             match command {
                 PendingCommand::Category(direction) => {
-                    let visible = (0..self.catalog.categories.len()).collect::<Vec<_>>();
-                    if let Some(index) =
-                        next_visible_category(&visible, self.selected_category, direction)
-                    {
+                    if let Some(index) = next_visible_category(
+                        &self.filter.categories,
+                        self.selected_category,
+                        direction,
+                    ) {
                         self.select_category(index);
                     }
                 }
                 PendingCommand::Mod(direction) => {
-                    let costume_count = self.catalog.categories[self.selected_category]
-                        .costumes
-                        .len();
-                    if costume_count > 0 {
-                        self.advance_mod_focus(carousel_rect, costume_count, direction, now);
-                    }
+                    self.advance_mod_focus(carousel_rect, direction, now);
                 }
                 PendingCommand::Action(action) => {
                     if self.reveal_progress < REVEAL_INTERACTION_THRESHOLD {
@@ -704,18 +852,16 @@ impl Layouts {
         }
     }
 
-    fn advance_mod_focus(
-        &mut self,
-        carousel_rect: Rect,
-        costume_count: usize,
-        direction: i32,
-        now: f64,
-    ) {
-        if direction == 0 || costume_count == 0 || self.pointer_gesture_active() {
+    fn advance_mod_focus(&mut self, carousel_rect: Rect, direction: i32, now: f64) {
+        if direction == 0 || self.pointer_gesture_active() {
             return;
         }
-        let from = self.current_carousel_placements(carousel_rect, costume_count, now);
-        let next_focus = next_focus_index(costume_count, self.carousel_focus, direction);
+        let Some(next_focus) =
+            next_visible_mod(self.visible_mods(), self.carousel_focus, direction)
+        else {
+            return;
+        };
+        let from = self.current_carousel_placements(carousel_rect, now);
         if next_focus == self.carousel_focus {
             self.boundary_feedback_until = now + ACTIVE_FEEDBACK_SECS;
             self.boundary_feedback_edge = Some(direction.signum());
@@ -730,7 +876,7 @@ impl Layouts {
         {
             *focus = next_focus;
         }
-        self.begin_carousel_transition(from, carousel_rect, costume_count, now);
+        self.begin_carousel_transition(from, carousel_rect, now);
     }
 
     fn request_animation_repaint(&self, ctx: &egui::Context, now: f64) {
@@ -773,7 +919,7 @@ impl Layouts {
         }
 
         self.clamp_selection();
-        let visible_indices = (0..self.catalog.categories.len()).collect::<Vec<_>>();
+        let visible_indices = self.filter.categories.clone();
         let strip_rect = Rect::from_min_size(
             ui.cursor().min,
             Vec2::new(
@@ -815,7 +961,7 @@ impl Layouts {
                 Vec2::new(CATEGORY_NAV_WIDTH, 28.0),
             ),
             -1,
-            'A',
+            'Z',
             left_enabled,
             &visible_indices,
             overlay_opacity,
@@ -830,7 +976,7 @@ impl Layouts {
                 Vec2::new(CATEGORY_NAV_WIDTH, 28.0),
             ),
             1,
-            'D',
+            'C',
             right_enabled,
             &visible_indices,
             overlay_opacity,
@@ -1019,6 +1165,7 @@ impl Layouts {
                 .len()
                 .saturating_sub(1),
         );
+        self.carousel_focus = self.visible_focus(index, self.carousel_focus);
         self.reveal_category = true;
         self.carousel_transition = None;
         self.carousel_pointer_press = None;
@@ -1068,6 +1215,15 @@ impl Layouts {
             Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+        if selected && self.row == Row::Categories {
+            // The keyboard is on this row.  The focused card dims to match.
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(4),
+                Stroke::new(1.5, content_gray(232, overlay_opacity)),
+                StrokeKind::Inside,
+            );
+        }
 
         if selected {
             let image_rect = Rect::from_min_size(
@@ -1174,9 +1330,9 @@ impl Layouts {
 
         let hovered = interactable && response.hovered();
         let now = ui.input(|input| input.time);
-        let border = if focused {
+        let border = if focused && self.row == Row::Mods {
             content_gray(232, overlay_opacity)
-        } else if hovered {
+        } else if focused || hovered {
             content_gray(180, overlay_opacity)
         } else if active {
             content_gray(132, overlay_opacity)
@@ -1267,13 +1423,13 @@ impl Layouts {
         }
     }
 
-    fn consume_carousel_input(
+    fn consume_carousel_wheel(
         &mut self,
         ui: &mut Ui,
         rect: Rect,
-        costume_count: usize,
+        card_count: usize,
     ) -> Option<i32> {
-        if costume_count == 0 {
+        if card_count == 0 {
             return None;
         }
         let hovered = ui.rect_contains_pointer(rect);
@@ -1292,20 +1448,6 @@ impl Layouts {
                     consumed_wheel = true;
                     if *phase == egui::TouchPhase::Move {
                         self.carousel_wheel_accum += wheel_units(*unit, delta.y);
-                    }
-                    false
-                }
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if !gesture_blocked && navigation_modifiers(*modifiers) => {
-                    match key {
-                        egui::Key::ArrowLeft | egui::Key::ArrowUp => direction = Some(-1),
-                        egui::Key::ArrowRight | egui::Key::ArrowDown => direction = Some(1),
-                        egui::Key::Enter => direction = Some(0),
-                        _ => return true,
                     }
                     false
                 }
@@ -1354,13 +1496,7 @@ impl Layouts {
                     ));
             }
         }
-
-        if direction == Some(0) {
-            self.activate_focused_costume(now);
-            None
-        } else {
-            direction
-        }
+        direction
     }
 
     fn consume_category_wheel(
@@ -1440,21 +1576,12 @@ impl Layouts {
         next_visible_category(visible_indices, self.selected_category, direction)
     }
 
-    fn activate_focused_costume(&mut self, now: f64) {
-        let category_index = self.selected_category;
-        let costume_index = self.carousel_focus;
-        if let Some(category) = self.catalog.categories.get_mut(category_index) {
-            select_costume(category, costume_index);
-            let new_active_image = active_image(category);
-            self.active_images[category_index] = new_active_image;
-            self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
-            self.active_feedback_costume = Some(costume_index);
-        }
-    }
-
     fn apply_focused_costume_action(&mut self, action: ModAction, now: f64) {
         let category_index = self.selected_category;
         let costume_index = self.carousel_focus;
+        if !self.visible_mods().contains(&costume_index) {
+            return;
+        }
         let mut changed = false;
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
             if costume_index >= category.costumes.len() {
@@ -1468,12 +1595,7 @@ impl Layouts {
                         costume.active = active;
                     }
                 }
-                ModAction::Additive => {
-                    let costume = &mut category.costumes[costume_index];
-                    changed = !costume.active;
-                    costume.active = true;
-                }
-                // Enabling through the toggle keeps the others, like Additive.
+                // Enabling through the toggle keeps the others enabled.
                 ModAction::Toggle => {
                     let costume = &mut category.costumes[costume_index];
                     costume.active = !costume.active;
@@ -1493,34 +1615,35 @@ impl Layouts {
     }
 }
 
+/// Queue the images of the mods the search shows around `focus`.
 fn append_nearby_mod_images(
     paths: &mut Vec<PathBuf>,
     category: &Category,
+    visible: &[usize],
     focus: usize,
     radius: usize,
 ) {
-    let count = category.costumes.len();
+    let count = visible.len();
     if count == 0 {
         return;
     }
-    let focus = focus.min(count - 1);
-    paths.extend(category.costumes[focus].image.clone());
+    let focus = visible
+        .iter()
+        .position(|&index| index == focus)
+        .unwrap_or(0);
+    paths.extend(category.costumes[visible[focus]].image.clone());
     for distance in 1..=radius.min(count - 1) {
-        for index in [
+        for position in [
             (focus + distance) % count,
             (focus + count - distance) % count,
         ] {
-            if let Some(path) = &category.costumes[index].image {
-                if !paths.contains(path) {
-                    paths.push(path.clone());
-                }
+            if let Some(path) = &category.costumes[visible[position]].image
+                && !paths.contains(path)
+            {
+                paths.push(path.clone());
             }
         }
     }
-}
-
-fn navigation_modifiers(modifiers: egui::Modifiers) -> bool {
-    !modifiers.ctrl && !modifiers.command && !modifiers.shift
 }
 
 fn wheel_units(unit: egui::MouseWheelUnit, delta_y: f32) -> f32 {
@@ -1560,6 +1683,16 @@ fn next_visible_category(
     visible_indices.get(target).copied()
 }
 
+/// The mod `direction` steps to among the mods a search shows.  Stops at
+/// either end, like the carousel without a search.
+fn next_visible_mod(visible: &[usize], focus: usize, direction: i32) -> Option<usize> {
+    let first = *visible.first()?;
+    let Some(position) = visible.iter().position(|&index| index == focus) else {
+        return Some(first);
+    };
+    Some(visible[next_focus_index(visible.len(), position, direction)])
+}
+
 fn next_focus_index(len: usize, current: usize, direction: i32) -> usize {
     if len == 0 {
         return 0;
@@ -1576,14 +1709,14 @@ fn next_focus_index(len: usize, current: usize, direction: i32) -> usize {
 fn card_reveal_progress(
     placement: &CarouselCardPlacement,
     progress: f32,
-    costume_count: usize,
+    card_count: usize,
 ) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
     // Reveal the focused card first, then bring in its neighbors with a small stagger.
     // Two-card carousels have no center slot, so their first card still appears promptly.
     let delay = if placement.focused {
         0.0
-    } else if costume_count <= 2 {
+    } else if card_count <= 2 {
         0.10
     } else if placement.slot == 0 {
         0.22
@@ -1688,6 +1821,24 @@ fn carousel_card_placements(
     placements
 }
 
+/// Card placements for the mods a search shows.  They sit side by side as if
+/// the hidden mods were not installed.
+fn visible_card_placements(
+    carousel_rect: Rect,
+    visible: &[usize],
+    focus: usize,
+) -> Vec<CarouselCardPlacement> {
+    let position = visible
+        .iter()
+        .position(|&index| index == focus)
+        .unwrap_or(0);
+    let mut placements = carousel_card_placements(carousel_rect, visible.len(), position);
+    for placement in &mut placements {
+        placement.index = visible[placement.index];
+    }
+    placements
+}
+
 fn lerp_rect(from: Rect, to: Rect, t: f32) -> Rect {
     Rect::from_min_max(lerp_pos(from.min, to.min, t), lerp_pos(from.max, to.max, t))
 }
@@ -1735,36 +1886,6 @@ fn active_image(category: &Category) -> Option<PathBuf> {
         .find(|costume| costume.active)
         .and_then(|costume| costume.image.clone())
         .or_else(|| category.image.clone())
-}
-
-fn preferred_category(catalog: &Catalog) -> usize {
-    catalog
-        .categories
-        .iter()
-        .position(|category| {
-            category.costumes.len() >= 2
-                && category
-                    .costumes
-                    .iter()
-                    .filter(|costume| costume.active)
-                    .count()
-                    == 1
-                && category
-                    .costumes
-                    .iter()
-                    .any(|costume| costume.image.is_some())
-        })
-        .or_else(|| {
-            catalog.categories.iter().position(|category| {
-                category
-                    .costumes
-                    .iter()
-                    .filter(|costume| costume.image.is_some())
-                    .count()
-                    >= 2
-            })
-        })
-        .unwrap_or(0)
 }
 
 fn character_name(name: &str) -> &str {
@@ -2200,19 +2321,19 @@ mod tests {
             note: None,
         });
         let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
-        let start = layouts.current_carousel_placements(rect, 3, 1.0);
+        let start = layouts.current_carousel_placements(rect, 1.0);
         layouts.carousel_focus = 1;
-        layouts.begin_carousel_transition(start, rect, 3, 1.0);
-        let midway = layouts.current_carousel_placements(rect, 3, 1.07);
+        layouts.begin_carousel_transition(start, rect, 1.0);
+        let midway = layouts.current_carousel_placements(rect, 1.07);
         layouts.carousel_focus = 2;
-        layouts.begin_carousel_transition(midway.clone(), rect, 3, 1.07);
-        let retargeted = layouts.current_carousel_placements(rect, 3, 1.07);
+        layouts.begin_carousel_transition(midway.clone(), rect, 1.07);
+        let retargeted = layouts.current_carousel_placements(rect, 1.07);
         for before in &midway {
             if let Some(after) = retargeted.iter().find(|card| card.index == before.index) {
                 assert_eq!(before.rect, after.rect);
             }
         }
-        let settled = layouts.current_carousel_placements(rect, 3, 2.0);
+        let settled = layouts.current_carousel_placements(rect, 2.0);
         assert!(same_card_geometry(
             &settled,
             &carousel_card_placements(rect, 3, 2)
@@ -2271,10 +2392,9 @@ mod tests {
             for focus in 0..count {
                 let from = carousel_card_placements(rect, count, focus);
                 layouts.carousel_focus = (focus + 1) % count;
-                layouts.begin_carousel_transition(from, rect, count, 1.0);
+                layouts.begin_carousel_transition(from, rect, 1.0);
                 for step in 0..=14 {
-                    let cards =
-                        layouts.current_carousel_placements(rect, count, 1.0 + step as f64 * 0.01);
+                    let cards = layouts.current_carousel_placements(rect, 1.0 + step as f64 * 0.01);
                     let slots: std::collections::HashSet<_> =
                         cards.iter().map(|card| card.slot).collect();
                     assert_eq!(
@@ -2375,8 +2495,8 @@ mod tests {
         let carousel = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
         let start = carousel_card_placements(carousel, 3, 0);
         layouts.carousel_focus = 1;
-        layouts.begin_carousel_transition(start, carousel, 3, 1.0);
-        let midway = layouts.current_carousel_placements(carousel, 3, 1.12);
+        layouts.begin_carousel_transition(start, carousel, 1.0);
+        let midway = layouts.current_carousel_placements(carousel, 1.12);
         let side = midway
             .iter()
             .find(|card| card.index == 2)
@@ -2793,24 +2913,6 @@ mod tests {
     }
 
     #[test]
-    fn additive_action_enables_without_disabling_and_is_idempotent() {
-        let mut layouts = test_layouts(1);
-        let context = egui::Context::default();
-        layouts.carousel_focus = 1;
-        layouts.apply_focused_action(&context, ModAction::Additive);
-        layouts.apply_focused_action(&context, ModAction::Additive);
-        run_layout_frame(
-            &context,
-            &mut layouts,
-            Vec2::new(560.0, 266.0),
-            1.0,
-            Vec::new(),
-            false,
-        );
-        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0, 1]);
-    }
-
-    #[test]
     fn toggle_action_can_remove_the_last_active_mod() {
         let mut layouts = Layouts::new(Catalog {
             game: "Test".into(),
@@ -2832,7 +2934,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_actions_are_noops_when_the_requested_state_already_holds() {
+    fn exclusive_action_is_a_noop_when_only_the_focused_mod_is_enabled() {
         let mut layouts = Layouts::new(Catalog {
             game: "Test".into(),
             categories: vec![category(&[false, true, false])],
@@ -2841,7 +2943,6 @@ mod tests {
         let context = egui::Context::default();
         layouts.carousel_focus = 1;
         layouts.apply_focused_action(&context, ModAction::Exclusive);
-        layouts.apply_focused_action(&context, ModAction::Additive);
         run_layout_frame(
             &context,
             &mut layouts,
@@ -2918,7 +3019,6 @@ mod tests {
                 categories: true,
                 mods: true,
                 exclusive: false,
-                additive: false,
                 toggle: true,
             }
         );
@@ -2930,7 +3030,6 @@ mod tests {
                 categories: true,
                 mods: true,
                 exclusive: true,
-                additive: true,
                 toggle: true,
             }
         );
@@ -2947,7 +3046,6 @@ mod tests {
         assert!(!availability.categories);
         assert!(!availability.mods);
         assert!(!availability.exclusive);
-        assert!(!availability.additive);
         assert!(!availability.toggle);
     }
 
@@ -2962,7 +3060,6 @@ mod tests {
         let availability = layouts.shortcut_availability();
         assert!(availability.mods);
         assert!(availability.exclusive);
-        assert!(!availability.additive);
         assert!(availability.toggle);
     }
 
@@ -2984,5 +3081,324 @@ mod tests {
         assert_eq!(layouts.selected_category, 1);
         assert_eq!(layouts.carousel_focus, 1);
         assert_eq!(active_indices(&layouts.catalog.categories[1]), vec![1]);
+    }
+
+    #[test]
+    fn rows_switch_up_and_down_and_reset_to_categories() {
+        let mut layouts = test_layouts(2);
+        assert_eq!(layouts.row(), Row::Categories);
+        assert_eq!(layouts.selected_category, 0);
+        layouts.switch_row(1);
+        assert_eq!(layouts.row(), Row::Categories);
+        layouts.switch_row(-1);
+        assert_eq!(layouts.row(), Row::Mods);
+        layouts.switch_row(-1);
+        layouts.switch_row(0);
+        assert_eq!(layouts.row(), Row::Mods);
+        layouts.switch_row(1);
+        assert_eq!(layouts.row(), Row::Categories);
+        layouts.switch_row(-1);
+        layouts.reset_row();
+        assert_eq!(layouts.row(), Row::Categories);
+    }
+
+    #[test]
+    fn mod_and_category_steps_and_actions_work_from_either_row() {
+        let mut layouts = test_layouts(2);
+        let context = egui::Context::default();
+        layouts.switch_row(1);
+        layouts.navigate_mod(&context, 1);
+        layouts.navigate_category(&context, 1);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.row(), Row::Categories);
+        assert_eq!(layouts.selected_category, 1);
+        assert_eq!(layouts.carousel_focus_by_category[0], 1);
+
+        // Enabling acts on the focused mod while the categories row is current.
+        layouts.navigate_mod(&context, 1);
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.1,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.row(), Row::Categories);
+        assert_eq!(active_indices(&layouts.catalog.categories[1]), vec![1]);
+
+        layouts.switch_row(-1);
+        layouts.navigate_category(&context, -1);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.2,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(layouts.row(), Row::Mods);
+        assert_eq!(layouts.selected_category, 0);
+        assert_eq!(layouts.carousel_focus, 1);
+    }
+
+    fn named(name: &str, mods: &[&str]) -> Category {
+        Category {
+            name: name.into(),
+            image: None,
+            costumes: mods
+                .iter()
+                .map(|name| Costume {
+                    name: (*name).into(),
+                    image: None,
+                    active: false,
+                })
+                .collect(),
+        }
+    }
+
+    fn search_layouts() -> Layouts {
+        Layouts::new(Catalog {
+            game: "Test".into(),
+            categories: vec![
+                named(
+                    "Operators: Ardelia",
+                    &["Summer Vow", "Beach_Day", "vow_of_dawn", "Classic"],
+                ),
+                named("Endministrator", &[]),
+                named("Perlica", &["Night  Vow v1.2", "Classic"]),
+                named("Vow Keepers", &["Alpha", "Beta"]),
+            ],
+            note: None,
+        })
+    }
+
+    #[test]
+    fn search_matches_names_loosely() {
+        let layouts = search_layouts();
+        let filter = |query: &str| Filter::new(&layouts.catalog, query);
+
+        // Case, underscores and repeated spaces do not matter.
+        let vow = filter("VOW");
+        assert_eq!(vow.categories, vec![0, 2, 3]);
+        assert_eq!(vow.mods, vec![vec![0, 2], vec![], vec![0], vec![0, 1]]);
+        assert_eq!(filter("beach day").mods[0], vec![1]);
+        assert_eq!(filter("vow of").mods[0], vec![2]);
+        assert_eq!(filter("night vow v1.2").mods[2], vec![0]);
+
+        // A matching category shows all its mods, even when it has none.
+        let keepers = filter("keep");
+        assert_eq!(keepers.categories, vec![3]);
+        assert_eq!(keepers.mods[3], vec![0, 1]);
+        assert_eq!(filter("endmin").categories, vec![1]);
+
+        // A mod name can match in several categories.
+        let classic = filter("classic");
+        assert_eq!(classic.categories, vec![0, 2]);
+        assert_eq!(classic.mods, vec![vec![3], vec![], vec![1], vec![]]);
+
+        // The rail shows the character name, so the group prefix does not match.
+        assert!(filter("operators").categories.is_empty());
+
+        // An empty search, or one of only spaces, shows everything.
+        for query in ["", "   "] {
+            let all = filter(query);
+            assert_eq!(all.categories, vec![0, 1, 2, 3]);
+            assert_eq!(
+                all.mods,
+                vec![vec![0, 1, 2, 3], vec![], vec![0, 1], vec![0, 1]]
+            );
+        }
+    }
+
+    #[test]
+    fn search_keeps_a_selection_it_shows_and_otherwise_moves_to_the_first_match() {
+        let mut layouts = search_layouts();
+        assert_eq!(layouts.selected_category, 0);
+        layouts.carousel_focus = 2;
+
+        // Ardelia still shows the focused mod.
+        layouts.set_search("vow");
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 2));
+
+        // Ardelia still shows, but not the focused mod.
+        layouts.set_search("beach");
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 1));
+        assert_eq!(layouts.carousel_focus_by_category[0], 1);
+
+        // Ardelia is hidden, so the first match takes over, and Perlica's
+        // remembered mod gives way to the one that matches.
+        layouts.carousel_focus_by_category[2] = 1;
+        layouts.set_search("night");
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (2, 0));
+
+        // Clearing the search stays where the search led.
+        layouts.set_search("");
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (2, 0));
+    }
+
+    #[test]
+    fn keys_step_over_what_the_search_hides() {
+        let mut layouts = search_layouts();
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 266.0);
+        layouts.set_search("vow");
+
+        layouts.navigate_mod(&context, 1);
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), false);
+        assert_eq!(layouts.carousel_focus, 2);
+
+        // The last match is an end, like the last mod.
+        layouts.navigate_mod(&context, 1);
+        run_layout_frame(&context, &mut layouts, size, 1.1, Vec::new(), false);
+        assert_eq!(layouts.carousel_focus, 2);
+        layouts.navigate_mod(&context, -1);
+        run_layout_frame(&context, &mut layouts, size, 1.2, Vec::new(), false);
+        assert_eq!(layouts.carousel_focus, 0);
+
+        // Endministrator is hidden.
+        layouts.navigate_category(&context, 1);
+        run_layout_frame(&context, &mut layouts, size, 1.3, Vec::new(), false);
+        assert_eq!(layouts.selected_category, 2);
+        layouts.navigate_category(&context, 1);
+        layouts.navigate_category(&context, 1);
+        run_layout_frame(&context, &mut layouts, size, 1.4, Vec::new(), false);
+        assert_eq!(layouts.selected_category, 3);
+        layouts.navigate_category(&context, -1);
+        layouts.navigate_category(&context, -1);
+        run_layout_frame(&context, &mut layouts, size, 1.5, Vec::new(), false);
+        assert_eq!(layouts.selected_category, 0);
+    }
+
+    #[test]
+    fn search_shows_only_matching_cards() {
+        let mut layouts = search_layouts();
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        layouts.set_search("vow");
+        // Two matches lay out like a two-mod carousel.
+        let cards = layouts.current_carousel_placements(rect, 1.0);
+        let mut shown = cards.iter().map(|card| card.index).collect::<Vec<_>>();
+        shown.sort_unstable();
+        assert_eq!(shown, vec![0, 2]);
+        let two = carousel_card_placements(rect, 2, 0);
+        for (card, plain) in cards.iter().zip(&two) {
+            assert_eq!((card.rect, card.slot), (plain.rect, plain.slot));
+        }
+    }
+
+    #[test]
+    fn enabling_a_search_result_still_disables_the_hidden_mods() {
+        let mut layouts = search_layouts();
+        let context = egui::Context::default();
+        layouts.catalog.categories[0].costumes[1].active = true;
+        layouts.catalog.categories[0].costumes[3].active = true;
+        layouts.set_search("dawn");
+        assert_eq!(layouts.carousel_focus, 2);
+
+        layouts.apply_focused_action(&context, ModAction::Exclusive);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![2]);
+    }
+
+    #[test]
+    fn a_mod_the_search_hides_cannot_be_enabled() {
+        let mut layouts = search_layouts();
+        let context = egui::Context::default();
+        layouts.set_search("dawn");
+        layouts.carousel_focus = 1;
+
+        layouts.apply_focused_action(&context, ModAction::Toggle);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 266.0),
+            1.0,
+            Vec::new(),
+            false,
+        );
+        assert!(active_indices(&layouts.catalog.categories[0]).is_empty());
+    }
+
+    #[test]
+    fn shortcut_availability_follows_the_search() {
+        let mut layouts = search_layouts();
+        // One category and one mod show, so there is nowhere to step.
+        layouts.set_search("dawn");
+        assert_eq!(
+            layouts.shortcut_availability(),
+            ShortcutAvailability {
+                categories: false,
+                mods: false,
+                exclusive: true,
+                toggle: true,
+            }
+        );
+
+        layouts.set_search("vow");
+        assert_eq!(
+            layouts.shortcut_availability(),
+            ShortcutAvailability {
+                categories: true,
+                mods: true,
+                exclusive: true,
+                toggle: true,
+            }
+        );
+
+        layouts.carousel_focus = 1;
+        let hidden = layouts.shortcut_availability();
+        assert!(!hidden.exclusive && !hidden.toggle);
+
+        layouts.set_search("zzz");
+        assert_eq!(
+            layouts.shortcut_availability(),
+            ShortcutAvailability {
+                categories: false,
+                mods: false,
+                exclusive: false,
+                toggle: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_search_without_matches_says_so() {
+        let mut layouts = search_layouts();
+        let context = egui::Context::default();
+        layouts.set_search("zzz");
+        assert_eq!(layouts.empty_carousel_text(), "No matches");
+
+        // The selection stays put, the rail is empty, and the carousel shows
+        // only the notice.
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            1.0,
+            Vec::new(),
+            true,
+        );
+        assert_eq!(layouts.selected_category, 0);
+        assert_eq!(layouts.visible_card_rects().len(), 1);
+
+        // A category that matches by name but has no mods is still empty.
+        layouts.set_search("endmin");
+        assert_eq!(layouts.selected_category, 1);
+        assert_eq!(layouts.empty_carousel_text(), "No installed mods");
     }
 }

@@ -784,7 +784,7 @@ fn scan_archived_mods(
     mods
 }
 
-fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> Result<PathBuf> {
+pub(crate) fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> Result<PathBuf> {
     let live_root = game
         .mods_path(use_default_path)
         .ok_or_else(|| anyhow!("game has no live mods path"))?;

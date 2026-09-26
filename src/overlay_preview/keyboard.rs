@@ -5,43 +5,48 @@
 //! try.  On Windows, Alt+H is a system hotkey that still arrives over such
 //! games, and `platform` uses it to move the keyboard focus to the overlay.  Key
 //! messages then reach the overlay's own window procedure, and this module
-//! turns them into commands and session events.
-
-use std::time::Instant;
+//! turns them into commands and session events.  While a search is being
+//! typed, letters and Space pass on to the search field instead.  Capture runs
+//! and other platforms read the same keys from egui.
 
 #[cfg(any(windows, test))]
-use std::{collections::VecDeque, time::Duration};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use egui::Context;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Command {
+    /// Up to the mods row, or down to the categories row.
+    Row(i32),
+    /// Left or right within the current row.
+    Move(i32),
     Mod(i32),
     Category(i32),
-    EnableExclusive,
-    EnableAdditive,
+    /// Enable the highlighted mod and disable the others.
+    Exclusive,
     Toggle,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Event {
-    /// Alt+H arrived.  `focused` reports whether the overlay has the keyboard,
-    /// `alt_down` whether Alt was still held once it had.
+    /// Alt+H arrived.  `focused` reports whether the overlay has the keyboard.
     Hotkey {
-        at: Instant,
         focused: bool,
-        alt_down: bool,
     },
     Command(Command),
-    /// The last held Alt key was released.
-    AltReleased(Instant),
+    /// Tab, F or Ctrl+F: start typing a search, or, from Tab while typing,
+    /// stop typing and keep the results.
+    Search,
     Escape,
     /// Another window took the keyboard.
     Deactivated,
 }
 
-#[cfg(any(windows, test))]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 mod vk {
     pub(super) const TAB: u32 = 0x09;
     pub(super) const RETURN: u32 = 0x0D;
@@ -50,12 +55,21 @@ mod vk {
     pub(super) const MENU: u32 = 0x12;
     pub(super) const ESCAPE: u32 = 0x1B;
     pub(super) const SPACE: u32 = 0x20;
+    pub(super) const LEFT: u32 = 0x25;
+    pub(super) const UP: u32 = 0x26;
+    pub(super) const RIGHT: u32 = 0x27;
+    pub(super) const DOWN: u32 = 0x28;
     pub(super) const A: u32 = 0x41;
+    pub(super) const C: u32 = 0x43;
     pub(super) const D: u32 = 0x44;
     pub(super) const E: u32 = 0x45;
+    pub(super) const F: u32 = 0x46;
     pub(super) const H: u32 = 0x48;
     pub(super) const Q: u32 = 0x51;
+    pub(super) const S: u32 = 0x53;
+    pub(super) const W: u32 = 0x57;
     pub(super) const X: u32 = 0x58;
+    pub(super) const Z: u32 = 0x5A;
     pub(super) const LWIN: u32 = 0x5B;
     pub(super) const RWIN: u32 = 0x5C;
     pub(super) const F10: u32 = 0x79;
@@ -86,46 +100,72 @@ const REPEAT_DELAY: Duration = Duration::from_millis(300);
 #[cfg(any(windows, test))]
 const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
 
-#[cfg(any(windows, test))]
 #[derive(Clone, Copy)]
 enum Role {
     /// Fires on press, then repeats while held.
     Navigate(Command),
     /// Fires once per press.
     Activate(Command),
+    /// Space and Enter: Exclusive, or Toggle while Shift is held.
+    Enable,
+    /// Tab, F and Ctrl+F start typing a search.  F types while searching,
+    /// so only Tab stops.
+    Search,
     Escape,
-    Alt,
     /// Swallowed without a command, so a press that starts in the overlay
-    /// also ends there: H, whose press went to the hotkey, F10, the reload
-    /// key, and Tab, Enter and Space, which would otherwise move or press
-    /// egui's keyboard focus.
+    /// also ends there: the modifiers, H, whose press went to the hotkey,
+    /// and F10, the reload key.
     Swallow,
     /// Passed through.  Other keys do nothing while one is held.
     Windows,
 }
 
+impl Role {
+    /// The event for a new press.  Repeats follow their own rules.
+    fn event(self, shift: bool) -> Option<Event> {
+        match self {
+            Role::Navigate(command) | Role::Activate(command) => Some(Event::Command(command)),
+            Role::Enable => Some(Event::Command(if shift {
+                Command::Toggle
+            } else {
+                Command::Exclusive
+            })),
+            Role::Search => Some(Event::Search),
+            Role::Escape => Some(Event::Escape),
+            Role::Swallow | Role::Windows => None,
+        }
+    }
+}
+
 /// Every key the overlay tracks.  A key's bit in the router masks is
-/// `1 << index`, and the navigation keys come first so their index also
-/// addresses `Router::next_repeat`.
-#[cfg(any(windows, test))]
-const KEYS: [(u32, Role); 19] = [
+/// `1 << index`.
+const KEYS: [(u32, Role); 28] = [
+    (vk::W, Role::Activate(Command::Row(-1))),
+    (vk::UP, Role::Activate(Command::Row(-1))),
+    (vk::S, Role::Activate(Command::Row(1))),
+    (vk::DOWN, Role::Activate(Command::Row(1))),
+    (vk::A, Role::Navigate(Command::Move(-1))),
+    (vk::LEFT, Role::Navigate(Command::Move(-1))),
+    (vk::D, Role::Navigate(Command::Move(1))),
+    (vk::RIGHT, Role::Navigate(Command::Move(1))),
     (vk::Q, Role::Navigate(Command::Mod(-1))),
     (vk::E, Role::Navigate(Command::Mod(1))),
-    (vk::A, Role::Navigate(Command::Category(-1))),
-    (vk::D, Role::Navigate(Command::Category(1))),
-    (vk::LSHIFT, Role::Activate(Command::EnableAdditive)),
-    (vk::RSHIFT, Role::Activate(Command::EnableAdditive)),
-    (vk::LCONTROL, Role::Activate(Command::EnableExclusive)),
-    (vk::RCONTROL, Role::Activate(Command::EnableExclusive)),
+    (vk::Z, Role::Navigate(Command::Category(-1))),
+    (vk::C, Role::Navigate(Command::Category(1))),
+    (vk::SPACE, Role::Enable),
+    (vk::RETURN, Role::Enable),
     (vk::X, Role::Activate(Command::Toggle)),
+    (vk::TAB, Role::Search),
+    (vk::F, Role::Search),
     (vk::ESCAPE, Role::Escape),
-    (vk::LMENU, Role::Alt),
-    (vk::RMENU, Role::Alt),
+    (vk::LSHIFT, Role::Swallow),
+    (vk::RSHIFT, Role::Swallow),
+    (vk::LCONTROL, Role::Swallow),
+    (vk::RCONTROL, Role::Swallow),
+    (vk::LMENU, Role::Swallow),
+    (vk::RMENU, Role::Swallow),
     (vk::H, Role::Swallow),
     (vk::F10, Role::Swallow),
-    (vk::TAB, Role::Swallow),
-    (vk::RETURN, Role::Swallow),
-    (vk::SPACE, Role::Swallow),
     (vk::LWIN, Role::Windows),
     (vk::RWIN, Role::Windows),
 ];
@@ -143,21 +183,173 @@ const fn bit(key: u32) -> u32 {
 }
 
 #[cfg(any(windows, test))]
-const ALT_KEYS: u32 = bit(vk::LMENU) | bit(vk::RMENU);
+const SHIFT_KEYS: u32 = bit(vk::LSHIFT) | bit(vk::RSHIFT);
 #[cfg(any(windows, test))]
 const WINDOWS_KEYS: u32 = bit(vk::LWIN) | bit(vk::RWIN);
 
-#[cfg(any(windows, test))]
 fn slot(key: u32) -> Option<(usize, Role)> {
     KEYS.iter()
         .position(|&(tracked, _)| tracked == key)
         .map(|index| (index, KEYS[index].1))
 }
 
-/// Whether the overlay window swallows the key instead of passing it on.
+/// Whether the overlay window swallows the key instead of passing it on,
+/// when no search is being typed.
 #[cfg(any(windows, test))]
 fn consumes(key: u32) -> bool {
     slot(key).is_some_and(|(_, role)| !matches!(role, Role::Windows))
+}
+
+/// Keys that type into the search while it is being typed, although they
+/// are commands otherwise.
+fn types(key: u32) -> bool {
+    matches!(
+        key,
+        vk::W
+            | vk::A
+            | vk::S
+            | vk::D
+            | vk::Q
+            | vk::E
+            | vk::Z
+            | vk::C
+            | vk::X
+            | vk::H
+            | vk::F
+            | vk::SPACE
+    )
+}
+
+/// Whether the search is being typed after `event`.
+fn typing_after(typing: bool, event: Event) -> bool {
+    match event {
+        Event::Search => !typing,
+        Event::Command(_) => typing,
+        Event::Hotkey { .. } | Event::Escape | Event::Deactivated => false,
+    }
+}
+
+/// The virtual key behind a key that reached egui.
+fn egui_vk(key: egui::Key) -> Option<u32> {
+    use egui::Key;
+
+    Some(match key {
+        Key::W => vk::W,
+        Key::ArrowUp => vk::UP,
+        Key::S => vk::S,
+        Key::ArrowDown => vk::DOWN,
+        Key::A => vk::A,
+        Key::ArrowLeft => vk::LEFT,
+        Key::D => vk::D,
+        Key::ArrowRight => vk::RIGHT,
+        Key::Q => vk::Q,
+        Key::E => vk::E,
+        Key::Z => vk::Z,
+        Key::C => vk::C,
+        Key::Space => vk::SPACE,
+        Key::Enter => vk::RETURN,
+        Key::X => vk::X,
+        Key::Escape => vk::ESCAPE,
+        Key::H => vk::H,
+        Key::F10 => vk::F10,
+        Key::Tab => vk::TAB,
+        Key::F => vk::F,
+        _ => return None,
+    })
+}
+
+/// Reads the overlay's keys from egui, for capture runs and other platforms,
+/// where no window procedure sees them first.  It takes the keys the window
+/// would swallow out of egui's input, with Alt+H standing in for the hotkey.
+#[derive(Default)]
+pub(super) struct EguiKeys {
+    typing: bool,
+    /// Bits as in `KEYS`.  egui marks repeats only after this filter runs.
+    held: u32,
+    /// Keys whose press typed into the search.
+    passed: u32,
+    events: Vec<Event>,
+}
+
+impl EguiKeys {
+    pub(super) fn filter(&mut self, input: &mut Vec<egui::Event>) {
+        // egui reports a key's character right after its press.
+        let mut took_press = false;
+        input.retain(|event| match *event {
+            egui::Event::Key {
+                key,
+                pressed,
+                modifiers,
+                ..
+            } => {
+                let keep = self.key(key, pressed, modifiers);
+                took_press = pressed && !keep;
+                keep
+            }
+            _ => {
+                let keep = !(took_press && matches!(event, egui::Event::Text(_)));
+                took_press = false;
+                keep
+            }
+        });
+    }
+
+    pub(super) fn drain(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Whether letters and Space type into the search.  The app has the
+    /// final say, since it can ignore a key that asked to start typing.
+    pub(super) fn set_typing(&mut self, typing: bool) {
+        self.typing = typing;
+    }
+
+    /// Routes a key like the window procedure does and returns whether egui
+    /// keeps it.
+    fn key(&mut self, key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> bool {
+        let Some(vk) = egui_vk(key) else {
+            return true;
+        };
+        let Some((index, role)) = slot(vk) else {
+            return true;
+        };
+        let mask: u32 = 1 << index;
+        let passed = self.passed & mask != 0;
+
+        if !pressed {
+            self.held &= !mask;
+            self.passed &= !mask;
+            return passed;
+        }
+        if self.held & mask != 0 {
+            if let Role::Navigate(command) = role
+                && !passed
+                && !(self.typing && types(vk))
+            {
+                self.push(Event::Command(command));
+            }
+            return passed;
+        }
+
+        self.held |= mask;
+        if vk == vk::H && modifiers.alt {
+            self.push(Event::Hotkey { focused: true });
+            return false;
+        }
+        if self.typing && types(vk) {
+            self.passed |= mask;
+            return true;
+        }
+        if let Some(event) = role.event(modifiers.shift) {
+            self.push(event);
+        }
+        false
+    }
+
+    fn push(&mut self, event: Event) {
+        self.typing = typing_after(self.typing, event);
+        self.events.push(event);
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -208,12 +400,17 @@ impl KeyMessage {
 /// `ours` marks keys whose press reached the overlay.  A key already held when
 /// the overlay took the keyboard belongs to the game: its repeats do nothing,
 /// and it does not hold up handing the keyboard back.
+///
+/// While a search is being typed, letters and Space go to the search field.
+/// `passed` marks those presses, so their repeats and release go there too.
 #[cfg(any(windows, test))]
 #[derive(Debug, Default)]
 struct Router {
     down: u32,
     ours: u32,
-    next_repeat: [Option<Instant>; 4],
+    passed: u32,
+    typing: bool,
+    next_repeat: [Option<Instant>; KEYS.len()],
     events: VecDeque<Event>,
 }
 
@@ -224,7 +421,9 @@ impl Router {
     fn reset(&mut self, held: u32, ours: u32) {
         self.down = held;
         self.ours = ours & held;
-        self.next_repeat = [None; 4];
+        self.passed = 0;
+        self.typing = false;
+        self.next_repeat = [None; KEYS.len()];
     }
 
     fn clear(&mut self) {
@@ -236,10 +435,7 @@ impl Router {
     fn hotkey_pressed(&mut self) {
         self.down |= bit(vk::H);
         self.ours |= bit(vk::H);
-    }
-
-    fn alt_down(&self) -> bool {
-        self.down & ALT_KEYS != 0
+        self.passed &= !bit(vk::H);
     }
 
     /// Whether a key that went down in the overlay is still `held`.  Handing
@@ -248,38 +444,42 @@ impl Router {
         self.ours & held != 0
     }
 
-    fn key(&mut self, key: u32, pressed: bool, now: Instant) {
+    fn push(&mut self, event: Event) {
+        self.typing = typing_after(self.typing, event);
+        self.events.push_back(event);
+    }
+
+    /// Routes a key message and returns whether the window swallows it.
+    fn key(&mut self, key: u32, pressed: bool, now: Instant) -> bool {
         let Some((index, role)) = slot(key) else {
-            return;
+            return false;
         };
         let mask: u32 = 1 << index;
-        let repeat = self.next_repeat.get_mut(index);
+        let swallow = !matches!(role, Role::Windows) && self.passed & mask == 0;
 
         if !pressed {
-            let was_down = self.down & mask != 0;
             self.down &= !mask;
             self.ours &= !mask;
-            if let Some(next) = repeat {
-                *next = None;
-            }
-            if was_down && matches!(role, Role::Alt) && !self.alt_down() {
-                self.events.push_back(Event::AltReleased(now));
-            }
-            return;
+            self.passed &= !mask;
+            self.next_repeat[index] = None;
+            return swallow;
         }
 
         let chord = self.down & WINDOWS_KEYS != 0;
         if self.down & mask != 0 {
             // An auto-repeat.  Only a navigation press that moved the
-            // selection repeats, on its own schedule.
-            if let (Role::Navigate(command), Some(next)) = (role, repeat)
+            // selection repeats, on its own schedule, and not while its key
+            // types.
+            if let Role::Navigate(command) = role
+                && swallow
                 && !chord
-                && next.is_some_and(|at| now >= at)
+                && !(self.typing && types(key))
+                && self.next_repeat[index].is_some_and(|at| now >= at)
             {
-                *next = Some(now + REPEAT_INTERVAL);
-                self.events.push_back(Event::Command(command));
+                self.next_repeat[index] = Some(now + REPEAT_INTERVAL);
+                self.push(Event::Command(command));
             }
-            return;
+            return swallow;
         }
 
         self.down |= mask;
@@ -287,19 +487,19 @@ impl Router {
             self.ours |= mask;
         }
         if chord {
-            return;
+            return swallow;
         }
-        match role {
-            Role::Navigate(command) => {
-                if let Some(next) = repeat {
-                    *next = Some(now + REPEAT_DELAY);
-                }
-                self.events.push_back(Event::Command(command));
-            }
-            Role::Activate(command) => self.events.push_back(Event::Command(command)),
-            Role::Escape => self.events.push_back(Event::Escape),
-            Role::Alt | Role::Swallow | Role::Windows => {}
+        if self.typing && types(key) {
+            self.passed |= mask;
+            return false;
         }
+        if let Role::Navigate(_) = role {
+            self.next_repeat[index] = Some(now + REPEAT_DELAY);
+        }
+        if let Some(event) = role.event(self.down & SHIFT_KEYS != 0) {
+            self.push(event);
+        }
+        swallow
     }
 }
 
@@ -329,14 +529,10 @@ fn with_shared<T>(f: impl FnOnce(&mut Shared) -> T) -> Option<T> {
 
 /// Updates the router, then asks for a frame once the borrow has ended.
 #[cfg(windows)]
-fn notify(update: impl FnOnce(&mut Router)) {
-    let ctx = with_shared(|shared| {
-        update(&mut shared.router);
-        shared.ctx.clone()
-    });
-    if let Some(ctx) = ctx {
-        ctx.request_repaint();
-    }
+fn notify<T>(update: impl FnOnce(&mut Router) -> T) -> Option<T> {
+    let (result, ctx) = with_shared(|shared| (update(&mut shared.router), shared.ctx.clone()))?;
+    ctx.request_repaint();
+    Some(result)
 }
 
 #[cfg(windows)]
@@ -386,12 +582,13 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     .filter(|&key| !physically_down(key));
     let now = Instant::now();
     notify(|router| {
-        router.key(message.key, message.pressed, now);
+        let swallow = router.key(message.key, message.pressed, now);
         if let Some(key) = other_shift {
             router.key(key, false, now);
         }
-    });
-    consumed
+        swallow
+    })
+    .unwrap_or(consumed)
 }
 
 /// Alt+H arrived.  `took_focus` is true when the overlay has just taken the
@@ -399,19 +596,13 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
 #[cfg(windows)]
 pub(super) fn hotkey(focused: bool, took_focus: bool) {
     let held = if took_focus { physical_keys() } else { 0 };
-    let at = Instant::now();
     notify(|router| {
         if took_focus {
             router.reset(held, bit(vk::H));
         } else if focused {
             router.hotkey_pressed();
         }
-        let alt_down = focused && router.alt_down();
-        router.events.push_back(Event::Hotkey {
-            at,
-            focused,
-            alt_down,
-        });
+        router.push(Event::Hotkey { focused });
     });
 }
 
@@ -427,7 +618,7 @@ pub(super) fn activated() {
 pub(super) fn deactivated() {
     notify(|router| {
         router.clear();
-        router.events.push_back(Event::Deactivated);
+        router.push(Event::Deactivated);
     });
 }
 
@@ -462,6 +653,15 @@ impl Keyboard {
         }
     }
 
+    /// Whether letters and Space type into the search.  The app has the final
+    /// say, since it can ignore a key that asked to start typing.
+    pub(super) fn set_typing(&self, typing: bool) {
+        #[cfg(windows)]
+        with_shared(|shared| shared.router.typing = typing);
+        #[cfg(not(windows))]
+        let _ = typing;
+    }
+
     /// Whether a key pressed in the overlay is still physically held.
     pub(super) fn busy(&self) -> bool {
         #[cfg(windows)]
@@ -492,6 +692,8 @@ mod tests {
     use super::*;
 
     const ALL: u32 = u32::MAX;
+    /// The B key, which the overlay does not use.
+    const UNUSED: u32 = 0x42;
 
     fn after(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
@@ -505,13 +707,45 @@ mod tests {
         Event::Command(command)
     }
 
+    fn press(router: &mut Router, key: u32, at: Instant) {
+        router.key(key, true, at);
+        router.key(key, false, at);
+    }
+
     #[test]
-    fn navigation_keys_map_to_commands() {
+    fn row_and_move_keys_map_to_commands() {
         let now = Instant::now();
         let mut router = Router::default();
-        for key in [vk::Q, vk::E, vk::A, vk::D] {
+        for key in [vk::W, vk::UP, vk::S, vk::DOWN] {
             assert!(consumes(key));
-            router.key(key, true, now);
+            press(&mut router, key, now);
+        }
+        for key in [vk::A, vk::LEFT, vk::D, vk::RIGHT] {
+            assert!(consumes(key));
+            press(&mut router, key, now);
+        }
+        assert_eq!(
+            drain(&mut router),
+            vec![
+                command(Command::Row(-1)),
+                command(Command::Row(-1)),
+                command(Command::Row(1)),
+                command(Command::Row(1)),
+                command(Command::Move(-1)),
+                command(Command::Move(-1)),
+                command(Command::Move(1)),
+                command(Command::Move(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_and_category_keys_map_to_commands() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        for key in [vk::Q, vk::E, vk::Z, vk::C] {
+            assert!(consumes(key));
+            press(&mut router, key, now);
         }
         assert_eq!(
             drain(&mut router),
@@ -525,14 +759,37 @@ mod tests {
     }
 
     #[test]
+    fn space_and_enter_enable_or_toggle_with_shift() {
+        let now = Instant::now();
+        for key in [vk::SPACE, vk::RETURN] {
+            let mut router = Router::default();
+            press(&mut router, key, now);
+            assert_eq!(drain(&mut router), vec![command(Command::Exclusive)]);
+            for shift in [vk::LSHIFT, vk::RSHIFT] {
+                router.key(shift, true, now);
+                press(&mut router, key, now);
+                router.key(shift, false, now);
+                assert_eq!(drain(&mut router), vec![command(Command::Toggle)]);
+            }
+            // Ctrl and Alt do not change what Space and Enter do.
+            for modifier in [vk::LCONTROL, vk::LMENU] {
+                router.key(modifier, true, now);
+                press(&mut router, key, now);
+                router.key(modifier, false, now);
+                assert_eq!(drain(&mut router), vec![command(Command::Exclusive)]);
+            }
+        }
+    }
+
+    #[test]
     fn other_keys_pass_through_without_commands() {
         let now = Instant::now();
         let mut router = Router::default();
-        // W, S, F4, an arrow for the opacity slider, and the Windows keys.
-        for key in [0x57, 0x53, 0x73, 0x25, vk::LWIN, vk::RWIN] {
+        // B, F4, and the Windows keys.
+        for key in [UNUSED, 0x73, vk::LWIN, vk::RWIN] {
             assert!(!consumes(key));
-            router.key(key, true, now);
-            router.key(key, false, now);
+            assert!(!router.key(key, true, now));
+            assert!(!router.key(key, false, now));
         }
         assert!(drain(&mut router).is_empty());
         assert!(!router.busy(ALL));
@@ -542,18 +799,19 @@ mod tests {
     fn swallowed_keys_have_no_commands_but_hold_up_focus_return() {
         let now = Instant::now();
         let keys = [
+            vk::LSHIFT,
+            vk::RSHIFT,
+            vk::LCONTROL,
+            vk::RCONTROL,
             vk::LMENU,
             vk::RMENU,
             vk::H,
             vk::F10,
-            vk::TAB,
-            vk::RETURN,
-            vk::SPACE,
         ];
         let mut router = Router::default();
         for key in keys {
             assert!(consumes(key));
-            router.key(key, true, now);
+            assert!(router.key(key, true, now));
         }
         assert!(drain(&mut router).is_empty());
         assert!(router.busy(ALL));
@@ -568,13 +826,12 @@ mod tests {
         let now = Instant::now();
         let mut router = Router::default();
         for (key, expected) in [
-            (vk::LSHIFT, Command::EnableAdditive),
-            (vk::RSHIFT, Command::EnableAdditive),
-            (vk::LCONTROL, Command::EnableExclusive),
-            (vk::RCONTROL, Command::EnableExclusive),
+            (vk::W, Command::Row(-1)),
+            (vk::DOWN, Command::Row(1)),
+            (vk::SPACE, Command::Exclusive),
+            (vk::RETURN, Command::Exclusive),
             (vk::X, Command::Toggle),
         ] {
-            assert!(consumes(key));
             router.key(key, true, now);
             router.key(key, true, after(now, 500));
             router.key(key, true, after(now, 1000));
@@ -590,14 +847,14 @@ mod tests {
     fn keys_held_before_the_overlay_took_the_keyboard_wait_for_release() {
         let now = Instant::now();
         let mut router = Router::default();
-        router.reset(bit(vk::A) | bit(vk::LSHIFT), 0);
+        router.reset(bit(vk::A) | bit(vk::SPACE), 0);
         router.key(vk::A, true, after(now, 400));
         router.key(vk::A, true, after(now, 800));
-        router.key(vk::LSHIFT, true, after(now, 800));
+        router.key(vk::SPACE, true, after(now, 800));
         assert!(drain(&mut router).is_empty());
         router.key(vk::A, false, after(now, 900));
         router.key(vk::A, true, after(now, 1000));
-        assert_eq!(drain(&mut router), vec![command(Command::Category(-1))]);
+        assert_eq!(drain(&mut router), vec![command(Command::Move(-1))]);
     }
 
     #[test]
@@ -615,28 +872,6 @@ mod tests {
         router.key(vk::Q, false, after(now, 1100));
         router.key(vk::Q, true, after(now, 1200));
         assert_eq!(drain(&mut router), vec![command(Command::Mod(-1))]);
-    }
-
-    #[test]
-    fn alt_release_is_reported_after_the_last_alt_key() {
-        let now = Instant::now();
-        let mut router = Router::default();
-        router.reset(bit(vk::LMENU), 0);
-        assert!(router.alt_down());
-        router.key(vk::RMENU, true, now);
-        router.key(vk::LMENU, false, after(now, 10));
-        assert!(router.alt_down());
-        assert!(drain(&mut router).is_empty());
-        router.key(vk::RMENU, false, after(now, 20));
-        assert!(!router.alt_down());
-        assert_eq!(drain(&mut router), vec![Event::AltReleased(after(now, 20))]);
-    }
-
-    #[test]
-    fn alt_release_without_a_press_is_ignored() {
-        let mut router = Router::default();
-        router.key(vk::LMENU, false, Instant::now());
-        assert!(drain(&mut router).is_empty());
     }
 
     #[test]
@@ -663,11 +898,31 @@ mod tests {
         );
         assert_eq!(router.events.len(), 2);
         router.key(vk::D, true, start + REPEAT_DELAY + REPEAT_INTERVAL);
-        assert_eq!(drain(&mut router), vec![command(Command::Category(1)); 3]);
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1)); 3]);
         router.key(vk::D, false, after(start, 1000));
         router.key(vk::D, true, after(start, 1001));
         router.key(vk::D, true, after(start, 1002));
-        assert_eq!(drain(&mut router), vec![command(Command::Category(1))]);
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
+    }
+
+    #[test]
+    fn held_navigation_keys_repeat_independently() {
+        let start = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::C, true, start);
+        router.key(vk::RIGHT, true, after(start, 100));
+        router.key(vk::C, true, start + REPEAT_DELAY);
+        router.key(vk::RIGHT, true, start + REPEAT_DELAY);
+        router.key(vk::RIGHT, true, after(start, 100) + REPEAT_DELAY);
+        assert_eq!(
+            drain(&mut router),
+            vec![
+                command(Command::Category(1)),
+                command(Command::Move(1)),
+                command(Command::Category(1)),
+                command(Command::Move(1)),
+            ]
+        );
     }
 
     #[test]
@@ -699,7 +954,6 @@ mod tests {
         assert!(router.busy(ALL));
         router.reset(bit(vk::LMENU), bit(vk::H));
         assert!(!router.busy(ALL));
-        assert!(router.alt_down());
     }
 
     #[test]
@@ -709,11 +963,11 @@ mod tests {
         router.key(vk::LMENU, true, now);
         router.key(vk::D, true, now);
         router.clear();
-        assert!(!router.alt_down());
         assert!(!router.busy(ALL));
-        // Releases that arrive after the reset are not reported.
-        router.key(vk::LMENU, false, now);
-        assert_eq!(drain(&mut router), vec![command(Command::Category(1))]);
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
+        // Nothing is held any more, so the next message for D is a new press.
+        router.key(vk::D, true, after(now, 50));
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
     }
 
     #[test]
@@ -773,6 +1027,359 @@ mod tests {
         assert!(!message(vk::Q, true).is_altgr_control(|| unreachable!()));
     }
 
+    #[test]
+    fn tab_and_f_start_a_search_and_only_tab_ends_it() {
+        let now = Instant::now();
+        for key in [vk::TAB, vk::F] {
+            let mut router = Router::default();
+            assert!(consumes(key));
+            assert!(router.key(key, true, now));
+            assert!(router.key(key, false, now));
+            assert_eq!(drain(&mut router), vec![Event::Search]);
+            assert!(router.typing);
+            // F types while searching.
+            assert!(!router.key(vk::F, true, now));
+            assert!(!router.key(vk::F, false, now));
+            assert!(drain(&mut router).is_empty());
+            assert!(router.typing);
+            press(&mut router, vk::TAB, now);
+            assert_eq!(drain(&mut router), vec![Event::Search]);
+            assert!(!router.typing);
+        }
+        // Ctrl+F starts it too.
+        let mut router = Router::default();
+        router.key(vk::LCONTROL, true, now);
+        press(&mut router, vk::F, now);
+        assert_eq!(drain(&mut router), vec![Event::Search]);
+    }
+
+    #[test]
+    fn typing_passes_letters_and_space_to_the_search() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        press(&mut router, vk::F, now);
+        drain(&mut router);
+        for key in [
+            vk::W,
+            vk::A,
+            vk::S,
+            vk::D,
+            vk::Q,
+            vk::E,
+            vk::Z,
+            vk::C,
+            vk::X,
+            vk::H,
+            vk::F,
+            vk::SPACE,
+        ] {
+            assert!(!router.key(key, true, now), "{key:#x}");
+            assert!(!router.key(key, true, after(now, 500)), "{key:#x}");
+            // A key that typed holds up handing the keyboard back like any
+            // other key pressed in the overlay.
+            assert!(router.busy(ALL));
+            assert!(!router.key(key, false, after(now, 600)), "{key:#x}");
+        }
+        assert!(drain(&mut router).is_empty());
+        assert!(router.typing);
+        assert!(!router.busy(ALL));
+    }
+
+    #[test]
+    fn typing_keeps_arrows_enter_escape_and_tab() {
+        let now = Instant::now();
+        let mut router = Router {
+            typing: true,
+            ..Router::default()
+        };
+        for key in [vk::UP, vk::DOWN, vk::LEFT, vk::RIGHT, vk::RETURN] {
+            assert!(router.key(key, true, now), "{key:#x}");
+            assert!(router.key(key, false, now), "{key:#x}");
+        }
+        router.key(vk::LSHIFT, true, now);
+        press(&mut router, vk::RETURN, now);
+        router.key(vk::LSHIFT, false, now);
+        assert_eq!(
+            drain(&mut router),
+            vec![
+                command(Command::Row(-1)),
+                command(Command::Row(1)),
+                command(Command::Move(-1)),
+                command(Command::Move(1)),
+                command(Command::Exclusive),
+                command(Command::Toggle),
+            ]
+        );
+        assert!(router.typing);
+        // Held arrows still repeat.
+        router.key(vk::RIGHT, true, now);
+        router.key(vk::RIGHT, true, now + REPEAT_DELAY);
+        router.key(vk::RIGHT, false, now + REPEAT_DELAY);
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1)); 2]);
+
+        assert!(router.key(vk::ESCAPE, true, now));
+        router.key(vk::ESCAPE, false, now);
+        assert_eq!(drain(&mut router), vec![Event::Escape]);
+        assert!(!router.typing);
+    }
+
+    #[test]
+    fn a_key_that_typed_is_released_to_the_search() {
+        let now = Instant::now();
+        let mut router = Router {
+            typing: true,
+            ..Router::default()
+        };
+        assert!(!router.key(vk::D, true, now));
+        press(&mut router, vk::TAB, now);
+        assert_eq!(drain(&mut router), vec![Event::Search]);
+        assert!(!router.typing);
+        // D went down in the search, so it stays there until released.
+        assert!(!router.key(vk::D, true, now + REPEAT_DELAY));
+        assert!(!router.key(vk::D, false, after(now, 400)));
+        assert!(drain(&mut router).is_empty());
+        // Its next press is a command again.
+        assert!(router.key(vk::D, true, after(now, 500)));
+        assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
+    }
+
+    #[test]
+    fn a_key_held_before_typing_started_stays_quiet() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::A, true, now);
+        press(&mut router, vk::F, after(now, 100));
+        assert!(router.key(vk::A, true, now + REPEAT_DELAY));
+        assert!(router.key(vk::A, false, after(now, 400)));
+        assert_eq!(
+            drain(&mut router),
+            vec![command(Command::Move(-1)), Event::Search]
+        );
+    }
+
+    #[test]
+    fn only_search_keys_start_typing_and_session_events_end_it() {
+        for typing in [false, true] {
+            assert_eq!(typing_after(typing, Event::Search), !typing);
+            assert_eq!(typing_after(typing, command(Command::Exclusive)), typing);
+            for event in [
+                Event::Escape,
+                Event::Hotkey { focused: true },
+                Event::Deactivated,
+            ] {
+                assert!(!typing_after(typing, event), "{event:?}");
+            }
+        }
+        // Taking or losing the keyboard starts over.
+        let mut router = Router {
+            typing: true,
+            ..Router::default()
+        };
+        router.reset(0, 0);
+        assert!(!router.typing);
+    }
+
+    fn egui_key(key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// Presses and releases `key` through `keys`.  Returns the events, and
+    /// whether egui still sees the key.
+    fn tap(keys: &mut EguiKeys, key: egui::Key, modifiers: egui::Modifiers) -> (Vec<Event>, bool) {
+        let mut input = vec![
+            egui_key(key, true, modifiers),
+            egui_key(key, false, modifiers),
+        ];
+        keys.filter(&mut input);
+        let kept = match input.len() {
+            0 => false,
+            2 => true,
+            _ => panic!("{key:?} lost only its press or its release"),
+        };
+        (keys.drain(), kept)
+    }
+
+    #[test]
+    fn egui_keys_map_like_window_keys() {
+        use egui::{Key, Modifiers};
+
+        let none = Modifiers::NONE;
+        for (key, modifiers, expected) in [
+            (Key::W, none, Some(command(Command::Row(-1)))),
+            (Key::ArrowUp, none, Some(command(Command::Row(-1)))),
+            (Key::S, none, Some(command(Command::Row(1)))),
+            (Key::ArrowDown, none, Some(command(Command::Row(1)))),
+            (Key::A, none, Some(command(Command::Move(-1)))),
+            (Key::ArrowLeft, none, Some(command(Command::Move(-1)))),
+            (Key::D, none, Some(command(Command::Move(1)))),
+            (Key::ArrowRight, none, Some(command(Command::Move(1)))),
+            (Key::Q, none, Some(command(Command::Mod(-1)))),
+            (Key::E, none, Some(command(Command::Mod(1)))),
+            (Key::Z, none, Some(command(Command::Category(-1)))),
+            (Key::C, none, Some(command(Command::Category(1)))),
+            (Key::Space, none, Some(command(Command::Exclusive))),
+            (Key::Enter, none, Some(command(Command::Exclusive))),
+            (Key::Space, Modifiers::SHIFT, Some(command(Command::Toggle))),
+            (Key::Enter, Modifiers::SHIFT, Some(command(Command::Toggle))),
+            (Key::X, none, Some(command(Command::Toggle))),
+            (Key::Tab, none, Some(Event::Search)),
+            (Key::F, none, Some(Event::Search)),
+            (Key::F, Modifiers::CTRL, Some(Event::Search)),
+            (Key::Escape, none, Some(Event::Escape)),
+            (
+                Key::H,
+                Modifiers::ALT,
+                Some(Event::Hotkey { focused: true }),
+            ),
+            (Key::H, none, None),
+            (Key::F10, none, None),
+        ] {
+            let mut keys = EguiKeys::default();
+            assert_eq!(
+                tap(&mut keys, key, modifiers),
+                (expected.into_iter().collect(), false),
+                "{key:?} {modifiers:?}"
+            );
+        }
+        for key in [Key::B, Key::F4] {
+            let mut keys = EguiKeys::default();
+            assert_eq!(tap(&mut keys, key, none), (Vec::new(), true), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn only_egui_navigation_keys_repeat() {
+        use egui::{Key, Modifiers};
+
+        let none = Modifiers::NONE;
+        for (key, repeats) in [
+            (Key::D, true),
+            (Key::Q, true),
+            (Key::W, false),
+            (Key::Space, false),
+            (Key::Enter, false),
+            (Key::X, false),
+            (Key::Tab, false),
+            (Key::Escape, false),
+        ] {
+            let mut keys = EguiKeys::default();
+            // egui-winit reports a repeat as another press, and egui marks
+            // it as a repeat only after the filter.
+            let mut input = vec![
+                egui_key(key, true, none),
+                egui_key(key, true, none),
+                egui_key(key, false, none),
+            ];
+            keys.filter(&mut input);
+            assert!(input.is_empty(), "{key:?}");
+            assert_eq!(keys.drain().len(), if repeats { 2 } else { 1 }, "{key:?}");
+        }
+        let mut keys = EguiKeys::default();
+        let mut input = vec![
+            egui_key(Key::H, true, Modifiers::ALT),
+            egui_key(Key::H, true, Modifiers::ALT),
+        ];
+        keys.filter(&mut input);
+        assert_eq!(keys.drain(), vec![Event::Hotkey { focused: true }]);
+    }
+
+    #[test]
+    fn egui_typing_keeps_letters_and_space_for_the_search() {
+        use egui::{Key, Modifiers};
+
+        let none = Modifiers::NONE;
+        let mut keys = EguiKeys::default();
+        assert_eq!(tap(&mut keys, Key::F, none), (vec![Event::Search], false));
+        for key in [
+            Key::W,
+            Key::A,
+            Key::S,
+            Key::D,
+            Key::Q,
+            Key::E,
+            Key::Z,
+            Key::C,
+            Key::X,
+            Key::H,
+            Key::F,
+            Key::Space,
+        ] {
+            assert_eq!(tap(&mut keys, key, none), (Vec::new(), true), "{key:?}");
+        }
+        for (key, modifiers, expected) in [
+            (Key::ArrowDown, none, command(Command::Row(1))),
+            (Key::Enter, none, command(Command::Exclusive)),
+            (Key::Enter, Modifiers::SHIFT, command(Command::Toggle)),
+            (Key::Tab, none, Event::Search),
+            (Key::W, none, command(Command::Row(-1))),
+        ] {
+            assert_eq!(
+                tap(&mut keys, key, modifiers),
+                (vec![expected], false),
+                "{key:?} {modifiers:?}"
+            );
+        }
+        // Esc and Alt+H end typing.
+        for (key, modifiers, event) in [
+            (Key::Escape, none, Event::Escape),
+            (Key::H, Modifiers::ALT, Event::Hotkey { focused: true }),
+        ] {
+            keys.set_typing(true);
+            assert_eq!(tap(&mut keys, key, modifiers), (vec![event], false));
+            assert_eq!(
+                tap(&mut keys, Key::S, none),
+                (vec![command(Command::Row(1))], false)
+            );
+        }
+    }
+
+    #[test]
+    fn egui_characters_follow_their_keys() {
+        use egui::{Key, Modifiers};
+
+        let none = Modifiers::NONE;
+        let text = |text: &str| egui::Event::Text(text.into());
+        let mut keys = EguiKeys::default();
+        let mut input = vec![
+            egui_key(Key::F, true, none),
+            text("f"),
+            egui_key(Key::F, false, none),
+            egui_key(Key::V, true, none),
+            text("v"),
+            egui_key(Key::V, false, none),
+            egui_key(Key::F, true, none),
+            text("f"),
+            egui_key(Key::Tab, true, none),
+            egui_key(Key::Space, true, none),
+            text(" "),
+            egui_key(Key::Tab, false, none),
+            // Text that follows no key, such as a finished IME word, stays.
+            text("語"),
+        ];
+        keys.filter(&mut input);
+        assert_eq!(
+            input,
+            vec![
+                egui_key(Key::V, true, none),
+                text("v"),
+                egui_key(Key::V, false, none),
+                egui_key(Key::F, true, none),
+                text("f"),
+                text("語"),
+            ]
+        );
+        assert_eq!(
+            keys.drain(),
+            vec![Event::Search, Event::Search, command(Command::Exclusive)]
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn window_messages_reach_the_installed_keyboard() {
@@ -782,28 +1389,32 @@ mod tests {
         assert!(installed());
 
         assert!(key_message(message(vk::Q, true), || None));
-        assert!(!key_message(message(0x57, true), || None));
+        assert!(!key_message(message(UNUSED, true), || None));
         assert!(!key_message(message(vk::LWIN, true), || None));
         assert_eq!(keyboard.drain(), vec![command(Command::Mod(-1))]);
 
-        // AltGr's fake Ctrl is swallowed without enabling anything.
+        // AltGr's fake Ctrl is swallowed without reaching the router.
         let right_alt = || Some(message(vk::RMENU, true));
         assert!(key_message(message(vk::LCONTROL, true), right_alt));
         assert!(keyboard.drain().is_empty());
 
         hotkey(true, false);
         deactivated();
-        assert!(matches!(
-            keyboard.drain().as_slice(),
-            [
-                Event::Hotkey {
-                    focused: true,
-                    alt_down: false,
-                    ..
-                },
-                Event::Deactivated,
-            ]
-        ));
+        assert_eq!(
+            keyboard.drain(),
+            vec![Event::Hotkey { focused: true }, Event::Deactivated]
+        );
+
+        // F starts a search, and letters then type into it until the app
+        // says otherwise.
+        assert!(key_message(message(vk::F, true), || None));
+        assert!(key_message(message(vk::F, false), || None));
+        assert_eq!(keyboard.drain(), vec![Event::Search]);
+        assert!(!key_message(message(vk::Q, true), || None));
+        assert!(!key_message(message(vk::Q, false), || None));
+        keyboard.set_typing(false);
+        assert!(key_message(message(vk::Q, true), || None));
+        assert_eq!(keyboard.drain(), vec![command(Command::Mod(-1))]);
 
         drop(keyboard);
         assert!(!installed());

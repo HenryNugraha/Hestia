@@ -41,6 +41,17 @@ static SUBCLASS_HWND: AtomicIsize = AtomicIsize::new(0);
 #[cfg(windows)]
 const HOTKEY_ID: i32 = 1;
 
+/// Points between the bottom of the strip and the bottom edge of the monitor.
+#[cfg(windows)]
+const BOTTOM_GAP: f32 = 18.0;
+
+/// Timer that puts the overlay back above the taskbar.
+#[cfg(windows)]
+const RAISE_TIMER_ID: usize = 1;
+
+#[cfg(windows)]
+const RAISE_CHECK_MS: u32 = 250;
+
 /// The window that had the keyboard when Alt+H took it.
 #[cfg(windows)]
 static RETURN_TARGET: AtomicIsize = AtomicIsize::new(0);
@@ -108,7 +119,147 @@ pub(super) fn configure(cc: &eframe::CreationContext<'_>) -> std::io::Result<()>
         return Ok(());
     };
     let hwnd = HWND(handle.hwnd.get() as *mut std::ffi::c_void);
-    configure_window(hwnd, cc.egui_ctx.pixels_per_point())
+    configure_window(hwnd, cc.egui_ctx.pixels_per_point())?;
+    keep_above_taskbar(hwnd);
+    Ok(())
+}
+
+/// The strip overlaps the taskbar.  Both are always-on-top windows, so
+/// whichever came forward last covers the other.
+///
+/// Marking the overlay as fullscreen makes the shell drop the taskbar while
+/// the overlay has the keyboard, which keeps Alt+H from bringing it up over a
+/// game.  The timer puts the overlay back on top after the taskbar is used.
+#[cfg(windows)]
+fn keep_above_taskbar(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::SetTimer;
+
+    if let Err(error) = mark_fullscreen(hwnd) {
+        tracing::warn!(%error, "Could not mark the overlay as fullscreen");
+    }
+    if unsafe { SetTimer(Some(hwnd), RAISE_TIMER_ID, RAISE_CHECK_MS, None) } == 0 {
+        let error = std::io::Error::last_os_error();
+        tracing::warn!(%error, "Could not start the overlay taskbar check");
+    }
+}
+
+#[cfg(windows)]
+fn mark_fullscreen(hwnd: windows::Win32::Foundation::HWND) -> windows::core::Result<()> {
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
+    };
+    use windows::Win32::UI::Shell::{ITaskbarList2, TaskbarList};
+
+    unsafe {
+        // winit has usually initialized OLE on this thread already.  Every
+        // successful call, including that case, needs its own uninitialize.
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        // The shell keeps the mark.  The taskbar list object can be released.
+        let result = CoCreateInstance::<_, ITaskbarList2>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+            .and_then(|taskbar| {
+                taskbar.HrInit()?;
+                taskbar.MarkFullscreenWindow(hwnd, true)
+            });
+        if initialized {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+/// Put the overlay back above the taskbar once the keyboard has moved on to
+/// something other than the shell.  Raising it while the shell has the
+/// keyboard would cover the menu or jump list that was just opened.
+#[cfg(windows)]
+unsafe fn raise_above_taskbar(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
+        SWP_NOSIZE, SetWindowPos,
+    };
+
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.0.is_null()
+        || foreground == hwnd
+        || !unsafe { taskbar_above(hwnd) }
+        || unsafe { is_shell_window(foreground) }
+    {
+        return;
+    }
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        )
+    };
+}
+
+/// Whether a taskbar on any monitor is above the overlay.
+#[cfg(windows)]
+unsafe fn taskbar_above(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_HWNDPREV, GetWindow};
+
+    let mut window = hwnd;
+    // Only always-on-top windows are above the overlay, so this stays short.
+    for _ in 0..256 {
+        match unsafe { GetWindow(window, GW_HWNDPREV) } {
+            Ok(above) => window = above,
+            Err(_) => return false,
+        }
+        if matches!(
+            unsafe { class_name(window) }.as_str(),
+            "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(windows)]
+unsafe fn is_shell_window(window: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+    use windows::core::w;
+
+    let class = unsafe { class_name(window) };
+    let taskbar_process = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.is_ok_and(|taskbar| {
+        let mut taskbar_pid = 0;
+        let mut window_pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(taskbar, Some(&mut taskbar_pid));
+            GetWindowThreadProcessId(window, Some(&mut window_pid));
+        }
+        taskbar_pid != 0 && taskbar_pid == window_pid
+    });
+    is_shell_class(&class, taskbar_process)
+}
+
+/// Taskbars, their menus and jump lists, the tray overflow and Alt+Tab belong
+/// to the process that owns the taskbar.
+#[cfg(windows)]
+fn is_shell_class(class: &str, taskbar_process: bool) -> bool {
+    match class {
+        // Start, search and the notification center run in their own hosts.
+        "Windows.UI.Core.CoreWindow" => true,
+        // File Explorer and the desktop share the taskbar's process, but
+        // switching to them means the taskbar is no longer in use.
+        "CabinetWClass" | "Progman" | "WorkerW" => false,
+        _ => taskbar_process,
+    }
+}
+
+#[cfg(windows)]
+unsafe fn class_name(window: windows::Win32::Foundation::HWND) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
+    let mut buffer = [0u16; 64];
+    let length = unsafe { GetClassNameW(window, &mut buffer) }.max(0) as usize;
+    String::from_utf16_lossy(&buffer[..length])
 }
 
 #[cfg(windows)]
@@ -181,44 +332,60 @@ fn configure_window(
         // The preview uses a fixed-size native canvas so expanding from the
         // mini strip never changes its anchor.  Place that canvas once, at the
         // bottom centre of the monitor containing the foreground game.  The
-        // work area already excludes the taskbar and can have negative origins
-        // on a monitor arranged to the left of the primary display.
-        let mut window_rect = RECT::default();
-        if GetWindowRect(hwnd, &mut window_rect).is_ok() {
-            let width = (window_rect.right - window_rect.left).max(1);
-            let height = (window_rect.bottom - window_rect.top).max(1);
-            let foreground = GetForegroundWindow();
-            let monitor_window = if foreground.0.is_null() {
-                hwnd
-            } else {
-                foreground
-            };
-            let monitor = MonitorFromWindow(monitor_window, MONITOR_DEFAULTTONEAREST);
-            if !monitor.0.is_null() {
-                let mut monitor_info = MONITORINFO {
-                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                    ..Default::default()
-                };
-                if GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
-                    let dpi = GetDpiForWindow(monitor_window);
-                    let monitor_scale = if dpi == 0 {
-                        pixels_per_point.max(0.5)
-                    } else {
-                        dpi as f32 / 96.0
-                    };
-                    let margin = (24.0 * monitor_scale).round() as i32;
-                    let (x, y, width, height) =
-                        fit_window_to_work_area(monitor_info.rcWork, width, height, margin);
-                    SetWindowPos(
-                        hwnd,
-                        None,
-                        x,
-                        y,
-                        width,
-                        height,
-                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
-                    )?;
+        // gap ignores the taskbar: a game covers it, and on the desktop the
+        // overlay stays above it.  A monitor arranged to the left of the
+        // primary display has a negative origin.
+        let foreground = GetForegroundWindow();
+        let monitor_window = if foreground.0.is_null() {
+            hwnd
+        } else {
+            foreground
+        };
+        let monitor = MonitorFromWindow(monitor_window, MONITOR_DEFAULTTONEAREST);
+        let mut monitor_info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !monitor.0.is_null() && GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+            // Arriving on a monitor with another scale resizes the canvas to
+            // keep its size in points, so place it again at the new size.
+            for _ in 0..2 {
+                let mut window_rect = RECT::default();
+                if GetWindowRect(hwnd, &mut window_rect).is_err() {
+                    break;
                 }
+                let dpi = GetDpiForWindow(hwnd);
+                let scale = if dpi == 0 {
+                    pixels_per_point.max(0.5)
+                } else {
+                    dpi as f32 / 96.0
+                };
+                let gap = (BOTTOM_GAP * scale).round() as i32;
+                let (x, y, width, height) = fit_window_to_monitor(
+                    monitor_info.rcMonitor,
+                    window_rect.right - window_rect.left,
+                    window_rect.bottom - window_rect.top,
+                    gap,
+                );
+                if (x, y, x + width, y + height)
+                    == (
+                        window_rect.left,
+                        window_rect.top,
+                        window_rect.right,
+                        window_rect.bottom,
+                    )
+                {
+                    break;
+                }
+                SetWindowPos(
+                    hwnd,
+                    None,
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+                )?;
             }
         }
     }
@@ -386,44 +553,44 @@ fn set_window_input_region(
 
 #[cfg(windows)]
 fn bottom_center_position(
-    work_area: windows::Win32::Foundation::RECT,
+    monitor: windows::Win32::Foundation::RECT,
     window_width: i32,
     window_height: i32,
-    margin: i32,
+    gap: i32,
 ) -> (i32, i32) {
-    let work_width = (work_area.right - work_area.left).max(0);
-    let work_height = (work_area.bottom - work_area.top).max(0);
+    let monitor_width = (monitor.right - monitor.left).max(0);
+    let monitor_height = (monitor.bottom - monitor.top).max(0);
     let width = window_width.max(1);
     let height = window_height.max(1);
-    let x = if width >= work_width {
-        work_area.left
+    let x = if width >= monitor_width {
+        monitor.left
     } else {
-        (work_area.left + (work_width - width) / 2).clamp(work_area.left, work_area.right - width)
+        (monitor.left + (monitor_width - width) / 2).clamp(monitor.left, monitor.right - width)
     };
-    let desired_y = work_area.bottom - height - margin.max(0);
-    let y = if height >= work_height {
-        work_area.top
+    let desired_y = monitor.bottom - height - gap.max(0);
+    let y = if height >= monitor_height {
+        monitor.top
     } else {
-        desired_y.clamp(work_area.top, work_area.bottom - height)
+        desired_y.clamp(monitor.top, monitor.bottom - height)
     };
     (x, y)
 }
 
 #[cfg(windows)]
-fn fit_window_to_work_area(
-    work_area: windows::Win32::Foundation::RECT,
+fn fit_window_to_monitor(
+    monitor: windows::Win32::Foundation::RECT,
     window_width: i32,
     window_height: i32,
-    margin: i32,
+    gap: i32,
 ) -> (i32, i32, i32, i32) {
-    let work_width = (work_area.right - work_area.left).max(1);
-    let work_height = (work_area.bottom - work_area.top).max(1);
-    let margin = margin.max(0);
-    let max_width = (work_width - margin.saturating_mul(2)).max(1);
-    let max_height = (work_height - margin).max(1);
+    let monitor_width = (monitor.right - monitor.left).max(1);
+    let monitor_height = (monitor.bottom - monitor.top).max(1);
+    let gap = gap.max(0);
+    let max_width = (monitor_width - gap.saturating_mul(2)).max(1);
+    let max_height = (monitor_height - gap).max(1);
     let width = window_width.max(1).min(max_width);
     let height = window_height.max(1).min(max_height);
-    let (x, y) = bottom_center_position(work_area, width, height, margin);
+    let (x, y) = bottom_center_position(monitor, width, height, gap);
     (x, y, width, height)
 }
 
@@ -553,7 +720,7 @@ unsafe extern "system" fn overlay_window_proc(
     use windows::Win32::UI::Input::KeyboardAndMouse::UnregisterHotKey;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, MA_NOACTIVATE, STYLESTRUCT, WM_MOUSEACTIVATE,
-        WM_NCDESTROY, WM_STYLECHANGING, WS_EX_NOACTIVATE,
+        WM_NCDESTROY, WM_STYLECHANGING, WM_TIMER, WS_EX_NOACTIVATE,
     };
 
     // winit may refresh its extended styles when viewport flags change.  Keep
@@ -575,6 +742,10 @@ unsafe extern "system" fn overlay_window_proc(
     let previous = PREVIOUS_WNDPROC.load(Ordering::Acquire);
     let subclass_hwnd = SUBCLASS_HWND.load(Ordering::Acquire);
     let ours = previous != 0 && subclass_hwnd == hwnd.0 as isize;
+    if ours && msg == WM_TIMER && wparam.0 == RAISE_TIMER_ID {
+        unsafe { raise_above_taskbar(hwnd) };
+        return LRESULT(0);
+    }
     if ours && let Some(result) = unsafe { keyboard_message(hwnd, msg, wparam, lparam) } {
         return result;
     }
@@ -735,41 +906,64 @@ mod tests {
     }
 
     #[test]
-    fn default_position_centres_on_negative_monitor_work_area() {
-        let work_area = RECT {
+    fn default_position_centres_on_negative_monitor() {
+        let monitor = RECT {
             left: -1920,
             top: 0,
             right: 0,
-            bottom: 1040,
+            bottom: 1080,
         };
-        assert_eq!(
-            bottom_center_position(work_area, 560, 660, 24),
-            (-1240, 356)
-        );
+        assert_eq!(bottom_center_position(monitor, 560, 660, 18), (-1240, 402));
     }
 
     #[test]
-    fn default_position_clamps_oversized_canvas_to_work_area() {
-        let work_area = RECT {
+    fn default_position_keeps_gap_on_offset_monitor() {
+        // A 1080p monitor to the right of a 1440p primary, lowered by 363px.
+        let monitor = RECT {
+            left: 2560,
+            top: 363,
+            right: 4480,
+            bottom: 1443,
+        };
+        let (x, y, width, height) = fit_window_to_monitor(monitor, 560, 660, 18);
+        assert_eq!((x, y, width, height), (3240, 765, 560, 660));
+        assert_eq!(monitor.bottom - (y + height), 18);
+    }
+
+    #[test]
+    fn default_position_clamps_oversized_canvas_to_monitor() {
+        let monitor = RECT {
             left: -300,
             top: 40,
             right: 900,
             bottom: 700,
         };
-        assert_eq!(bottom_center_position(work_area, 1600, 900, 24), (-300, 40));
+        assert_eq!(bottom_center_position(monitor, 1600, 900, 18), (-300, 40));
     }
 
     #[test]
-    fn fitted_geometry_shrinks_canvas_and_keeps_bottom_margin() {
-        let work_area = RECT {
+    fn fitted_geometry_shrinks_canvas_and_keeps_bottom_gap() {
+        let monitor = RECT {
             left: -1920,
             top: 0,
             right: 0,
-            bottom: 1040,
+            bottom: 1080,
         };
-        let (x, y, width, height) = fit_window_to_work_area(work_area, 560, 1320, 24);
+        let (x, y, width, height) = fit_window_to_monitor(monitor, 560, 1320, 27);
         assert_eq!((x, width), (-1240, 560));
-        assert_eq!(height, 1016);
-        assert_eq!(y + height, work_area.bottom - 24);
+        assert_eq!((y, height), (0, 1053));
+        assert_eq!(y + height, monitor.bottom - 27);
+    }
+
+    #[test]
+    fn shell_windows_hold_off_raising_the_overlay() {
+        assert!(is_shell_class("Shell_TrayWnd", true));
+        assert!(is_shell_class("Shell_SecondaryTrayWnd", true));
+        assert!(is_shell_class("TopLevelWindowForOverflowXamlIsland", true));
+        assert!(is_shell_class("Windows.UI.Core.CoreWindow", false));
+        for moved_on in ["CabinetWClass", "Progman", "WorkerW"] {
+            assert!(!is_shell_class(moved_on, true));
+        }
+        assert!(!is_shell_class("UnityWndClass", false));
     }
 }

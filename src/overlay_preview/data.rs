@@ -1,11 +1,16 @@
 //! Read-only snapshot of the installed library for the disposable overlay preview.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use crate::{
-    model::{DISABLED_CONTAINER, MOD_META_DIR, MOD_META_FILE},
+    model::{DISABLED_CONTAINER, MOD_META_DIR, MOD_META_FILE, ModCategory, ModCategorySortMode},
     persistence,
 };
+
+const UNCATEGORIZED: &str = "Uncategorized";
 
 #[derive(Clone)]
 pub(super) struct Catalog {
@@ -76,13 +81,12 @@ fn read_catalog() -> anyhow::Result<Catalog> {
         .mods_path(state.static_prefs.use_default_mods_path)
         .filter(|path| path.is_dir())
         .ok_or_else(|| anyhow::anyhow!("The selected game's mod folder is unavailable"))?;
-    let mut definitions: Vec<_> = state
+    let definitions: Vec<_> = state
         .categories
         .iter()
         .filter(|category| category.game_id == game.definition.id)
         .cloned()
         .collect();
-    definitions.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
     let mut categories: Vec<_> = definitions
         .iter()
         .map(|category| Category {
@@ -99,6 +103,7 @@ fn read_catalog() -> anyhow::Result<Catalog> {
         .into_iter();
     let mut skipped = 0;
     let mut grouped_for_preview = false;
+    let mut member_counts: HashMap<String, usize> = HashMap::new();
     while let Some(entry) = walk.next() {
         let Ok(entry) = entry else {
             skipped += 1;
@@ -124,6 +129,9 @@ fn read_catalog() -> anyhow::Result<Catalog> {
             }
         };
         let user = &metadata.metadata.user;
+        if let Some(id) = &user.category_id {
+            *member_counts.entry(id.clone()).or_default() += 1;
+        }
         let name = user
             .title
             .clone()
@@ -146,7 +154,7 @@ fn read_catalog() -> anyhow::Result<Catalog> {
             let group = if let Some(character) = inferred {
                 character
             } else if user.category.trim().is_empty() {
-                "Uncategorized"
+                UNCATEGORIZED
             } else {
                 &user.category
             };
@@ -241,6 +249,24 @@ fn read_catalog() -> anyhow::Result<Catalog> {
         })
         .collect();
     apply_character_portraits(&mut categories, &game.definition.id, &character_links);
+    let sort_mode = state
+        .category_sort_mode_by_game
+        .get(&game.definition.id)
+        .copied()
+        .unwrap_or_default();
+    if matches!(
+        sort_mode,
+        ModCategorySortMode::ByModCountAsc | ModCategorySortMode::ByModCountDesc
+    ) {
+        // The library's counts include archived mods.
+        if let Ok(archive) = crate::integrations::xxmi::archived_mods_root(
+            game,
+            state.static_prefs.use_default_mods_path,
+        ) {
+            count_archived_members(&archive, &mut member_counts);
+        }
+    }
+    categories = library_order(categories, &definitions, sort_mode, &member_counts);
     if !state.static_prefs.library_show_empty_category_folders {
         categories.retain(|category| !category.costumes.is_empty());
     }
@@ -258,6 +284,47 @@ fn read_catalog() -> anyhow::Result<Catalog> {
         categories,
         note: (!notes.is_empty()).then(|| notes.join(" ")),
     })
+}
+
+/// Orders the rail the way the main window orders its folders: the categories
+/// in the library's sort, then the groups this preview adds for mods the
+/// library leaves uncategorized, A to Z, with the catch-all last.
+fn library_order(
+    mut categories: Vec<Category>,
+    definitions: &[ModCategory],
+    mode: ModCategorySortMode,
+    member_counts: &HashMap<String, usize>,
+) -> Vec<Category> {
+    let mut groups = categories.split_off(definitions.len());
+    groups.sort_by_cached_key(|group| (group.name == UNCATEGORIZED, group.name.to_lowercase()));
+    let mut sorted = definitions.to_vec();
+    crate::app::sort_categories_with_counts(&mut sorted, mode, |id| {
+        member_counts.get(id).copied().unwrap_or_default()
+    });
+    let mut folders: Vec<_> = definitions.iter().zip(categories).collect();
+    folders.sort_by_cached_key(|(definition, _)| {
+        sorted
+            .iter()
+            .position(|category| category.id == definition.id)
+    });
+    folders
+        .into_iter()
+        .map(|(_, category)| category)
+        .chain(groups)
+        .collect()
+}
+
+fn count_archived_members(root: &Path, member_counts: &mut HashMap<String, usize>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        if let Ok(Some(state)) = persistence::load_portable_mod_state(&entry.path())
+            && let Some(id) = state.metadata.user.category_id
+        {
+            *member_counts.entry(id).or_default() += 1;
+        }
+    }
 }
 
 // Preview fixture grouping for the clearly named, uncategorized costumes in the
@@ -403,4 +470,114 @@ pub(super) fn state_path() -> Option<PathBuf> {
         candidates.push(cwd.join("hestia.toml"));
     }
     candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn definition(id: &str, name: &str, order: i32) -> ModCategory {
+        ModCategory {
+            id: id.into(),
+            game_id: "endfield".into(),
+            name: name.into(),
+            order,
+            gamebanana_character: None,
+        }
+    }
+
+    fn category(name: &str) -> Category {
+        Category {
+            name: name.into(),
+            image: None,
+            costumes: Vec::new(),
+        }
+    }
+
+    fn names(categories: &[Category]) -> Vec<&str> {
+        categories
+            .iter()
+            .map(|category| category.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn categories_follow_the_library_sort_and_preview_groups_come_after() {
+        let definitions = [
+            definition("misc", "Other/Misc", 0),
+            definition("endministrator", "Operators: Endministrator (F)", 1),
+            definition("akekuri", "Operators: Akekuri", 2),
+        ];
+        let categories = [
+            "Other/Misc",
+            "Operators: Endministrator (F)",
+            "Operators: Akekuri",
+            UNCATEGORIZED,
+            "Typhoeus",
+            "Ardelia",
+            "fan art",
+        ]
+        .map(category)
+        .into();
+        let ordered = library_order(
+            categories,
+            &definitions,
+            ModCategorySortMode::ByNameAsc,
+            &HashMap::new(),
+        );
+        assert_eq!(
+            names(&ordered),
+            [
+                "Operators: Akekuri",
+                "Operators: Endministrator (F)",
+                "Other/Misc",
+                "Ardelia",
+                "fan art",
+                "Typhoeus",
+                UNCATEGORIZED,
+            ]
+        );
+    }
+
+    #[test]
+    fn manual_sort_uses_the_library_order() {
+        let definitions = [
+            definition("c", "Chen", 2),
+            definition("a", "Perlica", 0),
+            definition("b", "Ember", 1),
+        ];
+        let categories = ["Chen", "Perlica", "Ember"].map(category).into();
+        let ordered = library_order(
+            categories,
+            &definitions,
+            ModCategorySortMode::Manual,
+            &HashMap::new(),
+        );
+        assert_eq!(names(&ordered), ["Perlica", "Ember", "Chen"]);
+    }
+
+    #[test]
+    fn mod_count_sort_uses_the_counted_members() {
+        let definitions = [
+            definition("empty", "Arclight", 0),
+            definition("one", "Chen", 1),
+            definition("three", "Perlica", 2),
+            definition("also-three", "Ember", 3),
+        ];
+        let categories = ["Arclight", "Chen", "Perlica", "Ember"]
+            .map(category)
+            .into();
+        let counts = HashMap::from([
+            ("one".to_owned(), 1),
+            ("three".to_owned(), 3),
+            ("also-three".to_owned(), 3),
+        ]);
+        let ordered = library_order(
+            categories,
+            &definitions,
+            ModCategorySortMode::ByModCountDesc,
+            &counts,
+        );
+        assert_eq!(names(&ordered), ["Ember", "Perlica", "Chen", "Arclight"]);
+    }
 }
