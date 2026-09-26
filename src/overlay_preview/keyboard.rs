@@ -1,59 +1,18 @@
-//! Keyboard navigation for the native overlay preview.
+//! Keyboard input for the native overlay preview.
 //!
-//! Windows uses a low-level keyboard hook because the transparent, no-activate
-//! overlay deliberately does not take focus from the game.  The hook only
-//! consumes the four navigation keys and activation keys when Alt is
-//! held. Alt itself and every other key continue through the normal Windows
-//! input path.
+//! Games that run elevated or under anti-cheat stop other processes from
+//! hooking, reading, or injecting their keyboard input, so the overlay does not
+//! try.  On Windows, Alt+H is a system hotkey that still arrives over such
+//! games, and `platform` uses it to move the keyboard focus to the overlay.  Key
+//! messages then reach the overlay's own window procedure, and this module
+//! turns them into commands and session events.
+
+use std::time::Instant;
 
 #[cfg(any(windows, test))]
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
-
-#[cfg(windows)]
-use std::sync::Mutex;
+use std::{collections::VecDeque, time::Duration};
 
 use egui::Context;
-
-#[cfg(any(windows, test))]
-const VK_A: u32 = 0x41;
-#[cfg(any(windows, test))]
-const VK_D: u32 = 0x44;
-#[cfg(any(windows, test))]
-const VK_E: u32 = 0x45;
-#[cfg(any(windows, test))]
-const VK_X: u32 = 0x58;
-#[cfg(any(windows, test))]
-const VK_Q: u32 = 0x51;
-#[cfg(any(windows, test))]
-const VK_SHIFT: u32 = 0x10;
-#[cfg(any(windows, test))]
-const VK_LSHIFT: u32 = 0xA0;
-#[cfg(any(windows, test))]
-const VK_RSHIFT: u32 = 0xA1;
-#[cfg(any(windows, test))]
-const VK_CONTROL: u32 = 0x11;
-#[cfg(any(windows, test))]
-const VK_LCONTROL: u32 = 0xA2;
-#[cfg(any(windows, test))]
-const VK_RCONTROL: u32 = 0xA3;
-#[cfg(any(windows, test))]
-const VK_LWIN: u32 = 0x5B;
-#[cfg(any(windows, test))]
-const VK_RWIN: u32 = 0x5C;
-#[cfg(any(windows, test))]
-const VK_LMENU: u32 = 0xA4;
-#[cfg(any(windows, test))]
-const VK_RMENU: u32 = 0xA5;
-#[cfg(any(windows, test))]
-const VK_MENU: u32 = 0x12;
-
-#[cfg(any(windows, test))]
-const REPEAT_DELAY: Duration = Duration::from_millis(300);
-#[cfg(any(windows, test))]
-const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Command {
@@ -64,576 +23,467 @@ pub(super) enum Command {
     Toggle,
 }
 
-/// Physical state machine shared by the Windows hook and its tests.
-///
-/// `down` records keys that were already held before Alt was pressed.  Such a
-/// key must not become a captured navigation key halfway through its physical
-/// press; in particular, its eventual key-up must still reach the game.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Event {
+    /// Alt+H arrived.  `focused` reports whether the overlay has the keyboard,
+    /// `alt_down` whether Alt was still held once it had.
+    Hotkey {
+        at: Instant,
+        focused: bool,
+        alt_down: bool,
+    },
+    Command(Command),
+    /// The last held Alt key was released.
+    AltReleased(Instant),
+    Escape,
+    /// Another window took the keyboard.
+    Deactivated,
+}
+
 #[cfg(any(windows, test))]
-#[derive(Debug)]
+mod vk {
+    pub(super) const TAB: u32 = 0x09;
+    pub(super) const RETURN: u32 = 0x0D;
+    pub(super) const SHIFT: u32 = 0x10;
+    pub(super) const CONTROL: u32 = 0x11;
+    pub(super) const MENU: u32 = 0x12;
+    pub(super) const ESCAPE: u32 = 0x1B;
+    pub(super) const SPACE: u32 = 0x20;
+    pub(super) const A: u32 = 0x41;
+    pub(super) const D: u32 = 0x44;
+    pub(super) const E: u32 = 0x45;
+    pub(super) const H: u32 = 0x48;
+    pub(super) const Q: u32 = 0x51;
+    pub(super) const X: u32 = 0x58;
+    pub(super) const LWIN: u32 = 0x5B;
+    pub(super) const RWIN: u32 = 0x5C;
+    pub(super) const F10: u32 = 0x79;
+    pub(super) const LSHIFT: u32 = 0xA0;
+    pub(super) const RSHIFT: u32 = 0xA1;
+    pub(super) const LCONTROL: u32 = 0xA2;
+    pub(super) const RCONTROL: u32 = 0xA3;
+    pub(super) const LMENU: u32 = 0xA4;
+    pub(super) const RMENU: u32 = 0xA5;
+}
+
+#[cfg(any(windows, test))]
+const WM_KEYDOWN: u32 = 0x0100;
+#[cfg(any(windows, test))]
+const WM_KEYUP: u32 = 0x0101;
+#[cfg(any(windows, test))]
+const WM_SYSKEYDOWN: u32 = 0x0104;
+#[cfg(any(windows, test))]
+const WM_SYSKEYUP: u32 = 0x0105;
+
+/// Key messages report Shift with a generic virtual key and tell the sides
+/// apart only by scan code.
+#[cfg(any(windows, test))]
+const RIGHT_SHIFT_SCAN_CODE: u32 = 0x36;
+
+#[cfg(any(windows, test))]
+const REPEAT_DELAY: Duration = Duration::from_millis(300);
+#[cfg(any(windows, test))]
+const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy)]
+enum Role {
+    /// Fires on press, then repeats while held.
+    Navigate(Command),
+    /// Fires once per press.
+    Activate(Command),
+    Escape,
+    Alt,
+    /// Swallowed without a command, so a press that starts in the overlay
+    /// also ends there: H, whose press went to the hotkey, F10, the reload
+    /// key, and Tab, Enter and Space, which would otherwise move or press
+    /// egui's keyboard focus.
+    Swallow,
+    /// Passed through.  Other keys do nothing while one is held.
+    Windows,
+}
+
+/// Every key the overlay tracks.  A key's bit in the router masks is
+/// `1 << index`, and the navigation keys come first so their index also
+/// addresses `Router::next_repeat`.
+#[cfg(any(windows, test))]
+const KEYS: [(u32, Role); 19] = [
+    (vk::Q, Role::Navigate(Command::Mod(-1))),
+    (vk::E, Role::Navigate(Command::Mod(1))),
+    (vk::A, Role::Navigate(Command::Category(-1))),
+    (vk::D, Role::Navigate(Command::Category(1))),
+    (vk::LSHIFT, Role::Activate(Command::EnableAdditive)),
+    (vk::RSHIFT, Role::Activate(Command::EnableAdditive)),
+    (vk::LCONTROL, Role::Activate(Command::EnableExclusive)),
+    (vk::RCONTROL, Role::Activate(Command::EnableExclusive)),
+    (vk::X, Role::Activate(Command::Toggle)),
+    (vk::ESCAPE, Role::Escape),
+    (vk::LMENU, Role::Alt),
+    (vk::RMENU, Role::Alt),
+    (vk::H, Role::Swallow),
+    (vk::F10, Role::Swallow),
+    (vk::TAB, Role::Swallow),
+    (vk::RETURN, Role::Swallow),
+    (vk::SPACE, Role::Swallow),
+    (vk::LWIN, Role::Windows),
+    (vk::RWIN, Role::Windows),
+];
+
+#[cfg(any(windows, test))]
+const fn bit(key: u32) -> u32 {
+    let mut index = 0;
+    while index < KEYS.len() {
+        if KEYS[index].0 == key {
+            return 1 << index;
+        }
+        index += 1;
+    }
+    panic!("untracked virtual key");
+}
+
+#[cfg(any(windows, test))]
+const ALT_KEYS: u32 = bit(vk::LMENU) | bit(vk::RMENU);
+#[cfg(any(windows, test))]
+const WINDOWS_KEYS: u32 = bit(vk::LWIN) | bit(vk::RWIN);
+
+#[cfg(any(windows, test))]
+fn slot(key: u32) -> Option<(usize, Role)> {
+    KEYS.iter()
+        .position(|&(tracked, _)| tracked == key)
+        .map(|index| (index, KEYS[index].1))
+}
+
+/// Whether the overlay window swallows the key instead of passing it on.
+#[cfg(any(windows, test))]
+fn consumes(key: u32) -> bool {
+    slot(key).is_some_and(|(_, role)| !matches!(role, Role::Windows))
+}
+
+#[cfg(any(windows, test))]
+fn resolve(key: u32, scan_code: u32, extended: bool) -> u32 {
+    match key {
+        vk::SHIFT if scan_code == RIGHT_SHIFT_SCAN_CODE => vk::RSHIFT,
+        vk::SHIFT => vk::LSHIFT,
+        vk::CONTROL if extended => vk::RCONTROL,
+        vk::CONTROL => vk::LCONTROL,
+        vk::MENU if extended => vk::RMENU,
+        vk::MENU => vk::LMENU,
+        other => other,
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct KeyMessage {
+    pub(super) key: u32,
+    pub(super) pressed: bool,
+}
+
+#[cfg(any(windows, test))]
+impl KeyMessage {
+    /// Reads a key-down or key-up window message, with Shift, Ctrl and Alt
+    /// resolved to their left or right key.
+    pub(super) fn parse(message: u32, wparam: usize, lparam: isize) -> Option<Self> {
+        let pressed = match message {
+            WM_KEYDOWN | WM_SYSKEYDOWN => true,
+            WM_KEYUP | WM_SYSKEYUP => false,
+            _ => return None,
+        };
+        let flags = (lparam as usize >> 16) as u32;
+        let key = resolve(wparam as u32, flags & 0xFF, flags & 0x100 != 0);
+        Some(Self { key, pressed })
+    }
+
+    /// AltGr reports a fake left Ctrl right before right Alt, on both press
+    /// and release.  `next` peeks at the following key message.
+    fn is_altgr_control(self, next: impl FnOnce() -> Option<Self>) -> bool {
+        self.key == vk::LCONTROL
+            && next().is_some_and(|next| next.key == vk::RMENU && next.pressed == self.pressed)
+    }
+}
+
+/// Tracks the keys held while the overlay has the keyboard.
+///
+/// `ours` marks keys whose press reached the overlay.  A key already held when
+/// the overlay took the keyboard belongs to the game: its repeats do nothing,
+/// and it does not hold up handing the keyboard back.
+#[cfg(any(windows, test))]
+#[derive(Debug, Default)]
 struct Router {
-    alt_keys: u8,
-    down: u8,
-    captured: u8,
-    activation_down: u8,
-    activation_captured: u8,
-    windows_down: u8,
+    down: u32,
+    ours: u32,
     next_repeat: [Option<Instant>; 4],
-    commands: VecDeque<Command>,
+    events: VecDeque<Event>,
 }
 
 #[cfg(any(windows, test))]
 impl Router {
-    fn new(alt_keys: u8, down: u8) -> Self {
-        Self {
-            alt_keys,
-            down,
-            captured: 0,
-            activation_down: 0,
-            activation_captured: 0,
-            windows_down: 0,
-            next_repeat: [None; 4],
-            commands: VecDeque::new(),
-        }
+    /// Starts over from the physical key state.  Of `ours`, only keys that
+    /// are still held are kept.
+    fn reset(&mut self, held: u32, ours: u32) {
+        self.down = held;
+        self.ours = ours & held;
+        self.next_repeat = [None; 4];
     }
 
-    fn alt_active(&self, alt_context: bool) -> bool {
-        self.alt_keys != 0 || alt_context
+    fn clear(&mut self) {
+        self.reset(0, 0);
     }
 
-    fn ctrl_active(&self) -> bool {
-        self.activation_down & 0x0C != 0
+    /// The hotkey swallowed H's press while the overlay had the keyboard, so
+    /// its repeats and release are the overlay's too.
+    fn hotkey_pressed(&mut self) {
+        self.down |= bit(vk::H);
+        self.ours |= bit(vk::H);
     }
 
-    /// Routes one physical keyboard event and returns whether it is consumed.
-    /// Ctrl is an activation key, but it also blocks navigation while held so
-    /// Ctrl combinations continue to reach the game as complete key pairs.
-    fn event(
-        &mut self,
-        vk: u32,
-        pressed: bool,
-        blocked_windows: bool,
-        alt_context: bool,
-        now: Instant,
-    ) -> bool {
-        if let Some(alt_bit) = alt_bit(vk) {
-            if pressed {
-                self.alt_keys |= alt_bit;
-            } else {
-                self.alt_keys &= !alt_bit;
-            }
-            return false;
-        }
+    fn alt_down(&self) -> bool {
+        self.down & ALT_KEYS != 0
+    }
 
-        if let Some(window_bit) = windows_bit(vk) {
-            if pressed {
-                self.windows_down |= window_bit;
-            } else {
-                self.windows_down &= !window_bit;
-            }
-            return false;
-        }
+    /// Whether a key that went down in the overlay is still `held`.  Handing
+    /// the keyboard back now would send its repeats and release to the game.
+    fn busy(&self, held: u32) -> bool {
+        self.ours & held != 0
+    }
 
-        if let Some((activation_bit, command)) = activation_key(vk) {
-            if !pressed {
-                let was_captured = self.activation_captured & activation_bit != 0;
-                self.activation_down &= !activation_bit;
-                self.activation_captured &= !activation_bit;
-                return was_captured;
-            }
-
-            let was_down = self.activation_down & activation_bit != 0;
-            self.activation_down |= activation_bit;
-
-            if self.activation_captured & activation_bit != 0 {
-                // Activation is edge-triggered. Repeated modifier-down events
-                // stay swallowed while the matching physical key is held.
-                return true;
-            }
-
-            // A modifier already held before Alt belongs to the game. This
-            // also keeps the normal AltGr sequence (synthetic Ctrl down,
-            // followed by right Alt) out of the activation path.
-            if was_down
-                || !self.alt_active(alt_context)
-                || blocked_windows
-                || self.windows_down != 0
-                || (matches!(command, Command::Toggle) && self.ctrl_active())
-            {
-                return false;
-            }
-
-            self.activation_captured |= activation_bit;
-            self.commands.push_back(command);
-            return true;
-        }
-
-        let Some(index) = navigation_index(vk) else {
-            return false;
+    fn key(&mut self, key: u32, pressed: bool, now: Instant) {
+        let Some((index, role)) = slot(key) else {
+            return;
         };
-        let bit = 1 << index;
+        let mask: u32 = 1 << index;
+        let repeat = self.next_repeat.get_mut(index);
 
         if !pressed {
-            let was_captured = self.captured & bit != 0;
-            self.down &= !bit;
-            self.captured &= !bit;
-            self.next_repeat[index] = None;
-            // This is the important key-up half of Alt release handling: a
-            // captured key remains swallowed until its own physical release.
-            return was_captured;
-        }
-
-        let was_down = self.down & bit != 0;
-        self.down |= bit;
-
-        if self.captured & bit != 0 {
-            if self.alt_active(alt_context)
-                && !blocked_windows
-                && self.windows_down == 0
-                && !self.ctrl_active()
-                && self.next_repeat[index].is_some_and(|next| now >= next)
-            {
-                self.commands.push_back(command_for(vk));
-                self.next_repeat[index] = Some(now + REPEAT_INTERVAL);
+            let was_down = self.down & mask != 0;
+            self.down &= !mask;
+            self.ours &= !mask;
+            if let Some(next) = repeat {
+                *next = None;
             }
-            // Once captured, repeat and release events must remain swallowed,
-            // even after Alt itself is released, so the game cannot receive a
-            // mismatched key-up/down sequence.
-            return true;
+            if was_down && matches!(role, Role::Alt) && !self.alt_down() {
+                self.events.push_back(Event::AltReleased(now));
+            }
+            return;
         }
 
-        // A key that was already down before Alt was pressed belongs to the
-        // game.  Do not steal it when its auto-repeat happens under Alt.
-        if was_down
-            || !self.alt_active(alt_context)
-            || blocked_windows
-            || self.windows_down != 0
-            || self.ctrl_active()
-        {
-            return false;
+        let chord = self.down & WINDOWS_KEYS != 0;
+        if self.down & mask != 0 {
+            // An auto-repeat.  Only a navigation press that moved the
+            // selection repeats, on its own schedule.
+            if let (Role::Navigate(command), Some(next)) = (role, repeat)
+                && !chord
+                && next.is_some_and(|at| now >= at)
+            {
+                *next = Some(now + REPEAT_INTERVAL);
+                self.events.push_back(Event::Command(command));
+            }
+            return;
         }
 
-        self.captured |= bit;
-        self.commands.push_back(command_for(vk));
-        self.next_repeat[index] = Some(now + REPEAT_DELAY);
-        true
-    }
-
-    fn take_commands(&mut self) -> Vec<Command> {
-        self.commands.drain(..).collect()
+        self.down |= mask;
+        if !matches!(role, Role::Windows) {
+            self.ours |= mask;
+        }
+        if chord {
+            return;
+        }
+        match role {
+            Role::Navigate(command) => {
+                if let Some(next) = repeat {
+                    *next = Some(now + REPEAT_DELAY);
+                }
+                self.events.push_back(Event::Command(command));
+            }
+            Role::Activate(command) => self.events.push_back(Event::Command(command)),
+            Role::Escape => self.events.push_back(Event::Escape),
+            Role::Alt | Role::Swallow | Role::Windows => {}
+        }
     }
 }
 
-#[cfg(any(windows, test))]
-fn navigation_index(vk: u32) -> Option<usize> {
-    match vk {
-        VK_Q => Some(0),
-        VK_E => Some(1),
-        VK_A => Some(2),
-        VK_D => Some(3),
+#[cfg(windows)]
+struct Shared {
+    ctx: Context,
+    router: Router,
+}
+
+// The window procedure runs on the thread that owns the window, which is also
+// the thread that runs the UI.
+#[cfg(windows)]
+thread_local! {
+    static SHARED: std::cell::RefCell<Option<Shared>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(windows)]
+fn with_shared<T>(f: impl FnOnce(&mut Shared) -> T) -> Option<T> {
+    SHARED
+        .try_with(|shared| {
+            let mut shared = shared.try_borrow_mut().ok()?;
+            shared.as_mut().map(f)
+        })
+        .ok()
+        .flatten()
+}
+
+/// Updates the router, then asks for a frame once the borrow has ended.
+#[cfg(windows)]
+fn notify(update: impl FnOnce(&mut Router)) {
+    let ctx = with_shared(|shared| {
+        update(&mut shared.router);
+        shared.ctx.clone()
+    });
+    if let Some(ctx) = ctx {
+        ctx.request_repaint();
+    }
+}
+
+#[cfg(windows)]
+fn physically_down(key: u32) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    (unsafe { GetAsyncKeyState(key as i32) }) < 0
+}
+
+/// Reads the tracked keys.  This only sees the truth while the overlay has
+/// the keyboard: a game that blocks input also hides it from this call.
+#[cfg(windows)]
+fn physical_keys() -> u32 {
+    KEYS.iter()
+        .enumerate()
+        .filter(|&(_, &(key, _))| physically_down(key))
+        .fold(0, |held, (index, _)| held | (1 << index))
+}
+
+/// Whether a `Keyboard` is alive on this thread.
+#[cfg(windows)]
+pub(super) fn installed() -> bool {
+    SHARED
+        .try_with(|shared| shared.try_borrow().map_or(true, |shared| shared.is_some()))
+        .unwrap_or(false)
+}
+
+/// Routes a key message sent to the overlay window and returns whether the
+/// window should swallow it.  `next` peeks at the following key message.
+#[cfg(windows)]
+pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<KeyMessage>) -> bool {
+    if !installed() || slot(message.key).is_none() {
+        return false;
+    }
+    let consumed = consumes(message.key);
+    // Peek before borrowing: PeekMessageW can dispatch sent messages into the
+    // window procedure.
+    if message.is_altgr_control(next) {
+        return consumed;
+    }
+    // With both Shift keys held, Windows reports only the last release.
+    let other_shift = match message.key {
+        vk::LSHIFT if !message.pressed => Some(vk::RSHIFT),
+        vk::RSHIFT if !message.pressed => Some(vk::LSHIFT),
         _ => None,
     }
+    .filter(|&key| !physically_down(key));
+    let now = Instant::now();
+    notify(|router| {
+        router.key(message.key, message.pressed, now);
+        if let Some(key) = other_shift {
+            router.key(key, false, now);
+        }
+    });
+    consumed
 }
 
-#[cfg(any(windows, test))]
-fn activation_key(vk: u32) -> Option<(u8, Command)> {
-    match vk {
-        VK_SHIFT => Some((0x03, Command::EnableAdditive)),
-        VK_LSHIFT => Some((0x01, Command::EnableAdditive)),
-        VK_RSHIFT => Some((0x02, Command::EnableAdditive)),
-        VK_CONTROL => Some((0x0C, Command::EnableExclusive)),
-        VK_LCONTROL => Some((0x04, Command::EnableExclusive)),
-        VK_RCONTROL => Some((0x08, Command::EnableExclusive)),
-        VK_X => Some((0x10, Command::Toggle)),
-        _ => None,
+/// Alt+H arrived.  `took_focus` is true when the overlay has just taken the
+/// keyboard from another window.
+#[cfg(windows)]
+pub(super) fn hotkey(focused: bool, took_focus: bool) {
+    let held = if took_focus { physical_keys() } else { 0 };
+    let at = Instant::now();
+    notify(|router| {
+        if took_focus {
+            router.reset(held, bit(vk::H));
+        } else if focused {
+            router.hotkey_pressed();
+        }
+        let alt_down = focused && router.alt_down();
+        router.events.push_back(Event::Hotkey {
+            at,
+            focused,
+            alt_down,
+        });
+    });
+}
+
+#[cfg(windows)]
+pub(super) fn activated() {
+    if installed() {
+        let held = physical_keys();
+        notify(|router| router.reset(held, 0));
     }
 }
 
-#[cfg(any(windows, test))]
-fn windows_bit(vk: u32) -> Option<u8> {
-    match vk {
-        VK_LWIN => Some(0x01),
-        VK_RWIN => Some(0x02),
-        _ => None,
-    }
+#[cfg(windows)]
+pub(super) fn deactivated() {
+    notify(|router| {
+        router.clear();
+        router.events.push_back(Event::Deactivated);
+    });
 }
 
-#[cfg(any(windows, test))]
-fn alt_bit(vk: u32) -> Option<u8> {
-    match vk {
-        VK_LMENU => Some(1),
-        VK_RMENU => Some(2),
-        VK_MENU => Some(3),
-        _ => None,
-    }
+/// Keyboard state for the overlay window.  Create it on the thread that runs
+/// the window, and keep one at a time.
+pub(super) struct Keyboard {
+    _private: (),
 }
 
-#[cfg(any(windows, test))]
-fn command_for(vk: u32) -> Command {
-    match vk {
-        VK_Q => Command::Mod(-1),
-        VK_E => Command::Mod(1),
-        VK_A => Command::Category(-1),
-        VK_D => Command::Category(1),
-        _ => unreachable!("command requested for a non-navigation key"),
-    }
-}
-
-pub(super) struct Monitor {
-    #[cfg(windows)]
-    state: std::sync::Arc<HookState>,
-    #[cfg(windows)]
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Monitor {
-    pub(super) fn new(ctx: Context) -> std::io::Result<Self> {
+impl Keyboard {
+    pub(super) fn new(ctx: Context) -> Self {
         #[cfg(windows)]
-        {
-            return windows_monitor(ctx);
-        }
+        SHARED.with(|shared| {
+            *shared.borrow_mut() = Some(Shared {
+                ctx,
+                router: Router::default(),
+            });
+        });
         #[cfg(not(windows))]
-        {
-            let _ = ctx;
-            Ok(Self {})
-        }
+        let _ = ctx;
+        Self { _private: () }
     }
 
-    pub(super) fn held(&self, ctx: &Context) -> bool {
+    pub(super) fn drain(&self) -> Vec<Event> {
         #[cfg(windows)]
         {
-            let _ = ctx;
-            self.state
-                .alt_held
-                .load(std::sync::atomic::Ordering::Acquire)
-        }
-        #[cfg(not(windows))]
-        {
-            ctx.input(|input| input.modifiers.alt)
-        }
-    }
-
-    pub(super) fn drain(&self) -> Vec<Command> {
-        #[cfg(windows)]
-        {
-            return self
-                .state
-                .router
-                .lock()
-                .map_or_else(|_| Vec::new(), |mut router| router.take_commands());
+            with_shared(|shared| shared.router.events.drain(..).collect()).unwrap_or_default()
         }
         #[cfg(not(windows))]
         {
             Vec::new()
         }
     }
-}
 
-#[cfg(windows)]
-struct HookState {
-    ctx: Context,
-    router: Mutex<Router>,
-    alt_held: std::sync::atomic::AtomicBool,
-    stop: std::sync::atomic::AtomicBool,
-    thread_id: std::sync::atomic::AtomicU32,
-}
-
-#[cfg(windows)]
-impl HookState {
-    fn new(ctx: Context) -> Self {
-        Self {
-            ctx,
-            router: Mutex::new(Router::new(0, 0)),
-            alt_held: std::sync::atomic::AtomicBool::new(false),
-            stop: std::sync::atomic::AtomicBool::new(false),
-            thread_id: std::sync::atomic::AtomicU32::new(0),
+    /// Whether a key pressed in the overlay is still physically held.
+    pub(super) fn busy(&self) -> bool {
+        #[cfg(windows)]
+        {
+            let held = physical_keys();
+            with_shared(|shared| shared.router.busy(held)).unwrap_or(false)
         }
-    }
-
-    fn route(
-        &self,
-        vk: u32,
-        pressed: bool,
-        blocked_windows: bool,
-        alt_context: bool,
-        now: Instant,
-    ) -> bool {
-        let Ok(mut router) = self.router.lock() else {
-            return false;
-        };
-        let old_alt = self.alt_held.load(std::sync::atomic::Ordering::Acquire);
-        let consumed = router.event(vk, pressed, blocked_windows, alt_context, now);
-        let new_alt = router.alt_keys != 0;
-        self.alt_held
-            .store(new_alt, std::sync::atomic::Ordering::Release);
-        if old_alt != new_alt || consumed || !router.commands.is_empty() {
-            self.ctx.request_repaint();
-        }
-        consumed
-    }
-}
-
-#[cfg(windows)]
-static ACTIVE_HOOK: std::sync::OnceLock<Mutex<Option<std::sync::Weak<HookState>>>> =
-    std::sync::OnceLock::new();
-
-#[cfg(windows)]
-fn active_hook() -> &'static Mutex<Option<std::sync::Weak<HookState>>> {
-    ACTIVE_HOOK.get_or_init(|| Mutex::new(None))
-}
-
-#[cfg(windows)]
-fn windows_monitor(ctx: Context) -> std::io::Result<Monitor> {
-    use std::sync::{Arc, mpsc};
-
-    let state = Arc::new(HookState::new(ctx));
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let thread_state = Arc::clone(&state);
-    let thread = std::thread::Builder::new()
-        .name("hestia-overlay-keyboard".into())
-        .spawn(move || keyboard_thread(thread_state, ready_tx))?;
-
-    match ready_rx.recv() {
-        Ok(Ok(_)) => Ok(Monitor {
-            state,
-            thread: Some(thread),
-        }),
-        Ok(Err(error)) => {
-            let _ = thread.join();
-            Err(error)
-        }
-        Err(_) => {
-            let _ = thread.join();
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "overlay keyboard hook thread exited during startup",
-            ))
+        #[cfg(not(windows))]
+        {
+            false
         }
     }
 }
 
 #[cfg(windows)]
-fn keyboard_thread(
-    state: std::sync::Arc<HookState>,
-    ready: std::sync::mpsc::SyncSender<std::io::Result<u32>>,
-) {
-    use std::sync::atomic::Ordering;
-    use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MSG, PM_NOREMOVE, PeekMessageW, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
-    };
-
-    let thread_id = unsafe { GetCurrentThreadId() };
-    state.thread_id.store(thread_id, Ordering::Release);
-
-    // Force creation of this thread's message queue before the owner can post
-    // WM_QUIT during Drop.
-    let mut queue_probe = MSG::default();
-    unsafe {
-        let _ = PeekMessageW(&mut queue_probe, None, 0, 0, PM_NOREMOVE);
-    }
-
-    initialize_physical_state(&state);
-
-    let module = match current_module() {
-        Ok(module) => module,
-        Err(error) => {
-            let _ = ready.send(Err(error));
-            return;
-        }
-    };
-
-    {
-        let Ok(mut active) = active_hook().lock() else {
-            let _ = ready.send(Err(std::io::Error::other(
-                "overlay keyboard hook state is poisoned",
-            )));
-            return;
-        };
-        if active.as_ref().is_some_and(|weak| weak.upgrade().is_some()) {
-            let _ = ready.send(Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "overlay keyboard hook is already running",
-            )));
-            return;
-        }
-        *active = Some(std::sync::Arc::downgrade(&state));
-    }
-
-    let hook =
-        match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(module), 0) } {
-            Ok(hook) => hook,
-            Err(error) => {
-                clear_active_hook(&state);
-                let _ = ready.send(Err(std::io::Error::other(error.to_string())));
-                return;
-            }
-        };
-
-    if ready.send(Ok(thread_id)).is_err() {
-        unsafe {
-            let _ = UnhookWindowsHookEx(hook);
-        }
-        clear_active_hook(&state);
-        return;
-    }
-
-    let mut message = MSG::default();
-    while !state.stop.load(Ordering::Acquire) {
-        let result = unsafe { GetMessageW(&mut message, None, 0, 0) };
-        if result.0 == 0 || result.0 == -1 {
-            break;
-        }
-        unsafe {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-    }
-
-    unsafe {
-        let _ = UnhookWindowsHookEx(hook);
-    }
-    clear_active_hook(&state);
-}
-
-#[cfg(windows)]
-fn initialize_physical_state(state: &HookState) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_A, VK_D, VK_E, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_Q,
-        VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_X,
-    };
-
-    let down = [VK_Q, VK_E, VK_A, VK_D]
-        .into_iter()
-        .enumerate()
-        .fold(0u8, |mask, (index, key)| {
-            let pressed = unsafe { GetAsyncKeyState(i32::from(key.0)) } < 0;
-            mask | (u8::from(pressed) << index)
-        });
-    let activation_down = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LSHIFT.0)) } < 0)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RSHIFT.0)) } < 0) << 1)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LCONTROL.0)) } < 0) << 2)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RCONTROL.0)) } < 0) << 3)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_X.0)) } < 0) << 4);
-    let windows_down = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LWIN.0)) } < 0)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RWIN.0)) } < 0) << 1);
-    let alt_keys = u8::from(unsafe { GetAsyncKeyState(i32::from(VK_LMENU.0)) } < 0)
-        | (u8::from(unsafe { GetAsyncKeyState(i32::from(VK_RMENU.0)) } < 0) << 1);
-    if let Ok(mut router) = state.router.lock() {
-        router.alt_keys = alt_keys;
-        router.down = down;
-        router.activation_down = activation_down;
-        router.windows_down = windows_down;
-        state
-            .alt_held
-            .store(alt_keys != 0, std::sync::atomic::Ordering::Release);
-    }
-}
-
-#[cfg(windows)]
-fn clear_active_hook(state: &std::sync::Arc<HookState>) {
-    let Ok(mut active) = active_hook().lock() else {
-        return;
-    };
-    let same = active
-        .as_ref()
-        .and_then(std::sync::Weak::upgrade)
-        .is_some_and(|candidate| std::sync::Arc::ptr_eq(&candidate, state));
-    if same {
-        *active = None;
-    }
-}
-
-#[cfg(windows)]
-fn active_state() -> Option<std::sync::Arc<HookState>> {
-    active_hook()
-        .lock()
-        .ok()
-        .and_then(|active| active.as_ref().and_then(std::sync::Weak::upgrade))
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn keyboard_hook(
-    code: i32,
-    wparam: windows::Win32::Foundation::WPARAM,
-    lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_INJECTED, WM_KEYDOWN, WM_KEYUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP,
-    };
-
-    if code < 0 || lparam.0 == 0 {
-        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
-    }
-    let Some(state) = active_state() else {
-        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
-    };
-    let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-    if event.flags.contains(LLKHF_INJECTED) {
-        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
-    }
-    let pressed = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-    let released = matches!(wparam.0 as u32, WM_KEYUP | WM_SYSKEYUP);
-    if !pressed && !released {
-        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
-    }
-
-    let blocked_windows = {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LWIN, VK_RWIN};
-        [VK_LWIN, VK_RWIN]
-            .into_iter()
-            .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) } < 0)
-    };
-    let consumed = state.route(
-        event.vkCode,
-        pressed,
-        blocked_windows,
-        event.flags.contains(LLKHF_ALTDOWN),
-        Instant::now(),
-    );
-    if consumed {
-        windows::Win32::Foundation::LRESULT(1)
-    } else {
-        unsafe { CallNextHookEx(None, code, wparam, lparam) }
-    }
-}
-
-#[cfg(windows)]
-fn current_module() -> std::io::Result<windows::Win32::Foundation::HINSTANCE> {
-    use windows::Win32::Foundation::{HINSTANCE, HMODULE};
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetModuleHandleW(module_name: *const u16) -> HMODULE;
-    }
-
-    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
-    if module.0.is_null() {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(HINSTANCE(module.0))
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Monitor {
+impl Drop for Keyboard {
     fn drop(&mut self) {
-        use std::sync::atomic::Ordering;
-        use windows::Win32::Foundation::{LPARAM, WPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
-
-        self.state.stop.store(true, Ordering::Release);
-        let thread_id = self.state.thread_id.load(Ordering::Acquire);
-        if thread_id != 0 {
-            unsafe {
-                let _ = PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+        let _ = SHARED.try_with(|shared| {
+            if let Ok(mut shared) = shared.try_borrow_mut() {
+                *shared = None;
             }
-        }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        });
     }
 }
 
@@ -641,215 +491,322 @@ impl Drop for Monitor {
 mod tests {
     use super::*;
 
-    fn t(offset_ms: u64) -> Instant {
-        Instant::now() + Duration::from_millis(offset_ms)
+    const ALL: u32 = u32::MAX;
+
+    fn after(start: Instant, ms: u64) -> Instant {
+        start + Duration::from_millis(ms)
+    }
+
+    fn drain(router: &mut Router) -> Vec<Event> {
+        router.events.drain(..).collect()
+    }
+
+    fn command(command: Command) -> Event {
+        Event::Command(command)
     }
 
     #[test]
-    fn alt_navigation_maps_to_expected_commands() {
-        let mut router = Router::new(1, 0);
-        assert!(router.event(VK_Q, true, false, false, t(0)));
-        assert!(router.event(VK_E, true, false, false, t(0)));
-        assert!(router.event(VK_A, true, false, false, t(0)));
-        assert!(router.event(VK_D, true, false, false, t(0)));
+    fn navigation_keys_map_to_commands() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        for key in [vk::Q, vk::E, vk::A, vk::D] {
+            assert!(consumes(key));
+            router.key(key, true, now);
+        }
         assert_eq!(
-            router.take_commands(),
+            drain(&mut router),
             vec![
-                Command::Mod(-1),
-                Command::Mod(1),
-                Command::Category(-1),
-                Command::Category(1),
+                command(Command::Mod(-1)),
+                command(Command::Mod(1)),
+                command(Command::Category(-1)),
+                command(Command::Category(1)),
             ]
         );
     }
 
     #[test]
-    fn old_w_s_and_space_bindings_reach_the_game() {
-        let mut router = Router::new(1, 0);
-        assert!(!router.event(0x57, true, false, false, t(0)));
-        assert!(!router.event(0x53, true, false, false, t(0)));
-        assert!(!router.event(0x20, true, false, false, t(0)));
-        assert!(router.take_commands().is_empty());
+    fn other_keys_pass_through_without_commands() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        // W, S, F4, an arrow for the opacity slider, and the Windows keys.
+        for key in [0x57, 0x53, 0x73, 0x25, vk::LWIN, vk::RWIN] {
+            assert!(!consumes(key));
+            router.key(key, true, now);
+            router.key(key, false, now);
+        }
+        assert!(drain(&mut router).is_empty());
+        assert!(!router.busy(ALL));
     }
 
     #[test]
-    fn activation_modifiers_are_alternatives_and_edge_triggered() {
-        let mut router = Router::new(1, 0);
-        assert!(router.event(VK_LSHIFT, true, false, false, t(0)));
-        assert!(router.event(VK_LSHIFT, true, false, false, t(1)));
-        assert_eq!(router.take_commands(), vec![Command::EnableAdditive]);
-        assert!(router.event(VK_LSHIFT, false, false, false, t(2)));
-
-        assert!(router.event(VK_RSHIFT, true, false, false, t(3)));
-        assert!(router.event(VK_RSHIFT, true, false, false, t(4)));
-        assert_eq!(router.take_commands(), vec![Command::EnableAdditive]);
-        assert!(router.event(VK_RSHIFT, false, false, false, t(5)));
-
-        assert!(router.event(VK_LCONTROL, true, false, false, t(6)));
-        assert!(router.event(VK_LCONTROL, true, false, false, t(7)));
-        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
-        assert!(router.event(VK_LCONTROL, false, false, false, t(8)));
-
-        assert!(router.event(VK_RCONTROL, true, false, false, t(9)));
-        assert!(router.event(VK_RCONTROL, true, false, false, t(10)));
-        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
-        assert!(router.event(VK_RCONTROL, false, false, false, t(11)));
+    fn swallowed_keys_have_no_commands_but_hold_up_focus_return() {
+        let now = Instant::now();
+        let keys = [
+            vk::LMENU,
+            vk::RMENU,
+            vk::H,
+            vk::F10,
+            vk::TAB,
+            vk::RETURN,
+            vk::SPACE,
+        ];
+        let mut router = Router::default();
+        for key in keys {
+            assert!(consumes(key));
+            router.key(key, true, now);
+        }
+        assert!(drain(&mut router).is_empty());
+        assert!(router.busy(ALL));
+        for key in keys {
+            router.key(key, false, now);
+        }
+        assert!(!router.busy(ALL));
     }
 
     #[test]
-    fn toggle_key_is_edge_triggered_and_captured_until_release() {
-        let mut router = Router::new(1, 0);
-        assert!(router.event(VK_X, true, false, false, t(0)));
-        assert!(router.event(VK_X, true, false, false, t(1)));
-        assert_eq!(router.take_commands(), vec![Command::Toggle]);
-        assert!(!router.event(VK_LMENU, false, false, false, t(2)));
-        assert!(router.event(VK_X, false, false, false, t(3)));
-        assert!(router.take_commands().is_empty());
-    }
-
-    #[test]
-    fn windows_chords_reach_the_game_and_block_capture() {
-        let mut router = Router::new(1, 0);
-        assert!(!router.event(VK_LWIN, true, false, false, t(0)));
-        assert!(!router.event(VK_Q, true, true, false, t(1)));
-        assert!(!router.event(VK_LSHIFT, true, true, false, t(2)));
-        assert!(!router.event(VK_LWIN, false, false, false, t(3)));
-        assert!(router.take_commands().is_empty());
-    }
-
-    #[test]
-    fn ctrl_held_navigation_reaches_the_game() {
-        let mut router = Router::new(0, 0);
-        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
-        assert!(!router.event(VK_LMENU, true, false, false, t(1)));
-        assert!(!router.event(VK_Q, true, false, false, t(2)));
-        assert!(!router.event(VK_Q, false, false, false, t(3)));
-        assert!(!router.event(VK_LCONTROL, false, false, false, t(4)));
-        assert!(router.take_commands().is_empty());
-    }
-
-    #[test]
-    fn ctrl_held_toggle_reaches_the_game() {
-        let mut router = Router::new(0, 0);
-        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
-        assert!(!router.event(VK_LMENU, true, false, false, t(1)));
-        assert!(!router.event(VK_X, true, false, false, t(2)));
-        assert!(!router.event(VK_X, false, false, false, t(3)));
-        assert!(!router.event(VK_LCONTROL, false, false, false, t(4)));
-        assert!(router.take_commands().is_empty());
-
-        let mut router = Router::new(0, 0);
-        assert!(!router.event(VK_LCONTROL, true, false, false, t(5)));
-        assert!(!router.event(VK_RMENU, true, false, false, t(6)));
-        assert!(!router.event(VK_X, true, false, false, t(7)));
-        assert!(!router.event(VK_X, false, false, false, t(8)));
-        assert!(!router.event(VK_LCONTROL, false, false, false, t(9)));
-        assert!(!router.event(VK_RMENU, false, false, false, t(10)));
-        assert!(router.take_commands().is_empty());
-    }
-
-    #[test]
-    fn pre_alt_navigation_and_activation_keyups_reach_the_game() {
-        let mut router = Router::new(0, 1 << 0);
-        router.activation_down = 0x01;
-        assert!(!router.event(VK_Q, true, false, false, t(0)));
-        assert!(!router.event(VK_LMENU, true, false, false, t(0)));
-        assert!(!router.event(VK_Q, false, false, false, t(0)));
-        assert!(!router.event(VK_LSHIFT, true, false, false, t(0)));
-        assert!(!router.event(VK_LSHIFT, false, false, false, t(0)));
-        assert!(router.take_commands().is_empty());
-
-        let mut router = Router::new(0, 0);
-        router.activation_down = 0x10;
-        assert!(!router.event(VK_X, true, false, false, t(0)));
-        assert!(!router.event(VK_LMENU, true, false, false, t(0)));
-        assert!(!router.event(VK_X, false, false, false, t(0)));
-        assert!(router.take_commands().is_empty());
-    }
-
-    #[test]
-    fn captured_keyup_stays_consumed_after_alt_release() {
-        let mut router = Router::new(1, 0);
-        assert!(router.event(VK_Q, true, false, false, t(0)));
-        assert!(!router.event(VK_LMENU, false, false, false, t(1)));
-        assert!(router.event(VK_Q, false, false, false, t(2)));
-    }
-
-    #[test]
-    fn captured_activation_keyup_stays_consumed_after_alt_release() {
-        for (key, command) in [
-            (VK_LSHIFT, Command::EnableAdditive),
-            (VK_RSHIFT, Command::EnableAdditive),
-            (VK_LCONTROL, Command::EnableExclusive),
-            (VK_RCONTROL, Command::EnableExclusive),
-            (VK_X, Command::Toggle),
+    fn activation_keys_are_edge_triggered() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        for (key, expected) in [
+            (vk::LSHIFT, Command::EnableAdditive),
+            (vk::RSHIFT, Command::EnableAdditive),
+            (vk::LCONTROL, Command::EnableExclusive),
+            (vk::RCONTROL, Command::EnableExclusive),
+            (vk::X, Command::Toggle),
         ] {
-            let mut router = Router::new(1, 0);
-            assert!(router.event(key, true, false, false, t(0)));
-            assert_eq!(router.take_commands(), vec![command]);
-            assert!(!router.event(VK_LMENU, false, false, false, t(1)));
-            assert!(router.event(key, false, false, false, t(2)));
+            assert!(consumes(key));
+            router.key(key, true, now);
+            router.key(key, true, after(now, 500));
+            router.key(key, true, after(now, 1000));
+            assert_eq!(drain(&mut router), vec![command(expected)]);
+            router.key(key, false, after(now, 1100));
+            router.key(key, true, after(now, 1200));
+            assert_eq!(drain(&mut router), vec![command(expected)]);
+            router.key(key, false, after(now, 1300));
         }
     }
 
     #[test]
-    fn altgr_does_not_activate_through_synthetic_control() {
-        let mut router = Router::new(0, 0);
-        assert!(!router.event(VK_LCONTROL, true, false, false, t(0)));
-        assert!(!router.event(VK_RMENU, true, false, false, t(1)));
-        assert!(!router.event(VK_LCONTROL, false, false, false, t(2)));
-        assert!(!router.event(VK_RMENU, false, false, false, t(3)));
-        assert!(router.take_commands().is_empty());
+    fn keys_held_before_the_overlay_took_the_keyboard_wait_for_release() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.reset(bit(vk::A) | bit(vk::LSHIFT), 0);
+        router.key(vk::A, true, after(now, 400));
+        router.key(vk::A, true, after(now, 800));
+        router.key(vk::LSHIFT, true, after(now, 800));
+        assert!(drain(&mut router).is_empty());
+        router.key(vk::A, false, after(now, 900));
+        router.key(vk::A, true, after(now, 1000));
+        assert_eq!(drain(&mut router), vec![command(Command::Category(-1))]);
+    }
 
-        let mut router = Router::new(0, 0);
-        assert!(!router.event(VK_RMENU, true, false, false, t(0)));
-        assert!(router.event(VK_LCONTROL, true, false, false, t(1)));
-        assert_eq!(router.take_commands(), vec![Command::EnableExclusive]);
-        assert!(router.event(VK_LCONTROL, false, false, false, t(2)));
-        assert!(!router.event(VK_RMENU, false, false, false, t(3)));
-        assert!(router.take_commands().is_empty());
+    #[test]
+    fn windows_key_chords_are_ignored() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::LWIN, true, now);
+        router.key(vk::Q, true, now);
+        router.key(vk::X, true, now);
+        router.key(vk::ESCAPE, true, now);
+        router.key(vk::LWIN, false, now);
+        // Q was pressed as part of the chord, so its repeats stay quiet.
+        router.key(vk::Q, true, after(now, 1000));
+        assert!(drain(&mut router).is_empty());
+        router.key(vk::Q, false, after(now, 1100));
+        router.key(vk::Q, true, after(now, 1200));
+        assert_eq!(drain(&mut router), vec![command(Command::Mod(-1))]);
+    }
+
+    #[test]
+    fn alt_release_is_reported_after_the_last_alt_key() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.reset(bit(vk::LMENU), 0);
+        assert!(router.alt_down());
+        router.key(vk::RMENU, true, now);
+        router.key(vk::LMENU, false, after(now, 10));
+        assert!(router.alt_down());
+        assert!(drain(&mut router).is_empty());
+        router.key(vk::RMENU, false, after(now, 20));
+        assert!(!router.alt_down());
+        assert_eq!(drain(&mut router), vec![Event::AltReleased(after(now, 20))]);
+    }
+
+    #[test]
+    fn alt_release_without_a_press_is_ignored() {
+        let mut router = Router::default();
+        router.key(vk::LMENU, false, Instant::now());
+        assert!(drain(&mut router).is_empty());
+    }
+
+    #[test]
+    fn escape_is_edge_triggered() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::ESCAPE, true, now);
+        router.key(vk::ESCAPE, true, after(now, 500));
+        assert_eq!(drain(&mut router), vec![Event::Escape]);
+    }
+
+    #[test]
+    fn navigation_repeats_after_a_delay() {
+        let start = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::D, true, start);
+        router.key(vk::D, true, after(start, 299));
+        assert_eq!(router.events.len(), 1);
+        router.key(vk::D, true, start + REPEAT_DELAY);
+        router.key(
+            vk::D,
+            true,
+            start + REPEAT_DELAY + Duration::from_millis(119),
+        );
+        assert_eq!(router.events.len(), 2);
+        router.key(vk::D, true, start + REPEAT_DELAY + REPEAT_INTERVAL);
+        assert_eq!(drain(&mut router), vec![command(Command::Category(1)); 3]);
+        router.key(vk::D, false, after(start, 1000));
+        router.key(vk::D, true, after(start, 1001));
+        router.key(vk::D, true, after(start, 1002));
+        assert_eq!(drain(&mut router), vec![command(Command::Category(1))]);
+    }
+
+    #[test]
+    fn busy_counts_only_keys_pressed_in_the_overlay() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.reset(bit(vk::A) | bit(vk::LMENU), 0);
+        assert!(!router.busy(ALL));
+        router.key(vk::Q, true, now);
+        assert!(router.busy(ALL));
+        // A key whose release never arrived is not held any more.
+        assert!(!router.busy(ALL & !bit(vk::Q)));
+        router.key(vk::Q, false, now);
+        assert!(!router.busy(ALL));
+    }
+
+    #[test]
+    fn the_hotkey_owns_h_until_it_is_released() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.hotkey_pressed();
+        assert!(router.busy(ALL));
+        router.key(vk::H, true, after(now, 500));
+        assert!(drain(&mut router).is_empty());
+        router.key(vk::H, false, after(now, 600));
+        assert!(!router.busy(ALL));
+
+        router.reset(bit(vk::LMENU) | bit(vk::H), bit(vk::H));
+        assert!(router.busy(ALL));
+        router.reset(bit(vk::LMENU), bit(vk::H));
+        assert!(!router.busy(ALL));
+        assert!(router.alt_down());
+    }
+
+    #[test]
+    fn clear_forgets_held_keys() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        router.key(vk::LMENU, true, now);
+        router.key(vk::D, true, now);
+        router.clear();
+        assert!(!router.alt_down());
+        assert!(!router.busy(ALL));
+        // Releases that arrive after the reset are not reported.
+        router.key(vk::LMENU, false, now);
+        assert_eq!(drain(&mut router), vec![command(Command::Category(1))]);
+    }
+
+    #[test]
+    fn generic_modifiers_resolve_to_a_side() {
+        assert_eq!(resolve(vk::SHIFT, 0x2A, false), vk::LSHIFT);
+        assert_eq!(resolve(vk::SHIFT, RIGHT_SHIFT_SCAN_CODE, false), vk::RSHIFT);
+        assert_eq!(resolve(vk::CONTROL, 0x1D, false), vk::LCONTROL);
+        assert_eq!(resolve(vk::CONTROL, 0x1D, true), vk::RCONTROL);
+        assert_eq!(resolve(vk::MENU, 0x38, false), vk::LMENU);
+        assert_eq!(resolve(vk::MENU, 0x38, true), vk::RMENU);
+        assert_eq!(resolve(vk::Q, 0x10, false), vk::Q);
+    }
+
+    #[test]
+    fn key_messages_parse_side_and_direction() {
+        let right_shift_down = ((RIGHT_SHIFT_SCAN_CODE << 16) | 1) as isize;
+        assert_eq!(
+            KeyMessage::parse(WM_KEYDOWN, vk::SHIFT as usize, right_shift_down),
+            Some(KeyMessage {
+                key: vk::RSHIFT,
+                pressed: true,
+            })
+        );
+        // Right Alt up: extended, context and transition bits set.  Windows
+        // may sign-extend the 32-bit flags.
+        let right_alt_up = 0xE138_0001_u32;
+        for lparam in [right_alt_up as isize, right_alt_up as i32 as isize] {
+            assert_eq!(
+                KeyMessage::parse(WM_SYSKEYUP, vk::MENU as usize, lparam),
+                Some(KeyMessage {
+                    key: vk::RMENU,
+                    pressed: false,
+                })
+            );
+        }
+        assert_eq!(
+            KeyMessage::parse(WM_SYSKEYDOWN, vk::Q as usize, 0x2010_0001),
+            Some(KeyMessage {
+                key: vk::Q,
+                pressed: true,
+            })
+        );
+        // WM_CHAR is not a key message.
+        assert_eq!(KeyMessage::parse(0x0102, 0x71, 0x0010_0001), None);
+    }
+
+    #[test]
+    fn altgr_fake_control_is_recognised() {
+        let message = |key, pressed| KeyMessage { key, pressed };
+        let left_control = message(vk::LCONTROL, true);
+        assert!(left_control.is_altgr_control(|| Some(message(vk::RMENU, true))));
+        assert!(message(vk::LCONTROL, false).is_altgr_control(|| Some(message(vk::RMENU, false))));
+        assert!(!left_control.is_altgr_control(|| Some(message(vk::RMENU, false))));
+        assert!(!left_control.is_altgr_control(|| Some(message(vk::LMENU, true))));
+        assert!(!left_control.is_altgr_control(|| None));
+        assert!(!message(vk::RCONTROL, true).is_altgr_control(|| Some(message(vk::RMENU, true))));
+        assert!(!message(vk::Q, true).is_altgr_control(|| unreachable!()));
     }
 
     #[cfg(windows)]
     #[test]
-    fn alt_keyup_clears_held_even_with_alt_context_flag() {
-        let state = HookState::new(Context::default());
-        assert!(!state.route(VK_LMENU, true, false, false, Instant::now()));
-        assert!(state.alt_held.load(std::sync::atomic::Ordering::Acquire));
-        assert!(!state.route(VK_LMENU, false, false, true, Instant::now()));
-        assert!(!state.alt_held.load(std::sync::atomic::Ordering::Acquire));
-    }
+    fn window_messages_reach_the_installed_keyboard() {
+        let message = |key, pressed| KeyMessage { key, pressed };
+        assert!(!installed());
+        let keyboard = Keyboard::new(Context::default());
+        assert!(installed());
 
-    #[test]
-    fn navigation_repeats_after_delay() {
-        let mut router = Router::new(1, 0);
-        let start = Instant::now();
-        assert!(router.event(VK_D, true, false, false, start));
-        assert!(router.event(VK_D, true, false, false, start + Duration::from_millis(299)));
-        assert_eq!(router.commands.len(), 1);
-        assert!(router.event(VK_D, true, false, false, start + REPEAT_DELAY));
-        assert!(router.event(
-            VK_D,
-            true,
-            false,
-            false,
-            start + REPEAT_DELAY + Duration::from_millis(119)
-        ));
-        assert_eq!(router.commands.len(), 2);
-        assert!(router.event(
-            VK_D,
-            true,
-            false,
-            false,
-            start + REPEAT_DELAY + REPEAT_INTERVAL
-        ));
-        assert_eq!(
-            router.take_commands(),
-            vec![
-                Command::Category(1),
-                Command::Category(1),
-                Command::Category(1),
+        assert!(key_message(message(vk::Q, true), || None));
+        assert!(!key_message(message(0x57, true), || None));
+        assert!(!key_message(message(vk::LWIN, true), || None));
+        assert_eq!(keyboard.drain(), vec![command(Command::Mod(-1))]);
+
+        // AltGr's fake Ctrl is swallowed without enabling anything.
+        let right_alt = || Some(message(vk::RMENU, true));
+        assert!(key_message(message(vk::LCONTROL, true), right_alt));
+        assert!(keyboard.drain().is_empty());
+
+        hotkey(true, false);
+        deactivated();
+        assert!(matches!(
+            keyboard.drain().as_slice(),
+            [
+                Event::Hotkey {
+                    focused: true,
+                    alt_down: false,
+                    ..
+                },
+                Event::Deactivated,
             ]
-        );
+        ));
+
+        drop(keyboard);
+        assert!(!installed());
+        assert!(!key_message(message(vk::Q, true), || None));
     }
 }

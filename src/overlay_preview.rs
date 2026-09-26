@@ -8,6 +8,7 @@ mod layouts;
 mod motion;
 mod platform;
 mod restore;
+mod session;
 mod thumbnails;
 
 use std::{
@@ -27,6 +28,14 @@ const IDLE_SIZE: egui::Vec2 = egui::vec2(280.0, 48.0);
 const CANVAS_SIZE: egui::Vec2 = egui::vec2(560.0, 660.0);
 const CAROUSEL_HEIGHT: f32 = 266.0;
 const HEADER_HEIGHT: f32 = 46.0;
+/// Win32 `ERROR_HOTKEY_ALREADY_REGISTERED`.
+const HOTKEY_ALREADY_REGISTERED: i32 = 1409;
+const HOTKEY_TAKEN: &str = "Another app already uses Alt+H, so only the pin can open the overlay.";
+const HOTKEY_FAILED: &str = "Couldn't register Alt+H, so only the pin can open the overlay.";
+const FOCUS_TAKE_FAILED: &str =
+    "Couldn't take focus from the game, so keys won't reach the overlay.";
+const FOCUS_RETURN_FAILED: &str =
+    "Couldn't give focus back to the game. Click the game to continue.";
 
 pub fn run() -> anyhow::Result<()> {
     let catalog = data::load_catalog();
@@ -122,8 +131,11 @@ pub fn run() -> anyhow::Result<()> {
                 window.set_border_color(None);
             }
             apply_preview_style(&cc.egui_ctx);
-            let alt_monitor = if capture.is_none() {
-                Some(keyboard::Monitor::new(cc.egui_ctx.clone())?)
+            let keyboard = capture
+                .is_none()
+                .then(|| keyboard::Keyboard::new(cc.egui_ctx.clone()));
+            let hotkey_warning = if keyboard.is_some() {
+                register_hotkey()
             } else {
                 None
             };
@@ -146,7 +158,11 @@ pub fn run() -> anyhow::Result<()> {
                 pointer_completion: PointerCompletion::default(),
                 capture_alt,
                 capture_alt_release,
-                alt_monitor,
+                keyboard,
+                session: session::Session::default(),
+                focus_return_pending: false,
+                hotkey_warning,
+                focus_warning: None,
                 capture,
                 capture_click,
                 capture_button,
@@ -188,7 +204,12 @@ struct OverlayPreview {
     pointer_completion: PointerCompletion,
     capture_alt: bool,
     capture_alt_release: Option<u32>,
-    alt_monitor: Option<keyboard::Monitor>,
+    keyboard: Option<keyboard::Keyboard>,
+    session: session::Session,
+    /// Hand the keyboard back once no key pressed in the overlay is held.
+    focus_return_pending: bool,
+    hotkey_warning: Option<&'static str>,
+    focus_warning: Option<&'static str>,
     capture: Option<PathBuf>,
     capture_click: Option<egui::Pos2>,
     capture_button: egui::PointerButton,
@@ -353,23 +374,83 @@ impl eframe::App for OverlayPreview {
                 Some(ctx.load_texture("hestia-brand", icon_image, egui::TextureOptions::LINEAR));
             self.brand_pixels = brand_pixels;
         }
-        let alt = if self.capture.is_some() {
-            ctx.input(|input| input.modifiers.alt)
-        } else {
-            self.alt_monitor
-                .as_ref()
-                .is_some_and(|monitor| monitor.held(&ctx))
-        };
+        // Capture runs and non-Windows previews read Alt and its chords from
+        // egui.  On Windows, the window procedure swallows the overlay's keys
+        // before egui sees them and reports them through `keyboard`.
+        let fallback_input = self.keyboard.is_none() || !cfg!(windows);
+        let alt = fallback_input && ctx.input(|input| input.modifiers.alt);
         if !alt {
             self.suppress_alt_until_release = false;
         }
-        let escape = ctx.input_mut(|input| {
+        let mut escape = ctx.input_mut(|input| {
             let modifiers = input.modifiers;
             input.consume_key(modifiers, egui::Key::Escape)
         });
         if escape {
             self.pinned = false;
             self.suppress_alt_until_release = alt;
+        }
+        let mut commands = Vec::new();
+        let events = self
+            .keyboard
+            .as_ref()
+            .map(keyboard::Keyboard::drain)
+            .unwrap_or_default();
+        for event in events {
+            let transition = match event {
+                keyboard::Event::Hotkey {
+                    at,
+                    focused,
+                    alt_down,
+                } => {
+                    self.focus_warning = (!focused).then_some(FOCUS_TAKE_FAILED);
+                    self.session.hotkey(at, focused, alt_down)
+                }
+                keyboard::Event::Command(command) => {
+                    self.session.command();
+                    // Gate on the state when the key arrived: a command and the
+                    // Alt release that ends the session can share a frame.
+                    if self.session.is_open() || self.pinned {
+                        commands.push(command);
+                    }
+                    session::Transition::None
+                }
+                keyboard::Event::AltReleased(at) => self.session.alt_released(at),
+                keyboard::Event::Escape => {
+                    escape = true;
+                    self.pinned = false;
+                    self.session.escape()
+                }
+                keyboard::Event::Deactivated => {
+                    self.focus_return_pending = false;
+                    if self.focus_warning == Some(FOCUS_RETURN_FAILED) {
+                        self.focus_warning = None;
+                    }
+                    self.session.deactivated()
+                }
+            };
+            self.apply_transition(transition);
+        }
+        if self.focus_return_pending {
+            if self
+                .keyboard
+                .as_ref()
+                .is_some_and(keyboard::Keyboard::busy)
+            {
+                // Key releases ask for a frame themselves.  This also covers
+                // a release that never arrived.
+                ctx.request_repaint_after(Duration::from_millis(50));
+            } else {
+                self.focus_return_pending = false;
+                if platform::return_focus() {
+                    tracing::info!("Overlay returned the keyboard");
+                } else {
+                    tracing::warn!("Overlay could not return the keyboard");
+                    self.focus_warning = Some(FOCUS_RETURN_FAILED);
+                }
+            }
+        }
+        if escape {
             self.pointer_completion.cancel();
             self.samples.cancel_pointer_interaction();
         }
@@ -388,8 +469,10 @@ impl eframe::App for OverlayPreview {
         let completing_pointer = self
             .pointer_completion
             .begin_frame(self.expanded && !escape, pressed_inside);
-        let expanded =
-            self.pinned || (alt && !self.suppress_alt_until_release) || completing_pointer;
+        let expanded = self.pinned
+            || self.session.is_open()
+            || (alt && !self.suppress_alt_until_release)
+            || completing_pointer;
         if expanded != self.expanded {
             self.samples.dismiss_transient_ui(&ctx);
             if !expanded {
@@ -405,14 +488,8 @@ impl eframe::App for OverlayPreview {
             ctx.request_repaint_after(Duration::from_millis(8));
         }
         self.samples.set_reveal(self.motion.cards());
-        let mut commands = self
-            .alt_monitor
-            .as_ref()
-            .map(|monitor| monitor.drain())
-            .unwrap_or_default();
-        // Capture runs and non-Windows previews receive ordinary egui key events.
-        // The native Windows hook consumes its own chords before they reach egui.
-        if ctx.current_pass_index() == 0 && (self.alt_monitor.is_none() || !cfg!(windows)) {
+        if fallback_input && ctx.current_pass_index() == 0 {
+            let mut chords = Vec::new();
             ctx.input_mut(|input| {
                 input.events.retain(|event| {
                     let egui::Event::Key {
@@ -441,34 +518,36 @@ impl eframe::App for OverlayPreview {
                         }
                         _ => return true,
                     };
-                    commands.push(command);
+                    chords.push(command);
                     false
                 });
-                commands.extend(
+                chords.extend(
                     modifier_commands(self.previous_navigation_modifiers, input.modifiers)
                         .into_iter()
                         .flatten(),
                 );
                 self.previous_navigation_modifiers = input.modifiers;
             });
+            if expanded && !self.suppress_alt_until_release {
+                commands.extend(chords);
+            }
         }
-        if expanded && !self.suppress_alt_until_release {
-            for command in commands {
-                match command {
-                    keyboard::Command::Mod(direction) => self.samples.navigate_mod(&ctx, direction),
-                    keyboard::Command::Category(direction) => {
-                        self.samples.navigate_category(&ctx, direction)
-                    }
-                    keyboard::Command::EnableExclusive => self
-                        .samples
-                        .apply_focused_action(&ctx, layouts::ModAction::Exclusive),
-                    keyboard::Command::EnableAdditive => self
-                        .samples
-                        .apply_focused_action(&ctx, layouts::ModAction::Additive),
-                    keyboard::Command::Toggle => self
-                        .samples
-                        .apply_focused_action(&ctx, layouts::ModAction::Toggle),
+        // Queue after the expansion change above, which clears queued commands.
+        for command in commands {
+            match command {
+                keyboard::Command::Mod(direction) => self.samples.navigate_mod(&ctx, direction),
+                keyboard::Command::Category(direction) => {
+                    self.samples.navigate_category(&ctx, direction)
                 }
+                keyboard::Command::EnableExclusive => self
+                    .samples
+                    .apply_focused_action(&ctx, layouts::ModAction::Exclusive),
+                keyboard::Command::EnableAdditive => self
+                    .samples
+                    .apply_focused_action(&ctx, layouts::ModAction::Additive),
+                keyboard::Command::Toggle => self
+                    .samples
+                    .apply_focused_action(&ctx, layouts::ModAction::Toggle),
             }
         }
         let mut visible_regions = Vec::new();
@@ -542,7 +621,12 @@ impl eframe::App for OverlayPreview {
                         .show_held_preview(ui, preview_rect, self.opacity);
                     visible_regions.extend_from_slice(self.samples.visible_card_rects());
                 }
-                if let Some(error) = &self.restore_error {
+                if let Some(message) = self
+                    .restore_error
+                    .as_deref()
+                    .or(self.focus_warning)
+                    .or(self.hotkey_warning)
+                {
                     let warning = egui::Rect::from_min_size(
                         layout.base.min - egui::vec2(0.0, 40.0),
                         egui::vec2(layout.base.width(), 40.0),
@@ -552,7 +636,7 @@ impl eframe::App for OverlayPreview {
                     let mut warning_ui =
                         ui.new_child(egui::UiBuilder::new().max_rect(warning.shrink(5.0)));
                     warning_ui.label(
-                        RichText::new(error)
+                        RichText::new(message)
                             .size(11.0)
                             .color(Color32::from_rgb(230, 140, 130)),
                     );
@@ -601,6 +685,19 @@ impl eframe::App for OverlayPreview {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
     }
+}
+
+/// Register Alt+H and describe a failure for the warning strip.
+fn register_hotkey() -> Option<&'static str> {
+    let error = platform::register_hotkey().err()?;
+    tracing::warn!(%error, "Could not register the overlay hotkey");
+    Some(
+        if error.raw_os_error() == Some(HOTKEY_ALREADY_REGISTERED) {
+            HOTKEY_TAKEN
+        } else {
+            HOTKEY_FAILED
+        },
+    )
 }
 
 /// Defer collapsing through the release frame of a gesture begun on the overlay.
@@ -691,12 +788,23 @@ mod interaction_tests {
 }
 
 impl OverlayPreview {
+    fn apply_transition(&mut self, transition: session::Transition) {
+        match transition {
+            session::Transition::None => return,
+            session::Transition::Opened => self.focus_return_pending = false,
+            session::Transition::Closed { return_focus } => {
+                self.focus_return_pending = return_focus;
+            }
+        }
+        tracing::info!(?transition, session = ?self.session, "Overlay session changed");
+    }
+
     fn start_window_drag(&self, ctx: &egui::Context) {
         #[cfg(windows)]
         {
             let _ = ctx;
             // egui-winit gates StartDrag on has_focus() for X11 safety. This
-            // Windows overlay intentionally never takes focus, so use winit's
+            // Windows overlay usually does not have focus, so use winit's
             // native caption-drag path directly instead of that shared guard.
             if let Some(window) = &self.native_window {
                 if let Err(error) = window.drag_window() {
@@ -720,28 +828,20 @@ impl OverlayPreview {
                 );
             }
             ui.add_space(8.0);
-            let (key_rect, _) =
-                ui.allocate_exact_size(egui::vec2(30.0, 20.0), egui::Sense::hover());
-            ui.painter().rect(
-                key_rect,
-                3,
-                Color32::from_white_alpha(content_alpha(8, self.opacity)),
-                egui::Stroke::new(
-                    1.0,
-                    Color32::from_white_alpha(content_alpha(36, self.opacity)),
-                ),
-                egui::StrokeKind::Inside,
-            );
+            idle_keycap(ui, "ALT", 30.0, self.opacity);
+            let (plus_rect, _) =
+                ui.allocate_exact_size(egui::vec2(8.0, 20.0), egui::Sense::hover());
             ui.painter().text(
-                key_rect.center(),
+                plus_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "ALT",
-                egui::FontId::proportional(10.0),
-                content_gray(220, self.opacity),
+                "+",
+                egui::FontId::proportional(11.0),
+                content_gray(150, self.opacity),
             );
+            idle_keycap(ui, "H", 20.0, self.opacity);
             ui.add(
                 egui::Label::new(
-                    RichText::new("hold to browse")
+                    RichText::new("to browse")
                         .size(11.0)
                         .color(Color32::from_gray(175)),
                 )
@@ -809,7 +909,7 @@ impl OverlayPreview {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
                 let pin_help = if self.pinned {
-                    "Unpin · return to hold Alt"
+                    "Unpin · return to Alt+H"
                 } else {
                     "Keep expanded"
                 };
@@ -939,6 +1039,24 @@ fn shortcut_hints(
         }
     }
     response
+}
+
+fn idle_keycap(ui: &mut egui::Ui, key: &str, width: f32, opacity: u8) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 20.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        3,
+        Color32::from_white_alpha(content_alpha(8, opacity)),
+        egui::Stroke::new(1.0, Color32::from_white_alpha(content_alpha(36, opacity))),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        key,
+        egui::FontId::proportional(10.0),
+        content_gray(220, opacity),
+    );
 }
 
 fn header_button(

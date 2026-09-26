@@ -5,15 +5,24 @@
 //! `ShowWindow` call in winit.  `WS_EX_NOACTIVATE` and `WM_MOUSEACTIVATE` are
 //! needed as well so a click, pin, or drag does not move foreground focus to the
 //! overlay.
+//!
+//! The keyboard moves to the overlay only through Alt+H.  Windows delivers the
+//! hotkey even over a game that blocks other processes from its input, and
+//! receiving it allows the overlay to take the foreground.  Key messages then
+//! reach this window procedure, which hands them to `keyboard`, and
+//! `return_focus` gives the keyboard back afterwards.
 
 #[cfg(windows)]
 use std::sync::{
     Mutex, OnceLock,
-    atomic::{AtomicIsize, Ordering},
+    atomic::{AtomicBool, AtomicIsize, Ordering},
 };
 
 #[cfg(windows)]
 use egui::Rect;
+
+#[cfg(windows)]
+use super::keyboard;
 
 #[cfg(windows)]
 #[link(name = "user32")]
@@ -28,6 +37,19 @@ static PREVIOUS_WNDPROC: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(windows)]
 static SUBCLASS_HWND: AtomicIsize = AtomicIsize::new(0);
+
+#[cfg(windows)]
+const HOTKEY_ID: i32 = 1;
+
+/// The window that had the keyboard when Alt+H took it.
+#[cfg(windows)]
+static RETURN_TARGET: AtomicIsize = AtomicIsize::new(0);
+
+/// Whether the last key press was swallowed.  `TranslateMessage` has already
+/// queued its character messages by then, and they must not reach winit
+/// alone: an orphan `WM_SYSCHAR` makes `DefWindowProc` beep.
+#[cfg(windows)]
+static SWALLOW_CHARACTERS: AtomicBool = AtomicBool::new(false);
 
 /// The native region is owned by USER32 after `SetWindowRgn` succeeds.  Keep
 /// only the input used to build it so a normal repaint does not allocate and
@@ -68,10 +90,9 @@ impl PixelRect {
 /// the mouse message instead of using `MA_NOACTIVATEANDEAT`, so egui clicks,
 /// wheel input, and native window dragging keep working.
 ///
-/// This intentionally does not register hooks, synthesize input, call
-/// `SetForegroundWindow`, or move focus to another window.  As a result, the
-/// overlay does not receive ordinary keyboard focus; the preview's Alt monitor
-/// remains responsible for detecting the hold gesture.
+/// This does not register the hotkey, synthesize input, call
+/// `SetForegroundWindow`, or move focus to another window.  `register_hotkey`
+/// adds the only path that moves the keyboard to the overlay.
 #[cfg(windows)]
 pub(super) fn configure(cc: &eframe::CreationContext<'_>) -> std::io::Result<()> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -203,6 +224,62 @@ fn configure_window(
     }
 
     Ok(())
+}
+
+/// Register Alt+H for the configured overlay window.  Windows delivers it even
+/// while a game that blocks other input has the keyboard.
+#[cfg(windows)]
+pub(super) fn register_hotkey() -> std::io::Result<()> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOD_ALT, MOD_NOREPEAT, RegisterHotKey, VK_H,
+    };
+
+    let hwnd = SUBCLASS_HWND.load(Ordering::Acquire);
+    if hwnd == 0 {
+        return Err(std::io::Error::other("overlay window is not configured"));
+    }
+    unsafe {
+        RegisterHotKey(
+            Some(HWND(hwnd as *mut std::ffi::c_void)),
+            HOTKEY_ID,
+            MOD_ALT | MOD_NOREPEAT,
+            u32::from(VK_H.0),
+        )
+    }
+    .map_err(os_error)
+}
+
+/// Hand the keyboard back to the window that had it before Alt+H.  Returns
+/// false when the overlay still has it.
+#[cfg(windows)]
+pub(super) fn return_focus() -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsWindow, SetForegroundWindow,
+    };
+
+    let overlay = SUBCLASS_HWND.load(Ordering::Acquire);
+    if overlay == 0 || unsafe { GetForegroundWindow() }.0 as isize != overlay {
+        return true;
+    }
+    let target = HWND(RETURN_TARGET.load(Ordering::Acquire) as *mut std::ffi::c_void);
+    // The foreground process may give the foreground away.
+    !target.0.is_null()
+        && unsafe { IsWindow(Some(target)) }.as_bool()
+        && unsafe { SetForegroundWindow(target) }.as_bool()
+}
+
+/// `windows::core::Error` converts into an `io::Error` that keeps the HRESULT,
+/// so recover the Win32 code that callers compare against.
+#[cfg(windows)]
+fn os_error(error: windows::core::Error) -> std::io::Error {
+    let code = error.code().0 as u32;
+    if code & 0xFFFF_0000 == 0x8007_0000 {
+        std::io::Error::from_raw_os_error((code & 0xFFFF) as i32)
+    } else {
+        std::io::Error::other(error.to_string())
+    }
 }
 
 /// Update the native hit-test region from the visible egui rectangles.  A
@@ -367,6 +444,104 @@ pub(super) fn configure(_: &eframe::CreationContext<'_>) -> std::io::Result<()> 
     Ok(())
 }
 
+#[cfg(not(windows))]
+pub(super) fn register_hotkey() -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(super) fn return_focus() -> bool {
+    true
+}
+
+/// Take the keyboard for Alt+H.  Receiving the hotkey is what allows
+/// `SetForegroundWindow` to succeed while another app has the foreground.
+#[cfg(windows)]
+unsafe fn take_focus_for_hotkey(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+
+    let foreground = unsafe { GetForegroundWindow() };
+    let already_focused = foreground == hwnd;
+    if !already_focused {
+        if !foreground.0.is_null() {
+            RETURN_TARGET.store(foreground.0 as isize, Ordering::Release);
+        }
+        // Activation sends WM_ACTIVATE through this window procedure before
+        // the call returns.
+        let _ = unsafe { SetForegroundWindow(hwnd) };
+    }
+    let focused = unsafe { GetForegroundWindow() } == hwnd;
+    if focused {
+        let _ = unsafe { SetFocus(Some(hwnd)) };
+    }
+    tracing::info!(focused, already_focused, "overlay hotkey");
+    keyboard::hotkey(focused, focused && !already_focused);
+}
+
+#[cfg(windows)]
+unsafe fn peek_key_message(hwnd: windows::Win32::Foundation::HWND) -> Option<keyboard::KeyMessage> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MSG, PM_NOREMOVE, PeekMessageW, WM_KEYFIRST, WM_KEYLAST,
+    };
+
+    let mut next = MSG::default();
+    let found =
+        unsafe { PeekMessageW(&mut next, Some(hwnd), WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE) };
+    if found.as_bool() {
+        keyboard::KeyMessage::parse(next.message, next.wParam.0, next.lParam.0)
+    } else {
+        None
+    }
+}
+
+/// Keyboard handling for the subclassed overlay window.  Returns a result for
+/// the messages it swallows.
+#[cfg(windows)]
+unsafe fn keyboard_message(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> Option<windows::Win32::Foundation::LRESULT> {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SC_KEYMENU, WA_INACTIVE, WM_ACTIVATE, WM_CHAR, WM_DEADCHAR, WM_HOTKEY, WM_SYSCHAR,
+        WM_SYSCOMMAND, WM_SYSDEADCHAR,
+    };
+
+    match msg {
+        WM_HOTKEY if wparam.0 == HOTKEY_ID as usize && keyboard::installed() => {
+            unsafe { take_focus_for_hotkey(hwnd) };
+            Some(LRESULT(0))
+        }
+        // The overlay has no menu.  Keep Alt+Space and Alt+letter from
+        // entering menu mode.
+        WM_SYSCOMMAND if wparam.0 & 0xFFF0 == SC_KEYMENU as usize => Some(LRESULT(0)),
+        WM_CHAR | WM_SYSCHAR | WM_DEADCHAR | WM_SYSDEADCHAR
+            if SWALLOW_CHARACTERS.load(Ordering::Relaxed) =>
+        {
+            Some(LRESULT(0))
+        }
+        WM_ACTIVATE => {
+            if wparam.0 & 0xFFFF == WA_INACTIVE as usize {
+                keyboard::deactivated();
+            } else {
+                keyboard::activated();
+            }
+            None
+        }
+        _ => {
+            let key = keyboard::KeyMessage::parse(msg, wparam.0, lparam.0)?;
+            let swallow = keyboard::key_message(key, || unsafe { peek_key_message(hwnd) });
+            if key.pressed {
+                SWALLOW_CHARACTERS.store(swallow, Ordering::Relaxed);
+            }
+            swallow.then_some(LRESULT(0))
+        }
+    }
+}
+
 #[cfg(windows)]
 unsafe extern "system" fn overlay_window_proc(
     hwnd: windows::Win32::Foundation::HWND,
@@ -375,6 +550,7 @@ unsafe extern "system" fn overlay_window_proc(
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::UnregisterHotKey;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GWL_EXSTYLE, MA_NOACTIVATE, STYLESTRUCT, WM_MOUSEACTIVATE,
         WM_NCDESTROY, WM_STYLECHANGING, WS_EX_NOACTIVATE,
@@ -398,7 +574,15 @@ unsafe extern "system" fn overlay_window_proc(
 
     let previous = PREVIOUS_WNDPROC.load(Ordering::Acquire);
     let subclass_hwnd = SUBCLASS_HWND.load(Ordering::Acquire);
-    let result = if previous != 0 && subclass_hwnd == hwnd.0 as isize {
+    let ours = previous != 0 && subclass_hwnd == hwnd.0 as isize;
+    if ours && let Some(result) = unsafe { keyboard_message(hwnd, msg, wparam, lparam) } {
+        return result;
+    }
+    if ours && msg == WM_NCDESTROY {
+        let _ = unsafe { UnregisterHotKey(Some(hwnd), HOTKEY_ID) };
+    }
+
+    let result = if ours {
         let previous: windows::Win32::UI::WindowsAndMessaging::WNDPROC =
             Some(unsafe { std::mem::transmute(previous) });
         unsafe { CallWindowProcW(previous, hwnd, msg, wparam, lparam) }
@@ -410,6 +594,7 @@ unsafe extern "system" fn overlay_window_proc(
         clear_input_region_cache(hwnd.0 as isize);
         PREVIOUS_WNDPROC.store(0, Ordering::Release);
         SUBCLASS_HWND.store(0, Ordering::Release);
+        RETURN_TARGET.store(0, Ordering::Release);
     }
 
     result
