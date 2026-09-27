@@ -6,7 +6,7 @@
 //! or decode the whole mod library.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
@@ -21,6 +21,11 @@ const MAX_RESIDENT_TEXTURES: usize = 64;
 const MAX_FAILED_PATHS: usize = 256;
 const RESULT_CHANNEL_CAPACITY: usize = MAX_QUEUED_WORK;
 const MAX_UPLOADS_PER_POLL: usize = 4;
+
+/// The library covers a censored card with this dark color at this opacity,
+/// out of 255.  Censored pictures are darkened the same way when they load.
+const CENSOR_COVER: [u32; 3] = [12, 12, 14];
+const CENSOR_COVER_ALPHA: u32 = 230;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Priority {
@@ -146,14 +151,23 @@ struct DecodedThumbnail {
 
 struct DecodeResult {
     path: PathBuf,
+    censored: bool,
     image: Result<DecodedThumbnail, String>,
 }
 
-fn decode_thumbnail(path: &Path) -> Result<DecodedThumbnail, String> {
-    let image = image::open(path)
+fn decode_thumbnail(path: &Path, censored: bool) -> Result<DecodedThumbnail, String> {
+    // Hestia's downloaded pictures are `.bin` files, so read the format from
+    // the contents rather than the extension.
+    let mut image = image::ImageReader::open(path)
+        .and_then(|reader| reader.with_guessed_format())
+        .map_err(|error| error.to_string())
+        .and_then(|reader| reader.decode().map_err(|error| error.to_string()))
         .map_err(|error| format!("failed to decode {}: {error}", path.display()))?
         .thumbnail(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION)
         .to_rgba8();
+    if censored {
+        censor(&mut image);
+    }
     let size = [image.width() as usize, image.height() as usize];
     Ok(DecodedThumbnail {
         size,
@@ -161,14 +175,35 @@ fn decode_thumbnail(path: &Path) -> Result<DecodedThumbnail, String> {
     })
 }
 
+/// Darkens a picture like the library's cover on censored cards.
+fn censor(image: &mut image::RgbaImage) {
+    for pixel in image.pixels_mut() {
+        for (channel, cover) in pixel.0.iter_mut().zip(CENSOR_COVER) {
+            *channel = (cover + u32::from(*channel) * (255 - CENSOR_COVER_ALPHA) / 255) as u8;
+        }
+    }
+}
+
 fn decode_worker(
     queue: Arc<DecodeQueue>,
     results: SyncSender<DecodeResult>,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
+    censored: Arc<Mutex<HashSet<PathBuf>>>,
 ) {
     while let Some(path) = queue.pop_blocking() {
-        let image = decode_thumbnail(&path);
-        if results.send(DecodeResult { path, image }).is_err() {
+        let censored = censored
+            .lock()
+            .expect("thumbnail censor lock poisoned")
+            .contains(&path);
+        let image = decode_thumbnail(&path, censored);
+        if results
+            .send(DecodeResult {
+                path,
+                censored,
+                image,
+            })
+            .is_err()
+        {
             break;
         }
         if let Some(ctx) = repaint_context
@@ -197,6 +232,7 @@ pub(super) struct ThumbnailCache {
     queue: Arc<DecodeQueue>,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
     results: Option<Receiver<DecodeResult>>,
+    censored: Arc<Mutex<HashSet<PathBuf>>>,
     worker: Option<JoinHandle<()>>,
     entries: HashMap<PathBuf, CacheEntry>,
     resident_lru: VecDeque<PathBuf>,
@@ -210,15 +246,25 @@ impl ThumbnailCache {
         let (results_tx, results_rx) = mpsc::sync_channel(RESULT_CHANNEL_CAPACITY);
         let worker_queue = Arc::clone(&queue);
         let worker_repaint_context = Arc::clone(&repaint_context);
+        let censored = Arc::new(Mutex::new(HashSet::new()));
+        let worker_censored = Arc::clone(&censored);
         let worker = thread::Builder::new()
             .name("hestia-overlay-thumbnails".to_owned())
-            .spawn(move || decode_worker(worker_queue, results_tx, worker_repaint_context))
+            .spawn(move || {
+                decode_worker(
+                    worker_queue,
+                    results_tx,
+                    worker_repaint_context,
+                    worker_censored,
+                )
+            })
             .expect("failed to start overlay thumbnail worker");
 
         Self {
             queue,
             repaint_context,
             results: Some(results_rx),
+            censored,
             worker: Some(worker),
             entries: HashMap::new(),
             resident_lru: VecDeque::new(),
@@ -297,6 +343,11 @@ impl ThumbnailCache {
             };
             completed = true;
             processed += 1;
+            if result.censored != self.is_censored(&result.path) {
+                // The library changed while it loaded.  The next frame asks again.
+                self.entries.remove(&result.path);
+                continue;
+            }
             match result.image {
                 Ok(decoded) => {
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
@@ -323,6 +374,38 @@ impl ThumbnailCache {
         if completed {
             ctx.request_repaint();
         }
+    }
+
+    /// The pictures to darken like the library's censored cards.  Pictures
+    /// that were censored and no longer are, or the other way, load again.
+    pub(super) fn set_censored(&mut self, paths: HashSet<PathBuf>) {
+        let changed: Vec<PathBuf> = {
+            let mut censored = self
+                .censored
+                .lock()
+                .expect("thumbnail censor lock poisoned");
+            if *censored == paths {
+                return;
+            }
+            let changed = censored.symmetric_difference(&paths).cloned().collect();
+            *censored = paths;
+            changed
+        };
+        for path in changed {
+            if matches!(
+                self.entries.get(&path),
+                Some(CacheEntry::Texture(_) | CacheEntry::Failed)
+            ) {
+                self.entries.remove(&path);
+            }
+        }
+    }
+
+    fn is_censored(&self, path: &Path) -> bool {
+        self.censored
+            .lock()
+            .expect("thumbnail censor lock poisoned")
+            .contains(path)
     }
 
     fn remove_evicted_pending(&mut self, evicted: Option<PathBuf>) {
@@ -459,6 +542,7 @@ mod tests {
             queue: Arc::new(DecodeQueue::new()),
             repaint_context: Arc::new(Mutex::new(None)),
             results: None,
+            censored: Arc::new(Mutex::new(HashSet::new())),
             worker: None,
             entries: HashMap::new(),
             resident_lru: VecDeque::new(),
@@ -494,10 +578,65 @@ mod tests {
         let source = image::RgbaImage::from_pixel(1200, 600, image::Rgba([12, 34, 56, 255]));
         source.save(&path).expect("write thumbnail test image");
 
-        let decoded = decode_thumbnail(&path).expect("decode thumbnail test image");
+        let decoded = decode_thumbnail(&path, false).expect("decode thumbnail test image");
         assert_eq!(decoded.size, [MAX_THUMBNAIL_DIMENSION as usize, 320]);
         assert_eq!(decoded.rgba.len(), 640 * 320 * 4);
 
         fs::remove_file(path).expect("remove thumbnail test image");
+    }
+
+    #[test]
+    fn downloaded_pictures_decode_without_an_image_extension() {
+        let directory = tempfile::tempdir().expect("create test directory");
+        let png = directory.path().join("picture.png");
+        image::RgbaImage::from_pixel(8, 4, image::Rgba([1, 2, 3, 255]))
+            .save(&png)
+            .expect("write test image");
+        let cached = directory.path().join("0123456789abcdef.bin");
+        fs::rename(&png, &cached).expect("rename test image");
+
+        let decoded = decode_thumbnail(&cached, false).expect("decode cached picture");
+        // Scaled to the thumbnail size, like every picture.
+        let width = MAX_THUMBNAIL_DIMENSION as usize;
+        assert_eq!(decoded.size, [width, width / 2]);
+        assert!(decode_thumbnail(&directory.path().join("missing.bin"), false).is_err());
+    }
+
+    #[test]
+    fn censored_pictures_darken_like_the_library_cover() {
+        let mut image = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 128, 200]));
+        censor(&mut image);
+        assert_eq!(image.get_pixel(0, 0).0, [37, 12, 26, 200]);
+    }
+
+    #[test]
+    fn changing_what_is_censored_loads_those_pictures_again() {
+        let mut cache = ThumbnailCache {
+            queue: Arc::new(DecodeQueue::new()),
+            repaint_context: Arc::new(Mutex::new(None)),
+            results: None,
+            censored: Arc::new(Mutex::new(HashSet::new())),
+            worker: None,
+            entries: HashMap::new(),
+            resident_lru: VecDeque::new(),
+            failed_lru: VecDeque::new(),
+        };
+        let ctx = egui::Context::default();
+        let kept = PathBuf::from("kept.png");
+        let flipped = PathBuf::from("flipped.png");
+        for path in [&kept, &flipped] {
+            let texture = ctx.load_texture(
+                texture_name(path),
+                egui::ColorImage::from_rgba_unmultiplied([1, 1], &[255; 4]),
+                egui::TextureOptions::LINEAR,
+            );
+            cache
+                .entries
+                .insert(path.clone(), CacheEntry::Texture(texture));
+        }
+        cache.set_censored(HashSet::from([flipped.clone()]));
+        assert!(cache.is_censored(&flipped));
+        assert!(cache.entries.contains_key(&kept));
+        assert!(!cache.entries.contains_key(&flipped));
     }
 }

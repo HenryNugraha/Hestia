@@ -6,6 +6,7 @@ mod integrations;
 mod manifest_cli;
 mod model;
 mod overlay_preview;
+mod overlay_protocol;
 mod persistence;
 #[cfg(feature = "profile")]
 mod profiler;
@@ -39,7 +40,16 @@ fn main() -> anyhow::Result<()> {
             .parse()
             .expect("valid log filter"),
     );
-    let _ = fmt().with_env_filter(log_filter).try_init();
+    let live_overlay = std::env::args_os().any(|arg| arg == overlay_protocol::OVERLAY_ARG);
+    if live_overlay {
+        // Stdout carries the messages to Hestia.
+        let _ = fmt()
+            .with_env_filter(log_filter)
+            .with_writer(std::io::stderr)
+            .try_init();
+    } else {
+        let _ = fmt().with_env_filter(log_filter).try_init();
+    }
 
     #[cfg(feature = "profile")]
     profiler::init();
@@ -51,6 +61,11 @@ fn main() -> anyhow::Result<()> {
     // single-instance guard, and game integrations.
     if std::env::args_os().any(|arg| arg == "--overlay-preview") {
         return overlay_preview::run();
+    }
+    // The in-game overlay Hestia starts while a game runs.  Like the preview,
+    // it never loads or saves Hestia's state.
+    if live_overlay {
+        return overlay_preview::run_live();
     }
     // A main-thread panic takes the process down without `on_exit`, which must not leave a
     // synthetic XXMI reload/hotkey press stuck (3DMigoto would keep reloading every frame).

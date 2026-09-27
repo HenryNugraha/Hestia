@@ -45,6 +45,17 @@ impl Session {
         }
     }
 
+    /// A click on the pinned overlay took the keyboard.  Unlike Alt+H, it
+    /// never closes.
+    pub(super) fn clicked(&mut self) -> Transition {
+        if self.is_open() {
+            Transition::None
+        } else {
+            *self = Self::Open;
+            Transition::Opened
+        }
+    }
+
     /// Another window took the keyboard, for example after a click on the game.
     pub(super) fn deactivated(&mut self) -> Transition {
         if self.is_open() {
@@ -99,5 +110,16 @@ mod tests {
         );
         assert_eq!(session.deactivated(), Transition::None);
         assert_eq!(session.hotkey(), Transition::Opened);
+    }
+
+    #[test]
+    fn a_click_opens_but_never_closes() {
+        let mut session = Session::default();
+        assert_eq!(session.clicked(), Transition::Opened);
+        assert_eq!(session.clicked(), Transition::None);
+        assert!(session.is_open());
+        session.deactivated();
+        assert_eq!(session.clicked(), Transition::Opened);
+        assert_eq!(session.escape(), Transition::Closed { return_focus: true });
     }
 }

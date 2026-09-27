@@ -8,3 +8,4 @@ include!("survey.rs");
 include!("translation.rs");
 include!("updates.rs");
 include!("profiles.rs");
+include!("game_overlay.rs");

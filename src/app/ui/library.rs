@@ -381,6 +381,83 @@ pub(crate) fn sort_categories_with_counts<F>(
     }
 }
 
+/// How many of a game's mods a category has, as sorting by count counts them.
+fn category_member_count(mods: &[ModEntry], game_id: &str, category_id: &str) -> usize {
+    mods.iter()
+        .filter(|mod_entry| {
+            mod_entry.game_id == game_id
+                && mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
+        })
+        .count()
+}
+
+/// Category id used for filtering/grouping. Falls back to matching the legacy
+/// plain-text category name against existing categories, mirroring
+/// `mod_category_label`, so name-only mods land in their category folder
+/// instead of silently dropping into the leftover bucket.
+fn effective_category_id<'a>(
+    categories: &'a [ModCategory],
+    mod_entry: &ModEntry,
+) -> Option<&'a str> {
+    if let Some(category_id) = mod_entry.metadata.user.category_id.as_deref() {
+        if let Some(category) = categories
+            .iter()
+            .find(|category| category.id == category_id && category.game_id == mod_entry.game_id)
+        {
+            return Some(&category.id);
+        }
+    }
+    let legacy = mod_entry.metadata.user.category.trim();
+    if legacy.is_empty() {
+        return None;
+    }
+    categories
+        .iter()
+        .find(|category| {
+            category.game_id == mod_entry.game_id
+                && category.name.trim().eq_ignore_ascii_case(legacy)
+        })
+        .map(|category| category.id.as_str())
+}
+
+/// Compares two mods by the library's sort setting alone.
+fn compare_by_library_sort(sort: LibrarySort, a: &ModEntry, b: &ModEntry) -> std::cmp::Ordering {
+    let display_name = |item: &ModEntry| {
+        item.metadata
+            .user
+            .title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(&item.folder_name)
+            .to_ascii_lowercase()
+    };
+    let sort_date = |item: &ModEntry| {
+        item.created_at
+            .timestamp()
+            .max(
+                item.content_mtime
+                    .map(|ts| ts.timestamp())
+                    .unwrap_or(i64::MIN),
+            )
+            .max(item.updated_at.timestamp())
+    };
+    let name_cmp = display_name(a).cmp(&display_name(b));
+    match sort {
+        LibrarySort::NameAsc => name_cmp,
+        LibrarySort::NameDesc => name_cmp.reverse(),
+        LibrarySort::DateDesc => sort_date(b).cmp(&sort_date(a)).then_with(|| name_cmp),
+        LibrarySort::DateAsc => sort_date(a).cmp(&sort_date(b)).then_with(|| name_cmp),
+        LibrarySort::SizeAsc => a
+            .content_size_bytes
+            .cmp(&b.content_size_bytes)
+            .then_with(|| name_cmp),
+        LibrarySort::SizeDesc => b
+            .content_size_bytes
+            .cmp(&a.content_size_bytes)
+            .then_with(|| name_cmp),
+    }
+}
+
 fn clamp_metadata_source_label(text: &str) -> String {
     const MAX_CHARS: usize = 15;
     const PREFIX_CHARS: usize = 12;
@@ -1773,14 +1850,7 @@ impl HestiaApp {
     }
 
     fn category_member_count(&self, game_id: &str, category_id: &str) -> usize {
-        self.state
-            .mods
-            .iter()
-            .filter(|mod_entry| {
-                mod_entry.game_id == game_id
-                    && mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
-            })
-            .count()
+        category_member_count(&self.state.mods, game_id, category_id)
     }
 
     fn mod_category_label(&self, mod_entry: &ModEntry) -> String {
@@ -1799,30 +1869,9 @@ impl HestiaApp {
         }
     }
 
-    /// Category id used for filtering/grouping. Falls back to matching the legacy
-    /// plain-text category name against existing categories, mirroring
-    /// `mod_category_label`, so name-only mods land in their category folder
-    /// instead of silently dropping into the leftover bucket.
+    /// See `effective_category_id`.
     fn effective_mod_category_id(&self, mod_entry: &ModEntry) -> Option<String> {
-        if let Some(category_id) = mod_entry.metadata.user.category_id.as_deref() {
-            if self.state.categories.iter().any(|category| {
-                category.id == category_id && category.game_id == mod_entry.game_id
-            }) {
-                return Some(category_id.to_string());
-            }
-        }
-        let legacy = mod_entry.metadata.user.category.trim();
-        if legacy.is_empty() {
-            return None;
-        }
-        self.state
-            .categories
-            .iter()
-            .find(|category| {
-                category.game_id == mod_entry.game_id
-                    && category.name.trim().eq_ignore_ascii_case(legacy)
-            })
-            .map(|category| category.id.clone())
+        effective_category_id(&self.state.categories, mod_entry).map(str::to_string)
     }
 
     fn categories_for_game(&self, game_id: &str) -> Vec<ModCategory> {

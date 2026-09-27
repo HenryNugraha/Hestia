@@ -23,6 +23,26 @@ pub(super) fn show_main(state_path: Option<&Path>) -> Result<()> {
     spawn_main(state_path)
 }
 
+/// Show the Hestia window that started the in-game overlay.  Hestia sends its
+/// window with the start message, so this doesn't look for it by title.
+pub(super) fn show_host(window: Option<i64>) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let restored = match window {
+            Some(window) => restore_and_foreground(windows::Win32::Foundation::HWND(
+                window as isize as *mut std::ffi::c_void,
+            )),
+            None => try_restore_existing_window()?,
+        };
+        if !restored {
+            bail!("Windows did not allow Hestia's window to be activated");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+    Ok(())
+}
+
 fn spawn_main(state_path: Option<&Path>) -> Result<()> {
     if let Some(path) = state_path {
         if !path.is_file() {

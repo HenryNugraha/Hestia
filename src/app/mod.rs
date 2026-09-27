@@ -106,7 +106,7 @@ fn request_animation_repaint(ctx: &egui::Context) {
 }
 
 impl eframe::App for HestiaApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         profiling::scope!("app::logic");
         set_current_language(self.state.static_prefs.language);
 
@@ -153,6 +153,7 @@ impl eframe::App for HestiaApp {
         self.enforce_gif_work_timeouts();
         self.poll_live_state_watch(ctx);
         self.poll_d3dx_reload_config_watch(ctx);
+        self.poll_game_overlay(ctx, frame);
         if !self.profile_operation_locks_app() {
             self.detect_drag_and_drop(ctx);
             self.handle_shortcuts(ctx);
@@ -330,6 +331,7 @@ impl eframe::App for HestiaApp {
         // Reload/hotkey sender threads are detached; make sure no synthetic key they
         // pressed outlives the process.
         crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
+        self.shut_down_game_overlay();
         self.cancel_all_gif_work();
         // A window resized right before closing the app would otherwise lose its
         // geometry to the save debounce.

@@ -1,16 +1,23 @@
 //! Disposable native costume-switching preview. Activation changes stay in memory.
 //! Launch with `hestia --overlay-preview`; normal startup never enters this module.
+//!
+//! The same window is also the in-game overlay, which Hestia starts with
+//! `--overlay` while a supported game runs.  It shows Hestia's library and
+//! hides until Alt+H.
 
 mod data;
 mod hints;
 mod keyboard;
 mod layouts;
+mod live;
 mod motion;
 mod platform;
 mod restore;
 mod search;
 mod session;
 mod thumbnails;
+
+pub(crate) use data::mod_image;
 
 use std::{
     collections::VecDeque,
@@ -41,9 +48,29 @@ const FOCUS_RETURN_FAILED: &str =
     "Couldn't give focus back to the game. Click the game to continue.";
 
 pub fn run() -> anyhow::Result<()> {
-    let catalog = data::load_catalog();
+    launch(None)
+}
+
+/// The in-game overlay.  Hestia sends the library first.
+pub fn run_live() -> anyhow::Result<()> {
+    launch(Some(live::read_start()?))
+}
+
+fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
+    let preview = start.is_none();
+    let (catalog, live_start) = match start {
+        Some(start) => (
+            data::catalog_from_library(start.library),
+            Some((start.host_window, start.game_pids, start.selection)),
+        ),
+        None => (data::load_catalog(), None),
+    };
     let game = catalog.game.clone();
-    let capture = std::env::var_os("HESTIA_OVERLAY_PREVIEW_CAPTURE").map(PathBuf::from);
+    // The in-game overlay ignores the preview's test settings.
+    let capture = preview
+        .then(|| std::env::var_os("HESTIA_OVERLAY_PREVIEW_CAPTURE"))
+        .flatten()
+        .map(PathBuf::from);
     let capture_frame = std::env::var("HESTIA_OVERLAY_PREVIEW_CAPTURE_FRAME")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -60,7 +87,7 @@ pub fn run() -> anyhow::Result<()> {
     } else {
         egui::PointerButton::Primary
     };
-    let pinned = std::env::var_os("HESTIA_OVERLAY_PREVIEW_PINNED").is_some();
+    let pinned = preview && std::env::var_os("HESTIA_OVERLAY_PREVIEW_PINNED").is_some();
     // Capture runs press Alt+H through egui: on the first frame to open the
     // overlay, and on the close frame to close it.
     let capture_open =
@@ -71,8 +98,9 @@ pub fn run() -> anyhow::Result<()> {
             .parse()
             .ok()
     });
-    let opacity = std::env::var("HESTIA_OVERLAY_PREVIEW_OPACITY")
-        .ok()
+    let opacity = preview
+        .then(|| std::env::var("HESTIA_OVERLAY_PREVIEW_OPACITY").ok())
+        .flatten()
         .and_then(|value| value.parse::<u8>().ok())
         .map(clamp_overlay_opacity)
         .unwrap_or(DEFAULT_OVERLAY_OPACITY);
@@ -116,7 +144,11 @@ pub fn run() -> anyhow::Result<()> {
             // "Hestia".  If the overlay ever takes that title, for example to
             // send the F10 reload, it must drop it while a search is open, or
             // typing would fire mod hotkeys.
-            .with_title("Hestia — Overlay preview")
+            .with_title(if preview {
+                "Hestia — Overlay preview"
+            } else {
+                "Hestia overlay"
+            })
             .with_inner_size(CANVAS_SIZE)
             .with_decorations(false)
             .with_resizable(false)
@@ -130,7 +162,11 @@ pub fn run() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "Hestia overlay preview",
+        if preview {
+            "Hestia overlay preview"
+        } else {
+            "Hestia overlay"
+        },
         options,
         Box::new(move |cc| {
             platform::configure(cc)?;
@@ -157,6 +193,22 @@ pub fn run() -> anyhow::Result<()> {
             // the same keys from egui instead.
             let egui_keys =
                 (keyboard.is_none() || !cfg!(windows)).then(keyboard::EguiKeys::default);
+            let mut samples = layouts::Layouts::new(catalog);
+            let live = match live_start {
+                Some((host_window, game_processes, selection)) => {
+                    // Mods change through Hestia, which comes in a later step.
+                    samples.set_read_only(true);
+                    if let Some(selection) = &selection {
+                        samples.restore_selection(selection);
+                    }
+                    platform::wait_for_game(&game_processes);
+                    Some(Live {
+                        link: live::Link::start(cc.egui_ctx.clone(), host_window)?,
+                        strip: live::Strip::default(),
+                    })
+                }
+                None => None,
+            };
             Ok(Box::new(OverlayPreview {
                 game,
                 #[cfg(windows)]
@@ -166,7 +218,8 @@ pub fn run() -> anyhow::Result<()> {
                 brand_pixels: 0,
                 restore_error: None,
                 region_update_failed: false,
-                samples: layouts::Layouts::new(catalog),
+                samples,
+                live,
                 opacity,
                 pinned,
                 expanded: pinned,
@@ -213,6 +266,8 @@ struct OverlayPreview {
     restore_error: Option<String>,
     region_update_failed: bool,
     samples: layouts::Layouts,
+    /// Only in the in-game overlay.
+    live: Option<Live>,
     opacity: u8,
     pinned: bool,
     expanded: bool,
@@ -242,6 +297,12 @@ struct OverlayPreview {
     capture_frame: u32,
     frames_drawn: u32,
     started: Instant,
+}
+
+/// The in-game overlay's link to Hestia, and when its strip shows.
+struct Live {
+    link: live::Link,
+    strip: live::Strip,
 }
 
 impl eframe::App for OverlayPreview {
@@ -356,6 +417,26 @@ impl eframe::App for OverlayPreview {
     fn ui(&mut self, root: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let now = ctx.input(|input| input.time);
+        if let Some(live) = &mut self.live {
+            if let Some(library) = live.link.take_library() {
+                self.game = library.game_name.clone();
+                self.samples
+                    .replace_catalog(data::catalog_from_library(library));
+            }
+            if live.link.take_closed() {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
+            if platform::take_game_arrived() {
+                live.strip.arrive(now);
+            }
+        }
+        // Alt+F4 closes the in-game overlay like its X.  Only Hestia ends it.
+        if self.live.as_ref().is_some_and(|live| !live.link.closing())
+            && ctx.input(|input| input.viewport().close_requested())
+        {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            self.close_live(&ctx);
+        }
         if ctx.input(|input| {
             input
                 .events
@@ -430,6 +511,10 @@ impl eframe::App for OverlayPreview {
                         self.session.escape()
                     }
                 }
+                keyboard::Event::Clicked => {
+                    self.focus_warning = None;
+                    self.session.clicked()
+                }
                 keyboard::Event::Deactivated => {
                     self.focus_return_pending = false;
                     if self.focus_warning == Some(FOCUS_RETURN_FAILED) {
@@ -440,6 +525,7 @@ impl eframe::App for OverlayPreview {
             };
             self.apply_transition(&ctx, transition);
         }
+        platform::set_click_takes_keyboard(self.pinned);
         if self.focus_return_pending {
             if self
                 .keyboard
@@ -497,6 +583,7 @@ impl eframe::App for OverlayPreview {
             ctx.request_repaint_after(Duration::from_millis(8));
         }
         self.samples.set_reveal(self.motion.cards());
+        let strip_opacity = self.update_strip(&ctx, now, expanded);
         // Queue after the expansion change above, which clears queued commands.
         for command in commands {
             match command {
@@ -518,6 +605,7 @@ impl eframe::App for OverlayPreview {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(root, |ui| {
+                ui.multiply_opacity(strip_opacity);
                 let bounds = ui.max_rect();
                 let opening = self.motion.strip();
                 let layout = motion::geometry(bounds, opening);
@@ -615,6 +703,15 @@ impl eframe::App for OverlayPreview {
                 }
             }
         });
+        // The in-game overlay hides once its strip has faded out.  The strip's
+        // X can have hidden it just now.
+        let present = self
+            .live
+            .as_ref()
+            .is_none_or(|live| expanded || self.motion.animating() || live.strip.shown(now));
+        if !present {
+            visible_regions.clear();
+        }
         match platform::update_input_regions(&ctx, &visible_regions) {
             Ok(()) => self.region_update_failed = false,
             Err(error) => {
@@ -622,6 +719,16 @@ impl eframe::App for OverlayPreview {
                     tracing::warn!(%error, "Could not update overlay input regions");
                 }
                 self.region_update_failed = true;
+            }
+        }
+        if self.live.is_some() {
+            if !present && self.frames_drawn > 0 && platform::is_visible() {
+                tracing::info!("Overlay hidden until Alt+H");
+                platform::hide();
+            } else if self.frames_drawn == 0 {
+                // eframe shows the window after the first frame, so the next
+                // one hides it again.
+                ctx.request_repaint();
             }
         }
         if self.pointer_completion.finish_frame(pointer_down) {
@@ -652,6 +759,9 @@ impl eframe::App for OverlayPreview {
                 self.capture_requested = true;
             }
             ctx.request_repaint_after(Duration::from_millis(80));
+        }
+        if let Some(live) = &mut self.live {
+            live.link.report(self.samples.selection());
         }
         self.frames_drawn = self.frames_drawn.saturating_add(1);
     }
@@ -880,6 +990,37 @@ impl OverlayPreview {
         ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
     }
 
+    /// Keeps the in-game overlay's strip up while the overlay is in use, and
+    /// returns the strip's opacity.  Always 1 in the preview.
+    fn update_strip(&mut self, ctx: &egui::Context, now: f64, expanded: bool) -> f32 {
+        let Some(live) = &mut self.live else {
+            return 1.0;
+        };
+        // Without Alt+H, the strip is the only way in, so its warning stays.
+        if expanded
+            || self.motion.animating()
+            || (self.hotkey_warning.is_some() && live.strip.shown(now))
+        {
+            live.strip.show(now);
+        } else if platform::is_visible()
+            && ctx.input(|input| input.pointer.hover_pos().is_some() || input.pointer.any_down())
+        {
+            live.strip.hover(now);
+        }
+        if let Some(after) = live.strip.next_frame(now) {
+            ctx.request_repaint_after(after);
+        }
+        live.strip.opacity(now)
+    }
+
+    /// The in-game overlay's header X: close like Esc, and unpin.
+    fn close_live(&mut self, ctx: &egui::Context) {
+        self.pinned = false;
+        let transition = self.session.escape();
+        self.apply_transition(ctx, transition);
+        ctx.request_repaint();
+    }
+
     fn hint_mode(&self) -> hints::Mode {
         hints::Mode::new(self.search.typing(), self.search.active())
     }
@@ -933,9 +1074,20 @@ impl OverlayPreview {
                 .sense(egui::Sense::hover()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if header_button(ui, lucide_icons::Icon::X, "Close overlay", self.opacity).clicked()
-                {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                let close_help = if self.live.is_some() {
+                    "Hide"
+                } else {
+                    "Close overlay"
+                };
+                if header_button(ui, lucide_icons::Icon::X, close_help, self.opacity).clicked() {
+                    match &mut self.live {
+                        Some(live) => {
+                            live.strip.dismiss();
+                            self.hotkey_warning = None;
+                            ui.ctx().request_repaint();
+                        }
+                        None => ui.ctx().send_viewport_cmd(ViewportCommand::Close),
+                    }
                 }
                 if header_button(ui, lucide_icons::Icon::Pin, "Keep expanded", self.opacity)
                     .clicked()
@@ -1005,7 +1157,11 @@ impl OverlayPreview {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if header_button(ui, lucide_icons::Icon::X, "Close overlay", opacity).clicked() {
-                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                    if self.live.is_some() {
+                        self.close_live(&ctx);
+                    } else {
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
                 }
                 let pin_help = if self.pinned {
                     "Unpin · return to Alt+H"
@@ -1026,8 +1182,19 @@ impl OverlayPreview {
                 )
                 .clicked()
                 {
-                    let profile = data::state_path();
-                    match restore::show_main(profile.as_deref()) {
+                    let restored = match &self.live {
+                        Some(live) => restore::show_host(live.link.host_window()),
+                        None => restore::show_main(data::state_path().as_deref()),
+                    };
+                    match restored {
+                        // Hestia has the keyboard now.
+                        Ok(()) if self.live.is_some() => {
+                            self.restore_error = None;
+                            self.pinned = false;
+                            let transition = self.session.deactivated();
+                            self.apply_transition(&ctx, transition);
+                            ctx.request_repaint();
+                        }
                         Ok(()) => ctx.send_viewport_cmd(ViewportCommand::Close),
                         Err(error) => {
                             self.restore_error = Some(format!("Could not open Hestia: {error:#}"))

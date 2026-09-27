@@ -11,3 +11,4 @@ include!("translation.rs");
 include!("updates.rs");
 include!("app_update.rs");
 include!("profiles.rs");
+include!("game_overlay.rs");

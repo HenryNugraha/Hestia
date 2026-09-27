@@ -447,6 +447,7 @@ impl HestiaApp {
             mod_hotkey_values_cache: HashMap::new(),
             mod_hotkey_values_loading: HashSet::new(),
             live_state_watch: None,
+            game_overlay: GameOverlay::default(),
             d3dx_reload_status_cache: None,
             d3dx_reload_config_watch: None,
             game_process_running_cache: HashMap::new(),
@@ -2605,25 +2606,6 @@ impl HestiaApp {
                 true
             })
             .collect();
-        let display_name = |item: &&ModEntry| {
-            item.metadata
-                .user
-                .title
-                .as_deref()
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or(&item.folder_name)
-                .to_ascii_lowercase()
-        };
-        let sort_date = |item: &&ModEntry| {
-            item.created_at
-                .timestamp()
-                .max(
-                    item.content_mtime
-                        .map(|ts| ts.timestamp())
-                        .unwrap_or(i64::MIN),
-                )
-                .max(item.updated_at.timestamp())
-        };
         let category_order = |item: &&ModEntry| {
             let category_id = item.metadata.user.category_id.as_deref();
             category_id
@@ -2637,7 +2619,6 @@ impl HestiaApp {
                 .unwrap_or(i32::MAX / 4)
         };
         mods.sort_by(|a, b| {
-            let name_cmp = display_name(a).cmp(&display_name(b));
             let status_cmp = if self.state.static_prefs.library_sort_status_first
                 && matches!(
                     self.state.static_prefs.effective_library_group_mode(),
@@ -2660,20 +2641,7 @@ impl HestiaApp {
             } else {
                 std::cmp::Ordering::Equal
             };
-            let sort_cmp = match self.state.static_prefs.library_sort {
-                LibrarySort::NameAsc => name_cmp,
-                LibrarySort::NameDesc => name_cmp.reverse(),
-                LibrarySort::DateDesc => sort_date(b).cmp(&sort_date(a)).then_with(|| name_cmp),
-                LibrarySort::DateAsc => sort_date(a).cmp(&sort_date(b)).then_with(|| name_cmp),
-                LibrarySort::SizeAsc => a
-                    .content_size_bytes
-                    .cmp(&b.content_size_bytes)
-                    .then_with(|| name_cmp),
-                LibrarySort::SizeDesc => b
-                    .content_size_bytes
-                    .cmp(&a.content_size_bytes)
-                    .then_with(|| name_cmp),
-            };
+            let sort_cmp = compare_by_library_sort(self.state.static_prefs.library_sort, a, b);
             status_cmp.then(category_cmp).then(sort_cmp)
         });
         mods

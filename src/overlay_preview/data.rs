@@ -12,25 +12,58 @@ use crate::{
 
 const UNCATEGORIZED: &str = "Uncategorized";
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct Catalog {
     pub game: String,
     pub categories: Vec<Category>,
     pub note: Option<String>,
 }
 
-#[derive(Clone)]
+/// Ids keep the overlay's place when the library changes under it.
+#[derive(Clone, Default)]
 pub(super) struct Category {
+    pub id: String,
     pub name: String,
     pub image: Option<PathBuf>,
     pub costumes: Vec<Costume>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct Costume {
+    pub id: String,
     pub name: String,
     pub image: Option<PathBuf>,
     pub active: bool,
+    /// The library censors its picture, so it shows darkened.
+    pub censored: bool,
+}
+
+/// The library Hestia sends to the live overlay.
+pub(super) fn catalog_from_library(library: crate::overlay_protocol::Library) -> Catalog {
+    Catalog {
+        game: library.game_name,
+        categories: library
+            .categories
+            .into_iter()
+            .map(|category| Category {
+                id: category.id,
+                name: category.name,
+                image: category.image,
+                costumes: category
+                    .mods
+                    .into_iter()
+                    .map(|item| Costume {
+                        id: item.id,
+                        name: item.name,
+                        image: item.image,
+                        active: item.active,
+                        censored: item.censored,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        note: None,
+    }
 }
 
 pub(super) fn load_catalog() -> Catalog {
@@ -90,6 +123,7 @@ fn read_catalog() -> anyhow::Result<Catalog> {
     let mut categories: Vec<_> = definitions
         .iter()
         .map(|category| Category {
+            id: category.id.clone(),
             name: category.name.clone(),
             image: None,
             costumes: Vec::new(),
@@ -169,6 +203,7 @@ fn read_catalog() -> anyhow::Result<Catalog> {
                 })
                 .unwrap_or_else(|| {
                     categories.push(Category {
+                        id: format!("preview-group:{}", group.to_lowercase()),
                         name: group.into(),
                         image: None,
                         costumes: Vec::new(),
@@ -185,26 +220,7 @@ fn read_catalog() -> anyhow::Result<Catalog> {
                     child.file_name() != MOD_META_DIR && child.file_name() != DISABLED_CONTAINER
                 })
         };
-        let image = user
-            .cover_image
-            .as_deref()
-            .and_then(|image| resolve_image(path, image))
-            .or_else(|| {
-                user.screenshots
-                    .iter()
-                    .find_map(|image| resolve_image(path, image))
-            })
-            .or_else(|| {
-                [
-                    "card_thumb_v2.png",
-                    "card_thumb.png",
-                    "rail_thumb.png",
-                    "icon_thumb.png",
-                ]
-                .into_iter()
-                .map(|name| path.join(MOD_META_DIR).join(name))
-                .find(|path| path.is_file())
-            });
+        let image = mod_image(path, user.cover_image.as_deref(), &user.screenshots, None);
         let category = &mut categories[category_index];
         if source_categories.len() <= category_index {
             source_categories.resize_with(category_index + 1, Vec::new);
@@ -224,9 +240,11 @@ fn read_catalog() -> anyhow::Result<Catalog> {
             category.image = image.clone();
         }
         category.costumes.push(Costume {
+            id: path.to_string_lossy().into_owned(),
             name,
             image,
             active,
+            censored: false,
         });
     }
     for category in &mut categories {
@@ -341,7 +359,40 @@ fn preview_character(name: &str) -> Option<&'static str> {
         })
 }
 
+/// A mod's picture for the overlay's cards: its cover, else a screenshot, else
+/// its GameBanana preview if Hestia has downloaded it, else a thumbnail Hestia
+/// baked.  The thumbnails are small for the cards, so they come last.
+pub(crate) fn mod_image(
+    root: &Path,
+    cover: Option<&str>,
+    screenshots: &[String],
+    downloaded_preview: Option<PathBuf>,
+) -> Option<PathBuf> {
+    cover
+        .and_then(|image| resolve_image(root, image))
+        .or_else(|| {
+            screenshots
+                .iter()
+                .find_map(|image| resolve_image(root, image))
+        })
+        .or_else(|| downloaded_preview.filter(|path| path.is_file()))
+        .or_else(|| {
+            [
+                "card_thumb_v2.png",
+                "card_thumb.png",
+                "rail_thumb.png",
+                "icon_thumb.png",
+            ]
+            .into_iter()
+            .map(|name| root.join(MOD_META_DIR).join(name))
+            .find(|path| path.is_file())
+        })
+}
+
 fn resolve_image(root: &Path, value: &str) -> Option<PathBuf> {
+    if value.trim().is_empty() {
+        return None;
+    }
     if value.starts_with("http:") || value.starts_with("https:") {
         return None;
     }
@@ -488,9 +539,9 @@ mod tests {
 
     fn category(name: &str) -> Category {
         Category {
+            id: name.into(),
             name: name.into(),
-            image: None,
-            costumes: Vec::new(),
+            ..Category::default()
         }
     }
 
@@ -536,6 +587,44 @@ mod tests {
                 "Typhoeus",
                 UNCATEGORIZED,
             ]
+        );
+    }
+
+    #[test]
+    fn mod_pictures_prefer_full_images_over_baked_thumbnails() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let file = |relative: &str| {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"image").unwrap();
+            path
+        };
+        let thumbnail = file(&format!("{MOD_META_DIR}/card_thumb_v2.png"));
+        let preview = file("preview.bin");
+        let screenshot = file(&format!("{DISABLED_CONTAINER}/shot.png"));
+        let cover = file("cover.png");
+        let screenshots = ["gone.png".to_owned(), "shot.png".to_owned()];
+        let pick = |cover: Option<&str>, screenshots: &[String], preview: Option<&Path>| {
+            mod_image(root, cover, screenshots, preview.map(Path::to_path_buf))
+        };
+        assert_eq!(
+            pick(Some("cover.png"), &screenshots, Some(&preview)),
+            Some(cover)
+        );
+        // A disabled mod's files move into the disabled folder.
+        assert_eq!(
+            pick(Some("missing.png"), &screenshots, Some(&preview)),
+            Some(screenshot)
+        );
+        assert_eq!(pick(None, &[], Some(&preview)), Some(preview));
+        assert_eq!(
+            pick(Some("https://example.com/a.png"), &[], None),
+            Some(thumbnail.clone())
+        );
+        assert_eq!(
+            pick(None, &[], Some(&root.join("evicted.bin"))),
+            Some(thumbnail)
         );
     }
 

@@ -401,6 +401,8 @@ pub struct HestiaApp {
     // Live-state watch: while the Hotkeys view is open for a mod whose game has the folded
     // consent on and is running, poll `d3dx_user.ini` for changes and re-read on flush.
     live_state_watch: Option<LiveStateWatch>,
+    // The in-game overlay, while a supported game runs.
+    game_overlay: GameOverlay,
     // Active XXMI game's root d3dx.ini status, shown in Settings and used to prompt when the
     // saved consent is on but the file no longer has the required values.
     d3dx_reload_status_cache: Option<D3dxReloadStatusCache>,

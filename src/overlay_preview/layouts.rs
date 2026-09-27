@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
 };
 
@@ -10,6 +10,7 @@ use egui::{
 
 use super::data::{Catalog, Category};
 use super::thumbnails::ThumbnailCache;
+use crate::overlay_protocol::Selection;
 
 const OVERLAY_OPACITY_MIN: u8 = 50;
 const OVERLAY_OPACITY_MAX: u8 = 94;
@@ -208,6 +209,9 @@ pub(super) struct Layouts {
     pending_commands: VecDeque<PendingCommand>,
     row: Row,
     filter: Filter,
+    /// The live overlay can't change mods yet, so clicks and keys that would
+    /// switch them do nothing.
+    read_only: bool,
 }
 
 impl Layouts {
@@ -230,6 +234,8 @@ impl Layouts {
             .map(active_image)
             .collect::<Vec<_>>();
         let filter = Filter::new(&catalog, "");
+        let mut thumbnails = ThumbnailCache::new();
+        thumbnails.set_censored(censored_images(&catalog));
 
         Self {
             catalog,
@@ -237,7 +243,7 @@ impl Layouts {
             carousel_focus,
             carousel_focus_by_category,
             active_images,
-            thumbnails: ThumbnailCache::new(),
+            thumbnails,
             reveal_category: true,
             category_wheel_accum: 0.0,
             category_wheel_last_event_at: f64::NEG_INFINITY,
@@ -259,7 +265,126 @@ impl Layouts {
             pending_commands: VecDeque::new(),
             row: Row::default(),
             filter,
+            read_only: false,
         }
+    }
+
+    pub(super) fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
+    /// Where the overlay is, by ids: the selected category, and each
+    /// category's focused mod where it isn't the one a fresh start would pick.
+    pub(super) fn selection(&self) -> Selection {
+        let mods = self
+            .catalog
+            .categories
+            .iter()
+            .enumerate()
+            .filter_map(|(index, category)| {
+                let focus = if index == self.selected_category {
+                    self.carousel_focus
+                } else {
+                    *self.carousel_focus_by_category.get(index)?
+                };
+                (focus != active_costume_index(category)).then_some((
+                    category.id.clone(),
+                    category.costumes.get(focus)?.id.clone(),
+                ))
+            })
+            .collect();
+        Selection {
+            category_id: self
+                .catalog
+                .categories
+                .get(self.selected_category)
+                .map(|category| category.id.clone()),
+            mods,
+        }
+    }
+
+    /// Go back to where `selection` left the overlay.  Without its category,
+    /// the overlay starts at the leftmost one.
+    pub(super) fn restore_selection(&mut self, selection: &Selection) {
+        self.apply_selection(selection, 0);
+    }
+
+    /// Take a new library from Hestia and stay on the same category and mods,
+    /// by id.  If the selected category is gone, the selection stays at the
+    /// same place in the rail.  A category left on its active mod follows the
+    /// active mod, as it would on a fresh start.
+    pub(super) fn replace_catalog(&mut self, catalog: Catalog) {
+        let selection = self.selection();
+        let previous_index = self.selected_category;
+        let query = std::mem::take(&mut self.filter.query);
+        self.catalog = catalog;
+        self.thumbnails.set_censored(censored_images(&self.catalog));
+        self.carousel_focus_by_category = self
+            .catalog
+            .categories
+            .iter()
+            .map(active_costume_index)
+            .collect();
+        self.active_images = self.catalog.categories.iter().map(active_image).collect();
+        self.filter = Filter::new(&self.catalog, &query);
+        self.carousel_transition = None;
+        self.carousel_pointer_press = None;
+        self.held_preview = None;
+        self.visible_card_rects.clear();
+        self.active_feedback_until = f64::NEG_INFINITY;
+        self.active_feedback_costume = None;
+        self.boundary_feedback_until = f64::NEG_INFINITY;
+        self.boundary_feedback_edge = None;
+        self.apply_selection(&selection, previous_index);
+    }
+
+    fn apply_selection(&mut self, selection: &Selection, fallback_category: usize) {
+        for (index, category) in self.catalog.categories.iter().enumerate() {
+            let focus = selection.mods.get(&category.id).and_then(|mod_id| {
+                category
+                    .costumes
+                    .iter()
+                    .position(|costume| &costume.id == mod_id)
+            });
+            if let (Some(focus), Some(slot)) =
+                (focus, self.carousel_focus_by_category.get_mut(index))
+            {
+                *slot = focus;
+            }
+        }
+        let last = self.catalog.categories.len().saturating_sub(1);
+        self.selected_category = selection
+            .category_id
+            .as_ref()
+            .and_then(|id| {
+                self.catalog
+                    .categories
+                    .iter()
+                    .position(|category| &category.id == id)
+            })
+            .unwrap_or(fallback_category)
+            .min(last);
+        self.carousel_focus = self
+            .carousel_focus_by_category
+            .get(self.selected_category)
+            .copied()
+            .unwrap_or(0);
+        self.clamp_selection();
+        if !self.filter.categories.contains(&self.selected_category) {
+            if let Some(&first) = self.filter.categories.first() {
+                self.selected_category = first;
+                self.carousel_focus = self.carousel_focus_by_category[first];
+                self.clamp_selection();
+            }
+        }
+        self.carousel_focus = self.visible_focus(self.selected_category, self.carousel_focus);
+        if let Some(slot) = self
+            .carousel_focus_by_category
+            .get_mut(self.selected_category)
+        {
+            *slot = self.carousel_focus;
+        }
+        self.reveal_category = true;
     }
 
     pub(super) fn prepare_thumbnails(&mut self, ctx: &egui::Context) {
@@ -521,8 +646,8 @@ impl Layouts {
         ShortcutAvailability {
             categories,
             mods,
-            exclusive: !(focused.active && active_count == 1),
-            toggle: true,
+            exclusive: !self.read_only && !(focused.active && active_count == 1),
+            toggle: !self.read_only,
         }
     }
 
@@ -904,6 +1029,9 @@ impl Layouts {
     }
 
     fn activate_costume_in_place(&mut self, category_index: usize, costume_index: usize, now: f64) {
+        if self.read_only {
+            return;
+        }
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
             select_costume(category, costume_index);
             self.active_images[category_index] = active_image(category);
@@ -1579,7 +1707,7 @@ impl Layouts {
     fn apply_focused_costume_action(&mut self, action: ModAction, now: f64) {
         let category_index = self.selected_category;
         let costume_index = self.carousel_focus;
-        if !self.visible_mods().contains(&costume_index) {
+        if self.read_only || !self.visible_mods().contains(&costume_index) {
             return;
         }
         let mut changed = false;
@@ -1879,6 +2007,19 @@ fn active_costume_index(category: &Category) -> usize {
         .unwrap_or(0)
 }
 
+/// The pictures of the mods the library censors.
+fn censored_images(catalog: &Catalog) -> HashSet<PathBuf> {
+    catalog
+        .categories
+        .iter()
+        .flat_map(|category| &category.costumes)
+        .filter(|costume| costume.censored)
+        .filter_map(|costume| costume.image.clone())
+        .collect()
+}
+
+/// The rail's picture for a category without its own: the active mod's, else
+/// the first mod's that has one.
 fn active_image(category: &Category) -> Option<PathBuf> {
     category
         .costumes
@@ -1886,6 +2027,12 @@ fn active_image(category: &Category) -> Option<PathBuf> {
         .find(|costume| costume.active)
         .and_then(|costume| costume.image.clone())
         .or_else(|| category.image.clone())
+        .or_else(|| {
+            category
+                .costumes
+                .iter()
+                .find_map(|costume| costume.image.clone())
+        })
 }
 
 fn character_name(name: &str) -> &str {
@@ -2685,7 +2832,10 @@ mod tests {
         Layouts::new(Catalog {
             game: "Test".into(),
             categories: (0..category_count)
-                .map(|index| category(&[index == 0, false, false]))
+                .map(|index| Category {
+                    id: format!("category-{index}"),
+                    ..category(&[index == 0, false, false])
+                })
                 .collect(),
             note: None,
         })
@@ -2767,15 +2917,18 @@ mod tests {
 
     fn category(active: &[bool]) -> Category {
         Category {
+            id: "Ardelia".into(),
             name: "Ardelia".into(),
             image: None,
             costumes: active
                 .iter()
                 .enumerate()
                 .map(|(index, &active)| Costume {
+                    id: format!("costume-{index}"),
                     name: format!("Costume {index}"),
                     image: None,
                     active,
+                    censored: false,
                 })
                 .collect(),
         }
@@ -3152,14 +3305,17 @@ mod tests {
 
     fn named(name: &str, mods: &[&str]) -> Category {
         Category {
+            id: name.into(),
             name: name.into(),
             image: None,
             costumes: mods
                 .iter()
                 .map(|name| Costume {
+                    id: (*name).into(),
                     name: (*name).into(),
                     image: None,
                     active: false,
+                    censored: false,
                 })
                 .collect(),
         }
@@ -3400,5 +3556,144 @@ mod tests {
         layouts.set_search("endmin");
         assert_eq!(layouts.selected_category, 1);
         assert_eq!(layouts.empty_carousel_text(), "No installed mods");
+    }
+
+    fn with_active(mut category: Category, active: &str) -> Category {
+        for costume in &mut category.costumes {
+            costume.active = costume.id == active;
+        }
+        category
+    }
+
+    fn live_catalog(categories: Vec<Category>) -> Catalog {
+        Catalog {
+            game: "Test".into(),
+            categories,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn a_new_library_keeps_the_selection_by_id() {
+        let mut layouts = Layouts::new(live_catalog(vec![
+            named("Akekuri", &["A1", "A2"]),
+            named("Ardelia", &["Vow", "Beach", "Classic"]),
+            named("Perlica", &["P1", "P2"]),
+        ]));
+        layouts.select_category(1);
+        layouts.carousel_focus = 2;
+        layouts.carousel_focus_by_category[2] = 1;
+        assert_eq!(
+            layouts.selection(),
+            Selection {
+                category_id: Some("Ardelia".into()),
+                mods: [
+                    ("Ardelia".to_owned(), "Classic".to_owned()),
+                    ("Perlica".to_owned(), "P2".to_owned()),
+                ]
+                .into(),
+            }
+        );
+
+        // A new category sorts first and Ardelia gains a mod before Classic.
+        layouts.replace_catalog(live_catalog(vec![
+            named("Aglina", &["G1"]),
+            named("Akekuri", &["A1", "A2"]),
+            named("Ardelia", &["Vow", "Beach", "Autumn", "Classic"]),
+            named("Perlica", &["P1", "P2"]),
+        ]));
+        assert_eq!(layouts.selected_category, 2);
+        assert_eq!(layouts.carousel_focus, 3);
+        assert_eq!(layouts.carousel_focus_by_category[3], 1);
+        assert!(layouts.reveal_category);
+
+        // Without Ardelia the selection stays at its place in the rail.
+        layouts.replace_catalog(live_catalog(vec![
+            named("Aglina", &["G1"]),
+            named("Akekuri", &["A1", "A2"]),
+            named("Perlica", &["P1", "P2"]),
+        ]));
+        assert_eq!(layouts.selected_category, 2);
+        assert_eq!(layouts.carousel_focus, 1);
+    }
+
+    #[test]
+    fn a_category_left_on_its_active_mod_follows_the_active_mod() {
+        let mut layouts = Layouts::new(live_catalog(vec![with_active(
+            named("Ardelia", &["Vow", "Beach", "Classic"]),
+            "Vow",
+        )]));
+        assert_eq!(layouts.selection().mods.len(), 0);
+        layouts.replace_catalog(live_catalog(vec![with_active(
+            named("Ardelia", &["Vow", "Beach", "Classic"]),
+            "Classic",
+        )]));
+        assert_eq!(layouts.carousel_focus, 2);
+
+        // Once moved away from the active mod, the focus stays put.
+        layouts.carousel_focus = 1;
+        layouts.replace_catalog(live_catalog(vec![with_active(
+            named("Ardelia", &["Vow", "Beach", "Classic"]),
+            "Vow",
+        )]));
+        assert_eq!(layouts.carousel_focus, 1);
+    }
+
+    #[test]
+    fn a_new_library_keeps_the_search() {
+        let mut layouts = search_layouts();
+        layouts.set_search("classic");
+        layouts.select_category(2);
+        layouts.carousel_focus = 1;
+        let mut catalog = search_layouts().catalog;
+        catalog.categories.remove(1);
+        layouts.replace_catalog(catalog);
+        assert_eq!(layouts.filter.query, "classic");
+        assert_eq!(layouts.filter.categories, vec![0, 1]);
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (1, 1));
+    }
+
+    #[test]
+    fn a_restored_selection_skips_what_is_gone() {
+        let mut layouts = Layouts::new(live_catalog(vec![
+            named("Akekuri", &["A1", "A2"]),
+            named("Ardelia", &["Vow", "Beach"]),
+        ]));
+        layouts.restore_selection(&Selection {
+            category_id: Some("Ardelia".into()),
+            mods: [
+                ("Ardelia".to_owned(), "Beach".to_owned()),
+                ("Akekuri".to_owned(), "Removed".to_owned()),
+            ]
+            .into(),
+        });
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (1, 1));
+        assert_eq!(layouts.carousel_focus_by_category[0], 0);
+        layouts.restore_selection(&Selection {
+            category_id: Some("Removed".into()),
+            mods: Default::default(),
+        });
+        assert_eq!(layouts.selected_category, 0);
+    }
+
+    #[test]
+    fn read_only_keys_and_clicks_leave_mods_alone() {
+        let mut layouts = Layouts::new(live_catalog(vec![with_active(
+            named("Ardelia", &["Vow", "Beach"]),
+            "Vow",
+        )]));
+        layouts.set_read_only(true);
+        layouts.carousel_focus = 1;
+        let availability = layouts.shortcut_availability();
+        assert!(!availability.exclusive && !availability.toggle);
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
+        layouts.activate_costume_in_place(0, 1, 1.0);
+        let active: Vec<bool> = layouts.catalog.categories[0]
+            .costumes
+            .iter()
+            .map(|costume| costume.active)
+            .collect();
+        assert_eq!(active, [true, false]);
     }
 }

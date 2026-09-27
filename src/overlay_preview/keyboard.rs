@@ -42,6 +42,8 @@ pub(super) enum Event {
     /// stop typing and keep the results.
     Search,
     Escape,
+    /// A click on the pinned overlay took the keyboard from another window.
+    Clicked,
     /// Another window took the keyboard.
     Deactivated,
 }
@@ -225,7 +227,7 @@ fn typing_after(typing: bool, event: Event) -> bool {
     match event {
         Event::Search => !typing,
         Event::Command(_) => typing,
-        Event::Hotkey { .. } | Event::Escape | Event::Deactivated => false,
+        Event::Hotkey { .. } | Event::Escape | Event::Clicked | Event::Deactivated => false,
     }
 }
 
@@ -606,12 +608,24 @@ pub(super) fn hotkey(focused: bool, took_focus: bool) {
     });
 }
 
+/// Asks for a frame, for news from the window procedure that isn't a key.
+#[cfg(windows)]
+pub(super) fn wake() {
+    notify(|_| ());
+}
+
 #[cfg(windows)]
 pub(super) fn activated() {
     if installed() {
         let held = physical_keys();
         notify(|router| router.reset(held, 0));
     }
+}
+
+/// A click took the keyboard.  Activation has already reset the keys.
+#[cfg(windows)]
+pub(super) fn clicked() {
+    notify(|router| router.push(Event::Clicked));
 }
 
 #[cfg(windows)]
