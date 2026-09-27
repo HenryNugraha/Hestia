@@ -43,6 +43,9 @@ struct GameOverlay {
     restart_at: Option<Instant>,
     /// The GameBanana installs it asked for that aren't done.
     installs: Vec<OverlayInstall>,
+    /// The game the preview in Settings shows the overlay for, while no
+    /// game runs.  Hestia's own window stands in for the game.
+    preview: Option<String>,
 }
 
 impl HestiaApp {
@@ -66,6 +69,12 @@ impl HestiaApp {
             }
             self.game_overlay.watched = watched;
         }
+        // The preview ends when its game has no overlay any more.
+        if let Some(id) = &self.game_overlay.preview
+            && !self.game_overlay.watched.iter().any(|game| &game.id == id)
+        {
+            self.game_overlay.preview = None;
+        }
         if self.game_overlay.watcher.is_none()
             && !self.game_overlay.watcher_failed
             && !self.game_overlay.watched.is_empty()
@@ -88,7 +97,8 @@ impl HestiaApp {
         self.consume_game_overlay_events(ctx);
         self.sync_game_overlay_installs(ctx);
 
-        // The overlay's game while it runs, or else the first one that runs.
+        // The overlay's game while it runs, or else the first one that runs,
+        // or else the preview's.
         let overlay = &self.game_overlay;
         let shown = overlay
             .process
@@ -103,7 +113,14 @@ impl HestiaApp {
             .iter()
             .find(|running| Some(running.id.as_str()) == shown)
             .or(running.first())
-            .map(|running| (*running).clone());
+            .map(|running| (*running).clone())
+            // The overlay shows over Hestia then, and works as in the game.
+            .or_else(|| {
+                overlay.preview.clone().map(|id| RunningGame {
+                    id,
+                    pids: vec![std::process::id()],
+                })
+            });
         let settings = self.game_overlay_settings();
 
         match (&mut self.game_overlay.process, game) {

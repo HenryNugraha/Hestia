@@ -916,4 +916,9 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Kecil", // SettingsGameOverlaySizeSmall
     "Normal", // SettingsGameOverlaySizeNormal
     "Besar", // SettingsGameOverlaySizeLarge
+    "Pratinjau", // SettingsGameOverlayPreview
+    "Menampilkan overlay di atas Hestia tanpa game, untuk mencobanya. Mod yang kamu nyalakan atau matikan di sana benar-benar berubah.", // SettingsGameOverlayPreviewTooltip
+    "Butuh game yang memakai XXMI.", // SettingsGameOverlayPreviewUnavailable
+    "Hentikan pratinjau", // SettingsGameOverlayStopPreview
+    "Tekan {key} untuk membuka overlay.", // SettingsGameOverlayPreviewHint
 ];

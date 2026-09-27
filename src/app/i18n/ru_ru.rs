@@ -915,4 +915,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Маленький", // SettingsGameOverlaySizeSmall
     "Обычный", // SettingsGameOverlaySizeNormal
     "Большой", // SettingsGameOverlaySizeLarge
+    "Предпросмотр", // SettingsGameOverlayPreview
+    "Показывает оверлей поверх Hestia без игры, чтобы его опробовать. Моды, включённые или выключенные в нём, меняются по-настоящему.", // SettingsGameOverlayPreviewTooltip
+    "Нужна игра, использующая XXMI.", // SettingsGameOverlayPreviewUnavailable
+    "Остановить предпросмотр", // SettingsGameOverlayStopPreview
+    "Нажмите {key}, чтобы открыть оверлей.", // SettingsGameOverlayPreviewHint
 ];

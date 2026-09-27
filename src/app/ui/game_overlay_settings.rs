@@ -15,7 +15,17 @@ impl HestiaApp {
     /// changed.
     fn game_overlay_settings_section(&mut self, ui: &mut Ui, text: TextCatalog) -> bool {
         let mut should_save = false;
+        // The preview shows the game picked in Hestia, or else the first one
+        // with the overlay.
+        let watched = &self.game_overlay.watched;
+        let preview_game = self
+            .selected_game()
+            .map(|game| game.definition.id.as_str())
+            .filter(|id| watched.iter().any(|game| game.id == *id))
+            .or_else(|| watched.first().map(|game| game.id.as_str()))
+            .map(str::to_owned);
         let prefs = &mut self.state.static_prefs;
+        let preview = &mut self.game_overlay.preview;
         static_label(
             ui,
             bold(text.settings_game_overlay(), Some(16.0)).underline(),
@@ -111,6 +121,37 @@ impl HestiaApp {
                     }
                     should_save |=
                         response.drag_stopped() || (response.changed() && !response.dragged());
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if preview.is_some() {
+                        if ui
+                            .button(text.get(TextKey::SettingsGameOverlayStopPreview))
+                            .clicked()
+                        {
+                            *preview = None;
+                        }
+                        static_label(
+                            ui,
+                            RichText::new(
+                                text.get(TextKey::SettingsGameOverlayPreviewHint)
+                                    .replace("{key}", &hotkey),
+                            )
+                            .weak(),
+                        );
+                    } else if ui
+                        .add_enabled(
+                            preview_game.is_some(),
+                            egui::Button::new(text.get(TextKey::SettingsGameOverlayPreview)),
+                        )
+                        .on_hover_text(text.get(TextKey::SettingsGameOverlayPreviewTooltip))
+                        .on_disabled_hover_text(
+                            text.get(TextKey::SettingsGameOverlayPreviewUnavailable),
+                        )
+                        .clicked()
+                    {
+                        *preview = preview_game;
+                    }
                 });
             });
             ui.add_space(1.0);

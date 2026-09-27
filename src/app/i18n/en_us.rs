@@ -916,4 +916,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Small", // SettingsGameOverlaySizeSmall
     "Normal", // SettingsGameOverlaySizeNormal
     "Large", // SettingsGameOverlaySizeLarge
+    "Preview", // SettingsGameOverlayPreview
+    "Shows the overlay over Hestia without a game, to try it out. Mods you turn on or off in it change for real.", // SettingsGameOverlayPreviewTooltip
+    "Needs a game that uses XXMI.", // SettingsGameOverlayPreviewUnavailable
+    "Stop preview", // SettingsGameOverlayStopPreview
+    "Press {key} to open the overlay.", // SettingsGameOverlayPreviewHint
 ];

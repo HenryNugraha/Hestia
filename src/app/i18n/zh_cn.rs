@@ -916,4 +916,9 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "小", // SettingsGameOverlaySizeSmall
     "正常", // SettingsGameOverlaySizeNormal
     "大", // SettingsGameOverlaySizeLarge
+    "预览", // SettingsGameOverlayPreview
+    "无需启动游戏，在 Hestia 上方显示浮层以便试用。在其中启用或禁用的模组会真实生效。", // SettingsGameOverlayPreviewTooltip
+    "需要使用 XXMI 的游戏。", // SettingsGameOverlayPreviewUnavailable
+    "停止预览", // SettingsGameOverlayStopPreview
+    "按 {key} 打开浮层。", // SettingsGameOverlayPreviewHint
 ];
