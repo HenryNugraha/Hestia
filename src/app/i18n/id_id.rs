@@ -834,4 +834,86 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Nama Z-A", // LibraryCategorySortByNameDesc
     "Tanpa kategori: {status}", // LibraryUncategorizedStatusHeader
     "Urutkan & Susun", // LibrarySortMenuTitle
+
+    // In-game overlay
+    "Overlay dalam game", // SettingsGameOverlay
+    "Tekan {key} saat game yang didukung berjalan untuk menjelajah dan mengganti mod di atas game.", // SettingsGameOverlayTooltip
+    "Aplikasi lain sudah memakai {key}, jadi overlay hanya bisa dibuka lewat pin.", // GameOverlayHotkeyTaken
+    "Tidak dapat mendaftarkan {key}, jadi overlay hanya bisa dibuka lewat pin.", // GameOverlayHotkeyFailed
+    "Tidak dapat mengambil fokus dari game, jadi tombol tidak akan sampai ke overlay.", // GameOverlayFocusTakeFailed
+    "Tidak dapat mengembalikan fokus ke game. Klik game untuk melanjutkan.", // GameOverlayFocusReturnFailed
+    "Hestia tidak menjawab, jadi perubahan mungkin belum dibuat.", // GameOverlayNoAnswer
+    "Tekan {key} di dalam game untuk melihat perubahannya.", // GameOverlayPressReloadKey
+    "{name} terpasang, dalam keadaan nonaktif.", // GameOverlayInstalledNotice
+    "Tidak dapat memasang {name}.", // GameOverlayInstallFailedNotice
+    "{name} perlu jawaban. Tekan {key}.", // GameOverlayNeedsAnswerNotice
+    "{name} sekarang ada di mod Anda.", // GameOverlayArrivedNotice
+    "untuk menjelajah", // GameOverlayToBrowse
+    "Sembunyikan", // GameOverlayHide
+    "Tutup overlay", // GameOverlayClose
+    "Tetap terbuka", // GameOverlayKeepExpanded
+    "Lepas pin · kembali ke {key}", // GameOverlayUnpin
+    "Pulihkan jendela utama Hestia", // GameOverlayOpenHestia
+    "Tidak dapat membuka Hestia: {error}", // GameOverlayCouldNotOpenHestia
+    "Tampilkan semua karakter", // GameOverlayShowAllCharacters
+    "Ketik untuk mencari", // GameOverlaySearchHint
+    "Opasitas", // GameOverlayOpacity
+    "Navigasi", // GameOverlayHintNavigate
+    "Jelajahi mod", // GameOverlayHintMods
+    "Jelajahi kategori", // GameOverlayHintCategories
+    "Aktifkan mod ini, nonaktifkan yang lain", // GameOverlayHintExclusive
+    "Aktifkan mod ini", // GameOverlayHintEnable
+    "Pasang", // GameOverlayHintInstall
+    "Coba lagi", // GameOverlayHintTryAgain
+    "Aktifkan/Nonaktifkan", // GameOverlayHintToggle
+    "Cari", // GameOverlayHintSearch
+    "Selesai mengetik", // GameOverlayHintDoneTyping
+    "Ubah pencarian", // GameOverlayHintEditSearch
+    "Hapus pencarian", // GameOverlayHintClearSearch
+    "Pilih file yang akan dipasang", // GameOverlayPickFile
+    "Mod bernama \"{folder}\" sudah terpasang", // GameOverlaySameName
+    "Ganti", // GameOverlayReplace
+    "Hapus yang terpasang terlebih dahulu", // GameOverlayReplaceDetail
+    "Gabungkan", // GameOverlayMerge
+    "Tambahkan file baru ke yang terpasang", // GameOverlayMergeDetail
+    "Simpan keduanya", // GameOverlayKeepBoth
+    "Pasang dengan nama lain", // GameOverlayKeepBothDetail
+    "Batal", // GameOverlayCancel
+    "Belum ada mod terpasang", // GameOverlayNoInstalledMods
+    "Pasang mod untuk melihatnya di sini.", // GameOverlayInstallToSee
+    "Tidak ada yang cocok", // GameOverlayNoMatches
+    "Kategori sebelumnya", // GameOverlayPreviousCategory
+    "Kategori berikutnya", // GameOverlayNextCategory
+    "Tidak dapat menghubungi GameBanana. Tekan Space untuk mencoba lagi.", // GameOverlayGameBananaFailed
+    "Tidak ada mod {name} di GameBanana", // GameOverlayGameBananaNothingFor
+    "Tidak ada yang cocok di GameBanana", // GameOverlayGameBananaNoMatches
+    "BARU", // GameOverlayNewTag
+    "Menunggu", // GameOverlayWaiting
+    "Mengunduh {percent}%", // GameOverlayDownloadingPercent
+    "Mengunduh", // GameOverlayDownloading
+    "Memasang", // GameOverlayInstalling
+    "Perlu jawaban Anda", // GameOverlayNeedsYourAnswer
+    "Terpasang, nonaktif", // GameOverlayInstalledOff
+    "Tidak dapat memasang. Tekan Space untuk mencoba lagi.", // GameOverlayCouldNotInstallTryAgain
+    "Tidak dapat memasang", // GameOverlayCouldNotInstall
+    "Tanpa pratinjau", // GameOverlayNoPreview
+    "Aktifkan overlay", // SettingsGameOverlayEnable
+    "Buka dengan", // SettingsGameOverlayOpenWith
+    "Ubah", // SettingsGameOverlayChangeKey
+    "Atur ulang", // SettingsGameOverlayResetKey
+    "Tekan tombolnya, atau Esc untuk batal", // SettingsGameOverlayPressKeys
+    "Gunakan Alt atau Ctrl dengan huruf, angka, atau tombol F.", // SettingsGameOverlayKeyNotAllowed
+    "{key} dipakai oleh Windows, overlay, atau XXMI. Pilih yang lain.", // SettingsGameOverlayKeyReserved
+    "Aplikasi lain sudah memakai {key}. Pilih yang lain.", // SettingsGameOverlayKeyTaken
+    "Tampilkan saat game dimulai", // SettingsGameOverlayArrivalStrip
+    "Menampilkan strip overlay selama beberapa detik saat game dimulai.", // SettingsGameOverlayArrivalStripTooltip
+    "Tampilkan pengingat setelah ditutup", // SettingsGameOverlayCloseStrip
+    "Strip dengan {key} tetap tampil beberapa detik setelah overlay ditutup.", // SettingsGameOverlayCloseStripTooltip
+    "Tampilkan mod GameBanana", // SettingsGameOverlayGameBanana
+    "Tampilkan karakter yang belum punya kategori", // SettingsGameOverlayAllCharacters
+    "Tampilkan petunjuk tombol", // SettingsGameOverlayKeyHints
+    "Ukuran", // SettingsGameOverlaySize
+    "Kecil", // SettingsGameOverlaySizeSmall
+    "Normal", // SettingsGameOverlaySizeNormal
+    "Besar", // SettingsGameOverlaySizeLarge
 ];

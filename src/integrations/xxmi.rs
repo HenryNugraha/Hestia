@@ -737,7 +737,7 @@ fn quote_arg_windows(arg: &str) -> String {
     out
 }
 
-fn scan_live_mods(
+pub(crate) fn scan_live_mods(
     game: &GameInstall,
     use_default_path: bool,
     scan_rabbitfx_requirement: bool,

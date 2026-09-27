@@ -8,9 +8,15 @@ use egui::{
     Ui, Vec2,
 };
 
-use super::data::{Catalog, Category};
+use super::data::{Catalog, Category, Costume};
+use super::gamebanana::{self, GameBanana, InstallNews, ListKey, StatusCard};
+use super::text;
 use super::thumbnails::ThumbnailCache;
-use crate::overlay_protocol::Selection;
+use crate::app::TextKey;
+use crate::overlay_protocol::{
+    BrowseMod, ChangeAction, FromOverlay, InstallStage, SameNameChoice, Selection, ToOverlay,
+    UNCATEGORIZED_ID, names_character,
+};
 
 const OVERLAY_OPACITY_MIN: u8 = 50;
 const OVERLAY_OPACITY_MAX: u8 = 94;
@@ -25,10 +31,24 @@ const CATEGORY_NAV_WIDTH: f32 = 40.0;
 const CATEGORY_GAP: f32 = 6.0;
 const ACCENT: Color32 = Color32::from_rgb(196, 91, 52);
 const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
+/// How long an installed mod takes to cross from its GameBanana card to its
+/// place among the category's own.
+const CROSSING_SECS: f64 = 0.5;
 const ACTIVE_FEEDBACK_SECS: f64 = 0.15;
+/// How fast a card's badge pulses while its change waits for Hestia.
+const WAITING_PULSE_SPEED: f64 = 4.0;
 const CATEGORY_SPRITE_SIZE: f32 = 30.0;
 const CATEGORY_SELECTED_SPRITE_SIZE: f32 = 40.0;
 const CARD_TITLE_BOTTOM_PADDING: f32 = 8.0;
+/// The extra room between a category's own mods and its GameBanana mods,
+/// which holds the divider.
+const DIVIDER_ZONE: f32 = 30.0;
+/// Selection ids of GameBanana cards start with this.
+const GAMEBANANA_PREFIX: &str = "gamebanana:";
+/// The selection id of the card after a GameBanana list.
+const GAMEBANANA_END: &str = "gamebanana:end";
+/// Ids of the categories "Show all characters" adds start with this.
+const EXTRA_CATEGORY_PREFIX: &str = "gamebanana:character:";
 
 // Keep one physical wheel notch from selecting several entries when egui exposes its
 // smoothing tail over multiple frames.
@@ -71,6 +91,7 @@ pub(super) fn suppress_tooltips(ctx: &egui::Context) {
 struct CarouselTransition {
     from: Vec<CarouselCardPlacement>,
     started_at: f64,
+    seconds: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -111,6 +132,15 @@ pub(super) enum ModAction {
     Toggle,
 }
 
+/// A change to mods the overlay made on screen, for Hestia to make.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ModRequest {
+    pub mod_id: String,
+    pub action: ChangeAction,
+    /// The mods it turned on or off on screen.
+    pub states: Vec<(String, bool)>,
+}
+
 /// The row that A/D and the side arrows move in. The overlay opens on the
 /// categories row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -120,53 +150,201 @@ pub(super) enum Row {
     Categories,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct ShortcutAvailability {
     pub categories: bool,
     pub mods: bool,
     pub exclusive: bool,
     pub toggle: bool,
+    pub space: Space,
+}
+
+/// What Space does on the focused card.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Space {
+    /// Turns the mod on and the rest of its category off.
+    #[default]
+    Exclusive,
+    /// Uncategorized only turns the mod on.
+    Enable,
+    Install,
+    TryAgain,
 }
 
 /// What a search shows.  A category whose name matches shows all its mods,
 /// any other category shows only the mods that match, and categories with no
 /// match are hidden.  An empty search shows everything.
+///
+/// A category linked to a GameBanana character shows the character's
+/// GameBanana mods after its own, as cards numbered on from its own mods,
+/// then a card for the list's state while it loads, failed or is empty.
+/// GameBanana mods already installed are left out.
 struct Filter {
     /// The search as typed.
     query: String,
+    /// The search as `search_key` has it.
+    needle: String,
     /// Visible categories, in catalog order.
     categories: Vec<usize>,
-    /// Each category's visible mods, in catalog order.  Indexed like the
-    /// catalog, so a hidden category has an empty list.
+    /// Each category's visible cards, in order.  Indexed like the catalog,
+    /// so a hidden category has an empty list.
     mods: Vec<Vec<usize>>,
 }
 
 impl Filter {
-    fn new(catalog: &Catalog, query: &str) -> Self {
+    fn new(catalog: &Catalog, query: &str, gamebanana: &GameBanana) -> Self {
         let needle = search_key(query);
+        let installed: HashSet<u64> = catalog
+            .categories
+            .iter()
+            .flat_map(|category| &category.costumes)
+            .filter_map(|costume| costume.gamebanana_id)
+            .collect();
         let mut categories = Vec::new();
         let mut mods = Vec::with_capacity(catalog.categories.len());
         for (index, category) in catalog.categories.iter().enumerate() {
-            let all =
-                needle.is_empty() || search_key(character_name(&category.name)).contains(&needle);
-            let visible: Vec<usize> = category
+            let all = matches_category(category, &needle);
+            let list = list_key(category, &needle).and_then(|key| gamebanana.list(&key));
+            // A mod the overlay installs waits behind its card until the
+            // card crosses.
+            let held = |gamebanana_id: Option<u64>| {
+                gamebanana_id.is_some_and(|id| {
+                    gamebanana.holds(id)
+                        && list.is_some_and(|list| list.mods.iter().any(|item| item.id == id))
+                })
+            };
+            let mut visible: Vec<usize> = category
                 .costumes
                 .iter()
                 .enumerate()
                 .filter(|(_, costume)| all || search_key(&costume.name).contains(&needle))
+                .filter(|(_, costume)| !held(costume.gamebanana_id))
                 .map(|(costume_index, _)| costume_index)
                 .collect();
             if all || !visible.is_empty() {
                 categories.push(index);
+                if let Some(list) = list {
+                    let own = category.costumes.len();
+                    visible.extend(
+                        list.mods
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, item)| {
+                                !installed.contains(&item.id) || gamebanana.holds(item.id)
+                            })
+                            .map(|(position, _)| own + position),
+                    );
+                    if list.status_card().is_some() {
+                        visible.push(own + list.mods.len());
+                    }
+                }
             }
             mods.push(visible);
         }
         Self {
             query: query.to_owned(),
+            needle,
             categories,
             mods,
         }
     }
+}
+
+/// Whether a search shows all of a category's mods: it's empty, or it
+/// matches the category's name.
+fn matches_category(category: &Category, needle: &str) -> bool {
+    needle.is_empty() || search_key(character_name(&category.name)).contains(needle)
+}
+
+/// The GameBanana list a category shows with the search `needle`: the
+/// character's mods when the search shows all of the category's own,
+/// otherwise the ones that match.
+fn list_key(category: &Category, needle: &str) -> Option<ListKey> {
+    Some(ListKey {
+        character: category.character?,
+        query: if matches_category(category, needle) {
+            String::new()
+        } else {
+            needle.to_owned()
+        },
+    })
+}
+
+/// An answer in the panel that shows an install's question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    File(u64),
+    SameName(SameNameChoice),
+    Cancel,
+}
+
+/// How the question panel shows an answer.
+struct AnswerRow {
+    label: String,
+    detail: Option<String>,
+    size: Option<String>,
+}
+
+impl AnswerRow {
+    /// `files` are the ones a file answer picks from.
+    fn new(answer: Answer, files: &[crate::overlay_protocol::InstallFile]) -> Self {
+        let (label, detail, size) = match answer {
+            Answer::File(id) => match files.iter().find(|file| file.id == id) {
+                Some(file) => (
+                    file.name.clone(),
+                    file.description.clone(),
+                    Some(file_size_label(file.size)),
+                ),
+                None => (id.to_string(), None, None),
+            },
+            Answer::SameName(SameNameChoice::Replace) => (
+                text(TextKey::GameOverlayReplace).to_owned(),
+                Some(text(TextKey::GameOverlayReplaceDetail).to_owned()),
+                None,
+            ),
+            Answer::SameName(SameNameChoice::Merge) => (
+                text(TextKey::GameOverlayMerge).to_owned(),
+                Some(text(TextKey::GameOverlayMergeDetail).to_owned()),
+                None,
+            ),
+            Answer::SameName(SameNameChoice::KeepBoth) => (
+                text(TextKey::GameOverlayKeepBoth).to_owned(),
+                Some(text(TextKey::GameOverlayKeepBothDetail).to_owned()),
+                None,
+            ),
+            Answer::Cancel => (text(TextKey::GameOverlayCancel).to_owned(), None, None),
+        };
+        Self {
+            label,
+            detail,
+            size,
+        }
+    }
+}
+
+/// The answers to the question an install asks at `stage`, then Cancel.
+fn answers(stage: &InstallStage) -> Vec<Answer> {
+    let mut answers = match stage {
+        InstallStage::ChooseFile { files } => {
+            files.iter().map(|file| Answer::File(file.id)).collect()
+        }
+        InstallStage::SameName { .. } => vec![
+            Answer::SameName(SameNameChoice::Replace),
+            Answer::SameName(SameNameChoice::Merge),
+            Answer::SameName(SameNameChoice::KeepBoth),
+        ],
+        _ => return Vec::new(),
+    };
+    answers.push(Answer::Cancel);
+    answers
+}
+
+/// One card of the carousel.
+#[derive(Clone, Copy)]
+enum Card<'a> {
+    Own(&'a Costume),
+    GameBanana(&'a BrowseMod),
+    Status(StatusCard),
 }
 
 /// Text as a search compares it: underscores read as spaces, runs of spaces
@@ -209,9 +387,23 @@ pub(super) struct Layouts {
     pending_commands: VecDeque<PendingCommand>,
     row: Row,
     filter: Filter,
-    /// The live overlay can't change mods yet, so clicks and keys that would
-    /// switch them do nothing.
-    read_only: bool,
+    /// Changes made on screen since the last `take_requests`.
+    requests: Vec<ModRequest>,
+    /// Mods whose change waits for Hestia, by id.
+    waiting: HashSet<String>,
+    gamebanana: GameBanana,
+    /// "Show all characters" adds the game's GameBanana characters without
+    /// a category to the rail.
+    show_all_characters: bool,
+    /// The highlighted answer in the question panel, and the mod whose
+    /// question it answers.
+    question_row: usize,
+    question_for: Option<u64>,
+    /// Mods the overlay installed, tagged NEW until they're used.
+    new_mods: HashSet<String>,
+    /// "... is now with your mods", for the installed mods that crossed out
+    /// of sight since the last `take_arrivals`.
+    arrivals: Vec<String>,
 }
 
 impl Layouts {
@@ -233,7 +425,8 @@ impl Layouts {
             .iter()
             .map(active_image)
             .collect::<Vec<_>>();
-        let filter = Filter::new(&catalog, "");
+        let gamebanana = GameBanana::default();
+        let filter = Filter::new(&catalog, "", &gamebanana);
         let mut thumbnails = ThumbnailCache::new();
         thumbnails.set_censored(censored_images(&catalog));
 
@@ -265,12 +458,419 @@ impl Layouts {
             pending_commands: VecDeque::new(),
             row: Row::default(),
             filter,
-            read_only: false,
+            requests: Vec::new(),
+            waiting: HashSet::new(),
+            gamebanana,
+            show_all_characters: false,
+            question_row: 0,
+            question_for: None,
+            new_mods: HashSet::new(),
+            arrivals: Vec::new(),
         }
     }
 
-    pub(super) fn set_read_only(&mut self, read_only: bool) {
-        self.read_only = read_only;
+    /// The installed mods that crossed out of sight since the last call, by
+    /// name.
+    pub(super) fn take_arrivals(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.arrivals)
+    }
+
+    /// The changes made on screen since the last call, oldest first.
+    pub(super) fn take_requests(&mut self) -> Vec<ModRequest> {
+        std::mem::take(&mut self.requests)
+    }
+
+    /// Shows which mods' changes wait for Hestia.
+    pub(super) fn set_waiting(&mut self, waiting: HashSet<String>) {
+        self.waiting = waiting;
+    }
+
+    /// Shows GameBanana mods after the categories' own, which only the
+    /// in-game overlay can ask Hestia for, and with `all_characters`, the
+    /// characters no category stands for.  Or hides them.
+    pub(super) fn set_gamebanana(&mut self, enabled: bool, all_characters: bool) {
+        let show_all = enabled && all_characters;
+        if self.gamebanana.enabled() == enabled && self.show_all_characters == show_all {
+            return;
+        }
+        self.gamebanana.set_enabled(enabled);
+        self.show_all_characters = show_all;
+        // The characters give the categories their pictures too.
+        self.gamebanana.ask_characters();
+        self.replace_catalog(self.own_catalog());
+    }
+
+    /// What to ask Hestia for since the last call.
+    pub(super) fn take_gamebanana_requests(&mut self) -> Vec<FromOverlay> {
+        self.gamebanana.take_requests()
+    }
+
+    /// Takes GameBanana pages, characters, pictures and installs from
+    /// Hestia.  Says what the installs' news tells.
+    pub(super) fn receive_gamebanana(&mut self, messages: Vec<ToOverlay>) -> Vec<InstallNews> {
+        let mut news = Vec::new();
+        if messages.is_empty() {
+            return news;
+        }
+        let mut lists_changed = false;
+        let mut characters_changed = false;
+        for message in messages {
+            match message {
+                ToOverlay::BrowsePage(page) => {
+                    lists_changed |= self.gamebanana.receive_page(page);
+                }
+                ToOverlay::Characters { characters, error } => {
+                    self.gamebanana.set_characters(characters, error);
+                    characters_changed = true;
+                }
+                ToOverlay::Pictures(pictures) => {
+                    characters_changed |= self.gamebanana.apply_pictures(&pictures);
+                    lists_changed = true;
+                }
+                ToOverlay::Install(update) => {
+                    if let InstallStage::Installed { mods } = &update.stage {
+                        self.new_mods.extend(mods.iter().cloned());
+                    }
+                    news.extend(self.gamebanana.receive_install(update));
+                }
+                _ => {}
+            }
+        }
+        if characters_changed {
+            // Rebuilding the catalog rebuilds the lists' cards too.
+            self.replace_catalog(self.own_catalog());
+        } else if lists_changed {
+            self.refresh_gamebanana();
+        }
+        news
+    }
+
+    pub(super) fn show_all_characters(&self) -> bool {
+        self.show_all_characters
+    }
+
+    /// Adds the game's GameBanana characters without a category to the rail,
+    /// after the library's categories, or takes them away.
+    pub(super) fn set_show_all_characters(&mut self, show: bool) {
+        if self.show_all_characters == show || !self.gamebanana.enabled() {
+            return;
+        }
+        self.show_all_characters = show;
+        if show {
+            self.gamebanana.ask_characters();
+        }
+        self.replace_catalog(self.own_catalog());
+    }
+
+    /// The library without the categories "Show all characters" added.
+    fn own_catalog(&self) -> Catalog {
+        let mut catalog = self.catalog.clone();
+        catalog.categories.retain(|category| !category.extra);
+        catalog
+    }
+
+    /// `catalog` with GameBanana's characters.  A category without a link
+    /// takes the character its name stands for, and the character's picture
+    /// in place of its mods'.  With "Show all characters" on, the characters
+    /// no category stands for come after the library's categories.
+    fn with_characters(&self, mut catalog: Catalog) -> Catalog {
+        let characters = self.gamebanana.characters();
+        for category in &mut catalog.categories {
+            if category.extra || category.id == UNCATEGORIZED_ID {
+                continue;
+            }
+            let character = match category.character {
+                Some(id) => characters.iter().find(|character| character.id == id),
+                None => characters
+                    .iter()
+                    .find(|character| names_character(&category.name, &character.name)),
+            };
+            if let Some(character) = character {
+                category.character = Some(character.id);
+                if category.image.is_none() {
+                    category.image = character.image.clone();
+                }
+            }
+        }
+        if !self.show_all_characters {
+            return catalog;
+        }
+        let linked: HashSet<u64> = catalog
+            .categories
+            .iter()
+            .filter_map(|category| category.character)
+            .collect();
+        let mut extras: Vec<Category> = self
+            .gamebanana
+            .characters()
+            .iter()
+            .filter(|character| !linked.contains(&character.id))
+            .map(|character| Category {
+                id: format!("{EXTRA_CATEGORY_PREFIX}{}", character.id),
+                name: character.name.clone(),
+                image: character.image.clone(),
+                character: Some(character.id),
+                extra: true,
+                costumes: Vec::new(),
+            })
+            .collect();
+        extras.sort_by_cached_key(|category| category.name.to_lowercase());
+        catalog.categories.extend(extras);
+        catalog
+    }
+
+    /// Rebuilds the cards after a GameBanana list changed, keeping the
+    /// focused card.  A card that went away leaves the focus on the card
+    /// before it.
+    fn refresh_gamebanana(&mut self) {
+        let query = std::mem::take(&mut self.filter.query);
+        self.filter = Filter::new(&self.catalog, &query, &self.gamebanana);
+        let mut censored = censored_images(&self.catalog);
+        censored.extend(self.gamebanana.censored_images());
+        self.thumbnails.set_censored(censored);
+        let visible = self.visible_mods();
+        if !visible.is_empty() && !visible.contains(&self.carousel_focus) {
+            self.carousel_focus = visible
+                .iter()
+                .rev()
+                .find(|&&index| index < self.carousel_focus)
+                .copied()
+                .unwrap_or(visible[0]);
+            if let Some(slot) = self
+                .carousel_focus_by_category
+                .get_mut(self.selected_category)
+            {
+                *slot = self.carousel_focus;
+            }
+        }
+    }
+
+    /// Moves the cards of the installs that finished a moment ago into the
+    /// categories' own mods, each to its sorted place.  The focus stays on
+    /// the card it was on, so a focused card that crosses stays in the
+    /// middle while the others slide around it.
+    fn cross_installs(&mut self, ctx: &egui::Context, carousel_rect: Rect, now: f64) {
+        let (crossed, next) = self.gamebanana.cross_finished(now);
+        if let Some(at) = next {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
+        }
+        if crossed.is_empty() {
+            return;
+        }
+        let category_index = self.selected_category;
+        let from: Vec<(Option<String>, CarouselCardPlacement)> = self
+            .current_carousel_placements(carousel_rect, now)
+            .into_iter()
+            .map(|placement| (self.card_id(category_index, placement.index), placement))
+            .collect();
+        let selection = self.selection();
+        let query = std::mem::take(&mut self.filter.query);
+        self.filter = Filter::new(&self.catalog, &query, &self.gamebanana);
+        self.apply_selection(&selection, category_index);
+        let from = from
+            .into_iter()
+            .filter_map(|(id, mut placement)| {
+                placement.index = self.card_position(category_index, &id?)?;
+                Some(placement)
+            })
+            .collect();
+        self.begin_carousel_transition(from, carousel_rect, now);
+        if let Some(transition) = &mut self.carousel_transition {
+            transition.seconds = CROSSING_SECS;
+        }
+        // One that lands out of sight says where it went.
+        let shown: Vec<usize> = self
+            .target_placements(carousel_rect)
+            .iter()
+            .map(|placement| placement.index)
+            .collect();
+        if let Some(category) = self.catalog.categories.get(category_index) {
+            for gamebanana_id in crossed {
+                let landed = category
+                    .costumes
+                    .iter()
+                    .position(|costume| costume.gamebanana_id == Some(gamebanana_id));
+                if let Some(index) = landed
+                    && !shown.contains(&index)
+                {
+                    self.arrivals
+                        .push(clean_display_name(&category.costumes[index].name));
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    /// The GameBanana list the category shows with the current search.
+    fn gamebanana_key(&self, category_index: usize) -> Option<ListKey> {
+        let category = self.catalog.categories.get(category_index)?;
+        list_key(category, &self.filter.needle)
+    }
+
+    fn gamebanana_list(&self, category_index: usize) -> Option<&gamebanana::List> {
+        self.gamebanana.list(&self.gamebanana_key(category_index)?)
+    }
+
+    /// The card at `index` in a category: its own mods, then its GameBanana
+    /// list's mods, then the list's state.
+    fn card(&self, category_index: usize, index: usize) -> Option<Card<'_>> {
+        let category = self.catalog.categories.get(category_index)?;
+        if let Some(costume) = category.costumes.get(index) {
+            return Some(Card::Own(costume));
+        }
+        let list = self.gamebanana_list(category_index)?;
+        let position = index - category.costumes.len();
+        match list.mods.get(position) {
+            Some(item) => Some(Card::GameBanana(item)),
+            None if position == list.mods.len() => list.status_card().map(Card::Status),
+            None => None,
+        }
+    }
+
+    fn card_count(&self, category_index: usize) -> usize {
+        let own = self
+            .catalog
+            .categories
+            .get(category_index)
+            .map_or(0, |category| category.costumes.len());
+        own + self.gamebanana_list(category_index).map_or(0, |list| {
+            list.mods.len() + usize::from(list.status_card().is_some())
+        })
+    }
+
+    fn card_image(&self, category_index: usize, index: usize) -> Option<PathBuf> {
+        match self.card(category_index, index)? {
+            Card::Own(costume) => costume.image.clone(),
+            Card::GameBanana(item) => item.image.clone(),
+            Card::Status(_) => None,
+        }
+    }
+
+    /// A card's selection id: its mod's, or one for GameBanana cards.
+    fn card_id(&self, category_index: usize, index: usize) -> Option<String> {
+        Some(match self.card(category_index, index)? {
+            Card::Own(costume) => costume.id.clone(),
+            Card::GameBanana(item) => format!("{GAMEBANANA_PREFIX}{}", item.id),
+            Card::Status(_) => GAMEBANANA_END.to_owned(),
+        })
+    }
+
+    fn card_position(&self, category_index: usize, id: &str) -> Option<usize> {
+        let category = self.catalog.categories.get(category_index)?;
+        if let Some(position) = category
+            .costumes
+            .iter()
+            .position(|costume| costume.id == id)
+        {
+            return Some(position);
+        }
+        let gamebanana_id: Option<u64> = id
+            .strip_prefix(GAMEBANANA_PREFIX)
+            .and_then(|id| id.parse().ok());
+        // A GameBanana mod that got installed is one of the category's own,
+        // once its card crossed.
+        if let Some(position) = gamebanana_id
+            .filter(|&gamebanana_id| !self.gamebanana.holds(gamebanana_id))
+            .and_then(|gamebanana_id| {
+                category
+                    .costumes
+                    .iter()
+                    .position(|costume| costume.gamebanana_id == Some(gamebanana_id))
+            })
+        {
+            return Some(position);
+        }
+        let list = self.gamebanana_list(category_index)?;
+        let own = category.costumes.len();
+        if id == GAMEBANANA_END {
+            return list.status_card().map(|_| own + list.mods.len());
+        }
+        list.mods
+            .iter()
+            .position(|item| Some(item.id) == gamebanana_id)
+            .map(|position| own + position)
+    }
+
+    /// Where the category `id` is in the rail.  A category "Show all
+    /// characters" added is the category for its character once there is one.
+    fn category_position(&self, id: &str) -> Option<usize> {
+        let categories = &self.catalog.categories;
+        categories
+            .iter()
+            .position(|category| category.id == id)
+            .or_else(|| {
+                let character: u64 = id.strip_prefix(EXTRA_CATEGORY_PREFIX)?.parse().ok()?;
+                categories
+                    .iter()
+                    .position(|category| category.character == Some(character))
+            })
+    }
+
+    /// Starts the selected category's GameBanana list, or asks for its next
+    /// page, once the carousel nears the end of its cards.
+    fn update_gamebanana(&mut self, ctx: &egui::Context, now: f64) {
+        if !self.gamebanana.enabled() || !self.filter.categories.contains(&self.selected_category) {
+            return;
+        }
+        let Some(key) = self.gamebanana_key(self.selected_category) else {
+            return;
+        };
+        let visible = self.visible_mods();
+        let position = visible
+            .iter()
+            .position(|&index| index == self.carousel_focus)
+            .unwrap_or(0);
+        if position + gamebanana::LOAD_AHEAD < visible.len() {
+            return;
+        }
+        if self.gamebanana.want(&key, now) {
+            self.refresh_gamebanana();
+        }
+        if let Some(at) = self.gamebanana.settles_at(&key) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
+        }
+    }
+
+    /// Space or a click on a GameBanana card installs its mod into the
+    /// category, or into a new one for its character when the category is
+    /// one "Show all characters" added.  On the card after a list whose page
+    /// failed, any action asks again.
+    fn activate_gamebanana(&mut self, category_index: usize, index: usize, install: bool) {
+        match self.card(category_index, index) {
+            Some(Card::GameBanana(item)) if install => {
+                let item = item.clone();
+                let category_id = self
+                    .catalog
+                    .categories
+                    .get(category_index)
+                    .filter(|category| !category.extra)
+                    .map(|category| category.id.clone());
+                self.gamebanana.install(&item, category_id);
+            }
+            Some(Card::Status(StatusCard::Failed)) => {
+                if let Some(key) = self.gamebanana_key(category_index) {
+                    self.gamebanana.retry(&key);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// What Space does on a focused GameBanana card: install it, or try
+    /// again after a failed install or list.  Nothing while it installs.
+    fn gamebanana_space(&self) -> Option<Space> {
+        if !self.visible_mods().contains(&self.carousel_focus) {
+            return None;
+        }
+        match self.card(self.selected_category, self.carousel_focus) {
+            Some(Card::GameBanana(item)) => match self.gamebanana.install_state(item.id) {
+                Some(install) if install.holds() => None,
+                Some(install) if install.stage == InstallStage::Failed => Some(Space::TryAgain),
+                _ => Some(Space::Install),
+            },
+            Some(Card::Status(StatusCard::Failed)) => Some(Space::TryAgain),
+            _ => None,
+        }
     }
 
     /// Where the overlay is, by ids: the selected category, and each
@@ -287,10 +887,8 @@ impl Layouts {
                 } else {
                     *self.carousel_focus_by_category.get(index)?
                 };
-                (focus != active_costume_index(category)).then_some((
-                    category.id.clone(),
-                    category.costumes.get(focus)?.id.clone(),
-                ))
+                (focus != active_costume_index(category))
+                    .then_some((category.id.clone(), self.card_id(index, focus)?))
             })
             .collect();
         Selection {
@@ -317,8 +915,10 @@ impl Layouts {
         let selection = self.selection();
         let previous_index = self.selected_category;
         let query = std::mem::take(&mut self.filter.query);
-        self.catalog = catalog;
-        self.thumbnails.set_censored(censored_images(&self.catalog));
+        self.catalog = self.with_characters(catalog);
+        let mut censored = censored_images(&self.catalog);
+        censored.extend(self.gamebanana.censored_images());
+        self.thumbnails.set_censored(censored);
         self.carousel_focus_by_category = self
             .catalog
             .categories
@@ -326,7 +926,7 @@ impl Layouts {
             .map(active_costume_index)
             .collect();
         self.active_images = self.catalog.categories.iter().map(active_image).collect();
-        self.filter = Filter::new(&self.catalog, &query);
+        self.filter = Filter::new(&self.catalog, &query, &self.gamebanana);
         self.carousel_transition = None;
         self.carousel_pointer_press = None;
         self.held_preview = None;
@@ -336,19 +936,18 @@ impl Layouts {
         self.boundary_feedback_until = f64::NEG_INFINITY;
         self.boundary_feedback_edge = None;
         self.apply_selection(&selection, previous_index);
+        self.forget_used_new_mods();
     }
 
     fn apply_selection(&mut self, selection: &Selection, fallback_category: usize) {
-        for (index, category) in self.catalog.categories.iter().enumerate() {
-            let focus = selection.mods.get(&category.id).and_then(|mod_id| {
-                category
-                    .costumes
-                    .iter()
-                    .position(|costume| &costume.id == mod_id)
-            });
-            if let (Some(focus), Some(slot)) =
-                (focus, self.carousel_focus_by_category.get_mut(index))
-            {
+        for (category_id, mod_id) in &selection.mods {
+            let Some(index) = self.category_position(category_id) else {
+                continue;
+            };
+            if let (Some(focus), Some(slot)) = (
+                self.card_position(index, mod_id),
+                self.carousel_focus_by_category.get_mut(index),
+            ) {
                 *slot = focus;
             }
         }
@@ -356,12 +955,7 @@ impl Layouts {
         self.selected_category = selection
             .category_id
             .as_ref()
-            .and_then(|id| {
-                self.catalog
-                    .categories
-                    .iter()
-                    .position(|category| &category.id == id)
-            })
+            .and_then(|id| self.category_position(id))
             .unwrap_or(fallback_category)
             .min(last);
         self.carousel_focus = self
@@ -392,15 +986,13 @@ impl Layouts {
         let mut paths = Vec::new();
         // Prioritize the current carousel, then its next cards and adjacent
         // characters. The mini strip also calls this to warm the first view.
-        if let Some(category) = self.catalog.categories.get(self.selected_category) {
-            append_nearby_mod_images(
-                &mut paths,
-                category,
-                self.visible_mods(),
-                self.carousel_focus,
-                2,
-            );
-        }
+        append_nearby_mod_images(
+            &mut paths,
+            self.visible_mods(),
+            self.carousel_focus,
+            2,
+            |index| self.card_image(self.selected_category, index),
+        );
         let visible = &self.filter.categories;
         let selected = visible
             .iter()
@@ -422,10 +1014,10 @@ impl Layouts {
             if index != self.selected_category && position.abs_diff(selected) <= 1 {
                 append_nearby_mod_images(
                     &mut paths,
-                    category,
                     &self.filter.mods[index],
                     active_costume_index(category),
                     1,
+                    |costume| self.card_image(index, costume),
                 );
             }
         }
@@ -449,9 +1041,20 @@ impl Layouts {
         let now = ui.input(|input| input.time);
         self.consume_pending_commands(ui.ctx(), carousel_rect, now);
         self.clamp_selection();
+        self.update_gamebanana(ui.ctx(), now);
+        self.cross_installs(ui.ctx(), carousel_rect, now);
         let category_index = self.selected_category;
         let visible_count = self.visible_mods().len();
+        // An install's question covers the carousel until it's answered.
+        let question = self.current_question();
+        if question.is_some() {
+            self.cancel_pointer_interaction();
+        }
         if visible_count == 0 {
+            if let Some((mod_id, answers)) = question {
+                self.show_question(ui, carousel_rect, mod_id, &answers, overlay_opacity);
+                return;
+            }
             let text = self.empty_carousel_text();
             let font = FontId::proportional(15.0);
             let galley = ui.painter().layout_no_wrap(
@@ -487,6 +1090,25 @@ impl Layouts {
             self.cancel_pointer_interaction();
         }
         let mut placements = self.current_carousel_placements(carousel_rect, now);
+        if let Some((mod_id, answers)) = question {
+            // The cards stay behind the panel, dimmed and out of reach.
+            for placement in &placements {
+                let reveal = card_reveal_progress(placement, self.reveal_progress, visible_count);
+                self.show_carousel_card(
+                    ui,
+                    category_index,
+                    placement.index,
+                    placement.rect,
+                    placement.focused,
+                    placement.slot,
+                    reveal.min(0.3),
+                    overlay_opacity,
+                );
+            }
+            self.show_question(ui, carousel_rect, mod_id, &answers, overlay_opacity);
+            self.request_animation_repaint(ui.ctx(), now);
+            return;
+        }
         let wheel_direction = self.consume_carousel_wheel(ui, carousel_rect, visible_count);
         if let Some(direction) = wheel_direction {
             self.advance_mod_focus(carousel_rect, direction, now);
@@ -531,6 +1153,7 @@ impl Layouts {
                     overlay_opacity,
                 );
             }
+            self.paint_gamebanana_divider(ui, &placements, carousel_rect, overlay_opacity);
         }
         if self.held_preview.is_none() {
             if let Some(costume_index) =
@@ -595,6 +1218,230 @@ impl Layouts {
         ctx.request_repaint();
     }
 
+    /// An install asks a question, which W/S, Space and Esc answer until
+    /// it's answered.
+    pub(super) fn question_open(&self) -> bool {
+        self.gamebanana.question().is_some()
+    }
+
+    /// The install that asks, its answers, and the highlighted one kept on
+    /// them.  A new question starts on its first answer.
+    fn current_question(&mut self) -> Option<(u64, Vec<Answer>)> {
+        let (mod_id, install) = self.gamebanana.question()?;
+        let answers = answers(&install.stage);
+        if self.question_for != Some(mod_id) {
+            self.question_for = Some(mod_id);
+            self.question_row = 0;
+        }
+        self.question_row = self.question_row.min(answers.len().saturating_sub(1));
+        Some((mod_id, answers))
+    }
+
+    /// Up for a negative direction, down for a positive one.
+    pub(super) fn move_question(&mut self, direction: i32) {
+        if let Some((_, answers)) = self.current_question() {
+            self.question_row = self
+                .question_row
+                .saturating_add_signed(direction.signum() as isize)
+                .min(answers.len().saturating_sub(1));
+        }
+    }
+
+    /// Gives the highlighted answer.
+    pub(super) fn answer_question(&mut self) {
+        let Some((mod_id, answers)) = self.current_question() else {
+            return;
+        };
+        match answers.get(self.question_row) {
+            Some(Answer::File(file_id)) => self.gamebanana.pick_file(mod_id, *file_id),
+            Some(Answer::SameName(choice)) => self.gamebanana.choose_same_name(mod_id, *choice),
+            Some(Answer::Cancel) => self.gamebanana.cancel_install(mod_id),
+            None => {}
+        }
+    }
+
+    /// Stops the install that asks.  False without a question.
+    pub(super) fn cancel_question(&mut self) -> bool {
+        let Some((mod_id, _)) = self.gamebanana.question() else {
+            return false;
+        };
+        self.gamebanana.cancel_install(mod_id);
+        true
+    }
+
+    /// The panel over the carousel with the question an install asks, and
+    /// its answers: Space or a click gives the highlighted one.
+    fn show_question(
+        &mut self,
+        ui: &mut Ui,
+        area: Rect,
+        mod_id: u64,
+        answers: &[Answer],
+        overlay_opacity: u8,
+    ) {
+        const PADDING: f32 = 12.0;
+        const HEADER: f32 = 50.0;
+        const ANSWER_HEIGHT: f32 = 34.0;
+        let Some(install) = self.gamebanana.install_state(mod_id) else {
+            return;
+        };
+        let title = clean_display_name(&install.name);
+        let (prompt, files) = match &install.stage {
+            InstallStage::ChooseFile { files } => (
+                text(TextKey::GameOverlayPickFile).to_owned(),
+                files.as_slice(),
+            ),
+            InstallStage::SameName { folder } => (
+                text(TextKey::GameOverlaySameName).replace("{folder}", folder),
+                &[][..],
+            ),
+            _ => return,
+        };
+        let rows: Vec<AnswerRow> = answers
+            .iter()
+            .map(|answer| AnswerRow::new(*answer, files))
+            .collect();
+
+        let width = (area.width() - 40.0).clamp(1.0, 440.0);
+        let room = area.height() - 8.0 - HEADER - PADDING;
+        let shown = ((room / ANSWER_HEIGHT).floor() as usize).clamp(1, rows.len());
+        let first = self
+            .question_row
+            .saturating_sub(shown / 2)
+            .min(rows.len() - shown);
+        let panel = Rect::from_center_size(
+            area.center(),
+            Vec2::new(width, HEADER + shown as f32 * ANSWER_HEIGHT + PADDING),
+        );
+        self.visible_card_rects.push(panel);
+        ui.painter().rect_filled(
+            panel,
+            CornerRadius::same(4),
+            rgba_alpha(26, 26, 26, 245, overlay_opacity),
+        );
+        ui.painter().rect_stroke(
+            panel,
+            CornerRadius::same(4),
+            Stroke::new(1.0, content_gray(82, overlay_opacity)),
+            StrokeKind::Inside,
+        );
+        let text_width = width - PADDING * 2.0;
+        let title_galley = elided_galley(
+            ui,
+            &title,
+            FontId::proportional(14.0),
+            content_gray(235, overlay_opacity),
+            text_width,
+        );
+        ui.painter().galley(
+            panel.min + Vec2::new(PADDING, PADDING),
+            title_galley,
+            Color32::PLACEHOLDER,
+        );
+        let prompt_galley = elided_galley(
+            ui,
+            &prompt,
+            FontId::proportional(11.0),
+            content_gray(170, overlay_opacity),
+            text_width,
+        );
+        ui.painter().galley(
+            panel.min + Vec2::new(PADDING, PADDING + 20.0),
+            prompt_galley,
+            Color32::PLACEHOLDER,
+        );
+
+        let mut clicked = None;
+        for (index, answer) in rows.iter().enumerate().skip(first).take(shown) {
+            let row = Rect::from_min_size(
+                egui::pos2(
+                    panel.min.x + 4.0,
+                    panel.min.y + HEADER + (index - first) as f32 * ANSWER_HEIGHT,
+                ),
+                Vec2::new(width - 8.0, ANSWER_HEIGHT),
+            );
+            let response = ui
+                .interact(
+                    row,
+                    ui.id().with(("overlay-question-answer", index)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                clicked = Some(index);
+            }
+            let highlighted = index == self.question_row;
+            if highlighted || response.hovered() {
+                ui.painter().rect_filled(
+                    row,
+                    CornerRadius::same(3),
+                    Color32::from_white_alpha(chrome_alpha(
+                        if highlighted { 22 } else { 12 },
+                        overlay_opacity,
+                    )),
+                );
+            }
+            if highlighted {
+                ui.painter().rect_filled(
+                    Rect::from_min_size(row.min, Vec2::new(3.0, row.height())),
+                    CornerRadius::ZERO,
+                    content_color(ACCENT, overlay_opacity),
+                );
+            }
+            let cancel = answers[index] == Answer::Cancel;
+            let mut label_width = row.width() - 20.0;
+            if let Some(size) = &answer.size {
+                let size_galley = ui.painter().layout_no_wrap(
+                    size.clone(),
+                    FontId::proportional(11.0),
+                    content_gray(150, overlay_opacity),
+                );
+                label_width -= size_galley.size().x + 10.0;
+                ui.painter().galley(
+                    egui::pos2(row.max.x - 10.0 - size_galley.size().x, row.min.y + 6.0),
+                    size_galley,
+                    Color32::PLACEHOLDER,
+                );
+            }
+            let label_galley = elided_galley(
+                ui,
+                &answer.label,
+                FontId::proportional(12.5),
+                content_gray(if cancel { 180 } else { 235 }, overlay_opacity),
+                label_width,
+            );
+            let label_y = if answer.detail.is_some() {
+                row.min.y + 4.0
+            } else {
+                row.center().y - label_galley.size().y * 0.5
+            };
+            ui.painter().galley(
+                egui::pos2(row.min.x + 10.0, label_y),
+                label_galley,
+                Color32::PLACEHOLDER,
+            );
+            if let Some(detail) = &answer.detail {
+                let detail_galley = elided_galley(
+                    ui,
+                    detail,
+                    FontId::proportional(10.0),
+                    content_gray(150, overlay_opacity),
+                    row.width() - 20.0,
+                );
+                ui.painter().galley(
+                    egui::pos2(row.min.x + 10.0, row.min.y + 20.0),
+                    detail_galley,
+                    Color32::PLACEHOLDER,
+                );
+            }
+        }
+        if let Some(index) = clicked {
+            self.question_row = index;
+            self.answer_question();
+            ui.ctx().request_repaint();
+        }
+    }
+
     pub(super) fn row(&self) -> Row {
         self.row
     }
@@ -618,9 +1465,7 @@ impl Layouts {
         let Some(category) = self.catalog.categories.get(self.selected_category) else {
             return ShortcutAvailability {
                 categories,
-                mods: false,
-                exclusive: false,
-                toggle: false,
+                ..ShortcutAvailability::default()
             };
         };
         let visible = self.visible_mods();
@@ -630,24 +1475,33 @@ impl Layouts {
             .get(self.carousel_focus)
             .filter(|_| visible.contains(&self.carousel_focus))
         else {
+            let space = self.gamebanana_space();
             return ShortcutAvailability {
                 categories,
                 mods,
-                exclusive: false,
+                exclusive: space.is_some(),
                 toggle: false,
+                space: space.unwrap_or_default(),
             };
         };
         // Exclusive also disables mods the search hides, so count them all.
+        // In Uncategorized it only enables.
         let active_count = category
             .costumes
             .iter()
             .filter(|costume| costume.active)
             .count();
+        let loose = is_loose(category);
         ShortcutAvailability {
             categories,
             mods,
-            exclusive: !self.read_only && !(focused.active && active_count == 1),
-            toggle: !self.read_only,
+            exclusive: !(focused.active && (loose || active_count == 1)),
+            toggle: true,
+            space: if loose {
+                Space::Enable
+            } else {
+                Space::Exclusive
+            },
         }
     }
 
@@ -657,7 +1511,7 @@ impl Layouts {
         if self.filter.query == query {
             return;
         }
-        self.filter = Filter::new(&self.catalog, query);
+        self.filter = Filter::new(&self.catalog, query, &self.gamebanana);
         self.reveal_category = true;
         self.carousel_transition = None;
         self.carousel_pointer_press = None;
@@ -678,11 +1532,13 @@ impl Layouts {
     /// What the carousel says when it has no cards.  A search that matches
     /// nothing leaves the selection on a category it hides.
     fn empty_carousel_text(&self) -> &'static str {
-        if self.filter.categories.contains(&self.selected_category) {
-            "No installed mods"
-        } else {
-            "No matches"
-        }
+        text(
+            if self.filter.categories.contains(&self.selected_category) {
+                TextKey::GameOverlayNoInstalledMods
+            } else {
+                TextKey::GameOverlayNoMatches
+            },
+        )
     }
 
     /// The selected category's mods that the search shows.
@@ -738,16 +1594,14 @@ impl Layouts {
         let Some(preview) = self.held_preview else {
             return;
         };
-        let Some(costume) = self
-            .catalog
-            .categories
-            .get(preview.category_index)
-            .and_then(|category| category.costumes.get(preview.costume_index))
-        else {
+        if self
+            .card(preview.category_index, preview.costume_index)
+            .is_none()
+        {
             self.held_preview = None;
             return;
-        };
-        let image_path = costume.image.clone();
+        }
+        let image_path = self.card_image(preview.category_index, preview.costume_index);
         let texture = self.texture_for(ui, image_path.as_deref());
         let area = available_rect.shrink(18.0);
         let image_rect = texture
@@ -814,6 +1668,9 @@ impl Layouts {
         }) else {
             return;
         };
+        if matches!(self.card(category_index, card.index), Some(Card::Status(_))) {
+            return;
+        }
         self.held_preview = Some(HeldPreview {
             category_index,
             costume_index: card.index,
@@ -900,12 +1757,11 @@ impl Layouts {
             // transition would have completed while the button was held.
             return press.placements.clone();
         }
-        let target =
-            visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
+        let target = self.target_placements(carousel_rect);
         let Some(transition) = self.carousel_transition.clone() else {
             return target;
         };
-        let progress = ((now - transition.started_at) / CAROUSEL_TRANSITION_SECS).clamp(0.0, 1.0);
+        let progress = ((now - transition.started_at) / transition.seconds).clamp(0.0, 1.0);
         if progress >= 1.0 {
             self.carousel_transition = None;
             return target;
@@ -930,19 +1786,43 @@ impl Layouts {
         current
     }
 
+    /// Where the cards settle.  GameBanana cards sit a divider's width away
+    /// from the category's own.
+    fn target_placements(&self, carousel_rect: Rect) -> Vec<CarouselCardPlacement> {
+        let mut placements =
+            visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
+        let own = self
+            .catalog
+            .categories
+            .get(self.selected_category)
+            .map_or(0, |category| category.costumes.len());
+        if own > 0 {
+            let focus_is_own = self.carousel_focus < own;
+            for placement in &mut placements {
+                if focus_is_own && placement.index >= own {
+                    placement.rect = placement.rect.translate(Vec2::new(DIVIDER_ZONE, 0.0));
+                } else if !focus_is_own && placement.index < own {
+                    placement.rect = placement.rect.translate(Vec2::new(-DIVIDER_ZONE, 0.0));
+                }
+            }
+        }
+        placements
+    }
+
     fn begin_carousel_transition(
         &mut self,
         from: Vec<CarouselCardPlacement>,
         carousel_rect: Rect,
         now: f64,
     ) {
-        let to = visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
+        let to = self.target_placements(carousel_rect);
         if same_card_geometry(&from, &to) {
             self.carousel_transition = None;
         } else {
             self.carousel_transition = Some(CarouselTransition {
                 from,
                 started_at: now,
+                seconds: CAROUSEL_TRANSITION_SECS,
             });
         }
     }
@@ -1008,7 +1888,7 @@ impl Layouts {
         let transition_remaining = self
             .carousel_transition
             .as_ref()
-            .map(|transition| (CAROUSEL_TRANSITION_SECS - (now - transition.started_at)).max(0.0));
+            .map(|transition| (transition.seconds - (now - transition.started_at)).max(0.0));
         let feedback_remaining = (self.active_feedback_until - now).max(0.0);
         let boundary_remaining = (self.boundary_feedback_until - now).max(0.0);
         let remaining = transition_remaining
@@ -1023,19 +1903,22 @@ impl Layouts {
     pub(super) fn animation_pending(&self, now: f64) -> bool {
         self.carousel_transition
             .as_ref()
-            .is_some_and(|transition| now - transition.started_at < CAROUSEL_TRANSITION_SECS)
+            .is_some_and(|transition| now - transition.started_at < transition.seconds)
             || now < self.active_feedback_until
             || now < self.boundary_feedback_until
     }
 
     fn activate_costume_in_place(&mut self, category_index: usize, costume_index: usize, now: f64) {
-        if self.read_only {
+        if !matches!(self.card(category_index, costume_index), Some(Card::Own(_))) {
+            self.activate_gamebanana(category_index, costume_index, true);
             return;
         }
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
-            select_costume(category, costume_index);
+            self.requests
+                .extend(select_costume(category, costume_index));
             self.active_images[category_index] = active_image(category);
         }
+        self.forget_used_new_mods();
         self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
         self.active_feedback_costume = Some(costume_index);
     }
@@ -1071,7 +1954,25 @@ impl Layouts {
             .show(&mut content_ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.set_height(CATEGORY_ITEM_HEIGHT);
-                    for &index in &visible_indices {
+                    let mut divided = false;
+                    for (position, &index) in visible_indices.iter().enumerate() {
+                        // A line sets the added characters apart from the
+                        // library's categories.
+                        if self.catalog.categories[index].extra && !divided {
+                            divided = true;
+                            if position > 0 {
+                                let (line, _) = ui.allocate_exact_size(
+                                    Vec2::new(1.0, CATEGORY_ITEM_HEIGHT),
+                                    Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    Rect::from_center_size(line.center(), Vec2::new(1.0, 48.0)),
+                                    CornerRadius::ZERO,
+                                    white_alpha(60, overlay_opacity),
+                                );
+                                ui.add_space(CATEGORY_GAP);
+                            }
+                        }
                         let selected = self.selected_category == index;
                         self.show_category_item(ui, index, selected, overlay_opacity);
                         ui.add_space(CATEGORY_GAP);
@@ -1139,11 +2040,11 @@ impl Layouts {
             });
         let response = delayed_tooltip(
             response,
-            if direction < 0 {
-                "Previous category"
+            text(if direction < 0 {
+                TextKey::GameOverlayPreviousCategory
             } else {
-                "Next category"
-            },
+                TextKey::GameOverlayNextCategory
+            }),
         );
         let hover = ui.ctx().animate_bool_with_time(
             response.id.with("hover"),
@@ -1231,7 +2132,7 @@ impl Layouts {
         ui.vertical_centered(|ui| {
             ui.add_space(68.0);
             let title = ui.label(
-                RichText::new("No installed mods")
+                RichText::new(text(TextKey::GameOverlayNoInstalledMods))
                     .size(16.0)
                     .strong()
                     .color(content_gray(255, overlay_opacity)),
@@ -1244,7 +2145,7 @@ impl Layouts {
                         self.catalog
                             .note
                             .as_deref()
-                            .unwrap_or("Install a mod to see it here."),
+                            .unwrap_or(text(TextKey::GameOverlayInstallToSee)),
                     )
                     .size(12.0)
                     .color(content_gray(160, overlay_opacity)),
@@ -1265,9 +2166,7 @@ impl Layouts {
         self.selected_category = self
             .selected_category
             .min(self.catalog.categories.len().saturating_sub(1));
-        let count = self.catalog.categories[self.selected_category]
-            .costumes
-            .len();
+        let count = self.card_count(self.selected_category);
         self.carousel_focus = self.carousel_focus.min(count.saturating_sub(1));
     }
 
@@ -1287,12 +2186,9 @@ impl Layouts {
             .get(index)
             .copied()
             .unwrap_or_else(|| active_costume_index(&self.catalog.categories[index]));
-        self.carousel_focus = self.carousel_focus.min(
-            self.catalog.categories[index]
-                .costumes
-                .len()
-                .saturating_sub(1),
-        );
+        self.carousel_focus = self
+            .carousel_focus
+            .min(self.card_count(index).saturating_sub(1));
         self.carousel_focus = self.visible_focus(index, self.carousel_focus);
         self.reveal_category = true;
         self.carousel_transition = None;
@@ -1313,6 +2209,13 @@ impl Layouts {
         overlay_opacity: u8,
     ) {
         let category_name = self.catalog.categories[index].name.clone();
+        // A GameBanana character without a category shows faded, as a ghost.
+        let extra = self.catalog.categories[index].extra;
+        let picture_alpha = if extra {
+            scaled_alpha(image_alpha(overlay_opacity), 0.5)
+        } else {
+            image_alpha(overlay_opacity)
+        };
         let name = character_name(&category_name).to_owned();
         let image = self.catalog.categories[index]
             .image
@@ -1368,8 +2271,15 @@ impl Layouts {
                 texture.as_ref(),
                 false,
                 false,
-                image_alpha(overlay_opacity),
+                picture_alpha,
             );
+            if extra {
+                paint_dashed_rect(
+                    ui,
+                    image_rect.expand(2.0),
+                    Stroke::new(1.0, content_gray(154, overlay_opacity)),
+                );
+            }
             let truncated = paint_category_name(
                 ui,
                 Rect::from_min_max(
@@ -1406,8 +2316,15 @@ impl Layouts {
                 texture.as_ref(),
                 false,
                 false,
-                image_alpha(overlay_opacity),
+                picture_alpha,
             );
+            if extra {
+                paint_dashed_rect(
+                    ui,
+                    image_rect.expand(2.0),
+                    Stroke::new(1.0, content_gray(154, overlay_opacity)),
+                );
+            }
             let truncated = paint_category_name(
                 ui,
                 Rect::from_min_max(
@@ -1416,12 +2333,42 @@ impl Layouts {
                 ),
                 &name,
                 FontId::proportional(10.0),
-                content_gray(220, overlay_opacity),
+                content_gray(if extra { 150 } else { 220 }, overlay_opacity),
             );
             if truncated {
                 let _ = delayed_tooltip(response, name.clone());
             }
         }
+        // A dot shows where a mod the overlay installed went.
+        if self.catalog.categories[index]
+            .costumes
+            .iter()
+            .any(|costume| self.new_mods.contains(&costume.id))
+        {
+            // A dark ring keeps it apart from the picture.
+            ui.painter().circle(
+                egui::pos2(rect.max.x - 9.0, rect.min.y + 8.0),
+                4.5,
+                content_color(ACCENT, overlay_opacity),
+                Stroke::new(1.5, content_gray(47, overlay_opacity)),
+            );
+        }
+    }
+
+    /// Mods tagged NEW lose the tag once they're used.
+    fn forget_used_new_mods(&mut self) {
+        if self.new_mods.is_empty() {
+            return;
+        }
+        let used: HashSet<&str> = self
+            .catalog
+            .categories
+            .iter()
+            .flat_map(|category| &category.costumes)
+            .filter(|costume| costume.active)
+            .map(|costume| costume.id.as_str())
+            .collect();
+        self.new_mods.retain(|id| !used.contains(id.as_str()));
     }
 
     fn show_carousel_card(
@@ -1435,10 +2382,48 @@ impl Layouts {
         reveal: f32,
         overlay_opacity: u8,
     ) {
-        let (name, image, active) = {
-            let costume = &self.catalog.categories[category_index].costumes[costume_index];
-            (costume.name.clone(), costume.image.clone(), costume.active)
-        };
+        let (name, image, active, waiting, from_gamebanana, install) =
+            match self.card(category_index, costume_index) {
+                Some(Card::Own(costume)) => (
+                    costume.name.clone(),
+                    costume.image.clone(),
+                    costume.active,
+                    self.waiting.contains(&costume.id),
+                    false,
+                    None,
+                ),
+                Some(Card::GameBanana(item)) => (
+                    item.name.clone(),
+                    item.image.clone(),
+                    false,
+                    false,
+                    true,
+                    self.gamebanana
+                        .install_state(item.id)
+                        .map(|install| install.stage.clone()),
+                ),
+                Some(Card::Status(status)) => {
+                    self.show_status_card(
+                        ui,
+                        category_index,
+                        status,
+                        rect,
+                        focused,
+                        slot,
+                        reveal,
+                        overlay_opacity,
+                    );
+                    return;
+                }
+                None => return,
+            };
+        let new = !active
+            && matches!(
+                self.card(category_index, costume_index),
+                Some(Card::Own(costume)) if self.new_mods.contains(&costume.id)
+            );
+        // A finished install glows until its card crosses.
+        let installed = matches!(install, Some(InstallStage::Installed { .. }));
         let interactable = reveal >= REVEAL_INTERACTION_THRESHOLD;
         let response = ui
             .interact(
@@ -1458,7 +2443,9 @@ impl Layouts {
 
         let hovered = interactable && response.hovered();
         let now = ui.input(|input| input.time);
-        let border = if focused && self.row == Row::Mods {
+        let border = if installed {
+            content_color(ACCENT, overlay_opacity)
+        } else if focused && self.row == Row::Mods {
             content_gray(232, overlay_opacity)
         } else if focused || hovered {
             content_gray(180, overlay_opacity)
@@ -1473,8 +2460,48 @@ impl Layouts {
         }
         let image_rect = visual_rect.shrink(1.0);
         let texture = self.texture_for(ui, image.as_deref());
-        let name_rect = card_name_rect(image_rect, focused);
+        // How the install goes, on a line under the name.
+        let status = install
+            .as_ref()
+            .and_then(|stage| install_status(stage, focused))
+            .map(|status| {
+                let color = scale_color_alpha(content_color(status.color, overlay_opacity), reveal);
+                let galley = ui.painter().layout(
+                    status.text,
+                    FontId::proportional(if focused { 10.5 } else { 9.5 }),
+                    color,
+                    image_rect.width() - 16.0,
+                );
+                (galley, color, status.bar)
+            });
+        let status_height = status
+            .as_ref()
+            .map_or(0.0, |(galley, _, _)| galley.size().y + 3.0);
+        let name_rect =
+            card_name_rect(image_rect, focused).translate(Vec2::new(0.0, -status_height));
         let (name_size, _) = measure_card_name(ui, name_rect, &name, overlay_opacity, focused);
+        if installed {
+            // A soft orange glow until the card crosses.
+            let glow = egui::epaint::Shadow {
+                offset: [0, 0],
+                blur: 18,
+                spread: 0,
+                color: scale_color_alpha(
+                    Color32::from_rgba_unmultiplied(
+                        232,
+                        116,
+                        59,
+                        content_alpha(140, overlay_opacity),
+                    ),
+                    reveal,
+                ),
+            };
+            ui.painter()
+                .add(glow.as_shape(visual_rect, CornerRadius::ZERO));
+            if reveal > 0.01 {
+                self.visible_card_rects.push(visual_rect.expand(14.0));
+            }
+        }
         paint_thumbnail_tinted(
             ui,
             image_rect,
@@ -1487,14 +2514,20 @@ impl Layouts {
             ui,
             image_rect,
             overlay_opacity,
-            name_size.y + CARD_TITLE_BOTTOM_PADDING + 8.0,
+            name_size.y + status_height + CARD_TITLE_BOTTOM_PADDING + 8.0,
             reveal,
         );
         ui.painter().rect_stroke(
             visual_rect.shrink(0.5),
             CornerRadius::ZERO,
             Stroke::new(
-                if active || focused { 1.5 } else { 1.0 },
+                if installed {
+                    2.0
+                } else if active || focused {
+                    1.5
+                } else {
+                    1.0
+                },
                 scale_color_alpha(border, reveal),
             ),
             StrokeKind::Inside,
@@ -1514,12 +2547,20 @@ impl Layouts {
             );
         }
 
-        if active {
+        if active || waiting {
             let feedback = now < self.active_feedback_until
                 && self.active_feedback_costume == Some(costume_index);
             if feedback {
                 self.request_animation_repaint(ui.ctx(), now);
             }
+            // While Hestia makes the change, the badge pulses with dots.
+            let pulse = if waiting {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(33));
+                0.6 + 0.4 * (now * WAITING_PULSE_SPEED).sin().abs() as f32
+            } else {
+                1.0
+            };
             let badge_rect =
                 Rect::from_min_size(visual_rect.min + Vec2::new(8.0, 8.0), Vec2::splat(21.0));
             ui.painter().rect_filled(
@@ -1533,13 +2574,32 @@ impl Layouts {
                     reveal,
                 ),
             );
+            let icon = if waiting {
+                lucide_icons::Icon::Ellipsis
+            } else {
+                lucide_icons::Icon::Check
+            };
             ui.painter().text(
                 badge_rect.center(),
                 Align2::CENTER_CENTER,
-                char::from(lucide_icons::Icon::Check).to_string(),
+                char::from(icon).to_string(),
                 FontId::new(14.0, egui::FontFamily::Name("preview-icons".into())),
-                scale_color_alpha(content_color(ACCENT, overlay_opacity), reveal),
+                scale_color_alpha(content_color(ACCENT, overlay_opacity), reveal * pulse),
             );
+        }
+        if from_gamebanana {
+            paint_gamebanana_badge(ui, visual_rect, focused, installed, reveal, overlay_opacity);
+        }
+        if new {
+            paint_new_tag(ui, visual_rect, reveal, overlay_opacity);
+        }
+        if let Some((galley, color, bar)) = status {
+            let position = egui::pos2(
+                name_rect.min.x,
+                image_rect.max.y - CARD_TITLE_BOTTOM_PADDING - galley.size().y,
+            );
+            ui.painter().galley(position, galley, color);
+            paint_install_bar(ui, image_rect, bar, now, reveal, overlay_opacity);
         }
 
         if reveal > 0.01 {
@@ -1549,6 +2609,200 @@ impl Layouts {
                 let _ = delayed_tooltip(response, clean_display_name(&name));
             }
         }
+    }
+
+    /// The card after a GameBanana list: a placeholder while it loads, or
+    /// why the list has no more mods.
+    #[allow(clippy::too_many_arguments)]
+    fn show_status_card(
+        &mut self,
+        ui: &mut Ui,
+        category_index: usize,
+        status: StatusCard,
+        rect: Rect,
+        focused: bool,
+        slot: usize,
+        reveal: f32,
+        overlay_opacity: u8,
+    ) {
+        let interactable = reveal >= REVEAL_INTERACTION_THRESHOLD;
+        let retry = interactable && status == StatusCard::Failed;
+        let response = ui
+            .interact(
+                rect,
+                ui.id().with(("overlay-preview-carousel-card-slot", slot)),
+                if interactable {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            )
+            .on_hover_cursor(if retry {
+                egui::CursorIcon::PointingHand
+            } else {
+                egui::CursorIcon::Default
+            });
+        let hovered = retry && response.hovered();
+        let visual_rect = rect.translate(Vec2::new(0.0, (1.0 - reveal) * REVEAL_OFFSET));
+        if reveal > 0.01 {
+            self.visible_card_rects.push(visual_rect);
+        }
+        let fill = if status == StatusCard::Loading {
+            let now = ui.input(|input| input.time);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
+            (70.0 + 40.0 * (0.5 + 0.5 * (now * 2.5).sin())) as u8
+        } else {
+            70
+        };
+        ui.painter().rect_filled(
+            visual_rect,
+            CornerRadius::ZERO,
+            scale_color_alpha(rgba_alpha(65, 65, 65, fill, overlay_opacity), reveal),
+        );
+        let border = if focused && self.row == Row::Mods {
+            content_gray(232, overlay_opacity)
+        } else if focused || hovered {
+            content_gray(180, overlay_opacity)
+        } else {
+            content_gray(82, overlay_opacity)
+        };
+        ui.painter().rect_stroke(
+            visual_rect.shrink(0.5),
+            CornerRadius::ZERO,
+            Stroke::new(
+                if focused { 1.5 } else { 1.0 },
+                scale_color_alpha(border, reveal),
+            ),
+            StrokeKind::Inside,
+        );
+        let text = match status {
+            StatusCard::Loading => {
+                // Where the name will be.
+                let bottom = visual_rect.max.y - CARD_TITLE_BOTTOM_PADDING;
+                let height = if focused { 9.0 } else { 7.0 };
+                let width = visual_rect.width() - 24.0;
+                for (line, share) in [(1.0, 0.8), (0.0, 0.5)] {
+                    let bar = Rect::from_min_size(
+                        egui::pos2(
+                            visual_rect.min.x + 12.0,
+                            bottom - height - line * (height + 6.0),
+                        ),
+                        Vec2::new(width * share, height),
+                    );
+                    ui.painter().rect_filled(
+                        bar,
+                        CornerRadius::same(2),
+                        scale_color_alpha(white_alpha(34, overlay_opacity), reveal),
+                    );
+                }
+                return;
+            }
+            StatusCard::Failed => text(TextKey::GameOverlayGameBananaFailed).to_owned(),
+            StatusCard::Empty => {
+                if self
+                    .gamebanana_key(category_index)
+                    .is_some_and(|key| key.query.is_empty())
+                {
+                    text(TextKey::GameOverlayGameBananaNothingFor).replace(
+                        "{name}",
+                        character_name(&self.catalog.categories[category_index].name),
+                    )
+                } else {
+                    text(TextKey::GameOverlayGameBananaNoMatches).to_owned()
+                }
+            }
+        };
+        let color = scale_color_alpha(content_gray(200, overlay_opacity), reveal);
+        let mut job = egui::text::LayoutJob::simple(
+            text,
+            FontId::proportional(if focused { 13.0 } else { 11.0 }),
+            color,
+            visual_rect.width() - 24.0,
+        );
+        job.halign = Align::Center;
+        let galley = ui.painter().layout_job(job);
+        let position = egui::pos2(
+            visual_rect.center().x,
+            visual_rect.center().y - galley.size().y * 0.5,
+        );
+        ui.painter().galley(position, galley, color);
+    }
+
+    /// The line before a category's GameBanana mods, while the first one
+    /// shows: between them and the category's own, or first in the row when
+    /// none of its own show.
+    fn paint_gamebanana_divider(
+        &mut self,
+        ui: &Ui,
+        placements: &[CarouselCardPlacement],
+        carousel_rect: Rect,
+        overlay_opacity: u8,
+    ) {
+        let Some(category) = self.catalog.categories.get(self.selected_category) else {
+            return;
+        };
+        let own = category.costumes.len();
+        let visible = self.visible_mods();
+        let Some(&first) = visible.iter().find(|&&index| index >= own) else {
+            return;
+        };
+        let Some(card) = placements.iter().find(|placement| placement.index == first) else {
+            return;
+        };
+        let x = card.rect.min.x - (CAROUSEL_CARD_GAP + DIVIDER_ZONE) * 0.5;
+        let center_y = carousel_rect.center().y;
+        let half = (NEIGHBOR_CARD_SIZE.y - 12.0) * 0.5;
+        let reveal = self.reveal_progress;
+        // A dark backing like the header's, so the line reads over the game.
+        // The window shows only what's listed, and the gap between cards
+        // isn't.
+        let backing = Rect::from_min_max(
+            egui::pos2(x - 6.0, center_y - half - 6.0),
+            egui::pos2(x + 20.0, center_y + half + 6.0),
+        );
+        ui.painter().rect_filled(
+            backing,
+            4,
+            scale_color_alpha(
+                Color32::from_rgba_unmultiplied(32, 32, 32, super::base_alpha(overlay_opacity)),
+                reveal,
+            ),
+        );
+        if reveal > 0.01 {
+            self.visible_card_rects.push(backing);
+        }
+        ui.painter().line_segment(
+            [
+                egui::pos2(x, center_y - half),
+                egui::pos2(x, center_y + half),
+            ],
+            Stroke::new(
+                1.0,
+                scale_color_alpha(
+                    Color32::from_white_alpha(content_alpha(71, overlay_opacity)),
+                    reveal,
+                ),
+            ),
+        );
+        let color = scale_color_alpha(content_gray(200, overlay_opacity), reveal);
+        let galley = ui
+            .painter()
+            .layout_job(egui::text::LayoutJob::single_section(
+                "GAMEBANANA".to_owned(),
+                egui::TextFormat {
+                    font_id: FontId::proportional(10.0),
+                    color,
+                    extra_letter_spacing: 1.5,
+                    ..Default::default()
+                },
+            ));
+        // Turned to read upwards, the label's top edge faces the line.
+        let position = egui::pos2(x + 4.0, center_y + galley.size().x * 0.5);
+        ui.painter().add(
+            egui::epaint::TextShape::new(position, galley, color)
+                .with_angle(-std::f32::consts::FRAC_PI_2),
+        );
     }
 
     fn consume_carousel_wheel(
@@ -1707,32 +2961,36 @@ impl Layouts {
     fn apply_focused_costume_action(&mut self, action: ModAction, now: f64) {
         let category_index = self.selected_category;
         let costume_index = self.carousel_focus;
-        if self.read_only || !self.visible_mods().contains(&costume_index) {
+        if !self.visible_mods().contains(&costume_index) {
+            return;
+        }
+        if !matches!(self.card(category_index, costume_index), Some(Card::Own(_))) {
+            self.activate_gamebanana(
+                category_index,
+                costume_index,
+                action == ModAction::Exclusive,
+            );
             return;
         }
         let mut changed = false;
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
-            if costume_index >= category.costumes.len() {
+            let Some(costume) = category.costumes.get(costume_index) else {
                 return;
-            }
-            match action {
-                ModAction::Exclusive => {
-                    for (index, costume) in category.costumes.iter_mut().enumerate() {
-                        let active = index == costume_index;
-                        changed |= costume.active != active;
-                        costume.active = active;
-                    }
-                }
+            };
+            let action = match action {
+                ModAction::Exclusive => ChangeAction::Use,
                 // Enabling through the toggle keeps the others enabled.
-                ModAction::Toggle => {
-                    let costume = &mut category.costumes[costume_index];
-                    costume.active = !costume.active;
-                    changed = true;
-                }
+                ModAction::Toggle if costume.active => ChangeAction::TurnOff,
+                ModAction::Toggle => ChangeAction::TurnOn,
+            };
+            if let Some(request) = change_costumes(category, costume_index, action) {
+                self.requests.push(request);
+                changed = true;
             }
             self.active_images[category_index] = active_image(category);
         }
         if changed {
+            self.forget_used_new_mods();
             self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
             self.active_feedback_costume = Some(costume_index);
         }
@@ -1746,10 +3004,10 @@ impl Layouts {
 /// Queue the images of the mods the search shows around `focus`.
 fn append_nearby_mod_images(
     paths: &mut Vec<PathBuf>,
-    category: &Category,
     visible: &[usize],
     focus: usize,
     radius: usize,
+    image_of: impl Fn(usize) -> Option<PathBuf>,
 ) {
     let count = visible.len();
     if count == 0 {
@@ -1759,16 +3017,16 @@ fn append_nearby_mod_images(
         .iter()
         .position(|&index| index == focus)
         .unwrap_or(0);
-    paths.extend(category.costumes[visible[focus]].image.clone());
+    paths.extend(image_of(visible[focus]));
     for distance in 1..=radius.min(count - 1) {
         for position in [
             (focus + distance) % count,
             (focus + count - distance) % count,
         ] {
-            if let Some(path) = &category.costumes[visible[position]].image
-                && !paths.contains(path)
+            if let Some(path) = image_of(visible[position])
+                && !paths.contains(&path)
             {
-                paths.push(path.clone());
+                paths.push(path);
             }
         }
     }
@@ -2039,6 +3297,224 @@ fn character_name(name: &str) -> &str {
     name.strip_prefix("Operators: ").unwrap_or(name)
 }
 
+/// Marks a mod the overlay installed, until it's used.
+fn paint_new_tag(ui: &Ui, card: Rect, reveal: f32, overlay_opacity: u8) {
+    let color = scale_color_alpha(content_gray(27, overlay_opacity), reveal);
+    let label = ui
+        .painter()
+        .layout_job(egui::text::LayoutJob::single_section(
+            text(TextKey::GameOverlayNewTag).to_owned(),
+            egui::TextFormat {
+                font_id: FontId::proportional(10.0),
+                color,
+                extra_letter_spacing: 0.6,
+                ..Default::default()
+            },
+        ));
+    let tag = Rect::from_min_size(
+        egui::pos2(card.max.x - 8.0 - label.size().x - 14.0, card.min.y + 8.0),
+        Vec2::new(label.size().x + 14.0, 18.0),
+    );
+    ui.painter().rect_filled(
+        tag,
+        CornerRadius::same(9),
+        scale_color_alpha(content_color(ACCENT, overlay_opacity), reveal),
+    );
+    ui.painter()
+        .galley(tag.center() - label.size() * 0.5, label, color);
+}
+
+/// Marks a GameBanana card, which isn't installed, or has an empty tick box
+/// once it is, since installs land turned off.  The focused card says where
+/// it's from.
+fn paint_gamebanana_badge(
+    ui: &Ui,
+    card: Rect,
+    focused: bool,
+    installed: bool,
+    reveal: f32,
+    overlay_opacity: u8,
+) {
+    let color = scale_color_alpha(content_gray(230, overlay_opacity), reveal);
+    let label = focused.then(|| {
+        ui.painter()
+            .layout_no_wrap("GameBanana".to_owned(), FontId::proportional(10.5), color)
+    });
+    let width = 21.0 + label.as_ref().map_or(0.0, |label| label.size().x + 6.0);
+    let badge = Rect::from_min_size(card.min + Vec2::splat(8.0), Vec2::new(width, 21.0));
+    ui.painter().rect_filled(
+        badge,
+        CornerRadius::same(4),
+        scale_color_alpha(
+            Color32::from_black_alpha(chrome_alpha(185, overlay_opacity)),
+            reveal,
+        ),
+    );
+    ui.painter().text(
+        egui::pos2(badge.min.x + 10.5, badge.center().y),
+        Align2::CENTER_CENTER,
+        char::from(if installed {
+            lucide_icons::Icon::Square
+        } else {
+            lucide_icons::Icon::Download
+        })
+        .to_string(),
+        FontId::new(12.0, egui::FontFamily::Name("preview-icons".into())),
+        color,
+    );
+    if let Some(label) = label {
+        let position = egui::pos2(badge.min.x + 21.0, badge.center().y - label.size().y * 0.5);
+        ui.painter().galley(position, label, color);
+    }
+}
+
+/// What a GameBanana card says under its name while Hestia installs it.
+struct InstallStatus {
+    text: String,
+    color: Color32,
+    bar: InstallBar,
+}
+
+/// The bar along the bottom of a card Hestia installs.
+enum InstallBar {
+    Hidden,
+    Moving,
+    Filled(f32),
+}
+
+fn install_status(stage: &InstallStage, focused: bool) -> Option<InstallStatus> {
+    const WORKING: Color32 = Color32::from_rgb(240, 168, 120);
+    const DONE: Color32 = Color32::from_rgb(201, 208, 213);
+    const FAILED: Color32 = Color32::from_rgb(230, 140, 130);
+    let (label, color, bar) = match stage {
+        InstallStage::Waiting => (
+            text(TextKey::GameOverlayWaiting).to_owned(),
+            WORKING,
+            InstallBar::Moving,
+        ),
+        InstallStage::Downloading {
+            percent: Some(percent),
+        } => (
+            text(TextKey::GameOverlayDownloadingPercent).replace("{percent}", &percent.to_string()),
+            WORKING,
+            InstallBar::Filled(f32::from(*percent) / 100.0),
+        ),
+        InstallStage::Downloading { percent: None } => (
+            text(TextKey::GameOverlayDownloading).to_owned(),
+            WORKING,
+            InstallBar::Moving,
+        ),
+        InstallStage::Installing => (
+            text(TextKey::GameOverlayInstalling).to_owned(),
+            WORKING,
+            InstallBar::Moving,
+        ),
+        InstallStage::ChooseFile { .. } | InstallStage::SameName { .. } => (
+            text(TextKey::GameOverlayNeedsYourAnswer).to_owned(),
+            WORKING,
+            InstallBar::Hidden,
+        ),
+        InstallStage::Installed { .. } => (
+            text(TextKey::GameOverlayInstalledOff).to_owned(),
+            DONE,
+            InstallBar::Filled(1.0),
+        ),
+        InstallStage::Failed if focused => (
+            text(TextKey::GameOverlayCouldNotInstallTryAgain).to_owned(),
+            FAILED,
+            InstallBar::Hidden,
+        ),
+        InstallStage::Failed => (
+            text(TextKey::GameOverlayCouldNotInstall).to_owned(),
+            FAILED,
+            InstallBar::Hidden,
+        ),
+        InstallStage::Canceled => return None,
+    };
+    Some(InstallStatus {
+        text: label,
+        color,
+        bar,
+    })
+}
+
+fn paint_install_bar(
+    ui: &Ui,
+    card: Rect,
+    bar: InstallBar,
+    now: f64,
+    reveal: f32,
+    overlay_opacity: u8,
+) {
+    let track = Rect::from_min_max(egui::pos2(card.min.x, card.max.y - 3.0), card.max);
+    let span = match bar {
+        InstallBar::Hidden => return,
+        InstallBar::Filled(share) => (0.0, share.clamp(0.0, 1.0)),
+        InstallBar::Moving => {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
+            let start = ((now / 1.2).fract() * 1.35 - 0.35) as f32;
+            (start.max(0.0), (start + 0.35).min(1.0))
+        }
+    };
+    ui.painter().rect_filled(
+        track,
+        CornerRadius::ZERO,
+        scale_color_alpha(
+            Color32::from_black_alpha(chrome_alpha(150, overlay_opacity)),
+            reveal,
+        ),
+    );
+    let filled = Rect::from_min_max(
+        egui::pos2(track.min.x + track.width() * span.0, track.min.y),
+        egui::pos2(track.min.x + track.width() * span.1, track.max.y),
+    );
+    ui.painter().rect_filled(
+        filled,
+        CornerRadius::ZERO,
+        scale_color_alpha(content_color(ACCENT, overlay_opacity), reveal),
+    );
+}
+
+/// `text` on one line, cut with an ellipsis to fit `width`.
+fn elided_galley(
+    ui: &Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, width.max(1.0));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    ui.painter().layout_job(job)
+}
+
+/// A download's size, as the question panel shows it.
+fn file_size_label(size: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    let size = size as f64;
+    if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else {
+        format!("{:.0} KB", (size / KB).max(1.0))
+    }
+}
+
+fn paint_dashed_rect(ui: &Ui, rect: Rect, stroke: Stroke) {
+    let points = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+        rect.left_top(),
+    ];
+    ui.painter()
+        .extend(egui::Shape::dashed_line(&points, stroke, 3.0, 2.0));
+}
+
 fn paint_category_name(ui: &Ui, rect: Rect, name: &str, font: FontId, color: Color32) -> bool {
     let mut job = egui::text::LayoutJob::simple(name.to_owned(), font, color, rect.width());
     job.wrap.max_rows = 1;
@@ -2175,7 +3651,7 @@ fn paint_thumbnail_tinted(
             ui.painter().text(
                 egui::pos2(rect.center().x, rect.center().y + 18.0),
                 Align2::CENTER_CENTER,
-                "No preview",
+                text(TextKey::GameOverlayNoPreview),
                 FontId::proportional(9.0),
                 chrome_gray_from_image_alpha(139, tint_alpha),
             );
@@ -2330,24 +3806,67 @@ fn paint_card_name_revealed(
     elided
 }
 
-/// Select a costume according to the switcher's exclusivity rule.
-fn select_costume(category: &mut Category, index: usize) {
-    if index >= category.costumes.len() {
-        return;
-    }
-
+/// Select a costume according to the switcher's exclusivity rule: with at
+/// most one mod on, use it, otherwise turn it on or off.
+fn select_costume(category: &mut Category, index: usize) -> Option<ModRequest> {
+    let costume = category.costumes.get(index)?;
     let active_count = category
         .costumes
         .iter()
         .filter(|costume| costume.active)
         .count();
-    if active_count <= 1 {
-        for (costume_index, costume) in category.costumes.iter_mut().enumerate() {
-            costume.active = costume_index == index;
-        }
+    let action = if active_count <= 1 {
+        ChangeAction::Use
+    } else if costume.active {
+        ChangeAction::TurnOff
     } else {
-        category.costumes[index].active = !category.costumes[index].active;
+        ChangeAction::TurnOn
+    };
+    change_costumes(category, index, action)
+}
+
+/// Makes a change on screen as Hestia will make it, and returns the request
+/// for Hestia when something changed.
+fn change_costumes(
+    category: &mut Category,
+    index: usize,
+    action: ChangeAction,
+) -> Option<ModRequest> {
+    let loose = is_loose(category);
+    let before: Vec<bool> = category
+        .costumes
+        .iter()
+        .map(|costume| costume.active)
+        .collect();
+    for (costume_index, costume) in category.costumes.iter_mut().enumerate() {
+        let target = costume_index == index;
+        costume.active = match action {
+            ChangeAction::Use if target => true,
+            ChangeAction::Use if loose => costume.active,
+            ChangeAction::Use => false,
+            ChangeAction::TurnOn if target => true,
+            ChangeAction::TurnOff if target => false,
+            ChangeAction::TurnOn | ChangeAction::TurnOff => costume.active,
+        };
     }
+    let states: Vec<(String, bool)> = category
+        .costumes
+        .iter()
+        .zip(before)
+        .filter(|(costume, was)| costume.active != *was)
+        .map(|(costume, _)| (costume.id.clone(), costume.active))
+        .collect();
+    (!states.is_empty()).then(|| ModRequest {
+        mod_id: category.costumes[index].id.clone(),
+        action,
+        states,
+    })
+}
+
+/// Uncategorized holds mods that have nothing to do with each other, so
+/// using one leaves the rest on.
+fn is_loose(category: &Category) -> bool {
+    category.id == UNCATEGORIZED_ID
 }
 
 #[cfg(test)]
@@ -2569,6 +4088,7 @@ mod tests {
                 0,
             ),
             started_at: 1.0,
+            seconds: CAROUSEL_TRANSITION_SECS,
         });
 
         layouts.activate_costume_in_place(0, 2, 1.05);
@@ -2920,6 +4440,8 @@ mod tests {
             id: "Ardelia".into(),
             name: "Ardelia".into(),
             image: None,
+            character: None,
+            extra: false,
             costumes: active
                 .iter()
                 .enumerate()
@@ -2929,6 +4451,7 @@ mod tests {
                     image: None,
                     active,
                     censored: false,
+                    gamebanana_id: None,
                 })
                 .collect(),
         }
@@ -3173,6 +4696,7 @@ mod tests {
                 mods: true,
                 exclusive: false,
                 toggle: true,
+                space: Space::Exclusive,
             }
         );
 
@@ -3184,6 +4708,7 @@ mod tests {
                 mods: true,
                 exclusive: true,
                 toggle: true,
+                space: Space::Exclusive,
             }
         );
     }
@@ -3308,6 +4833,8 @@ mod tests {
             id: name.into(),
             name: name.into(),
             image: None,
+            character: None,
+            extra: false,
             costumes: mods
                 .iter()
                 .map(|name| Costume {
@@ -3316,6 +4843,7 @@ mod tests {
                     image: None,
                     active: false,
                     censored: false,
+                    gamebanana_id: None,
                 })
                 .collect(),
         }
@@ -3340,7 +4868,7 @@ mod tests {
     #[test]
     fn search_matches_names_loosely() {
         let layouts = search_layouts();
-        let filter = |query: &str| Filter::new(&layouts.catalog, query);
+        let filter = |query: &str| Filter::new(&layouts.catalog, query, &layouts.gamebanana);
 
         // Case, underscores and repeated spaces do not matter.
         let vow = filter("VOW");
@@ -3502,6 +5030,7 @@ mod tests {
                 mods: false,
                 exclusive: true,
                 toggle: true,
+                space: Space::Exclusive,
             }
         );
 
@@ -3513,6 +5042,7 @@ mod tests {
                 mods: true,
                 exclusive: true,
                 toggle: true,
+                space: Space::Exclusive,
             }
         );
 
@@ -3528,8 +5058,40 @@ mod tests {
                 mods: false,
                 exclusive: false,
                 toggle: false,
+                space: Space::Exclusive,
             }
         );
+    }
+
+    #[test]
+    fn the_gamebanana_line_is_part_of_what_the_window_shows() {
+        let mut ardelia = named("Ardelia", &["Vow", "Beach"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        let context = egui::Context::default();
+        layouts.set_gamebanana(true, false);
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 3], false)]);
+        layouts.carousel_focus = 1;
+        layouts.set_reveal(1.0);
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            Vec2::new(560.0, 344.0),
+            2.0,
+            Vec::new(),
+            false,
+        );
+        // The window shows only these, and the line sits in the gap between
+        // Beach and Mod 1.
+        let rects = layouts.visible_card_rects();
+        let line = rects
+            .iter()
+            .find(|rect| rect.width() < 40.0)
+            .expect("the line's area");
+        assert!(rects.iter().any(|card| card.max.x <= line.min.x));
+        assert!(rects.iter().any(|card| card.min.x >= line.max.x));
     }
 
     #[test]
@@ -3676,24 +5238,393 @@ mod tests {
         assert_eq!(layouts.selected_category, 0);
     }
 
+    fn request(mod_id: &str, action: ChangeAction, states: &[(&str, bool)]) -> ModRequest {
+        ModRequest {
+            mod_id: mod_id.into(),
+            action,
+            states: states
+                .iter()
+                .map(|(id, active)| ((*id).into(), *active))
+                .collect(),
+        }
+    }
+
     #[test]
-    fn read_only_keys_and_clicks_leave_mods_alone() {
+    fn keys_and_clicks_ask_hestia_for_what_they_show() {
         let mut layouts = Layouts::new(live_catalog(vec![with_active(
-            named("Ardelia", &["Vow", "Beach"]),
+            named("Ardelia", &["Vow", "Beach", "Classic"]),
             "Vow",
         )]));
-        layouts.set_read_only(true);
         layouts.carousel_focus = 1;
-        let availability = layouts.shortcut_availability();
-        assert!(!availability.exclusive && !availability.toggle);
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
         layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
-        layouts.activate_costume_in_place(0, 1, 1.0);
-        let active: Vec<bool> = layouts.catalog.categories[0]
+        layouts.activate_costume_in_place(0, 2, 1.0);
+        // Using the mod that is already the only one on changes nothing.
+        layouts.activate_costume_in_place(0, 2, 1.0);
+        assert_eq!(
+            layouts.take_requests(),
+            [
+                request(
+                    "Beach",
+                    ChangeAction::Use,
+                    &[("Vow", false), ("Beach", true)]
+                ),
+                request("Beach", ChangeAction::TurnOff, &[("Beach", false)]),
+                request("Classic", ChangeAction::Use, &[("Classic", true)]),
+            ]
+        );
+        assert!(layouts.take_requests().is_empty());
+    }
+
+    #[test]
+    fn using_an_uncategorized_mod_leaves_the_others_on() {
+        let mut loose = with_active(named("Uncategorized", &["UI", "Shader"]), "UI");
+        loose.id = UNCATEGORIZED_ID.into();
+        let mut layouts = Layouts::new(live_catalog(vec![loose]));
+        assert!(!layouts.shortcut_availability().exclusive);
+        layouts.carousel_focus = 1;
+        assert!(layouts.shortcut_availability().exclusive);
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        assert_eq!(
+            layouts.take_requests(),
+            [request("Shader", ChangeAction::Use, &[("Shader", true)])]
+        );
+        // Both on now, so there is nothing left to use.
+        assert!(!layouts.shortcut_availability().exclusive);
+    }
+
+    fn gamebanana_page(character: u64, ids: &[u64], more: bool) -> ToOverlay {
+        ToOverlay::BrowsePage(crate::overlay_protocol::BrowsePage {
+            character,
+            query: String::new(),
+            page: 1,
+            mods: ids
+                .iter()
+                .map(|&id| BrowseMod {
+                    id,
+                    name: format!("Mod {id}"),
+                    ..Default::default()
+                })
+                .collect(),
+            more,
+            error: None,
+        })
+    }
+
+    #[test]
+    fn gamebanana_mods_follow_the_own_ones_without_the_installed() {
+        let mut ardelia = named("Ardelia", &["Vow", "Beach"]);
+        ardelia.character = Some(7);
+        ardelia.costumes[1].gamebanana_id = Some(2);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        let context = egui::Context::default();
+        layouts.update_gamebanana(&context, 0.0);
+        assert_eq!(layouts.visible_mods(), [0, 1], "off outside the overlay");
+        layouts.set_gamebanana(true, false);
+        layouts.update_gamebanana(&context, 0.0);
+        assert_eq!(layouts.visible_mods(), [0, 1, 2], "a loading card");
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::ListCharacters],
+            "only the characters, for their pictures"
+        );
+        layouts.update_gamebanana(&context, 1.0);
+        assert_eq!(layouts.take_gamebanana_requests().len(), 1);
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2, 3], false)]);
+        // Mod 2 is Beach, so the cards are Vow, Beach, Mod 1 and Mod 3.
+        assert_eq!(layouts.visible_mods(), [0, 1, 2, 4]);
+        layouts.carousel_focus = 4;
+        let selection = layouts.selection();
+        assert_eq!(selection.mods["Ardelia"], "gamebanana:3");
+        layouts.carousel_focus = 0;
+        layouts.restore_selection(&selection);
+        assert_eq!(layouts.carousel_focus, 4);
+
+        layouts.set_gamebanana(false, false);
+        assert_eq!(layouts.visible_mods(), [0, 1], "off in Settings");
+        assert!(layouts.visible_mods().contains(&layouts.carousel_focus));
+        layouts.set_gamebanana(true, false);
+        assert_eq!(layouts.visible_mods(), [0, 1, 2, 4], "the pages it had");
+    }
+
+    #[test]
+    fn show_all_characters_adds_the_unlinked_ones_after_the_library() {
+        let mut ardelia = named("Ardelia", &["Vow"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        layouts.set_gamebanana(true, false);
+        layouts.set_show_all_characters(true);
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::ListCharacters]
+        );
+        let character = |id, name: &str| crate::overlay_protocol::Character {
+            id,
+            name: name.into(),
+            image: None,
+        };
+        layouts.receive_gamebanana(vec![ToOverlay::Characters {
+            characters: vec![
+                character(9, "perlica"),
+                character(7, "Ardelia"),
+                character(8, "Endministrator"),
+            ],
+            error: None,
+        }]);
+        let names = |layouts: &Layouts| {
+            layouts
+                .catalog
+                .categories
+                .iter()
+                .map(|category| category.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&layouts), ["Ardelia", "Endministrator", "perlica"]);
+        assert_eq!(layouts.catalog.categories[1].id, "gamebanana:character:8");
+        // An extra character without mods yet still shows, for its list.
+        assert_eq!(layouts.filter.categories, [0, 1, 2]);
+        layouts.set_show_all_characters(false);
+        assert_eq!(names(&layouts), ["Ardelia"]);
+    }
+
+    #[test]
+    fn a_category_without_a_link_takes_the_character_its_name_stands_for() {
+        let mut ardelia = named("Operators: Ardelia", &["Vow"]);
+        ardelia.costumes[0].image = Some(PathBuf::from("vow.png"));
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        layouts.set_gamebanana(true, true);
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::ListCharacters]
+        );
+        layouts.receive_gamebanana(vec![ToOverlay::Characters {
+            characters: vec![
+                crate::overlay_protocol::Character {
+                    id: 7,
+                    name: "Ardelia".into(),
+                    image: Some(PathBuf::from("ardelia-icon.png")),
+                },
+                crate::overlay_protocol::Character {
+                    id: 8,
+                    name: "Endministrator".into(),
+                    image: None,
+                },
+            ],
+            error: None,
+        }]);
+        let categories = &layouts.catalog.categories;
+        assert_eq!(categories.len(), 2, "Ardelia isn't added a second time");
+        assert_eq!(categories[0].character, Some(7));
+        assert_eq!(
+            categories[0].image.as_deref(),
+            Some(Path::new("ardelia-icon.png")),
+            "the character's picture, not the mod's"
+        );
+        assert_eq!(categories[1].id, "gamebanana:character:8");
+
+        // A new library from Hestia keeps both.
+        layouts.replace_catalog(layouts.own_catalog());
+        assert_eq!(layouts.catalog.categories[0].character, Some(7));
+        assert_eq!(layouts.catalog.categories.len(), 2);
+    }
+
+    fn installed_from_gamebanana(name: &str, gamebanana_id: u64) -> Costume {
+        Costume {
+            id: name.into(),
+            name: name.into(),
+            image: None,
+            active: false,
+            censored: false,
+            gamebanana_id: Some(gamebanana_id),
+        }
+    }
+
+    fn install_update(mod_id: u64, stage: InstallStage) -> ToOverlay {
+        ToOverlay::Install(crate::overlay_protocol::InstallUpdate { mod_id, stage })
+    }
+
+    #[test]
+    fn space_installs_a_gamebanana_mod_and_the_focus_follows_it_in() {
+        let mut ardelia = named("Ardelia", &["Vow", "Zest"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia.clone()]));
+        layouts.set_gamebanana(true, false);
+        let context = egui::Context::default();
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.take_gamebanana_requests();
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2], false)]);
+        // Vow, Zest, Mod 1, Mod 2.
+        layouts.carousel_focus = 3;
+        assert!(layouts.shortcut_availability().exclusive);
+        assert_eq!(layouts.shortcut_availability().space, Space::Install);
+        layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
+        assert!(layouts.take_gamebanana_requests().is_empty(), "only Space");
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::Install(crate::overlay_protocol::Install {
+                mod_id: 2,
+                name: "Mod 2".into(),
+                category_id: Some("Ardelia".into()),
+            })]
+        );
+        assert!(!layouts.shortcut_availability().exclusive, "installing");
+        layouts.receive_gamebanana(vec![install_update(2, InstallStage::Failed)]);
+        assert_eq!(layouts.shortcut_availability().space, Space::TryAgain);
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.5);
+        assert_eq!(layouts.take_gamebanana_requests().len(), 1, "tried again");
+
+        // Hestia installs it in its sorted place, turned off.
+        ardelia
             .costumes
-            .iter()
-            .map(|costume| costume.active)
-            .collect();
-        assert_eq!(active, [true, false]);
+            .insert(1, installed_from_gamebanana("Mod 2", 2));
+        layouts.replace_catalog(live_catalog(vec![ardelia]));
+        // It waits behind its card: Vow, Zest, Mod 1, Mod 2.
+        assert_eq!(layouts.visible_mods(), [0, 2, 3, 4]);
+        assert_eq!(layouts.carousel_focus, 4);
+        let news = layouts.receive_gamebanana(vec![install_update(
+            2,
+            InstallStage::Installed {
+                mods: vec!["Mod 2".into()],
+            },
+        )]);
+        assert_eq!(news, [InstallNews::Installed("Mod 2".into())]);
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        layouts.cross_installs(&context, rect, 2.0);
+        assert_eq!(layouts.carousel_focus, 4, "it finishes in place first");
+        layouts.cross_installs(&context, rect, 2.7);
+        assert_eq!(layouts.visible_mods(), [0, 1, 2, 3]);
+        assert_eq!(layouts.carousel_focus, 1);
+        assert!(layouts.take_arrivals().is_empty(), "it stays in sight");
+        assert!(layouts.new_mods.contains("Mod 2"));
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 3.0);
+        assert!(layouts.new_mods.is_empty(), "used, so no longer new");
+    }
+
+    #[test]
+    fn an_extra_characters_install_asks_then_lands_in_its_new_category() {
+        let mut layouts = Layouts::new(live_catalog(vec![named("Ardelia", &["Vow"])]));
+        layouts.set_gamebanana(true, false);
+        layouts.set_show_all_characters(true);
+        layouts.receive_gamebanana(vec![ToOverlay::Characters {
+            characters: vec![crate::overlay_protocol::Character {
+                id: 8,
+                name: "Endministrator".into(),
+                image: None,
+            }],
+            error: None,
+        }]);
+        layouts.select_category(1);
+        let context = egui::Context::default();
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.take_gamebanana_requests();
+        layouts.receive_gamebanana(vec![gamebanana_page(8, &[5], false)]);
+        layouts.activate_costume_in_place(1, 0, 1.0);
+        assert!(matches!(
+            &layouts.take_gamebanana_requests()[..],
+            [FromOverlay::Install(crate::overlay_protocol::Install {
+                mod_id: 5,
+                category_id: None,
+                ..
+            })]
+        ));
+
+        let file = |id| crate::overlay_protocol::InstallFile {
+            id,
+            name: format!("{id}.zip"),
+            size: 1,
+            description: None,
+        };
+        let news = layouts.receive_gamebanana(vec![install_update(
+            5,
+            InstallStage::ChooseFile {
+                files: vec![file(30), file(31)],
+            },
+        )]);
+        assert_eq!(news, [InstallNews::Question("Mod 5".into())]);
+        assert!(layouts.question_open());
+        // Down past Cancel stays on it, then back up to the second file.
+        for _ in 0..3 {
+            layouts.move_question(1);
+        }
+        layouts.move_question(-1);
+        layouts.answer_question();
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::PickFile {
+                mod_id: 5,
+                file_id: 31
+            }]
+        );
+        assert!(!layouts.question_open());
+
+        // Hestia made a category for the character.
+        let mut endministrator = named("Endministrator", &[]);
+        endministrator.id = "new-category".into();
+        endministrator.character = Some(8);
+        endministrator
+            .costumes
+            .push(installed_from_gamebanana("Mod 5", 5));
+        layouts.replace_catalog(live_catalog(vec![
+            named("Ardelia", &["Vow"]),
+            endministrator,
+        ]));
+        assert_eq!(layouts.catalog.categories.len(), 2);
+        assert_eq!(
+            layouts.selection().category_id.as_deref(),
+            Some("new-category")
+        );
+        // Still on its card, after the mod that waits behind it.
+        assert_eq!(layouts.carousel_focus, 1);
+        layouts.receive_gamebanana(vec![install_update(
+            5,
+            InstallStage::Installed {
+                mods: vec!["Mod 5".into()],
+            },
+        )]);
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        layouts.cross_installs(&context, rect, 2.0);
+        layouts.cross_installs(&context, rect, 3.0);
+        assert_eq!(layouts.carousel_focus, 0);
+        assert_eq!(layouts.visible_mods(), [0]);
+    }
+
+    #[test]
+    fn a_mod_that_crosses_out_of_sight_says_where_it_went() {
+        let mut ardelia = named("Ardelia", &["A", "B", "C", "D", "E"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia.clone()]));
+        layouts.set_gamebanana(true, false);
+        let context = egui::Context::default();
+        layouts.carousel_focus = 4;
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.take_gamebanana_requests();
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2, 3, 4], false)]);
+        layouts.carousel_focus = 5;
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        // On to the last GameBanana card while it installs.
+        layouts.carousel_focus = 8;
+        ardelia
+            .costumes
+            .insert(0, installed_from_gamebanana("0 First", 1));
+        layouts.replace_catalog(live_catalog(vec![ardelia]));
+        layouts.receive_gamebanana(vec![install_update(
+            1,
+            InstallStage::Installed {
+                mods: vec!["0 First".into()],
+            },
+        )]);
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        layouts.cross_installs(&context, rect, 2.0);
+        layouts.cross_installs(&context, rect, 3.0);
+        assert_eq!(layouts.take_arrivals(), ["0 First"]);
+        // The focus stays on the card it was on.
+        assert_eq!(
+            layouts.card_id(0, layouts.carousel_focus).as_deref(),
+            Some("gamebanana:4")
+        );
     }
 }

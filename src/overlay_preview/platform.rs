@@ -23,6 +23,7 @@ use egui::Rect;
 
 #[cfg(windows)]
 use super::keyboard;
+use crate::model::OverlayHotkey;
 
 #[cfg(windows)]
 #[link(name = "user32")]
@@ -547,28 +548,115 @@ unsafe fn watch_for_game(hwnd: windows::Win32::Foundation::HWND) {
     }
 }
 
-/// Register Alt+H for the configured overlay window.  Windows delivers it even
-/// while a game that blocks other input has the keyboard.
+/// Register `hotkey` for the configured overlay window, in place of the key
+/// it had.  Windows delivers it even while a game that blocks other input
+/// has the keyboard.
 #[cfg(windows)]
-pub(super) fn register_hotkey() -> std::io::Result<()> {
+pub(super) fn register_hotkey(hotkey: OverlayHotkey) -> std::io::Result<()> {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        MOD_ALT, MOD_NOREPEAT, RegisterHotKey, VK_H,
-    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 
     let hwnd = SUBCLASS_HWND.load(Ordering::Acquire);
     if hwnd == 0 {
         return Err(std::io::Error::other("overlay window is not configured"));
     }
+    let hwnd = HWND(hwnd as *mut std::ffi::c_void);
     unsafe {
+        let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID);
         RegisterHotKey(
-            Some(HWND(hwnd as *mut std::ffi::c_void)),
+            Some(hwnd),
             HOTKEY_ID,
-            MOD_ALT | MOD_NOREPEAT,
-            u32::from(VK_H.0),
+            hotkey_modifiers(hotkey),
+            u32::from(hotkey.key),
         )
     }
     .map_err(os_error)
+}
+
+#[cfg(windows)]
+fn hotkey_modifiers(
+    hotkey: OverlayHotkey,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::HOT_KEY_MODIFIERS {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+    };
+
+    [
+        (hotkey.ctrl, MOD_CONTROL),
+        (hotkey.alt, MOD_ALT),
+        (hotkey.shift, MOD_SHIFT),
+    ]
+    .into_iter()
+    .filter(|&(held, _)| held)
+    .fold(MOD_NOREPEAT, |modifiers, (_, modifier)| {
+        modifiers | modifier
+    })
+}
+
+/// Whether another app has `hotkey` registered already.  The overlay's own
+/// registration counts too, so leave out the key it has.
+#[cfg(windows)]
+pub(crate) fn hotkey_taken(hotkey: OverlayHotkey) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+
+    // Any id works for a registration this thread undoes right away.
+    const PROBE_ID: i32 = 0xB00;
+    let registered = unsafe {
+        RegisterHotKey(
+            None,
+            PROBE_ID,
+            hotkey_modifiers(hotkey),
+            u32::from(hotkey.key),
+        )
+    };
+    match registered {
+        Ok(()) => {
+            let _ = unsafe { UnregisterHotKey(None, PROBE_ID) };
+            false
+        }
+        Err(error) => os_error(error).raw_os_error() == Some(super::HOTKEY_ALREADY_REGISTERED),
+    }
+}
+
+/// Resize the overlay's canvas to `size` points, keeping its bottom centre
+/// where it is.
+#[cfg(windows)]
+pub(super) fn resize_canvas(size: egui::Vec2) {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
+    };
+
+    let hwnd = SUBCLASS_HWND.load(Ordering::Acquire);
+    if hwnd == 0 {
+        return;
+    }
+    let hwnd = HWND(hwnd as *mut std::ffi::c_void);
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+        return;
+    }
+    let scale = match unsafe { GetDpiForWindow(hwnd) } {
+        0 => 1.0,
+        dpi => dpi as f32 / 96.0,
+    };
+    let width = (size.x * scale).round() as i32;
+    let height = (size.y * scale).round() as i32;
+    let x = (rect.left + rect.right - width) / 2;
+    let y = rect.bottom - height;
+    if let Err(error) = unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            x,
+            y,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+        )
+    } {
+        tracing::warn!(%error, "Could not resize the overlay");
+    }
 }
 
 /// Sets whether a click on the overlay takes the keyboard from the game.
@@ -772,9 +860,17 @@ pub(super) fn configure(_: &eframe::CreationContext<'_>) -> std::io::Result<()> 
 }
 
 #[cfg(not(windows))]
-pub(super) fn register_hotkey() -> std::io::Result<()> {
+pub(super) fn register_hotkey(_: OverlayHotkey) -> std::io::Result<()> {
     Ok(())
 }
+
+#[cfg(not(windows))]
+pub(crate) fn hotkey_taken(_: OverlayHotkey) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub(super) fn resize_canvas(_: egui::Vec2) {}
 
 #[cfg(not(windows))]
 pub(super) fn set_click_takes_keyboard(_: bool) {}

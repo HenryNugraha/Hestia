@@ -2760,6 +2760,11 @@ enum ReloadForeground {
         title: String,
         hwnd: windows::Win32::Foundation::HWND,
     },
+    /// The in-game overlay, which XXMI takes keys from only while it's titled "Hestia".
+    Overlay {
+        title: String,
+        hwnd: windows::Win32::Foundation::HWND,
+    },
     Other {
         title: String,
     },
@@ -2772,6 +2777,7 @@ impl ReloadForeground {
         match self {
             Self::Hestia { title, .. } => format!("Hestia foreground ({title:?})"),
             Self::Game { title, .. } => format!("game foreground ({title:?})"),
+            Self::Overlay { title, .. } => format!("in-game overlay foreground ({title:?})"),
             Self::Other { title } => format!("other foreground ({title:?})"),
             Self::None => "no foreground window".to_string(),
         }
@@ -3018,6 +3024,10 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     let Some((hwnd, title, pid)) = foreground_window_title_and_pid() else {
         return ReloadForeground::None;
     };
+    // Before the title: the overlay may still carry "Hestia" from a reload.
+    if game_overlay_process().is_some_and(|overlay| overlay.pid == pid) {
+        return ReloadForeground::Overlay { title, hwnd };
+    }
     if title == HESTIA_WINDOW_TITLE {
         return ReloadForeground::Hestia { title, hwnd };
     }
@@ -3054,12 +3064,119 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     ReloadForeground::Other { title }
 }
 
+/// Hestia's main window: this process's window titled "Hestia", never the in-game overlay
+/// while it carries that title for a reload.
 #[cfg(windows)]
 fn hestia_window() -> Option<windows::Win32::Foundation::HWND> {
-    use windows::{Win32::UI::WindowsAndMessaging::FindWindowW, core::w};
+    use windows::{
+        Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId},
+        core::w,
+    };
 
-    let hwnd = unsafe { FindWindowW(None, w!("Hestia")).ok()? };
-    (!hwnd.0.is_null()).then_some(hwnd)
+    let mut after = None;
+    loop {
+        let hwnd = unsafe { FindWindowExW(None, after, None, w!("Hestia")).ok()? };
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == std::process::id() {
+            return Some(hwnd);
+        }
+        after = Some(hwnd);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The in-game overlay: another Hestia process, whose window XXMI takes keys from only while
+// it's titled "Hestia".
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct GameOverlayProcess {
+    pid: u32,
+    /// Its search takes the keys.
+    typing: bool,
+}
+
+static GAME_OVERLAY: std::sync::Mutex<Option<GameOverlayProcess>> = std::sync::Mutex::new(None);
+
+fn game_overlay_process() -> std::sync::MutexGuard<'static, Option<GameOverlayProcess>> {
+    GAME_OVERLAY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The in-game overlay's process while it runs, so a reload with the overlay in front goes
+/// through its title.
+pub fn set_game_overlay_process(pid: Option<u32>) {
+    *game_overlay_process() = pid.map(|pid| GameOverlayProcess { pid, typing: false });
+}
+
+/// Whether the overlay's search takes the keys.  No reload goes through its title meanwhile.
+pub fn set_game_overlay_typing(typing: bool) {
+    if let Some(overlay) = game_overlay_process().as_mut() {
+        overlay.typing = typing;
+    }
+}
+
+#[cfg(windows)]
+fn game_overlay_typing() -> bool {
+    game_overlay_process().is_some_and(|overlay| overlay.typing)
+}
+
+#[cfg(windows)]
+const OVERLAY_TITLE_TIMEOUT_MS: u32 = 500;
+
+/// Sets another process's window title.  A window that takes longer than the timeout still
+/// gets the title once it responds, in the order sent, so a later title is never overtaken.
+#[cfg(windows)]
+fn set_window_title(hwnd: windows::Win32::Foundation::HWND, title: &str) -> bool {
+    use windows::Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::{SMTO_NORMAL, SendMessageTimeoutW, WM_SETTEXT},
+    };
+
+    let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut result = 0;
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_SETTEXT,
+            WPARAM(0),
+            LPARAM(title.as_ptr() as isize),
+            SMTO_NORMAL,
+            OVERLAY_TITLE_TIMEOUT_MS,
+            Some(&mut result),
+        )
+    };
+    sent.0 != 0
+}
+
+/// The overlay titled "Hestia" until dropped.
+#[cfg(windows)]
+struct OverlayTitle(windows::Win32::Foundation::HWND);
+
+#[cfg(windows)]
+impl OverlayTitle {
+    fn take(overlay: windows::Win32::Foundation::HWND) -> Self {
+        set_window_title(overlay, HESTIA_WINDOW_TITLE);
+        Self(overlay)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OverlayTitle {
+    fn drop(&mut self) {
+        if !set_window_title(self.0, crate::overlay_protocol::OVERLAY_TITLE) {
+            tracing::warn!(
+                "the in-game overlay did not take its title back in time; it gets it once it \
+                 responds"
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -3609,6 +3726,12 @@ pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>>
 #[derive(Clone, Copy)]
 enum AcceptedForeground {
     Window(windows::Win32::Foundation::HWND),
+    /// A window that passes every key to the game while it has the key down, so only as long
+    /// as no other key is down: the in-game overlay titled "Hestia".
+    Quiet {
+        hwnd: windows::Win32::Foundation::HWND,
+        key: u16,
+    },
 }
 
 #[cfg(windows)]
@@ -3616,6 +3739,10 @@ fn accepted_foreground_still_active(accepted: AcceptedForeground) -> bool {
     match accepted {
         AcceptedForeground::Window(expected) => foreground_window_title_and_pid()
             .is_some_and(|(foreground, _, _)| foreground == expected),
+        AcceptedForeground::Quiet { hwnd, key } => {
+            foreground_window_title_and_pid().is_some_and(|(foreground, _, _)| foreground == hwnd)
+                && !keyboard_key_down_except(key)
+        }
     }
 }
 
@@ -3703,6 +3830,15 @@ fn keyboard_key_down_for_reload() -> bool {
     // Start at VK_BACK (0x08), intentionally skipping mouse buttons. This is a
     // physical-key idle gate for the foreground hand-off, not a general input lock.
     (0x08..=0xfe).any(|vk| unsafe { GetAsyncKeyState(vk) } < 0)
+}
+
+#[cfg(windows)]
+fn keyboard_key_down_except(key: u16) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    (0x08..=0xfe)
+        .filter(|vk| *vk != i32::from(key))
+        .any(|vk| unsafe { GetAsyncKeyState(vk) } < 0)
 }
 
 #[cfg(windows)]
@@ -3922,6 +4058,83 @@ fn send_reload_hotkey_via_hestia_focus(
     })
 }
 
+/// The in-game overlay is foreground.  XXMI takes keys only from the game or a window titled
+/// "Hestia", so the overlay carries that title for each press of the reload key, then gets
+/// its own back.  Titled "Hestia", it would pass every key pressed in it to the game's mod
+/// hotkeys too, so a press waits until the overlay's search doesn't take the keys and no key
+/// has been down for a moment, and a key pressed during it ends it early to be tried again.
+/// Returns `None` when the overlay lost the foreground before any press, so the caller looks
+/// again.
+#[cfg(windows)]
+fn send_reload_hotkey_via_overlay(
+    importer_root: &Path,
+    overlay: windows::Win32::Foundation::HWND,
+) -> Result<Option<String>> {
+    let vk = reload_hotkey_vk(importer_root);
+    let started = std::time::Instant::now();
+    let mut pressed = 0;
+    let mut interrupted = 0;
+    while pressed < RELOAD_KEY_PULSE_COUNT {
+        let overlay_foreground = foreground_window_title_and_pid()
+            .is_some_and(|(foreground, _, _)| foreground == overlay);
+        if !overlay_foreground || started.elapsed() >= FOCUS_ROUTE_RETRY_TIMEOUT {
+            break;
+        }
+        if game_overlay_typing() {
+            std::thread::sleep(KEYBOARD_IDLE_POLL);
+            continue;
+        }
+        let remaining = FOCUS_ROUTE_RETRY_TIMEOUT.saturating_sub(started.elapsed());
+        if !wait_for_keyboard_idle(remaining.min(Duration::from_millis(1_500))) {
+            continue;
+        }
+        // A key-up reaches no hotkey, so the settle-up goes before the title.
+        send_keyboard_input(vk, true, "reload key settle-up")?;
+        std::thread::sleep(Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
+        if game_overlay_typing() || keyboard_key_down_for_reload() {
+            continue;
+        }
+        let accepted = AcceptedForeground::Quiet {
+            hwnd: overlay,
+            key: vk,
+        };
+        let title = OverlayTitle::take(overlay);
+        let done = wait_for_foreground_window(
+            overlay,
+            Some(HESTIA_WINDOW_TITLE),
+            FOREGROUND_SETTLE_TIMEOUT,
+        ) && hold_reload_key(vk, accepted)?;
+        drop(title);
+        if done {
+            pressed += 1;
+            if pressed < RELOAD_KEY_PULSE_COUNT {
+                std::thread::sleep(Duration::from_millis(RELOAD_KEY_PULSE_GAP_MS));
+            }
+        } else {
+            interrupted += 1;
+        }
+    }
+
+    let interruptions = if interrupted > 0 {
+        format!("; {interrupted} press(es) ended early by a key or the foreground")
+    } else {
+        String::new()
+    };
+    if pressed > 0 {
+        return Ok(Some(format!(
+            "sent reload hotkey via the in-game overlay's title ({pressed} of \
+             {RELOAD_KEY_PULSE_COUNT} presses){interruptions}"
+        )));
+    }
+    if started.elapsed() >= FOCUS_ROUTE_RETRY_TIMEOUT {
+        return Ok(Some(format!(
+            "skipped: keys were down or the in-game overlay's search took them for {}ms{interruptions}",
+            FOCUS_ROUTE_RETRY_TIMEOUT.as_millis()
+        )));
+    }
+    Ok(None)
+}
+
 #[cfg(windows)]
 fn focus_route_message(outcome: FocusRouteOutcome) -> String {
     let mut parts = vec!["sent reload hotkey via Hestia focus".to_string()];
@@ -4017,6 +4230,22 @@ pub fn send_reload_hotkey_foreground_aware(
                     },
                 });
             }
+            ReloadForeground::Overlay { title, hwnd } => {
+                if !reload_hotkey_supported(&importer_root) {
+                    return Ok(ReloadHotkeyReport {
+                        message: format!(
+                            "skipped: the in-game overlay is foreground but additional_foreground_window is unavailable; {label}"
+                        ),
+                    });
+                }
+                if let Some(message) = send_reload_hotkey_via_overlay(&importer_root, hwnd)? {
+                    return Ok(ReloadHotkeyReport {
+                        message: with_hint(format!("{message}; {label}")),
+                    });
+                }
+                // It closed, so the game or Hestia may be in front now.
+                last_foreground = ReloadForeground::Overlay { title, hwnd };
+            }
             other => {
                 last_foreground = other;
                 if attempt < FOREGROUND_RELOAD_ATTEMPTS {
@@ -4032,6 +4261,17 @@ pub fn send_reload_hotkey_foreground_aware(
             last_foreground.label()
         ),
     })
+}
+
+/// The importer's reload key as the user presses it, such as "F10".
+#[cfg(windows)]
+pub fn reload_hotkey_name(importer_root: &Path) -> String {
+    vk_display_name(reload_hotkey_vk(importer_root))
+}
+
+#[cfg(not(windows))]
+pub fn reload_hotkey_name(_importer_root: &Path) -> String {
+    "F10".to_string()
 }
 
 #[cfg(not(windows))]

@@ -1,13 +1,13 @@
 const TEXT_KEY_COUNT: usize = TextKey::COUNT;
 
 #[derive(Clone, Copy)]
-struct TextCatalog {
+pub(crate) struct TextCatalog {
     language: AppLanguage,
 }
 
 #[repr(usize)]
-#[derive(Clone, Copy)]
-enum TextKey {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextKey {
     WhatsNewWindowTitle,
     WhatsNewFeedbackSurveyTooltip,
 
@@ -821,10 +821,92 @@ enum TextKey {
     LibraryCategorySortByNameDesc,
     LibraryUncategorizedStatusHeader,
     LibrarySortMenuTitle,
+
+    // In-game overlay
+    SettingsGameOverlay,
+    SettingsGameOverlayTooltip,
+    GameOverlayHotkeyTaken,
+    GameOverlayHotkeyFailed,
+    GameOverlayFocusTakeFailed,
+    GameOverlayFocusReturnFailed,
+    GameOverlayNoAnswer,
+    GameOverlayPressReloadKey,
+    GameOverlayInstalledNotice,
+    GameOverlayInstallFailedNotice,
+    GameOverlayNeedsAnswerNotice,
+    GameOverlayArrivedNotice,
+    GameOverlayToBrowse,
+    GameOverlayHide,
+    GameOverlayClose,
+    GameOverlayKeepExpanded,
+    GameOverlayUnpin,
+    GameOverlayOpenHestia,
+    GameOverlayCouldNotOpenHestia,
+    GameOverlayShowAllCharacters,
+    GameOverlaySearchHint,
+    GameOverlayOpacity,
+    GameOverlayHintNavigate,
+    GameOverlayHintMods,
+    GameOverlayHintCategories,
+    GameOverlayHintExclusive,
+    GameOverlayHintEnable,
+    GameOverlayHintInstall,
+    GameOverlayHintTryAgain,
+    GameOverlayHintToggle,
+    GameOverlayHintSearch,
+    GameOverlayHintDoneTyping,
+    GameOverlayHintEditSearch,
+    GameOverlayHintClearSearch,
+    GameOverlayPickFile,
+    GameOverlaySameName,
+    GameOverlayReplace,
+    GameOverlayReplaceDetail,
+    GameOverlayMerge,
+    GameOverlayMergeDetail,
+    GameOverlayKeepBoth,
+    GameOverlayKeepBothDetail,
+    GameOverlayCancel,
+    GameOverlayNoInstalledMods,
+    GameOverlayInstallToSee,
+    GameOverlayNoMatches,
+    GameOverlayPreviousCategory,
+    GameOverlayNextCategory,
+    GameOverlayGameBananaFailed,
+    GameOverlayGameBananaNothingFor,
+    GameOverlayGameBananaNoMatches,
+    GameOverlayNewTag,
+    GameOverlayWaiting,
+    GameOverlayDownloadingPercent,
+    GameOverlayDownloading,
+    GameOverlayInstalling,
+    GameOverlayNeedsYourAnswer,
+    GameOverlayInstalledOff,
+    GameOverlayCouldNotInstallTryAgain,
+    GameOverlayCouldNotInstall,
+    GameOverlayNoPreview,
+    SettingsGameOverlayEnable,
+    SettingsGameOverlayOpenWith,
+    SettingsGameOverlayChangeKey,
+    SettingsGameOverlayResetKey,
+    SettingsGameOverlayPressKeys,
+    SettingsGameOverlayKeyNotAllowed,
+    SettingsGameOverlayKeyReserved,
+    SettingsGameOverlayKeyTaken,
+    SettingsGameOverlayArrivalStrip,
+    SettingsGameOverlayArrivalStripTooltip,
+    SettingsGameOverlayCloseStrip,
+    SettingsGameOverlayCloseStripTooltip,
+    SettingsGameOverlayGameBanana,
+    SettingsGameOverlayAllCharacters,
+    SettingsGameOverlayKeyHints,
+    SettingsGameOverlaySize,
+    SettingsGameOverlaySizeSmall,
+    SettingsGameOverlaySizeNormal,
+    SettingsGameOverlaySizeLarge,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::LibrarySortMenuTitle as usize + 1;
+    const COUNT: usize = Self::SettingsGameOverlaySizeLarge as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -833,11 +915,11 @@ include!("i18n/zh_cn.rs");
 include!("i18n/ru_ru.rs");
 
 impl TextCatalog {
-    fn new(language: AppLanguage) -> Self {
+    pub(crate) fn new(language: AppLanguage) -> Self {
         Self { language }
     }
 
-    fn get(self, key: TextKey) -> &'static str {
+    pub(crate) fn get(self, key: TextKey) -> &'static str {
         let index = key as usize;
         match self.language {
             AppLanguage::English => EN_US[index],
@@ -4064,6 +4146,14 @@ impl TextCatalog {
 
     fn could_not_copy_image(self) -> &'static str {
         self.get(TextKey::OverlayCouldNotCopyImage)
+    }
+
+    fn settings_game_overlay(self) -> &'static str {
+        self.get(TextKey::SettingsGameOverlay)
+    }
+
+    fn settings_game_overlay_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsGameOverlayTooltip)
     }
 }
 

@@ -2028,7 +2028,7 @@ impl HestiaApp {
     /// Returns the ids of the mods this install produced.
     fn finalize_install_after_refresh(
         &mut self,
-        _job_id: u64,
+        job_id: u64,
         payload: PendingInstallFinalize,
     ) -> Vec<String> {
         let PendingInstallFinalize {
@@ -2306,12 +2306,19 @@ impl HestiaApp {
                 candidate_labels,
             );
         }
+        // The in-game overlay's installs go where it showed them, or into a
+        // new category for their character.
+        let overlay_category = self.game_overlay_install_category(job_id);
         for id in &newly_installed_ids {
-            self.apply_browse_download_category(
-                id,
-                pending_meta.as_ref(),
-                gb_profile.as_deref(),
-            );
+            match &overlay_category {
+                Some(Some(category_id)) => self.assign_mod_category(id, Some(category_id.clone())),
+                _ => self.apply_browse_download_category(
+                    id,
+                    pending_meta.as_ref(),
+                    gb_profile.as_deref(),
+                    overlay_category.is_some(),
+                ),
+            }
         }
         // External installs (no GameBanana listing) inherit the category folder
         // the user was drilled into when they queued the install. GameBanana
@@ -2414,14 +2421,18 @@ impl HestiaApp {
             self.log_action(text.installed_action(), fallback_name);
             self.set_message_ok(text.installed_name(fallback_name));
         }
+        self.finish_game_overlay_install(job_id, &newly_installed_ids);
         newly_installed_ids
     }
 
+    /// `always` gives the mod a category even when the setting for Browse
+    /// downloads is off.
     fn apply_browse_download_category(
         &mut self,
         mod_entry_id: &str,
         pending_meta: Option<&PendingBrowseInstallMeta>,
         gb_profile: Option<&gamebanana::ProfileResponse>,
+        always: bool,
     ) {
         let Some(meta) = pending_meta else { return; };
         if meta.update_target_mod_id.is_some() {
@@ -2448,7 +2459,7 @@ impl HestiaApp {
             self.save_state();
             enabled
         };
-        if !enabled {
+        if !enabled && !always {
             return;
         }
 

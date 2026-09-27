@@ -2271,6 +2271,13 @@ impl HestiaApp {
                 );
             }
             _ => {
+                if self.ask_game_overlay_for_file(
+                    pending.task_id,
+                    &selectable,
+                    detail.unsafe_content,
+                ) {
+                    return;
+                }
                 self.remove_task(pending.task_id);
                 self.browse_state.file_prompt = Some(BrowseFilePrompt {
                     mod_id: pending.mod_id,

@@ -834,4 +834,86 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Name Z-A", // LibraryCategorySortByNameDesc
     "Uncategorized: {status}", // LibraryUncategorizedStatusHeader
     "Sort & Order", // LibrarySortMenuTitle
+
+    // In-game overlay
+    "In-game overlay", // SettingsGameOverlay
+    "Press {key} while a supported game runs to browse and switch mods over it.", // SettingsGameOverlayTooltip
+    "Another app already uses {key}, so only the pin can open the overlay.", // GameOverlayHotkeyTaken
+    "Couldn't register {key}, so only the pin can open the overlay.", // GameOverlayHotkeyFailed
+    "Couldn't take focus from the game, so keys won't reach the overlay.", // GameOverlayFocusTakeFailed
+    "Couldn't give focus back to the game. Click the game to continue.", // GameOverlayFocusReturnFailed
+    "Hestia didn't answer, so the change may not have been made.", // GameOverlayNoAnswer
+    "Press {key} in the game to see the change.", // GameOverlayPressReloadKey
+    "Installed {name}, turned off.", // GameOverlayInstalledNotice
+    "Couldn't install {name}.", // GameOverlayInstallFailedNotice
+    "{name} needs an answer. Press {key}.", // GameOverlayNeedsAnswerNotice
+    "{name} is now with your mods.", // GameOverlayArrivedNotice
+    "to browse", // GameOverlayToBrowse
+    "Hide", // GameOverlayHide
+    "Close overlay", // GameOverlayClose
+    "Keep expanded", // GameOverlayKeepExpanded
+    "Unpin · return to {key}", // GameOverlayUnpin
+    "Restore main Hestia window", // GameOverlayOpenHestia
+    "Could not open Hestia: {error}", // GameOverlayCouldNotOpenHestia
+    "Show all characters", // GameOverlayShowAllCharacters
+    "Type to search", // GameOverlaySearchHint
+    "Opacity", // GameOverlayOpacity
+    "Navigate", // GameOverlayHintNavigate
+    "Browse mods", // GameOverlayHintMods
+    "Browse categories", // GameOverlayHintCategories
+    "Enable this mod, disable others", // GameOverlayHintExclusive
+    "Enable this mod", // GameOverlayHintEnable
+    "Install", // GameOverlayHintInstall
+    "Try again", // GameOverlayHintTryAgain
+    "Toggle Enable/Disable", // GameOverlayHintToggle
+    "Search", // GameOverlayHintSearch
+    "Done typing", // GameOverlayHintDoneTyping
+    "Edit search", // GameOverlayHintEditSearch
+    "Clear search", // GameOverlayHintClearSearch
+    "Pick the file to install", // GameOverlayPickFile
+    "A mod named \"{folder}\" is already installed", // GameOverlaySameName
+    "Replace", // GameOverlayReplace
+    "Delete the installed one first", // GameOverlayReplaceDetail
+    "Merge", // GameOverlayMerge
+    "Add the new files to the installed one", // GameOverlayMergeDetail
+    "Keep both", // GameOverlayKeepBoth
+    "Install it under another name", // GameOverlayKeepBothDetail
+    "Cancel", // GameOverlayCancel
+    "No installed mods", // GameOverlayNoInstalledMods
+    "Install a mod to see it here.", // GameOverlayInstallToSee
+    "No matches", // GameOverlayNoMatches
+    "Previous category", // GameOverlayPreviousCategory
+    "Next category", // GameOverlayNextCategory
+    "Couldn't reach GameBanana. Space to try again.", // GameOverlayGameBananaFailed
+    "Nothing for {name} on GameBanana", // GameOverlayGameBananaNothingFor
+    "No matches on GameBanana", // GameOverlayGameBananaNoMatches
+    "NEW", // GameOverlayNewTag
+    "Waiting", // GameOverlayWaiting
+    "Downloading {percent}%", // GameOverlayDownloadingPercent
+    "Downloading", // GameOverlayDownloading
+    "Installing", // GameOverlayInstalling
+    "Needs your answer", // GameOverlayNeedsYourAnswer
+    "Installed, turned off", // GameOverlayInstalledOff
+    "Couldn't install. Space to try again.", // GameOverlayCouldNotInstallTryAgain
+    "Couldn't install", // GameOverlayCouldNotInstall
+    "No preview", // GameOverlayNoPreview
+    "Turn on the overlay", // SettingsGameOverlayEnable
+    "Open with", // SettingsGameOverlayOpenWith
+    "Change", // SettingsGameOverlayChangeKey
+    "Reset", // SettingsGameOverlayResetKey
+    "Press the keys, or Esc to cancel", // SettingsGameOverlayPressKeys
+    "Use Alt or Ctrl with a letter, number or F key.", // SettingsGameOverlayKeyNotAllowed
+    "{key} is used by Windows, the overlay or XXMI. Pick another.", // SettingsGameOverlayKeyReserved
+    "Another app already uses {key}. Pick another.", // SettingsGameOverlayKeyTaken
+    "Show at game start", // SettingsGameOverlayArrivalStrip
+    "Shows the overlay's strip for a few seconds when the game starts.", // SettingsGameOverlayArrivalStripTooltip
+    "Show the reminder after closing", // SettingsGameOverlayCloseStrip
+    "Keeps the strip with {key} for a few seconds after the overlay closes.", // SettingsGameOverlayCloseStripTooltip
+    "Show GameBanana mods", // SettingsGameOverlayGameBanana
+    "Show characters you have no category for", // SettingsGameOverlayAllCharacters
+    "Show key hints", // SettingsGameOverlayKeyHints
+    "Size", // SettingsGameOverlaySize
+    "Small", // SettingsGameOverlaySizeSmall
+    "Normal", // SettingsGameOverlaySizeNormal
+    "Large", // SettingsGameOverlaySizeLarge
 ];

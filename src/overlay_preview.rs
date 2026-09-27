@@ -3,9 +3,10 @@
 //!
 //! The same window is also the in-game overlay, which Hestia starts with
 //! `--overlay` while a supported game runs.  It shows Hestia's library and
-//! hides until Alt+H.
+//! hides until its key, Alt+H unless Settings changed it.
 
 mod data;
+mod gamebanana;
 mod hints;
 mod keyboard;
 mod layouts;
@@ -18,18 +19,27 @@ mod session;
 mod thumbnails;
 
 pub(crate) use data::mod_image;
+pub(crate) use platform::hotkey_taken;
 
 use std::{
+    cell::Cell,
     collections::VecDeque,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use egui::{Color32, RichText, ViewportCommand};
+use gamebanana::InstallNews;
 
-const OVERLAY_OPACITY_MIN: u8 = 50;
-const OVERLAY_OPACITY_MAX: u8 = 94;
-const DEFAULT_OVERLAY_OPACITY: u8 = 78;
+use crate::{
+    app::{TextCatalog, TextKey},
+    model::{AppLanguage, OverlayHotkey, OverlaySize},
+    overlay_protocol::Settings,
+};
+
+pub(crate) const OVERLAY_OPACITY_MIN: u8 = 50;
+pub(crate) const OVERLAY_OPACITY_MAX: u8 = 94;
+pub(crate) const DEFAULT_OVERLAY_OPACITY: u8 = 78;
 const EXPANDED_SIZE: egui::Vec2 = egui::vec2(560.0, 392.0);
 const IDLE_SIZE: egui::Vec2 = egui::vec2(280.0, 48.0);
 // Reserve the hold-preview space without resizing or recentering the native
@@ -40,12 +50,16 @@ const HEADER_HEIGHT: f32 = 46.0;
 const SEARCH_SIZE: egui::Vec2 = egui::vec2(120.0, 22.0);
 /// Win32 `ERROR_HOTKEY_ALREADY_REGISTERED`.
 const HOTKEY_ALREADY_REGISTERED: i32 = 1409;
-const HOTKEY_TAKEN: &str = "Another app already uses Alt+H, so only the pin can open the overlay.";
-const HOTKEY_FAILED: &str = "Couldn't register Alt+H, so only the pin can open the overlay.";
-const FOCUS_TAKE_FAILED: &str =
-    "Couldn't take focus from the game, so keys won't reach the overlay.";
-const FOCUS_RETURN_FAILED: &str =
-    "Couldn't give focus back to the game. Click the game to continue.";
+
+thread_local! {
+    /// Hestia's language, for the overlay's text.
+    static LANGUAGE: Cell<AppLanguage> = const { Cell::new(AppLanguage::English) };
+}
+
+/// The overlay's text in Hestia's language.
+fn text(key: TextKey) -> &'static str {
+    TextCatalog::new(LANGUAGE.get()).get(key)
+}
 
 pub fn run() -> anyhow::Result<()> {
     launch(None)
@@ -53,18 +67,53 @@ pub fn run() -> anyhow::Result<()> {
 
 /// The in-game overlay.  Hestia sends the library first.
 pub fn run_live() -> anyhow::Result<()> {
-    launch(Some(live::read_start()?))
+    let start = live::read_start()?;
+    data::save_sample(&start);
+    launch(Some(start))
 }
 
 fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
     let preview = start.is_none();
-    let (catalog, live_start) = match start {
+    let (catalog, mut settings, live_start) = match start {
         Some(start) => (
-            data::catalog_from_library(start.library),
-            Some((start.host_window, start.game_pids, start.selection)),
+            data::catalog_from_library(start.library.clone()),
+            start.settings,
+            Some((
+                start.host_window,
+                start.game_pids,
+                start.selection,
+                start.library,
+            )),
         ),
-        None => (data::load_catalog(), None),
+        None => {
+            let (catalog, settings) = data::load_sample();
+            (catalog, settings, None)
+        }
     };
+    // The preview can show another language, to check its text.
+    let language = preview
+        .then(|| std::env::var("HESTIA_OVERLAY_PREVIEW_LANGUAGE").ok())
+        .flatten()
+        .and_then(|tag| AppLanguage::from_locale_tag(&tag))
+        .unwrap_or(settings.language);
+    LANGUAGE.set(language);
+    // And another hotkey or size, to check they fit.
+    if preview {
+        if let Some(hotkey) = std::env::var("HESTIA_OVERLAY_PREVIEW_HOTKEY")
+            .ok()
+            .and_then(|name| OverlayHotkey::parse(&name))
+        {
+            settings.hotkey = hotkey;
+        }
+        if let Ok(name) = std::env::var("HESTIA_OVERLAY_PREVIEW_SIZE")
+            && let Some(size) = OverlaySize::ALL
+                .into_iter()
+                .find(|size| format!("{size:?}").eq_ignore_ascii_case(&name))
+        {
+            settings.size = size;
+        }
+    }
+    let zoom = settings.size.zoom();
     let game = catalog.game.clone();
     // The in-game overlay ignores the preview's test settings.
     let capture = preview
@@ -102,6 +151,7 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
         .then(|| std::env::var("HESTIA_OVERLAY_PREVIEW_OPACITY").ok())
         .flatten()
         .and_then(|value| value.parse::<u8>().ok())
+        .or(settings.opacity)
         .map(clamp_overlay_opacity)
         .unwrap_or(DEFAULT_OVERLAY_OPACITY);
     // Optional in-process input for native screenshot checks, never sent to Windows/the game.
@@ -140,16 +190,14 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             .expect("valid embedded app icon");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            // 3DMigoto also listens to keys pressed in a window titled
-            // "Hestia".  If the overlay ever takes that title, for example to
-            // send the F10 reload, it must drop it while a search is open, or
-            // typing would fire mod hotkeys.
+            // Hestia titles the overlay "Hestia" just while it presses the
+            // reload key, never while the search takes the keys.
             .with_title(if preview {
                 "Hestia — Overlay preview"
             } else {
-                "Hestia overlay"
+                crate::overlay_protocol::OVERLAY_TITLE
             })
-            .with_inner_size(CANVAS_SIZE)
+            .with_inner_size(CANVAS_SIZE * zoom)
             .with_decorations(false)
             .with_resizable(false)
             .with_transparent(true)
@@ -180,11 +228,13 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
                 window.set_border_color(None);
             }
             apply_preview_style(&cc.egui_ctx);
+            cc.egui_ctx.set_zoom_factor(zoom);
+            keyboard::set_hotkey(settings.hotkey);
             let keyboard = capture
                 .is_none()
                 .then(|| keyboard::Keyboard::new(cc.egui_ctx.clone()));
             let hotkey_warning = if keyboard.is_some() {
-                register_hotkey()
+                register_hotkey(settings.hotkey)
             } else {
                 None
             };
@@ -195,16 +245,17 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
                 (keyboard.is_none() || !cfg!(windows)).then(keyboard::EguiKeys::default);
             let mut samples = layouts::Layouts::new(catalog);
             let live = match live_start {
-                Some((host_window, game_processes, selection)) => {
-                    // Mods change through Hestia, which comes in a later step.
-                    samples.set_read_only(true);
+                Some((host_window, game_processes, selection, library)) => {
+                    samples.set_gamebanana(settings.gamebanana, settings.all_characters);
                     if let Some(selection) = &selection {
                         samples.restore_selection(selection);
                     }
                     platform::wait_for_game(&game_processes);
                     Some(Live {
-                        link: live::Link::start(cc.egui_ctx.clone(), host_window)?,
+                        link: live::Link::start(cc.egui_ctx.clone(), host_window, opacity)?,
                         strip: live::Strip::default(),
+                        changes: live::Changes::new(library),
+                        notice: None,
                     })
                 }
                 None => None,
@@ -221,6 +272,7 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
                 samples,
                 live,
                 opacity,
+                settings,
                 pinned,
                 expanded: pinned,
                 motion: motion::ExpansionMotion::new(pinned),
@@ -269,6 +321,8 @@ struct OverlayPreview {
     /// Only in the in-game overlay.
     live: Option<Live>,
     opacity: u8,
+    /// Hestia's settings for the overlay, or the sample's in the preview.
+    settings: Settings,
     pinned: bool,
     expanded: bool,
     motion: motion::ExpansionMotion,
@@ -282,8 +336,8 @@ struct OverlayPreview {
     search: search::Search,
     /// Hand the keyboard back once no key pressed in the overlay is held.
     focus_return_pending: bool,
-    hotkey_warning: Option<&'static str>,
-    focus_warning: Option<&'static str>,
+    hotkey_warning: Option<TextKey>,
+    focus_warning: Option<TextKey>,
     capture: Option<PathBuf>,
     capture_click: Option<egui::Pos2>,
     capture_button: egui::PointerButton,
@@ -303,19 +357,30 @@ struct OverlayPreview {
 struct Live {
     link: live::Link,
     strip: live::Strip,
+    changes: live::Changes,
+    notice: Option<Notice>,
+}
+
+/// The line above the strip: why Hestia didn't make a change, which key
+/// shows it in the game, or how an install went.
+struct Notice {
+    text: String,
+    until: f64,
+    /// Warnings are red.
+    warning: bool,
 }
 
 impl eframe::App for OverlayPreview {
     fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
         if std::mem::take(&mut self.capture_open) {
-            push_capture_key(input, egui::Key::H, egui::Modifiers::ALT);
+            push_hotkey(input, self.settings.hotkey);
         }
         if self
             .capture_close
             .is_some_and(|frame| self.frames_drawn >= frame)
         {
             self.capture_close = None;
-            push_capture_key(input, egui::Key::H, egui::Modifiers::ALT);
+            push_hotkey(input, self.settings.hotkey);
         }
         if self.frames_drawn >= 12 {
             if let Some(pos) = self.capture_click.take() {
@@ -417,16 +482,89 @@ impl eframe::App for OverlayPreview {
     fn ui(&mut self, root: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let now = ctx.input(|input| input.time);
-        if let Some(live) = &mut self.live {
-            if let Some(library) = live.link.take_library() {
+        let news = self.live.as_mut().map(|live| live.link.take_news());
+        if let Some(settings) = news.as_ref().and_then(|news| news.settings) {
+            self.apply_settings(&ctx, settings, now);
+        }
+        if let (Some(live), Some(news)) = (&mut self.live, news) {
+            if let Some(library) = news.library {
                 self.game = library.game_name.clone();
+                live.changes.receive(library);
+            }
+            let mut refused = None;
+            let mut press_key = None;
+            for answer in news.answers {
+                press_key = answer.press_key.clone().or(press_key);
+                refused = live.changes.answer(answer).or(refused);
+            }
+            if live.changes.expire(now) {
+                refused = Some(text(TextKey::GameOverlayNoAnswer).to_owned());
+            }
+            if let Some(error) = refused {
+                live.strip.warn(now);
+                live.notice = Some(Notice {
+                    text: error,
+                    until: now + live::WARNING_SECONDS,
+                    warning: true,
+                });
+            } else if let Some(key) = press_key {
+                live.notice = Some(Notice {
+                    text: text(TextKey::GameOverlayPressReloadKey).replace("{key}", &key),
+                    until: now + live::WARNING_SECONDS,
+                    warning: false,
+                });
+            }
+            if let Some(library) = live.changes.take_update() {
                 self.samples
                     .replace_catalog(data::catalog_from_library(library));
             }
+            // After the library, which has the mods an install added.
+            for news in self.samples.receive_gamebanana(news.gamebanana) {
+                let (key, name, warning) = match news {
+                    InstallNews::Installed(name) => {
+                        (TextKey::GameOverlayInstalledNotice, name, false)
+                    }
+                    InstallNews::Failed(name) => {
+                        (TextKey::GameOverlayInstallFailedNotice, name, true)
+                    }
+                    // The open overlay shows the question itself.
+                    InstallNews::Question(_) if self.expanded => continue,
+                    InstallNews::Question(name) => {
+                        (TextKey::GameOverlayNeedsAnswerNotice, name, false)
+                    }
+                };
+                live.strip.warn(now);
+                live.notice = Some(Notice {
+                    text: text(key)
+                        .replace("{name}", &name)
+                        .replace("{key}", &self.settings.hotkey.label()),
+                    until: now + live::WARNING_SECONDS,
+                    warning,
+                });
+            }
+            // Installed mods that crossed out of sight last frame.
+            for name in self.samples.take_arrivals() {
+                live.notice = Some(Notice {
+                    text: text(TextKey::GameOverlayArrivedNotice).replace("{name}", &name),
+                    until: now + live::WARNING_SECONDS,
+                    warning: false,
+                });
+            }
+            match &live.notice {
+                Some(notice) if now >= notice.until => live.notice = None,
+                Some(notice) => {
+                    ctx.request_repaint_after(Duration::from_secs_f64(notice.until - now))
+                }
+                None => {}
+            }
+            self.samples.set_waiting(live.changes.waiting(now));
             if live.link.take_closed() {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
-            if platform::take_game_arrived() {
+            // A hotkey warning shows even without the strip.
+            if platform::take_game_arrived()
+                && (self.settings.arrival_strip || self.hotkey_warning.is_some())
+            {
                 live.strip.arrive(now);
             }
         }
@@ -468,7 +606,7 @@ impl eframe::App for OverlayPreview {
         for event in events {
             let transition = match event {
                 keyboard::Event::Hotkey { focused } => {
-                    self.focus_warning = (!focused).then_some(FOCUS_TAKE_FAILED);
+                    self.focus_warning = (!focused).then_some(TextKey::GameOverlayFocusTakeFailed);
                     self.session.hotkey()
                 }
                 keyboard::Event::Command(command) => {
@@ -476,7 +614,17 @@ impl eframe::App for OverlayPreview {
                     // key that ends the session can share a frame.  Rows are
                     // settled here for the same reason, since opening and
                     // closing reset them.
-                    if self.session.is_open() || self.pinned {
+                    if (self.session.is_open() || self.pinned) && self.samples.question_open() {
+                        // An install's question takes W/S and Space until
+                        // it's answered.
+                        match command {
+                            keyboard::Command::Row(direction) => {
+                                self.samples.move_question(direction)
+                            }
+                            keyboard::Command::Exclusive => self.samples.answer_question(),
+                            _ => {}
+                        }
+                    } else if self.session.is_open() || self.pinned {
                         match command {
                             keyboard::Command::Row(direction) => self.samples.switch_row(direction),
                             keyboard::Command::Move(direction) => {
@@ -501,9 +649,14 @@ impl eframe::App for OverlayPreview {
                     session::Transition::None
                 }
                 keyboard::Event::Escape => {
-                    // Esc clears a search first, then closes.
+                    // Esc clears a search first, then cancels an install's
+                    // question, then closes.
                     if self.search.escape() {
                         ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
+                        session::Transition::None
+                    } else if (self.session.is_open() || self.pinned)
+                        && self.samples.cancel_question()
+                    {
                         session::Transition::None
                     } else {
                         escape = true;
@@ -517,7 +670,7 @@ impl eframe::App for OverlayPreview {
                 }
                 keyboard::Event::Deactivated => {
                     self.focus_return_pending = false;
-                    if self.focus_warning == Some(FOCUS_RETURN_FAILED) {
+                    if self.focus_warning == Some(TextKey::GameOverlayFocusReturnFailed) {
                         self.focus_warning = None;
                     }
                     self.session.deactivated()
@@ -541,7 +694,7 @@ impl eframe::App for OverlayPreview {
                     tracing::info!("Overlay returned the keyboard");
                 } else {
                     tracing::warn!("Overlay could not return the keyboard");
-                    self.focus_warning = Some(FOCUS_RETURN_FAILED);
+                    self.focus_warning = Some(TextKey::GameOverlayFocusReturnFailed);
                 }
             }
         }
@@ -601,6 +754,7 @@ impl eframe::App for OverlayPreview {
                 keyboard::Command::Row(_) | keyboard::Command::Move(_) => {}
             }
         }
+        let idle_width = self.idle_width(&ctx);
         let mut visible_regions = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -608,13 +762,27 @@ impl eframe::App for OverlayPreview {
                 ui.multiply_opacity(strip_opacity);
                 let bounds = ui.max_rect();
                 let opening = self.motion.strip();
-                let layout = motion::geometry(bounds, opening);
+                let layout = motion::geometry(bounds, opening, idle_width);
                 visible_regions.push(layout.base);
                 ui.painter().rect_filled(
                     layout.base,
                     0,
                     Color32::from_rgba_unmultiplied(32, 32, 32, base_alpha(self.opacity)),
                 );
+                // The newest message: in the header while it shows, else
+                // above the strip.
+                let hotkey = self.settings.hotkey.label();
+                let warning = |key: TextKey| text(key).replace("{key}", &hotkey);
+                let message: Option<(String, bool)> = self
+                    .restore_error
+                    .clone()
+                    .map(|error| (error, true))
+                    .or_else(|| {
+                        let notice = self.live.as_ref()?.notice.as_ref()?;
+                        Some((notice.text.clone(), notice.warning))
+                    })
+                    .or_else(|| self.focus_warning.map(|key| (warning(key), true)))
+                    .or_else(|| self.hotkey_warning.map(|key| (warning(key), true)));
                 if opening > 0.5 {
                     let mut header_ui = ui.new_child(
                         egui::UiBuilder::new()
@@ -623,7 +791,7 @@ impl eframe::App for OverlayPreview {
                     );
                     header_ui.set_clip_rect(layout.base);
                     header_ui.multiply_opacity(((opening - 0.5) * 2.0).clamp(0.0, 1.0));
-                    self.show_header(&mut header_ui, self.opacity);
+                    self.show_header(&mut header_ui, self.opacity, message.as_ref());
                     let mut strip_ui = ui.new_child(
                         egui::UiBuilder::new()
                             .id_salt("category-rail")
@@ -648,7 +816,7 @@ impl eframe::App for OverlayPreview {
                             layout.base.center().x,
                             layout.base.top() + IDLE_SIZE.y / 2.0,
                         ),
-                        IDLE_SIZE,
+                        egui::vec2(idle_width, IDLE_SIZE.y),
                     );
                     let mut idle_ui = ui.new_child(
                         egui::UiBuilder::new()
@@ -673,11 +841,8 @@ impl eframe::App for OverlayPreview {
                         .show_held_preview(ui, preview_rect, self.opacity);
                     visible_regions.extend_from_slice(self.samples.visible_card_rects());
                 }
-                if let Some(message) = self
-                    .restore_error
-                    .as_deref()
-                    .or(self.focus_warning)
-                    .or(self.hotkey_warning)
+                if opening <= 0.5
+                    && let Some((message, red)) = message
                 {
                     let warning = egui::Rect::from_min_size(
                         layout.base.min - egui::vec2(0.0, 40.0),
@@ -687,11 +852,11 @@ impl eframe::App for OverlayPreview {
                     ui.painter().rect_filled(warning, 0, Color32::from_gray(32));
                     let mut warning_ui =
                         ui.new_child(egui::UiBuilder::new().max_rect(warning.shrink(5.0)));
-                    warning_ui.label(
-                        RichText::new(message)
-                            .size(11.0)
-                            .color(Color32::from_rgb(230, 140, 130)),
-                    );
+                    warning_ui.label(RichText::new(message).size(11.0).color(if red {
+                        Color32::from_rgb(230, 140, 130)
+                    } else {
+                        Color32::from_gray(220)
+                    }));
                 }
             });
         ctx.memory(|memory| {
@@ -760,8 +925,21 @@ impl eframe::App for OverlayPreview {
             }
             ctx.request_repaint_after(Duration::from_millis(80));
         }
+        // The preview only changes mods on screen.  The in-game overlay asks
+        // Hestia to make each change.
+        let requests = self.samples.take_requests();
         if let Some(live) = &mut self.live {
+            for request in requests {
+                live.link.send_change(live.changes.ask(request, now));
+            }
+            for request in self.samples.take_gamebanana_requests() {
+                live.link.ask(request);
+            }
+            if let Some(after) = live.changes.next_frame(now) {
+                ctx.request_repaint_after(after);
+            }
             live.link.report(self.samples.selection());
+            live.link.report_typing(self.search.typing());
         }
         self.frames_drawn = self.frames_drawn.saturating_add(1);
     }
@@ -771,15 +949,15 @@ impl eframe::App for OverlayPreview {
     }
 }
 
-/// Register Alt+H and describe a failure for the warning strip.
-fn register_hotkey() -> Option<&'static str> {
-    let error = platform::register_hotkey().err()?;
+/// Register the hotkey and describe a failure for the warning strip.
+fn register_hotkey(hotkey: OverlayHotkey) -> Option<TextKey> {
+    let error = platform::register_hotkey(hotkey).err()?;
     tracing::warn!(%error, "Could not register the overlay hotkey");
     Some(
         if error.raw_os_error() == Some(HOTKEY_ALREADY_REGISTERED) {
-            HOTKEY_TAKEN
+            TextKey::GameOverlayHotkeyTaken
         } else {
-            HOTKEY_FAILED
+            TextKey::GameOverlayHotkeyFailed
         },
     )
 }
@@ -812,6 +990,25 @@ fn capture_key(token: &str) -> Option<(egui::Key, egui::Modifiers)> {
         }
     }
     Some((egui::Key::from_name(name)?, modifiers))
+}
+
+/// Presses the hotkey in a capture run.
+fn push_hotkey(input: &mut egui::RawInput, hotkey: OverlayHotkey) {
+    let Some(key) = hotkey
+        .parts()
+        .last()
+        .and_then(|name| egui::Key::from_name(name))
+    else {
+        return;
+    };
+    let modifiers = egui::Modifiers {
+        alt: hotkey.alt,
+        ctrl: hotkey.ctrl,
+        shift: hotkey.shift,
+        command: hotkey.ctrl,
+        ..egui::Modifiers::NONE
+    };
+    push_capture_key(input, key, modifiers);
 }
 
 /// Presses and releases a key in a capture run.
@@ -996,12 +1193,17 @@ impl OverlayPreview {
         let Some(live) = &mut self.live else {
             return 1.0;
         };
-        // Without Alt+H, the strip is the only way in, so its warning stays.
-        if expanded
-            || self.motion.animating()
-            || (self.hotkey_warning.is_some() && live.strip.shown(now))
-        {
+        // Without the hotkey, the strip is the only way in, so its warning
+        // stays.
+        if self.hotkey_warning.is_some() && live.strip.shown(now) {
             live.strip.show(now);
+        } else if expanded || self.motion.animating() {
+            // Without the reminder, the strip fades out as the overlay closes.
+            if self.settings.close_strip {
+                live.strip.show(now);
+            } else {
+                live.strip.keep(now);
+            }
         } else if platform::is_visible()
             && ctx.input(|input| input.pointer.hover_pos().is_some() || input.pointer.any_down())
         {
@@ -1011,6 +1213,50 @@ impl OverlayPreview {
             ctx.request_repaint_after(after);
         }
         live.strip.opacity(now)
+    }
+
+    /// Takes the settings Hestia sent while the overlay runs.
+    fn apply_settings(&mut self, ctx: &egui::Context, settings: Settings, now: f64) {
+        let old = std::mem::replace(&mut self.settings, settings);
+        LANGUAGE.set(settings.language);
+        if let Some(opacity) = settings.opacity {
+            self.opacity = clamp_overlay_opacity(opacity);
+            if let Some(live) = &mut self.live {
+                live.link.received_opacity(self.opacity);
+            }
+        }
+        if settings.hotkey != old.hotkey {
+            keyboard::set_hotkey(settings.hotkey);
+            if self.keyboard.is_some() {
+                self.hotkey_warning = register_hotkey(settings.hotkey);
+                if self.hotkey_warning.is_some()
+                    && let Some(live) = &mut self.live
+                {
+                    live.strip.warn(now);
+                }
+            }
+        }
+        if settings.size != old.size {
+            ctx.set_zoom_factor(settings.size.zoom());
+            platform::resize_canvas(CANVAS_SIZE * settings.size.zoom());
+        }
+        // Only on a change, so it doesn't undo a click on the header's
+        // button that Hestia hasn't saved yet.
+        if self.live.is_some()
+            && (settings.gamebanana, settings.all_characters)
+                != (old.gamebanana, old.all_characters)
+        {
+            self.samples
+                .set_gamebanana(settings.gamebanana, settings.all_characters);
+        }
+    }
+
+    /// The idle strip's width, wider for a hotkey with more keys than Alt+H.
+    fn idle_width(&self, ctx: &egui::Context) -> f32 {
+        let gap = ctx.global_style().spacing.item_spacing.x;
+        let extra =
+            keycaps_width(self.settings.hotkey, gap) - keycaps_width(OverlayHotkey::DEFAULT, gap);
+        IDLE_SIZE.x + extra.max(0.0)
     }
 
     /// The in-game overlay's header X: close like Esc, and unpin.
@@ -1054,31 +1300,34 @@ impl OverlayPreview {
                 );
             }
             ui.add_space(8.0);
-            idle_keycap(ui, "ALT", 30.0, self.opacity);
-            let (plus_rect, _) =
-                ui.allocate_exact_size(egui::vec2(8.0, 20.0), egui::Sense::hover());
-            ui.painter().text(
-                plus_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "+",
-                egui::FontId::proportional(11.0),
-                content_gray(150, self.opacity),
-            );
-            idle_keycap(ui, "H", 20.0, self.opacity);
+            for (index, key) in self.settings.hotkey.parts().iter().enumerate() {
+                if index > 0 {
+                    let (plus_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 20.0), egui::Sense::hover());
+                    ui.painter().text(
+                        plus_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "+",
+                        egui::FontId::proportional(11.0),
+                        content_gray(150, self.opacity),
+                    );
+                }
+                idle_keycap(ui, &key.to_uppercase(), keycap_width(key), self.opacity);
+            }
             ui.add(
                 egui::Label::new(
-                    RichText::new("to browse")
+                    RichText::new(text(TextKey::GameOverlayToBrowse))
                         .size(11.0)
                         .color(Color32::from_gray(175)),
                 )
                 .sense(egui::Sense::hover()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close_help = if self.live.is_some() {
-                    "Hide"
+                let close_help = text(if self.live.is_some() {
+                    TextKey::GameOverlayHide
                 } else {
-                    "Close overlay"
-                };
+                    TextKey::GameOverlayClose
+                });
                 if header_button(ui, lucide_icons::Icon::X, close_help, self.opacity).clicked() {
                     match &mut self.live {
                         Some(live) => {
@@ -1089,8 +1338,13 @@ impl OverlayPreview {
                         None => ui.ctx().send_viewport_cmd(ViewportCommand::Close),
                     }
                 }
-                if header_button(ui, lucide_icons::Icon::Pin, "Keep expanded", self.opacity)
-                    .clicked()
+                if header_button(
+                    ui,
+                    lucide_icons::Icon::Pin,
+                    text(TextKey::GameOverlayKeepExpanded),
+                    self.opacity,
+                )
+                .clicked()
                 {
                     self.pinned = true;
                     ui.ctx().request_repaint();
@@ -1099,7 +1353,7 @@ impl OverlayPreview {
         });
     }
 
-    fn show_header(&mut self, ui: &mut egui::Ui, opacity: u8) {
+    fn show_header(&mut self, ui: &mut egui::Ui, opacity: u8, message: Option<&(String, bool)>) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -1133,9 +1387,12 @@ impl OverlayPreview {
             let _ = layouts::delayed_tooltip(drag, self.game.clone());
             // The lane holds the search field and the hints.  Reserve exactly
             // the right-hand controls: three 28pt buttons, the 92pt slider,
-            // and their four 3pt gaps.  The lane ends at the slider's hit rect.
+            // and their four 3pt gaps, and in the game one more button and
+            // gap.  The lane ends at the slider's hit rect.
+            let show_all_button = self.live.is_some() && self.settings.gamebanana;
+            let controls = if show_all_button { 219.0 } else { 188.0 };
             let (lane, lane_drag) = ui.allocate_exact_size(
-                egui::vec2((ui.available_width() - 188.0).max(0.0), 30.0),
+                egui::vec2((ui.available_width() - controls).max(0.0), 30.0),
                 egui::Sense::drag(),
             );
             if lane_drag.drag_started() {
@@ -1146,29 +1403,41 @@ impl OverlayPreview {
             let mode = self.hint_mode();
             self.hint_ticker
                 .update(self.expanded, mode, ui.input(|input| input.time));
-            shortcut_hints(
-                ui,
-                hints_rect,
-                opacity,
-                &self.hint_ticker,
-                self.expanded,
-                mode,
-                self.samples.shortcut_availability(),
-            );
+            if let Some((message, red)) = message {
+                header_message(ui, hints_rect, message, *red, opacity);
+            } else if self.settings.key_hints {
+                shortcut_hints(
+                    ui,
+                    hints_rect,
+                    opacity,
+                    &self.hint_ticker,
+                    self.expanded,
+                    mode,
+                    self.samples.shortcut_availability(),
+                );
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if header_button(ui, lucide_icons::Icon::X, "Close overlay", opacity).clicked() {
+                if header_button(
+                    ui,
+                    lucide_icons::Icon::X,
+                    text(TextKey::GameOverlayClose),
+                    opacity,
+                )
+                .clicked()
+                {
                     if self.live.is_some() {
                         self.close_live(&ctx);
                     } else {
                         ctx.send_viewport_cmd(ViewportCommand::Close);
                     }
                 }
-                let pin_help = if self.pinned {
-                    "Unpin · return to Alt+H"
+                let pin_help = text(if self.pinned {
+                    TextKey::GameOverlayUnpin
                 } else {
-                    "Keep expanded"
-                };
-                if header_button_state(ui, lucide_icons::Icon::Pin, pin_help, opacity, self.pinned)
+                    TextKey::GameOverlayKeepExpanded
+                })
+                .replace("{key}", &self.settings.hotkey.label());
+                if header_button_state(ui, lucide_icons::Icon::Pin, &pin_help, opacity, self.pinned)
                     .clicked()
                 {
                     self.pinned = !self.pinned;
@@ -1177,7 +1446,7 @@ impl OverlayPreview {
                 if header_button(
                     ui,
                     lucide_icons::Icon::Maximize2,
-                    "Restore main Hestia window",
+                    text(TextKey::GameOverlayOpenHestia),
                     opacity,
                 )
                 .clicked()
@@ -1197,11 +1466,39 @@ impl OverlayPreview {
                         }
                         Ok(()) => ctx.send_viewport_cmd(ViewportCommand::Close),
                         Err(error) => {
-                            self.restore_error = Some(format!("Could not open Hestia: {error:#}"))
+                            self.restore_error = Some(
+                                text(TextKey::GameOverlayCouldNotOpenHestia)
+                                    .replace("{error}", &format!("{error:#}")),
+                            )
                         }
                     }
                 }
-                opacity_slider(ui, &mut self.opacity);
+                if show_all_button {
+                    let show_all = self.samples.show_all_characters();
+                    if header_button_state(
+                        ui,
+                        lucide_icons::Icon::Users,
+                        text(TextKey::GameOverlayShowAllCharacters),
+                        opacity,
+                        show_all,
+                    )
+                    .clicked()
+                    {
+                        self.samples.set_show_all_characters(!show_all);
+                        self.settings.all_characters = !show_all;
+                        if let Some(live) = &mut self.live {
+                            live.link.report_all_characters(!show_all);
+                        }
+                        ctx.request_repaint();
+                    }
+                }
+                let holding = opacity_slider(ui, &mut self.opacity);
+                // Saved once let go, not at every step of a drag.
+                if let Some(live) = &mut self.live
+                    && !holding
+                {
+                    live.link.report_opacity(self.opacity);
+                }
                 let (_, drag) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width().max(0.0), 30.0),
                     egui::Sense::drag(),
@@ -1259,7 +1556,7 @@ impl OverlayPreview {
                 .frame(egui::Frame::NONE)
                 .font(font)
                 .text_color(content_gray(235, opacity))
-                .hint_text("Type to search")
+                .hint_text(text(TextKey::GameOverlaySearchHint))
                 .char_limit(64)
                 .return_key(None)
                 .desired_width(field.width()),
@@ -1292,6 +1589,31 @@ impl OverlayPreview {
 /// Paints the hints into `rect`, the part of the header lane beside the search
 /// field.  The clipped rect stays fixed while a continuous train of hints
 /// moves through it.
+/// A message in place of the key hints, on up to two lines.
+fn header_message(ui: &egui::Ui, rect: egui::Rect, message: &str, red: bool, opacity: u8) {
+    let color = content_color(
+        if red {
+            Color32::from_rgb(230, 140, 130)
+        } else {
+            Color32::from_gray(220)
+        },
+        opacity,
+    );
+    let mut job = egui::text::LayoutJob::simple(
+        message.to_owned(),
+        egui::FontId::proportional(11.0),
+        color,
+        (rect.width() - 16.0).max(0.0),
+    );
+    job.wrap.max_rows = 2;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.painter().layout_job(job);
+    let position = egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter()
+        .with_clip_rect(ui.clip_rect().intersect(rect))
+        .galley(position, galley, color);
+}
+
 fn shortcut_hints(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -1311,7 +1633,7 @@ fn shortcut_hints(
             let group_width = keys.iter().map(|key| hints::key_width(key)).sum::<f32>()
                 + 3.0 * (keys.len() - 1) as f32;
             let label = painter.layout_no_wrap(
-                hint.label().to_owned(),
+                hint.label(available).to_owned(),
                 egui::FontId::proportional(11.0),
                 content_gray(if enabled { 165 } else { 112 }, opacity),
             );
@@ -1366,6 +1688,19 @@ fn shortcut_hints(
             origin += span;
         }
     }
+}
+
+/// A keycap wide enough for its name: ALT is 30, a letter 20.
+fn keycap_width(key: &str) -> f32 {
+    (9.0 + 7.0 * key.chars().count() as f32).max(20.0)
+}
+
+/// The idle strip's keycaps and the pluses between them, with `gap` after
+/// each.
+fn keycaps_width(hotkey: OverlayHotkey, gap: f32) -> f32 {
+    let parts = hotkey.parts();
+    let keycaps: f32 = parts.iter().map(|key| keycap_width(key) + gap).sum();
+    keycaps + (parts.len() - 1) as f32 * (8.0 + gap)
 }
 
 fn idle_keycap(ui: &mut egui::Ui, key: &str, width: f32, opacity: u8) {
@@ -1478,7 +1813,8 @@ fn filtered_icon(source: &image::RgbaImage, side: u32) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([side as usize, side as usize], &rgba)
 }
 
-fn opacity_slider(ui: &mut egui::Ui, opacity: &mut u8) {
+/// Whether the pointer holds the slider.
+fn opacity_slider(ui: &mut egui::Ui, opacity: &mut u8) -> bool {
     let (rect, mut response) =
         ui.allocate_exact_size(egui::vec2(92.0, 28.0), egui::Sense::click_and_drag());
     let track = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width() - 38.0, 4.0));
@@ -1506,8 +1842,13 @@ fn opacity_slider(ui: &mut egui::Ui, opacity: &mut u8) {
         response.mark_changed();
         ui.ctx().request_repaint();
     }
-    response
-        .widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*opacity), "Opacity"));
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(
+            ui.is_enabled(),
+            f64::from(*opacity),
+            text(TextKey::GameOverlayOpacity),
+        )
+    });
     let changing =
         response.is_pointer_button_down_on() || response.dragged() || *opacity != previous;
     let mut painter = ui.painter().clone();
@@ -1534,7 +1875,9 @@ fn opacity_slider(ui: &mut egui::Ui, opacity: &mut u8) {
         egui::Stroke::new(1.0, Color32::from_gray(if changing { 180 } else { 110 })),
         egui::StrokeKind::Inside,
     );
+    let holding = response.is_pointer_button_down_on() || response.dragged();
     response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    holding
 }
 
 fn clamp_overlay_opacity(opacity: u8) -> u8 {

@@ -833,4 +833,86 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Название Я-А", // LibraryCategorySortByNameDesc
     "Без категории: {status}", // LibraryUncategorizedStatusHeader
     "Сортировка и порядок", // LibrarySortMenuTitle
+
+    // In-game overlay
+    "Внутриигровой оверлей", // SettingsGameOverlay
+    "Нажмите {key} во время работы поддерживаемой игры, чтобы просматривать и переключать моды поверх неё.", // SettingsGameOverlayTooltip
+    "{key} уже занято другим приложением, поэтому оверлей открывается только кнопкой закрепления.", // GameOverlayHotkeyTaken
+    "Не удалось зарегистрировать {key}, поэтому оверлей открывается только кнопкой закрепления.", // GameOverlayHotkeyFailed
+    "Не удалось забрать фокус у игры, поэтому нажатия клавиш не дойдут до оверлея.", // GameOverlayFocusTakeFailed
+    "Не удалось вернуть фокус игре. Щёлкните по игре, чтобы продолжить.", // GameOverlayFocusReturnFailed
+    "Hestia не ответила, поэтому изменение могло не примениться.", // GameOverlayNoAnswer
+    "Нажмите {key} в игре, чтобы увидеть изменение.", // GameOverlayPressReloadKey
+    "{name} установлен и отключён.", // GameOverlayInstalledNotice
+    "Не удалось установить {name}.", // GameOverlayInstallFailedNotice
+    "{name} ждёт вашего ответа. Нажмите {key}.", // GameOverlayNeedsAnswerNotice
+    "{name} теперь среди ваших модов.", // GameOverlayArrivedNotice
+    "для просмотра", // GameOverlayToBrowse
+    "Скрыть", // GameOverlayHide
+    "Закрыть оверлей", // GameOverlayClose
+    "Не сворачивать", // GameOverlayKeepExpanded
+    "Открепить · вернуться к {key}", // GameOverlayUnpin
+    "Развернуть главное окно Hestia", // GameOverlayOpenHestia
+    "Не удалось открыть Hestia: {error}", // GameOverlayCouldNotOpenHestia
+    "Показать всех персонажей", // GameOverlayShowAllCharacters
+    "Введите для поиска", // GameOverlaySearchHint
+    "Непрозрачность", // GameOverlayOpacity
+    "Навигация", // GameOverlayHintNavigate
+    "Листать моды", // GameOverlayHintMods
+    "Листать категории", // GameOverlayHintCategories
+    "Включить этот мод, отключить остальные", // GameOverlayHintExclusive
+    "Включить этот мод", // GameOverlayHintEnable
+    "Установить", // GameOverlayHintInstall
+    "Повторить", // GameOverlayHintTryAgain
+    "Включить/отключить", // GameOverlayHintToggle
+    "Поиск", // GameOverlayHintSearch
+    "Закончить ввод", // GameOverlayHintDoneTyping
+    "Изменить поиск", // GameOverlayHintEditSearch
+    "Очистить поиск", // GameOverlayHintClearSearch
+    "Выберите файл для установки", // GameOverlayPickFile
+    "Мод с именем «{folder}» уже установлен", // GameOverlaySameName
+    "Заменить", // GameOverlayReplace
+    "Сначала удалить установленный", // GameOverlayReplaceDetail
+    "Объединить", // GameOverlayMerge
+    "Добавить новые файлы к установленному", // GameOverlayMergeDetail
+    "Оставить оба", // GameOverlayKeepBoth
+    "Установить под другим именем", // GameOverlayKeepBothDetail
+    "Отмена", // GameOverlayCancel
+    "Нет установленных модов", // GameOverlayNoInstalledMods
+    "Установите мод, чтобы он появился здесь.", // GameOverlayInstallToSee
+    "Нет совпадений", // GameOverlayNoMatches
+    "Предыдущая категория", // GameOverlayPreviousCategory
+    "Следующая категория", // GameOverlayNextCategory
+    "Не удалось связаться с GameBanana. Нажмите Space, чтобы повторить.", // GameOverlayGameBananaFailed
+    "На GameBanana нет модов для {name}", // GameOverlayGameBananaNothingFor
+    "На GameBanana нет совпадений", // GameOverlayGameBananaNoMatches
+    "НОВЫЙ", // GameOverlayNewTag
+    "Ожидание", // GameOverlayWaiting
+    "Загрузка {percent}%", // GameOverlayDownloadingPercent
+    "Загрузка", // GameOverlayDownloading
+    "Установка", // GameOverlayInstalling
+    "Нужен ваш ответ", // GameOverlayNeedsYourAnswer
+    "Установлен, отключён", // GameOverlayInstalledOff
+    "Не удалось установить. Нажмите Space, чтобы повторить.", // GameOverlayCouldNotInstallTryAgain
+    "Не удалось установить", // GameOverlayCouldNotInstall
+    "Нет превью", // GameOverlayNoPreview
+    "Включить оверлей", // SettingsGameOverlayEnable
+    "Открывать клавишами", // SettingsGameOverlayOpenWith
+    "Изменить", // SettingsGameOverlayChangeKey
+    "Сбросить", // SettingsGameOverlayResetKey
+    "Нажмите клавиши или Esc для отмены", // SettingsGameOverlayPressKeys
+    "Используйте Alt или Ctrl с буквой, цифрой или клавишей F.", // SettingsGameOverlayKeyNotAllowed
+    "{key} занято Windows, оверлеем или XXMI. Выберите другое сочетание.", // SettingsGameOverlayKeyReserved
+    "{key} уже занято другим приложением. Выберите другое сочетание.", // SettingsGameOverlayKeyTaken
+    "Показывать при запуске игры", // SettingsGameOverlayArrivalStrip
+    "Показывает полоску оверлея на несколько секунд при запуске игры.", // SettingsGameOverlayArrivalStripTooltip
+    "Показывать напоминание после закрытия", // SettingsGameOverlayCloseStrip
+    "Полоска с {key} остаётся на несколько секунд после закрытия оверлея.", // SettingsGameOverlayCloseStripTooltip
+    "Показывать моды GameBanana", // SettingsGameOverlayGameBanana
+    "Показывать персонажей без категории", // SettingsGameOverlayAllCharacters
+    "Показывать подсказки клавиш", // SettingsGameOverlayKeyHints
+    "Размер", // SettingsGameOverlaySize
+    "Маленький", // SettingsGameOverlaySizeSmall
+    "Обычный", // SettingsGameOverlaySizeNormal
+    "Большой", // SettingsGameOverlaySizeLarge
 ];

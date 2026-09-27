@@ -87,9 +87,10 @@ pub(super) struct StripGeometry {
     pub gallery: egui::Rect,
 }
 
-pub(super) fn geometry(bounds: egui::Rect, progress: f32) -> StripGeometry {
-    let width =
-        egui::lerp(super::IDLE_SIZE.x..=super::EXPANDED_SIZE.x, progress).min(bounds.width());
+/// The strip at `progress` from idle to open.  A longer hotkey makes the idle
+/// strip `idle_width` wide.
+pub(super) fn geometry(bounds: egui::Rect, progress: f32, idle_width: f32) -> StripGeometry {
+    let width = egui::lerp(idle_width..=super::EXPANDED_SIZE.x, progress).min(bounds.width());
     let height = egui::lerp(
         super::IDLE_SIZE.y..=(super::EXPANDED_SIZE.y - super::CAROUSEL_HEIGHT),
         progress,
@@ -123,7 +124,7 @@ mod tests {
     fn bottom_center_is_invariant_through_expansion() {
         let bounds = egui::Rect::from_min_size(egui::pos2(-300.0, 20.0), egui::vec2(560.0, 660.0));
         for step in 0..=100 {
-            let layout = geometry(bounds, step as f32 / 100.0);
+            let layout = geometry(bounds, step as f32 / 100.0, super::super::IDLE_SIZE.x);
             assert!(layout.base.center_bottom().distance(bounds.center_bottom()) < 0.0001);
         }
     }

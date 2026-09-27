@@ -834,4 +834,86 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "名称 Z-A", // LibraryCategorySortByNameDesc
     "未分类：{status}", // LibraryUncategorizedStatusHeader
     "排序与顺序", // LibrarySortMenuTitle
+
+    // In-game overlay
+    "游戏内浮层", // SettingsGameOverlay
+    "在受支持的游戏运行时按 {key}，即可在游戏上方浏览和切换模组。", // SettingsGameOverlayTooltip
+    "另一个应用已占用 {key}，只能通过固定按钮打开浮层。", // GameOverlayHotkeyTaken
+    "无法注册 {key}，只能通过固定按钮打开浮层。", // GameOverlayHotkeyFailed
+    "无法从游戏获取焦点，按键不会传到浮层。", // GameOverlayFocusTakeFailed
+    "无法将焦点交还给游戏。请点击游戏以继续。", // GameOverlayFocusReturnFailed
+    "Hestia 没有响应，更改可能未生效。", // GameOverlayNoAnswer
+    "在游戏中按 {key} 查看更改。", // GameOverlayPressReloadKey
+    "已安装 {name}，处于禁用状态。", // GameOverlayInstalledNotice
+    "无法安装 {name}。", // GameOverlayInstallFailedNotice
+    "{name} 需要你的选择。请按 {key}。", // GameOverlayNeedsAnswerNotice
+    "{name} 已加入你的模组。", // GameOverlayArrivedNotice
+    "浏览", // GameOverlayToBrowse
+    "隐藏", // GameOverlayHide
+    "关闭浮层", // GameOverlayClose
+    "保持展开", // GameOverlayKeepExpanded
+    "取消固定 · 恢复 {key}", // GameOverlayUnpin
+    "恢复 Hestia 主窗口", // GameOverlayOpenHestia
+    "无法打开 Hestia：{error}", // GameOverlayCouldNotOpenHestia
+    "显示所有角色", // GameOverlayShowAllCharacters
+    "输入以搜索", // GameOverlaySearchHint
+    "不透明度", // GameOverlayOpacity
+    "导航", // GameOverlayHintNavigate
+    "浏览模组", // GameOverlayHintMods
+    "浏览分类", // GameOverlayHintCategories
+    "启用此模组，禁用其他", // GameOverlayHintExclusive
+    "启用此模组", // GameOverlayHintEnable
+    "安装", // GameOverlayHintInstall
+    "重试", // GameOverlayHintTryAgain
+    "切换启用/禁用", // GameOverlayHintToggle
+    "搜索", // GameOverlayHintSearch
+    "完成输入", // GameOverlayHintDoneTyping
+    "编辑搜索", // GameOverlayHintEditSearch
+    "清除搜索", // GameOverlayHintClearSearch
+    "选择要安装的文件", // GameOverlayPickFile
+    "已安装名为“{folder}”的模组", // GameOverlaySameName
+    "替换", // GameOverlayReplace
+    "先删除已安装的模组", // GameOverlayReplaceDetail
+    "合并", // GameOverlayMerge
+    "将新文件添加到已安装的模组", // GameOverlayMergeDetail
+    "保留两者", // GameOverlayKeepBoth
+    "以其他名称安装", // GameOverlayKeepBothDetail
+    "取消", // GameOverlayCancel
+    "没有已安装的模组", // GameOverlayNoInstalledMods
+    "安装模组后会显示在这里。", // GameOverlayInstallToSee
+    "没有匹配项", // GameOverlayNoMatches
+    "上一个分类", // GameOverlayPreviousCategory
+    "下一个分类", // GameOverlayNextCategory
+    "无法连接 GameBanana。按 Space 重试。", // GameOverlayGameBananaFailed
+    "GameBanana 上没有 {name} 的模组", // GameOverlayGameBananaNothingFor
+    "GameBanana 上没有匹配项", // GameOverlayGameBananaNoMatches
+    "新", // GameOverlayNewTag
+    "等待中", // GameOverlayWaiting
+    "正在下载 {percent}%", // GameOverlayDownloadingPercent
+    "正在下载", // GameOverlayDownloading
+    "正在安装", // GameOverlayInstalling
+    "需要你的选择", // GameOverlayNeedsYourAnswer
+    "已安装，已禁用", // GameOverlayInstalledOff
+    "无法安装。按 Space 重试。", // GameOverlayCouldNotInstallTryAgain
+    "无法安装", // GameOverlayCouldNotInstall
+    "无预览", // GameOverlayNoPreview
+    "启用浮层", // SettingsGameOverlayEnable
+    "打开快捷键", // SettingsGameOverlayOpenWith
+    "更改", // SettingsGameOverlayChangeKey
+    "重置", // SettingsGameOverlayResetKey
+    "请按下按键，按 Esc 取消", // SettingsGameOverlayPressKeys
+    "请使用 Alt 或 Ctrl 加字母、数字或 F 键。", // SettingsGameOverlayKeyNotAllowed
+    "{key} 已被 Windows、浮层或 XXMI 使用，请换一个。", // SettingsGameOverlayKeyReserved
+    "另一个应用已占用 {key}，请换一个。", // SettingsGameOverlayKeyTaken
+    "游戏启动时显示", // SettingsGameOverlayArrivalStrip
+    "游戏启动时显示浮层横条几秒钟。", // SettingsGameOverlayArrivalStripTooltip
+    "关闭后显示提示", // SettingsGameOverlayCloseStrip
+    "浮层关闭后，带有 {key} 的横条会保留几秒钟。", // SettingsGameOverlayCloseStripTooltip
+    "显示 GameBanana 模组", // SettingsGameOverlayGameBanana
+    "显示你没有分类的角色", // SettingsGameOverlayAllCharacters
+    "显示按键提示", // SettingsGameOverlayKeyHints
+    "大小", // SettingsGameOverlaySize
+    "小", // SettingsGameOverlaySizeSmall
+    "正常", // SettingsGameOverlaySizeNormal
+    "大", // SettingsGameOverlaySizeLarge
 ];

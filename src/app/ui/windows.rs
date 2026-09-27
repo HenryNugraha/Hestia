@@ -3663,6 +3663,8 @@ impl HestiaApp {
                         });
                         ui.add_space(24.0);
 
+                        should_save |= self.game_overlay_settings_section(ui, text);
+
                         static_label(ui, bold(text.tasks(), Some(16.0)).underline());
                         ui.indent("setting_general_tasks", |ui| {
                             let tasks_layout = self.state.tasks_layout;

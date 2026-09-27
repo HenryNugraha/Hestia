@@ -30,6 +30,8 @@ struct GameOverlay {
     process: Option<OverlayProcess>,
     /// The library the overlay has.
     sent: Option<OverlayLibraryDraft>,
+    /// The settings the overlay has.
+    sent_settings: Option<overlay_protocol::Settings>,
     next_library_check: Option<Instant>,
     /// Where the overlay was in each game's library, by game, for this
     /// session.
@@ -39,18 +41,25 @@ struct GameOverlay {
     failures: usize,
     /// When to start it again after that.
     restart_at: Option<Instant>,
+    /// The GameBanana installs it asked for that aren't done.
+    installs: Vec<OverlayInstall>,
 }
 
 impl HestiaApp {
     /// Starts the in-game overlay when a supported game starts, keeps its
     /// library current, and closes it when the game exits.
     fn poll_game_overlay(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        let watched: Vec<WatchedGame> = self
-            .state
-            .games
-            .iter()
-            .filter_map(WatchedGame::for_game)
-            .collect();
+        // With the overlay turned off in Settings, no game counts, so a
+        // running overlay closes.
+        let watched: Vec<WatchedGame> = if self.state.static_prefs.game_overlay {
+            self.state
+                .games
+                .iter()
+                .filter_map(WatchedGame::for_game)
+                .collect()
+        } else {
+            Vec::new()
+        };
         if watched != self.game_overlay.watched {
             if let Some(watcher) = &self.game_overlay.watcher {
                 watcher.watch(watched.clone());
@@ -77,6 +86,7 @@ impl HestiaApp {
             }
         }
         self.consume_game_overlay_events(ctx);
+        self.sync_game_overlay_installs(ctx);
 
         // The overlay's game while it runs, or else the first one that runs.
         let overlay = &self.game_overlay;
@@ -94,11 +104,16 @@ impl HestiaApp {
             .find(|running| Some(running.id.as_str()) == shown)
             .or(running.first())
             .map(|running| (*running).clone());
+        let settings = self.game_overlay_settings();
 
         match (&mut self.game_overlay.process, game) {
             (Some(process), Some(game)) if process.game_id == game.id => {
                 if process.game_pids != game.pids {
                     process.set_game_pids(game.pids);
+                }
+                if self.game_overlay.sent_settings != Some(settings) {
+                    process.send_settings(settings);
+                    self.game_overlay.sent_settings = Some(settings);
                 }
                 self.send_game_overlay_library(ctx);
             }
@@ -127,15 +142,74 @@ impl HestiaApp {
         let Some(process) = &self.game_overlay.process else {
             return;
         };
+        let game_id = process.game_id.clone();
+        let mut changes = Vec::new();
+        let mut browse = Vec::new();
+        let mut installs = Vec::new();
+        let mut opacity_changed = None;
+        let mut all_characters_changed = None;
         let mut exited = false;
         while let Ok(event) = process.events.try_recv() {
             match event {
                 OverlayEvent::Message(overlay_protocol::FromOverlay::Selection(selection)) => {
                     self.game_overlay
                         .selections
-                        .insert(process.game_id.clone(), selection);
+                        .insert(game_id.clone(), selection);
                 }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Change(change)) => {
+                    changes.push(change);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Typing { typing }) => {
+                    xxmi_persist::set_game_overlay_typing(typing);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Opacity { opacity }) => {
+                    opacity_changed = Some(opacity);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::AllCharacters { show }) => {
+                    all_characters_changed = Some(show);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Browse(request)) => {
+                    browse.push(Some(request));
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::ListCharacters) => {
+                    browse.push(None);
+                }
+                OverlayEvent::Message(
+                    message @ (overlay_protocol::FromOverlay::Install(_)
+                    | overlay_protocol::FromOverlay::PickFile { .. }
+                    | overlay_protocol::FromOverlay::SameName { .. }
+                    | overlay_protocol::FromOverlay::CancelInstall { .. }),
+                ) => installs.push(message),
                 OverlayEvent::Exited => exited = true,
+            }
+        }
+        if !exited && let Some(overlay_browse) = self.game_overlay_browse() {
+            for request in browse {
+                match request {
+                    Some(request) => overlay_browse.clone().fetch_page(request),
+                    None => overlay_browse.clone().list_characters(),
+                }
+            }
+        }
+        let prefs = &mut self.state.static_prefs;
+        let opacity_changed =
+            opacity_changed.filter(|&opacity| prefs.game_overlay_opacity != Some(opacity));
+        let all_characters_changed =
+            all_characters_changed.filter(|&show| prefs.game_overlay_all_characters != show);
+        if let Some(opacity) = opacity_changed {
+            prefs.game_overlay_opacity = Some(opacity);
+        }
+        if let Some(show) = all_characters_changed {
+            prefs.game_overlay_all_characters = show;
+        }
+        if opacity_changed.is_some() || all_characters_changed.is_some() {
+            // The overlay has them already.
+            self.game_overlay.sent_settings = Some(self.game_overlay_settings());
+            self.save_state();
+        }
+        if !exited {
+            for message in installs {
+                self.handle_game_overlay_install(&game_id, message);
             }
         }
         if exited && let Some(process) = self.game_overlay.process.take() {
@@ -146,6 +220,229 @@ impl HestiaApp {
             process.close();
             self.game_overlay.sent = None;
             self.game_overlay_failed(ctx, "The in-game overlay closed unexpectedly".to_owned());
+            return;
+        }
+        for change in changes {
+            let (error, press_key) = match self.apply_game_overlay_change(&game_id, &change) {
+                Ok(press_key) => (None, press_key),
+                Err(error) => (Some(error), None),
+            };
+            let Some(game) = self
+                .state
+                .games
+                .iter()
+                .find(|game| game.definition.id == game_id)
+            else {
+                return;
+            };
+            let library = game_overlay_library(&self.state, game, self.text().uncategorized());
+            let library = (self.game_overlay.sent.as_ref() != Some(&library)).then_some(library);
+            let Some(process) = &self.game_overlay.process else {
+                return;
+            };
+            process.answer(
+                library.clone(),
+                overlay_protocol::Changed {
+                    id: change.id,
+                    error,
+                    press_key,
+                },
+            );
+            if library.is_some() {
+                self.game_overlay.sent = library;
+            }
+        }
+    }
+
+    /// The settings the overlay takes from Hestia.
+    fn game_overlay_settings(&self) -> overlay_protocol::Settings {
+        let prefs = &self.state.static_prefs;
+        overlay_protocol::Settings {
+            language: prefs.language,
+            opacity: prefs.game_overlay_opacity,
+            hotkey: prefs.game_overlay_hotkey,
+            arrival_strip: prefs.game_overlay_arrival_strip,
+            close_strip: prefs.game_overlay_close_strip,
+            gamebanana: prefs.game_overlay_gamebanana,
+            all_characters: prefs.game_overlay_all_characters,
+            key_hints: prefs.game_overlay_key_hints,
+            size: prefs.game_overlay_size,
+        }
+    }
+
+    /// What answering the overlay's GameBanana requests needs, while it runs.
+    fn game_overlay_browse(&self) -> Option<OverlayBrowse> {
+        let process = self.game_overlay.process.as_ref()?;
+        let prefs = &self.state.static_prefs;
+        Some(OverlayBrowse {
+            runtime: self.runtime_services.clone(),
+            portable: self.portable.clone(),
+            game_id: process.game_id.clone(),
+            outbox: process.outbox(),
+            browse_sort: prefs.browse_sort,
+            unsafe_content_mode: prefs.unsafe_content_mode,
+            cache_limit_bytes: self.cache_limit_bytes.load(Ordering::Relaxed),
+        })
+    }
+
+    /// Makes a change the in-game overlay asked for with the steps of the
+    /// library's Enable and Disable, as one change with one reload.  Gives the
+    /// game's reload key when the reload settings leave pressing it to the
+    /// user.  The error is for the overlay's warning strip.
+    fn apply_game_overlay_change(
+        &mut self,
+        game_id: &str,
+        change: &overlay_protocol::Change,
+    ) -> Result<Option<String>, String> {
+        use overlay_protocol::ChangeAction;
+
+        let text = self.text();
+        let Some(game) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        // A mod that's gone leaves the overlay with the library sent next.
+        let Some(target) = self.state.mods.iter().find(|entry| {
+            entry.id == change.mod_id
+                && entry.game_id == game_id
+                && entry.status != ModStatus::Archived
+        }) else {
+            return Ok(None);
+        };
+        let mut turn_off = Vec::new();
+        let mut turn_on = Vec::new();
+        match change.action {
+            ChangeAction::Use | ChangeAction::TurnOn if target.status == ModStatus::Disabled => {
+                turn_on.push(target.id.clone());
+            }
+            ChangeAction::TurnOff if target.status == ModStatus::Active => {
+                turn_off.push(target.id.clone());
+            }
+            _ => {}
+        }
+        // Uncategorized mods have nothing to do with each other, so using one
+        // leaves the rest on.  Unsafe mods the overlay hides count too.
+        if change.action == ChangeAction::Use
+            && let Some(category_id) = effective_category_id(&self.state.categories, target)
+        {
+            turn_off.extend(
+                self.state
+                    .mods
+                    .iter()
+                    .filter(|entry| {
+                        entry.game_id == game_id
+                            && entry.id != change.mod_id
+                            && entry.status == ModStatus::Active
+                            && effective_category_id(&self.state.categories, entry)
+                                == Some(category_id)
+                    })
+                    .map(|entry| entry.id.clone()),
+            );
+        }
+        if turn_off.is_empty() && turn_on.is_empty() {
+            return Ok(None);
+        }
+        let locked = turn_off.iter().any(|mod_id| {
+            self.mod_action_lock_reason_by_id(mod_id, ModMutationKind::DisableActive)
+                .is_some()
+        }) || turn_on.iter().any(|mod_id| {
+            self.mod_action_lock_reason_by_id(mod_id, ModMutationKind::EnableIntoActive)
+                .is_some()
+        });
+        if locked {
+            self.report_locked_mods(None);
+            return Err(text.mods_locked_probably_by_game().to_owned());
+        }
+
+        let use_default = self.state.static_prefs.use_default_mods_path;
+        let mut ptx = self.begin_xxmi_persist_tx(&game);
+        // (name, turned on)
+        let mut done: Vec<(String, bool)> = Vec::new();
+        let mut failure = None;
+        // Off first.  If one of the others won't turn off, the used mod stays
+        // off too, so two never run together.
+        for (mod_ids, on) in [(&turn_off, false), (&turn_on, true)] {
+            if on && failure.is_some() {
+                break;
+            }
+            for mod_id in mod_ids {
+                let Some(entry) = self.state.mods.iter_mut().find(|entry| &entry.id == mod_id)
+                else {
+                    continue;
+                };
+                let result = match (game.definition.backend, on) {
+                    (GameBackend::Xxmi, false) => Self::persisted_xxmi_disable(&mut ptx, entry),
+                    (GameBackend::Xxmi, true) => Self::persisted_xxmi_enable(&mut ptx, entry),
+                    (GameBackend::UnrealEngine, false) => {
+                        unrealengine::disable_mod(entry, &game, use_default)
+                    }
+                    (GameBackend::UnrealEngine, true) => {
+                        unrealengine::enable_mod(entry, &game, use_default)
+                    }
+                };
+                match result {
+                    Ok(()) => done.push((entry.folder_name.clone(), on)),
+                    Err(error) => {
+                        failure.get_or_insert((error, on));
+                    }
+                }
+            }
+        }
+        let request_reload = [
+            (ReloadHotkeyTrigger::EnablingMods, true),
+            (ReloadHotkeyTrigger::DisablingMods, false),
+        ]
+        .into_iter()
+        .find(|(trigger, on)| {
+            done.iter().any(|(_, done_on)| done_on == on)
+                && self.xxmi_reload_enabled_for_game(&game, *trigger)
+        })
+        .map(|(trigger, _)| trigger);
+        // With auto-reload off for this, the overlay tells the user which key
+        // shows the change.
+        let press_key =
+            (game.is_xxmi() && !done.is_empty() && request_reload.is_none()).then(|| {
+                xxmi_persist::importer_root_for(&game, use_default)
+                    .map(|root| xxmi_persist::reload_hotkey_name(&root))
+                    .unwrap_or_else(|| "F10".to_owned())
+            });
+        self.finish_xxmi_persist_tx(&game, ptx, request_reload);
+
+        for (name, on) in &done {
+            let action = if *on {
+                text.action_enabled()
+            } else {
+                text.action_disabled()
+            };
+            self.log_action(action, name);
+        }
+        if let Some((name, on)) = done.last() {
+            let action = if *on {
+                text.action_enabled()
+            } else {
+                text.action_disabled()
+            };
+            self.set_message_ok(text.action_message(action, name));
+            self.save_state();
+            self.refresh();
+        }
+        match failure {
+            Some((error, on)) => {
+                let fallback = if on {
+                    text.enable_failed()
+                } else {
+                    text.disable_failed()
+                };
+                let toast = self.mod_action_error_toast(&error, fallback);
+                self.report_error(error, Some(toast));
+                Err(toast.to_owned())
+            }
+            None => Ok(press_key),
         }
     }
 
@@ -171,10 +468,12 @@ impl HestiaApp {
             return;
         };
         let library = game_overlay_library(&self.state, game, self.text().uncategorized());
+        let start_settings = self.game_overlay_settings();
         let start = OverlayStartDraft {
             host_window: game_overlay_host_window(frame),
             game_pids: running.pids.clone(),
             library: library.clone(),
+            settings: start_settings,
             selection: self.game_overlay.selections.get(&running.id).cloned(),
         };
         match OverlayProcess::spawn(running, start) {
@@ -182,6 +481,7 @@ impl HestiaApp {
                 tracing::info!(game = %running.id, "Started the in-game overlay");
                 self.game_overlay.process = Some(process);
                 self.game_overlay.sent = Some(library);
+                self.game_overlay.sent_settings = Some(start_settings);
                 self.game_overlay.next_library_check = Some(now + GAME_OVERLAY_LIBRARY_INTERVAL);
             }
             Err(error) => {
@@ -364,6 +664,11 @@ fn overlay_mod_draft(entry: &ModEntry, censored: bool) -> OverlayModDraft {
             thumbnails: [user.card_thumb_generated_at, user.rail_thumb_generated_at],
         },
         censored,
+        gamebanana_id: entry
+            .source
+            .as_ref()
+            .and_then(|source| source.gamebanana.as_ref())
+            .map(|link| link.mod_id),
     }
 }
 
@@ -569,5 +874,59 @@ mod game_overlay_library_tests {
         let library = game_overlay_library(&state, &game("zzz"), "Uncategorized");
         assert_eq!(library.categories[2].character, Some(42));
         assert_eq!(library.categories[1].character, None);
+    }
+
+    /// Saves the installed Hestia's library as the overlay preview's sample,
+    /// for `--overlay-preview` and its screenshots.  The game is
+    /// HESTIA_OVERLAY_PREVIEW_GAME, Endfield by default.
+    #[test]
+    #[ignore = "reads the real library and writes target/overlay-preview/sample-library.json"]
+    fn save_overlay_preview_sample() {
+        let state_path = std::env::var_os("HESTIA_OVERLAY_PREVIEW_STATE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("APPDATA").expect("APPDATA"))
+                    .join("Hestia/hestia.toml")
+            });
+        let mut state = crate::persistence::load_app_state(&crate::persistence::PortablePaths {
+            history_db: state_path.with_file_name("history.db"),
+            state_archive: state_path,
+            state_source: None,
+        })
+        .expect("load the library");
+        let game_id =
+            std::env::var("HESTIA_OVERLAY_PREVIEW_GAME").unwrap_or_else(|_| "endfield".to_owned());
+        let game = state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .expect("the game is in the library")
+            .clone();
+        // Only reads the mods, unlike Hestia's scan, which also writes their
+        // metadata.  The overlay leaves archived mods out anyway.
+        state.mods = crate::integrations::xxmi::scan_live_mods(
+            &game,
+            state.static_prefs.use_default_mods_path,
+            false,
+        )
+        .expect("read the mods");
+        let game = &game;
+        let text = TextCatalog::new(state.static_prefs.language);
+        let start = overlay_protocol::Start {
+            host_pid: 0,
+            host_window: None,
+            game_pids: Vec::new(),
+            settings: overlay_protocol::Settings {
+                language: state.static_prefs.language,
+                opacity: state.static_prefs.game_overlay_opacity,
+                ..Default::default()
+            },
+            library: game_overlay_library(&state, game, text.uncategorized()).resolve(),
+            selection: None,
+        };
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/overlay-preview/sample-library.json");
+        std::fs::write(&path, serde_json::to_string_pretty(&start).unwrap()).unwrap();
+        println!("Saved {}", path.display());
     }
 }

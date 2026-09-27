@@ -183,6 +183,32 @@ pub struct StaticPreferences {
     pub send_reload_hotkey: bool,
     #[serde(default)]
     pub reload_hotkey_triggers: ReloadHotkeyTriggers,
+    /// Alt+H shows the in-game overlay while a supported game runs.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay: bool,
+    /// The opacity the in-game overlay was left at.  None until it changes.
+    #[serde(default)]
+    pub game_overlay_opacity: Option<u8>,
+    #[serde(default)]
+    pub game_overlay_hotkey: OverlayHotkey,
+    /// The overlay's strip shows for a moment when a game starts.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_arrival_strip: bool,
+    /// The overlay's strip stays for a moment after it closes, as a reminder
+    /// of its key.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_close_strip: bool,
+    /// The overlay lists GameBanana's mods after the installed ones.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_gamebanana: bool,
+    /// The overlay also lists GameBanana's characters that no category
+    /// stands for.
+    #[serde(default)]
+    pub game_overlay_all_characters: bool,
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_key_hints: bool,
+    #[serde(default)]
+    pub game_overlay_size: OverlaySize,
     #[serde(default)]
     pub window_pos: Option<[f32; 2]>,
     #[serde(default)]
@@ -291,6 +317,15 @@ impl Default for StaticPreferences {
             preserve_mod_settings: true,
             send_reload_hotkey: true,
             reload_hotkey_triggers: ReloadHotkeyTriggers::default(),
+            game_overlay: true,
+            game_overlay_opacity: None,
+            game_overlay_hotkey: OverlayHotkey::default(),
+            game_overlay_arrival_strip: true,
+            game_overlay_close_strip: true,
+            game_overlay_gamebanana: true,
+            game_overlay_all_characters: false,
+            game_overlay_key_hints: true,
+            game_overlay_size: OverlaySize::default(),
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -1805,6 +1840,211 @@ impl CacheSizeTier {
 impl Default for CacheSizeTier {
     fn default() -> Self {
         Self::Gb4
+    }
+}
+
+/// The key that shows the in-game overlay: Alt or Ctrl, maybe with Shift,
+/// and a letter, digit or F key.  Saved as its name, like "Alt+H".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct OverlayHotkey {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    /// Windows' virtual key code.
+    pub key: u8,
+}
+
+/// Why a key can't show the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayHotkeyProblem {
+    /// Not Alt or Ctrl with a letter, digit or F key.
+    NotAllowed,
+    /// Windows, the open overlay or XXMI uses it.
+    Reserved,
+}
+
+const VK_F1: u8 = 0x70;
+const VK_F4: u8 = 0x73;
+const VK_F10: u8 = 0x79;
+const VK_F12: u8 = 0x7B;
+
+impl OverlayHotkey {
+    pub const DEFAULT: Self = Self {
+        ctrl: false,
+        alt: true,
+        shift: false,
+        key: b'H',
+    };
+
+    /// The open overlay's own keys, and XXMI's reload key.
+    const RESERVED_KEYS: [u8; 11] = [
+        b'W', b'A', b'S', b'D', b'Q', b'E', b'Z', b'C', b'X', b'F', VK_F10,
+    ];
+
+    pub fn new(ctrl: bool, alt: bool, shift: bool, key: u8) -> Result<Self, OverlayHotkeyProblem> {
+        if !(ctrl || alt) || Self::key_label(key).is_none() {
+            return Err(OverlayHotkeyProblem::NotAllowed);
+        }
+        // Alt+F4 closes the window that has the keyboard.
+        if Self::RESERVED_KEYS.contains(&key) || (alt && key == VK_F4) {
+            return Err(OverlayHotkeyProblem::Reserved);
+        }
+        Ok(Self {
+            ctrl,
+            alt,
+            shift,
+            key,
+        })
+    }
+
+    /// Reads a name like "Ctrl+Alt+H", ignoring case.
+    pub fn parse(name: &str) -> Option<Self> {
+        let (mut ctrl, mut alt, mut shift, mut key) = (false, false, false, None);
+        for part in name.split('+').map(str::trim) {
+            match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "alt" => alt = true,
+                "shift" => shift = true,
+                _ if key.is_none() => key = Some(Self::key_code(part)?),
+                _ => return None,
+            }
+        }
+        Self::new(ctrl, alt, shift, key?).ok()
+    }
+
+    /// Windows' key code for a letter, digit or F1 to F12.
+    pub fn key_code(name: &str) -> Option<u8> {
+        let name = name.to_ascii_uppercase();
+        match name.as_bytes() {
+            &[byte] if byte.is_ascii_uppercase() || byte.is_ascii_digit() => Some(byte),
+            [b'F', number @ ..] if !number.is_empty() => {
+                let number: u8 = std::str::from_utf8(number).ok()?.parse().ok()?;
+                (1..=12).contains(&number).then(|| VK_F1 + number - 1)
+            }
+            _ => None,
+        }
+    }
+
+    /// The name of a letter, digit or F key, from Windows' key code.
+    fn key_label(key: u8) -> Option<String> {
+        match key {
+            b'A'..=b'Z' | b'0'..=b'9' => Some(char::from(key).to_string()),
+            VK_F1..=VK_F12 => Some(format!("F{}", key - VK_F1 + 1)),
+            _ => None,
+        }
+    }
+
+    /// The keys to press, like ["Ctrl", "Alt", "H"].
+    pub fn parts(self) -> Vec<String> {
+        let mut parts: Vec<String> = [
+            (self.ctrl, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+        ]
+        .into_iter()
+        .filter(|&(held, _)| held)
+        .map(|(_, name)| name.to_owned())
+        .collect();
+        parts.extend(Self::key_label(self.key));
+        parts
+    }
+
+    /// Like "Ctrl+Alt+H".
+    pub fn label(self) -> String {
+        self.parts().join("+")
+    }
+}
+
+impl Default for OverlayHotkey {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl From<String> for OverlayHotkey {
+    /// A name it can't read, or a key it doesn't allow, is Alt+H.
+    fn from(name: String) -> Self {
+        Self::parse(&name).unwrap_or_default()
+    }
+}
+
+impl From<OverlayHotkey> for String {
+    fn from(hotkey: OverlayHotkey) -> Self {
+        hotkey.label()
+    }
+}
+
+/// How big the in-game overlay draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OverlaySize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+}
+
+impl OverlaySize {
+    pub const ALL: [Self; 3] = [Self::Small, Self::Normal, Self::Large];
+
+    pub fn zoom(self) -> f32 {
+        match self {
+            Self::Small => 0.85,
+            Self::Normal => 1.0,
+            Self::Large => 1.2,
+        }
+    }
+}
+
+#[cfg(test)]
+mod overlay_hotkey_tests {
+    use super::{OverlayHotkey, OverlayHotkeyProblem};
+
+    #[test]
+    fn names_read_back_as_the_same_key() {
+        for name in ["Alt+H", "Ctrl+M", "Ctrl+Alt+Shift+7", "Alt+F5", "Ctrl+F12"] {
+            assert_eq!(OverlayHotkey::parse(name).unwrap().label(), name);
+        }
+        assert_eq!(
+            OverlayHotkey::parse(" shift + alt + j ").unwrap().label(),
+            "Alt+Shift+J"
+        );
+        let saved = serde_json::to_string(&OverlayHotkey::parse("Ctrl+K").unwrap()).unwrap();
+        assert_eq!(saved, "\"Ctrl+K\"");
+    }
+
+    #[test]
+    fn keys_it_does_not_allow_read_as_alt_h() {
+        for name in [
+            "H",
+            "Shift+H",
+            "Alt+Space",
+            "Alt+F4",
+            "Ctrl+F",
+            "Alt+W",
+            "Alt+F10",
+            "Alt+H+J",
+            "",
+        ] {
+            assert!(OverlayHotkey::parse(name).is_none(), "{name}");
+            assert_eq!(
+                serde_json::from_str::<OverlayHotkey>(&format!("\"{name}\"")).unwrap(),
+                OverlayHotkey::DEFAULT
+            );
+        }
+    }
+
+    #[test]
+    fn problems_say_why() {
+        assert_eq!(
+            OverlayHotkey::new(false, false, true, b'H'),
+            Err(OverlayHotkeyProblem::NotAllowed)
+        );
+        assert_eq!(
+            OverlayHotkey::new(true, false, false, b'Q'),
+            Err(OverlayHotkeyProblem::Reserved)
+        );
+        assert!(OverlayHotkey::new(true, false, false, 0x73).is_ok());
     }
 }
 

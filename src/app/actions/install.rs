@@ -6,7 +6,7 @@ impl HestiaApp {
                     if !self.install_inflight.contains_key(&job_id) {
                         continue;
                     }
-                    self.pending_imports.push_back(PendingImport { job_id, inspection, gb_profile });
+                    self.review_pending_import(PendingImport { job_id, inspection, gb_profile });
                 }
                 InstallEvent::InspectFailed { job_id, error } => {
                     let Some(current) = self.install_inflight.remove(&job_id) else {

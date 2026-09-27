@@ -2,8 +2,9 @@
 //!
 //! Games that run elevated or under anti-cheat stop other processes from
 //! hooking, reading, or injecting their keyboard input, so the overlay does not
-//! try.  On Windows, Alt+H is a system hotkey that still arrives over such
-//! games, and `platform` uses it to move the keyboard focus to the overlay.  Key
+//! try.  On Windows, the overlay's key (Alt+H unless Settings changed it) is a
+//! system hotkey that still arrives over such games, and `platform` uses it
+//! to move the keyboard focus to the overlay.  Key
 //! messages then reach the overlay's own window procedure, and this module
 //! turns them into commands and session events.  While a search is being
 //! typed, letters and Space pass on to the search field instead.  Capture runs
@@ -15,7 +16,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use std::cell::Cell;
+
 use egui::Context;
+
+use crate::model::OverlayHotkey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Command {
@@ -33,7 +38,8 @@ pub(super) enum Command {
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Event {
-    /// Alt+H arrived.  `focused` reports whether the overlay has the keyboard.
+    /// The hotkey arrived.  `focused` reports whether the overlay has the
+    /// keyboard.
     Hotkey {
         focused: bool,
     },
@@ -66,6 +72,7 @@ mod vk {
     pub(super) const D: u32 = 0x44;
     pub(super) const E: u32 = 0x45;
     pub(super) const F: u32 = 0x46;
+    #[cfg(test)]
     pub(super) const H: u32 = 0x48;
     pub(super) const Q: u32 = 0x51;
     pub(super) const S: u32 = 0x53;
@@ -115,8 +122,8 @@ enum Role {
     Search,
     Escape,
     /// Swallowed without a command, so a press that starts in the overlay
-    /// also ends there: the modifiers, H, whose press went to the hotkey,
-    /// and F10, the reload key.
+    /// also ends there: the modifiers, the hotkey's key, whose press went to
+    /// the hotkey, and F10, the reload key.
     Swallow,
     /// Passed through.  Other keys do nothing while one is held.
     Windows,
@@ -166,11 +173,35 @@ const KEYS: [(u32, Role); 28] = [
     (vk::RCONTROL, Role::Swallow),
     (vk::LMENU, Role::Swallow),
     (vk::RMENU, Role::Swallow),
-    (vk::H, Role::Swallow),
+    (HOTKEY, Role::Swallow),
     (vk::F10, Role::Swallow),
     (vk::LWIN, Role::Windows),
     (vk::RWIN, Role::Windows),
 ];
+
+/// Stands in `KEYS` for the hotkey's key, which Settings can change.  No
+/// real key has code 0.
+const HOTKEY: u32 = 0;
+
+// Set and read on the thread that runs the UI and the window procedure.
+thread_local! {
+    static HOTKEY_KEYS: Cell<OverlayHotkey> = const { Cell::new(OverlayHotkey::DEFAULT) };
+}
+
+/// Makes `hotkey` the key the overlay tracks as its hotkey.
+pub(super) fn set_hotkey(hotkey: OverlayHotkey) {
+    HOTKEY_KEYS.set(hotkey);
+}
+
+fn hotkey_key() -> u32 {
+    u32::from(HOTKEY_KEYS.get().key)
+}
+
+/// The key a `KEYS` entry stands for.
+#[cfg(windows)]
+fn real_key(key: u32) -> u32 {
+    if key == HOTKEY { hotkey_key() } else { key }
+}
 
 #[cfg(any(windows, test))]
 const fn bit(key: u32) -> u32 {
@@ -190,6 +221,7 @@ const SHIFT_KEYS: u32 = bit(vk::LSHIFT) | bit(vk::RSHIFT);
 const WINDOWS_KEYS: u32 = bit(vk::LWIN) | bit(vk::RWIN);
 
 fn slot(key: u32) -> Option<(usize, Role)> {
+    let key = if key == hotkey_key() { HOTKEY } else { key };
     KEYS.iter()
         .position(|&(tracked, _)| tracked == key)
         .map(|index| (index, KEYS[index].1))
@@ -203,23 +235,24 @@ fn consumes(key: u32) -> bool {
 }
 
 /// Keys that type into the search while it is being typed, although they
-/// are commands otherwise.
+/// are commands otherwise.  The hotkey's key types unless it's an F key.
 fn types(key: u32) -> bool {
-    matches!(
-        key,
-        vk::W
-            | vk::A
-            | vk::S
-            | vk::D
-            | vk::Q
-            | vk::E
-            | vk::Z
-            | vk::C
-            | vk::X
-            | vk::H
-            | vk::F
-            | vk::SPACE
-    )
+    let typed = matches!(key, 0x30..=0x39 | 0x41..=0x5A);
+    (key == hotkey_key() && typed)
+        || matches!(
+            key,
+            vk::W
+                | vk::A
+                | vk::S
+                | vk::D
+                | vk::Q
+                | vk::E
+                | vk::Z
+                | vk::C
+                | vk::X
+                | vk::F
+                | vk::SPACE
+        )
 }
 
 /// Whether the search is being typed after `event`.
@@ -252,17 +285,18 @@ fn egui_vk(key: egui::Key) -> Option<u32> {
         Key::Enter => vk::RETURN,
         Key::X => vk::X,
         Key::Escape => vk::ESCAPE,
-        Key::H => vk::H,
         Key::F10 => vk::F10,
         Key::Tab => vk::TAB,
         Key::F => vk::F,
-        _ => return None,
+        // The letter, digit or F key the hotkey can be.
+        _ => return OverlayHotkey::key_code(key.name()).map(u32::from),
     })
 }
 
 /// Reads the overlay's keys from egui, for capture runs and other platforms,
 /// where no window procedure sees them first.  It takes the keys the window
-/// would swallow out of egui's input, with Alt+H standing in for the hotkey.
+/// would swallow out of egui's input, with the hotkey's keys standing in for
+/// the hotkey.
 #[derive(Default)]
 pub(super) struct EguiKeys {
     typing: bool,
@@ -334,7 +368,11 @@ impl EguiKeys {
         }
 
         self.held |= mask;
-        if vk == vk::H && modifiers.alt {
+        let hotkey = HOTKEY_KEYS.get();
+        if vk == hotkey_key()
+            && (modifiers.ctrl, modifiers.alt, modifiers.shift)
+                == (hotkey.ctrl, hotkey.alt, hotkey.shift)
+        {
             self.push(Event::Hotkey { focused: true });
             return false;
         }
@@ -432,12 +470,12 @@ impl Router {
         self.reset(0, 0);
     }
 
-    /// The hotkey swallowed H's press while the overlay had the keyboard, so
-    /// its repeats and release are the overlay's too.
+    /// The hotkey swallowed its key's press while the overlay had the
+    /// keyboard, so its repeats and release are the overlay's too.
     fn hotkey_pressed(&mut self) {
-        self.down |= bit(vk::H);
-        self.ours |= bit(vk::H);
-        self.passed &= !bit(vk::H);
+        self.down |= bit(HOTKEY);
+        self.ours |= bit(HOTKEY);
+        self.passed &= !bit(HOTKEY);
     }
 
     /// Whether a key that went down in the overlay is still `held`.  Handing
@@ -550,7 +588,7 @@ fn physically_down(key: u32) -> bool {
 fn physical_keys() -> u32 {
     KEYS.iter()
         .enumerate()
-        .filter(|&(_, &(key, _))| physically_down(key))
+        .filter(|&(_, &(key, _))| physically_down(real_key(key)))
         .fold(0, |held, (index, _)| held | (1 << index))
 }
 
@@ -593,14 +631,14 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     .unwrap_or(consumed)
 }
 
-/// Alt+H arrived.  `took_focus` is true when the overlay has just taken the
-/// keyboard from another window.
+/// The hotkey arrived.  `took_focus` is true when the overlay has just taken
+/// the keyboard from another window.
 #[cfg(windows)]
 pub(super) fn hotkey(focused: bool, took_focus: bool) {
     let held = if took_focus { physical_keys() } else { 0 };
     notify(|router| {
         if took_focus {
-            router.reset(held, bit(vk::H));
+            router.reset(held, bit(HOTKEY));
         } else if focused {
             router.hotkey_pressed();
         }
@@ -964,9 +1002,9 @@ mod tests {
         router.key(vk::H, false, after(now, 600));
         assert!(!router.busy(ALL));
 
-        router.reset(bit(vk::LMENU) | bit(vk::H), bit(vk::H));
+        router.reset(bit(vk::LMENU) | bit(HOTKEY), bit(HOTKEY));
         assert!(router.busy(ALL));
-        router.reset(bit(vk::LMENU), bit(vk::H));
+        router.reset(bit(vk::LMENU), bit(HOTKEY));
         assert!(!router.busy(ALL));
     }
 

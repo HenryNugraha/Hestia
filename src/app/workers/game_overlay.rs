@@ -258,6 +258,8 @@ struct OverlayModDraft {
     pictures: OverlayModPictures,
     /// An unsafe mod the library censors.
     censored: bool,
+    /// The GameBanana mod it was installed from.
+    gamebanana_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -273,14 +275,14 @@ struct OverlayModPictures {
 impl OverlayLibraryDraft {
     /// Finds the pictures, which reads the disk.
     fn resolve(self) -> overlay_protocol::Library {
-        let icons = if self
+        let characters = if self
             .categories
             .iter()
-            .any(|category| category.character.is_some())
+            .any(|category| category.id != overlay_protocol::UNCATEGORIZED_ID)
         {
-            character_icon_urls(&self.game_id)
+            saved_characters(&self.game_id)
         } else {
-            HashMap::new()
+            Vec::new()
         };
         overlay_protocol::Library {
             game_id: self.game_id,
@@ -288,21 +290,35 @@ impl OverlayLibraryDraft {
             categories: self
                 .categories
                 .into_iter()
-                .map(|category| overlay_protocol::Category {
-                    image: category
-                        .character
-                        .and_then(|character| icons.get(&character))
-                        .map(|url| {
-                            persistence::cache_file_path(&HestiaApp::browse_image_cache_key(url))
-                        })
-                        .filter(|path| path.is_file()),
-                    id: category.id,
-                    name: category.name,
-                    mods: category
-                        .mods
-                        .into_iter()
-                        .map(OverlayModDraft::resolve)
-                        .collect(),
+                .map(|category| {
+                    // Without a link, the character the name stands for.
+                    let character = match category.character {
+                        Some(id) => characters.iter().find(|character| character.id == id),
+                        None if category.id == overlay_protocol::UNCATEGORIZED_ID => None,
+                        None => characters.iter().find(|character| {
+                            overlay_protocol::names_character(&category.name, &character.name)
+                        }),
+                    };
+                    overlay_protocol::Category {
+                        image: character
+                            .and_then(|character| character.icon_url.as_deref())
+                            .map(|url| {
+                                persistence::cache_file_path(&HestiaApp::browse_image_cache_key(
+                                    url,
+                                ))
+                            })
+                            .filter(|path| path.is_file()),
+                        character: category
+                            .character
+                            .or(character.map(|character| character.id)),
+                        id: category.id,
+                        name: category.name,
+                        mods: category
+                            .mods
+                            .into_iter()
+                            .map(OverlayModDraft::resolve)
+                            .collect(),
+                    }
                 })
                 .collect(),
         }
@@ -328,31 +344,31 @@ impl OverlayModDraft {
             image,
             active: self.active,
             censored: self.censored,
+            gamebanana_id: self.gamebanana_id,
         }
     }
 }
 
-/// The icons of the game's GameBanana characters, by character, from what
-/// Browse has saved.  Empty when Browse hasn't listed the characters yet.
-fn character_icon_urls(game_id: &str) -> HashMap<u64, String> {
+/// The game's GameBanana characters, from what Hestia saved when Browse or
+/// the overlay listed them.  Empty until one has.
+fn saved_characters(game_id: &str) -> Vec<gamebanana::CharacterCategory> {
     let Some(super_category) = gamebanana::character_super_category_id_for_hestia(game_id) else {
-        return HashMap::new();
+        return Vec::new();
     };
     let key = gamebanana::character_categories_cache_key(game_id, super_category);
     let Ok(bytes) = fs::read(persistence::cache_file_path(&key)) else {
-        return HashMap::new();
+        return Vec::new();
     };
-    serde_json::from_slice::<Vec<gamebanana::CharacterCategory>>(&bytes)
-        .map(|characters| {
-            characters
-                .into_iter()
-                .filter_map(|character| {
-                    let url = character.icon_url.filter(|url| !url.trim().is_empty())?;
-                    Some((character.id, url))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let mut characters: Vec<gamebanana::CharacterCategory> =
+        serde_json::from_slice(&bytes).unwrap_or_default();
+    characters.retain(|character| !character.is_obsolete);
+    for character in &mut characters {
+        character.icon_url = character
+            .icon_url
+            .take()
+            .filter(|url| !url.trim().is_empty());
+    }
+    characters
 }
 
 /// What the overlay needs first.
@@ -360,22 +376,36 @@ struct OverlayStartDraft {
     host_window: Option<i64>,
     game_pids: Vec<u32>,
     library: OverlayLibraryDraft,
+    settings: overlay_protocol::Settings,
     selection: Option<overlay_protocol::Selection>,
 }
 
 /// What Hestia has for the overlay that isn't written yet.  Only the newest
-/// library matters, so a new one replaces one still waiting.
+/// library matters, so a new one replaces one still waiting.  Answers go
+/// after the library, so the overlay has the change when its answer arrives.
 #[derive(Default)]
 struct OverlayOutgoing {
     start: Option<OverlayStartDraft>,
     library: Option<OverlayLibraryDraft>,
     game_pids: Option<Vec<u32>>,
+    answers: Vec<overlay_protocol::Changed>,
+    /// GameBanana pages and characters, in the order Hestia got them.
+    messages: Vec<overlay_protocol::ToOverlay>,
+    /// GameBanana pictures downloaded since the last write.
+    pictures: overlay_protocol::Pictures,
     closed: bool,
 }
 
 impl OverlayOutgoing {
     fn is_empty(&self) -> bool {
-        self.start.is_none() && self.library.is_none() && self.game_pids.is_none() && !self.closed
+        self.start.is_none()
+            && self.library.is_none()
+            && self.game_pids.is_none()
+            && self.answers.is_empty()
+            && self.messages.is_empty()
+            && self.pictures.mods.is_empty()
+            && self.pictures.characters.is_empty()
+            && !self.closed
     }
 }
 
@@ -394,6 +424,17 @@ impl OverlayOutbox {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         self.news.notify_one();
+    }
+
+    fn send(&self, message: overlay_protocol::ToOverlay) {
+        self.update(|pending| pending.messages.push(message));
+    }
+
+    fn add_pictures(&self, pictures: overlay_protocol::Pictures) {
+        self.update(|pending| {
+            pending.pictures.mods.extend(pictures.mods);
+            pending.pictures.characters.extend(pictures.characters);
+        });
     }
 
     /// Ends the link, which tells the overlay to close.
@@ -452,6 +493,7 @@ impl OverlayProcess {
             let _ = child.wait();
             return Err(error);
         }
+        xxmi_persist::set_game_overlay_process(Some(child.id()));
         Ok(Self {
             game_id: game.id.clone(),
             game_pids: game.pids.clone(),
@@ -480,9 +522,28 @@ impl OverlayProcess {
         Ok(())
     }
 
+    fn outbox(&self) -> Arc<OverlayOutbox> {
+        Arc::clone(&self.outbox)
+    }
+
     fn send_library(&self, library: OverlayLibraryDraft) {
         self.outbox
             .update(|pending| pending.library = Some(library));
+    }
+
+    /// Answers a change, after the library when there is one.
+    fn answer(&self, library: Option<OverlayLibraryDraft>, answer: overlay_protocol::Changed) {
+        self.outbox.update(|pending| {
+            if library.is_some() {
+                pending.library = library;
+            }
+            pending.answers.push(answer);
+        });
+    }
+
+    fn send_settings(&self, settings: overlay_protocol::Settings) {
+        self.outbox
+            .send(overlay_protocol::ToOverlay::Settings(settings));
     }
 
     fn set_game_pids(&mut self, pids: Vec<u32>) {
@@ -492,6 +553,7 @@ impl OverlayProcess {
 
     /// Asks the overlay to close, and ends it if it hasn't after a moment.
     fn close(self) {
+        xxmi_persist::set_game_overlay_process(None);
         self.outbox.close();
         let mut child = self.child;
         // Without this thread the overlay still closes, since it exits by
@@ -514,6 +576,7 @@ impl OverlayProcess {
 
     /// Ends the overlay now.
     fn end(mut self) {
+        xxmi_persist::set_game_overlay_process(None);
         self.outbox.close();
         let _ = self.child.kill();
     }
@@ -526,6 +589,16 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
             // Dropping stdin ends the link.
             return;
         }
+        let pictures = pending.pictures;
+        let pictures = (!pictures.mods.is_empty() || !pictures.characters.is_empty())
+            .then_some(overlay_protocol::ToOverlay::Pictures(pictures));
+        let later = pending
+            .answers
+            .into_iter()
+            .map(overlay_protocol::ToOverlay::Changed)
+            .chain(pending.messages)
+            .chain(pictures)
+            .map(Some);
         let messages = [
             pending.start.map(|start| {
                 overlay_protocol::ToOverlay::Start(overlay_protocol::Start {
@@ -533,6 +606,7 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
                     host_window: start.host_window,
                     game_pids: start.game_pids,
                     library: start.library.resolve(),
+                    settings: start.settings,
                     selection: start.selection,
                 })
             }),
@@ -543,7 +617,7 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
                 .game_pids
                 .map(|pids| overlay_protocol::ToOverlay::GameProcesses { pids }),
         ];
-        for message in messages.into_iter().flatten() {
+        for message in messages.into_iter().chain(later).flatten() {
             let written = overlay_protocol::encode(&message)
                 .map_err(std::io::Error::from)
                 .and_then(|line| writeln!(stdin, "{line}"))

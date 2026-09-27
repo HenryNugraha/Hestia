@@ -1,6 +1,10 @@
 use std::time::Duration;
 
-use super::layouts::ShortcutAvailability;
+use super::{
+    layouts::{ShortcutAvailability, Space},
+    text,
+};
+use crate::app::TextKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Hint {
@@ -86,18 +90,23 @@ impl Hint {
         }
     }
 
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Navigate => "Navigate",
-            Self::Mods => "Browse mods",
-            Self::Categories => "Browse categories",
-            Self::Exclusive | Self::TypedExclusive => "Enable this mod, disable others",
-            Self::Toggle | Self::TypedToggle => "Toggle Enable/Disable",
-            Self::Search => "Search",
-            Self::DoneTyping => "Done typing",
-            Self::EditSearch => "Edit search",
-            Self::ClearSearch => "Clear search",
-        }
+    pub(super) fn label(self, available: ShortcutAvailability) -> &'static str {
+        text(match self {
+            Self::Exclusive | Self::TypedExclusive => match available.space {
+                Space::Exclusive => TextKey::GameOverlayHintExclusive,
+                Space::Enable => TextKey::GameOverlayHintEnable,
+                Space::Install => TextKey::GameOverlayHintInstall,
+                Space::TryAgain => TextKey::GameOverlayHintTryAgain,
+            },
+            Self::Navigate => TextKey::GameOverlayHintNavigate,
+            Self::Mods => TextKey::GameOverlayHintMods,
+            Self::Categories => TextKey::GameOverlayHintCategories,
+            Self::Toggle | Self::TypedToggle => TextKey::GameOverlayHintToggle,
+            Self::Search => TextKey::GameOverlayHintSearch,
+            Self::DoneTyping => TextKey::GameOverlayHintDoneTyping,
+            Self::EditSearch => TextKey::GameOverlayHintEditSearch,
+            Self::ClearSearch => TextKey::GameOverlayHintClearSearch,
+        })
     }
 
     /// Whether the keys do anything right now.  Dimmed otherwise.
@@ -238,7 +247,12 @@ mod tests {
         let hints = |mode: Mode| {
             mode.sequence()
                 .iter()
-                .map(|hint| (hint.keys().join("+"), hint.label()))
+                .map(|hint| {
+                    (
+                        hint.keys().join("+"),
+                        hint.label(ShortcutAvailability::default()),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         let normal = [
@@ -274,17 +288,13 @@ mod tests {
 
     #[test]
     fn typed_actions_dim_like_their_keys_and_search_keys_never_dim() {
-        let none = ShortcutAvailability {
-            categories: false,
-            mods: false,
-            exclusive: false,
-            toggle: false,
-        };
+        let none = ShortcutAvailability::default();
         let all = ShortcutAvailability {
             categories: true,
             mods: true,
             exclusive: true,
             toggle: true,
+            space: Space::Exclusive,
         };
         for (typed, key) in [
             (Hint::TypedExclusive, Hint::Exclusive),
@@ -303,6 +313,23 @@ mod tests {
         }
         assert!(!Hint::Navigate.enabled(none));
         assert!(Hint::Navigate.enabled(ShortcutAvailability { mods: true, ..none }));
+    }
+
+    #[test]
+    fn space_says_what_it_does_on_the_focused_card() {
+        let label = |space| {
+            let available = ShortcutAvailability {
+                space,
+                ..ShortcutAvailability::default()
+            };
+            (
+                Hint::Exclusive.label(available),
+                Hint::TypedExclusive.label(available),
+            )
+        };
+        assert_eq!(label(Space::Enable), ("Enable this mod", "Enable this mod"));
+        assert_eq!(label(Space::Install), ("Install", "Install"));
+        assert_eq!(label(Space::TryAgain), ("Try again", "Try again"));
     }
 
     #[test]

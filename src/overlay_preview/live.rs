@@ -2,6 +2,7 @@
 //! `crate::overlay_protocol` has the messages.
 
 use std::{
+    collections::HashSet,
     io::{BufRead, Write},
     sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc},
     thread,
@@ -10,8 +11,10 @@ use std::{
 
 use anyhow::{Context, bail};
 
-use super::platform;
-use crate::overlay_protocol::{self, FromOverlay, Library, Selection, Start, ToOverlay};
+use super::{layouts::ModRequest, platform};
+use crate::overlay_protocol::{
+    self, Change, Changed, FromOverlay, Library, Selection, Settings, Start, ToOverlay,
+};
 
 /// How long the strip shows after the overlay closes.
 const STRIP_SECONDS: f64 = 3.0;
@@ -20,11 +23,21 @@ const STRIP_SECONDS: f64 = 3.0;
 /// enough to notice Alt+H.
 const ARRIVAL_SECONDS: f64 = 7.0;
 
+/// How long the strip shows a change Hestia refused.
+pub(super) const WARNING_SECONDS: f64 = 6.0;
+
 /// How long the strip stays after the pointer leaves it.
 const HOVER_SECONDS: f64 = 1.5;
 
 /// The end of the strip's time, where it fades out.
 const FADE_SECONDS: f64 = 0.4;
+
+/// How long a change waits for Hestia before its card shows that it waits.
+/// Most answers come sooner, so their cards never flicker.
+const WAITING_LOOK_SECONDS: f64 = 0.3;
+
+/// How long the overlay waits for Hestia to answer a change.
+const ANSWER_SECONDS: f64 = 10.0;
 
 /// How long the overlay waits for its window to close once Hestia is gone.
 const EXIT_GRACE: Duration = Duration::from_secs(3);
@@ -46,8 +59,21 @@ pub(super) fn read_start() -> anyhow::Result<Start> {
 
 #[derive(Default)]
 struct Inbox {
-    library: Option<Library>,
+    news: News,
     closed: bool,
+}
+
+/// What Hestia sent since the overlay last looked.
+#[derive(Default)]
+pub(super) struct News {
+    /// The newest settings.
+    pub settings: Option<Settings>,
+    /// The newest library.
+    pub library: Option<Library>,
+    /// Answers to changes, each after the library that has its change.
+    pub answers: Vec<Changed>,
+    /// GameBanana pages, characters and pictures, in the order they came.
+    pub gamebanana: Vec<ToOverlay>,
 }
 
 pub(super) struct Link {
@@ -55,12 +81,19 @@ pub(super) struct Link {
     outbox: mpsc::Sender<FromOverlay>,
     host_window: Option<i64>,
     reported: Option<Selection>,
+    typing: bool,
+    /// The opacity Hestia last knew.
+    opacity: u8,
     closing: bool,
 }
 
 impl Link {
     /// Starts reading Hestia's messages and writing the overlay's.
-    pub(super) fn start(ctx: egui::Context, host_window: Option<i64>) -> std::io::Result<Self> {
+    pub(super) fn start(
+        ctx: egui::Context,
+        host_window: Option<i64>,
+        opacity: u8,
+    ) -> std::io::Result<Self> {
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let reader_inbox = Arc::clone(&inbox);
         thread::Builder::new()
@@ -75,6 +108,8 @@ impl Link {
             outbox,
             host_window,
             reported: None,
+            typing: false,
+            opacity,
             closing: false,
         })
     }
@@ -83,9 +118,20 @@ impl Link {
         self.host_window
     }
 
-    /// The newest library since the last call.
-    pub(super) fn take_library(&self) -> Option<Library> {
-        lock(&self.inbox).library.take()
+    /// What Hestia sent since the last call.  Taken together, so an answer
+    /// never comes without the library that has its change.
+    pub(super) fn take_news(&self) -> News {
+        std::mem::take(&mut lock(&self.inbox).news)
+    }
+
+    /// Asks Hestia for a change.
+    pub(super) fn send_change(&self, change: Change) {
+        let _ = self.outbox.send(FromOverlay::Change(change));
+    }
+
+    /// Asks Hestia for GameBanana mods or characters.
+    pub(super) fn ask(&self, request: FromOverlay) {
+        let _ = self.outbox.send(request);
     }
 
     /// Whether Hestia has closed the link.  True once.
@@ -109,6 +155,32 @@ impl Link {
             self.reported = Some(selection);
         }
     }
+
+    /// Tells Hestia whether the search takes the keys, when that changed.
+    pub(super) fn report_typing(&mut self, typing: bool) {
+        if self.typing != typing {
+            let _ = self.outbox.send(FromOverlay::Typing { typing });
+            self.typing = typing;
+        }
+    }
+
+    /// Tells Hestia the opacity to save, when that changed.
+    pub(super) fn report_opacity(&mut self, opacity: u8) {
+        if self.opacity != opacity {
+            let _ = self.outbox.send(FromOverlay::Opacity { opacity });
+            self.opacity = opacity;
+        }
+    }
+
+    /// Notes an opacity that came from Hestia, so it isn't sent back.
+    pub(super) fn received_opacity(&mut self, opacity: u8) {
+        self.opacity = opacity;
+    }
+
+    /// Tells Hestia to save the header's "show all characters" button.
+    pub(super) fn report_all_characters(&self, show: bool) {
+        let _ = self.outbox.send(FromOverlay::AllCharacters { show });
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -126,8 +198,25 @@ fn read_messages(inbox: &Mutex<Inbox>, ctx: &egui::Context) {
             Err(_) => break,
         };
         match overlay_protocol::decode::<ToOverlay>(&line) {
+            Ok(ToOverlay::Settings(settings)) => {
+                lock(inbox).news.settings = Some(settings);
+                ctx.request_repaint();
+            }
             Ok(ToOverlay::Library(library)) => {
-                lock(inbox).library = Some(library);
+                lock(inbox).news.library = Some(library);
+                ctx.request_repaint();
+            }
+            Ok(ToOverlay::Changed(answer)) => {
+                lock(inbox).news.answers.push(answer);
+                ctx.request_repaint();
+            }
+            Ok(
+                message @ (ToOverlay::BrowsePage(_)
+                | ToOverlay::Characters { .. }
+                | ToOverlay::Pictures(_)
+                | ToOverlay::Install(_)),
+            ) => {
+                lock(inbox).news.gamebanana.push(message);
                 ctx.request_repaint();
             }
             Ok(ToOverlay::GameProcesses { pids }) => platform::set_game_processes(&pids),
@@ -176,6 +265,12 @@ impl Strip {
         self.show_for(now, STRIP_SECONDS);
     }
 
+    /// Shows the strip just while the overlay is open, so it fades out as
+    /// soon as it closes.
+    pub(super) fn keep(&mut self, now: f64) {
+        self.show_for(now, FADE_SECONDS);
+    }
+
     /// Shows the strip for the game's first time in front.
     pub(super) fn arrive(&mut self, now: f64) {
         self.show_for(now, ARRIVAL_SECONDS);
@@ -184,6 +279,11 @@ impl Strip {
     fn show_for(&mut self, now: f64, seconds: f64) {
         self.until = self.until.max(now + seconds);
         self.dismissed = false;
+    }
+
+    /// Shows the strip long enough to read a warning.
+    pub(super) fn warn(&mut self, now: f64) {
+        self.show_for(now, WARNING_SECONDS);
     }
 
     /// Keeps the strip a little longer while the pointer is on it.
@@ -222,9 +322,226 @@ impl Strip {
     }
 }
 
+/// The changes to mods the overlay asked Hestia for.  A change shows at once
+/// and stays while Hestia works on it, so a library Hestia sent before making
+/// it doesn't undo it on screen.  Once Hestia answers, its library shows.
+pub(super) struct Changes {
+    /// The newest library from Hestia.
+    library: Library,
+    /// What the overlay shows: the library with the changes still waiting.
+    shown: Library,
+    asked: Vec<Asked>,
+    next_id: u64,
+}
+
+struct Asked {
+    id: u64,
+    /// When the overlay asked, in egui time.
+    at: f64,
+    mod_id: String,
+    /// The mods the change turned on or off on screen.
+    states: Vec<(String, bool)>,
+}
+
+impl Changes {
+    pub(super) fn new(library: Library) -> Self {
+        Self {
+            shown: library.clone(),
+            library,
+            asked: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Asks Hestia for a change the overlay already shows.
+    pub(super) fn ask(&mut self, request: ModRequest, now: f64) -> Change {
+        self.next_id += 1;
+        self.asked.push(Asked {
+            id: self.next_id,
+            at: now,
+            mod_id: request.mod_id.clone(),
+            states: request.states,
+        });
+        self.shown = self.with_asked();
+        Change {
+            id: self.next_id,
+            mod_id: request.mod_id,
+            action: request.action,
+        }
+    }
+
+    pub(super) fn receive(&mut self, library: Library) {
+        self.library = library;
+    }
+
+    /// Takes Hestia's answer.  The error says why Hestia refused the change.
+    pub(super) fn answer(&mut self, answer: Changed) -> Option<String> {
+        let index = self.asked.iter().position(|asked| asked.id == answer.id)?;
+        self.asked.remove(index);
+        answer.error
+    }
+
+    /// Gives up on changes Hestia hasn't answered in time.  True if any.
+    pub(super) fn expire(&mut self, now: f64) -> bool {
+        let before = self.asked.len();
+        self.asked.retain(|asked| now - asked.at < ANSWER_SECONDS);
+        self.asked.len() != before
+    }
+
+    /// The library to show, when it's not the one showing.
+    pub(super) fn take_update(&mut self) -> Option<Library> {
+        let shown = self.with_asked();
+        (shown != self.shown).then(|| {
+            self.shown = shown.clone();
+            shown
+        })
+    }
+
+    /// The mods whose change has waited long enough to show that it waits.
+    pub(super) fn waiting(&self, now: f64) -> HashSet<String> {
+        self.asked
+            .iter()
+            .filter(|asked| now - asked.at >= WAITING_LOOK_SECONDS)
+            .map(|asked| asked.mod_id.clone())
+            .collect()
+    }
+
+    /// When a card starts to look like it waits, or a change runs out of
+    /// time.
+    pub(super) fn next_frame(&self, now: f64) -> Option<Duration> {
+        self.asked
+            .iter()
+            .flat_map(|asked| [asked.at + WAITING_LOOK_SECONDS, asked.at + ANSWER_SECONDS])
+            .filter(|at| *at > now)
+            .min_by(f64::total_cmp)
+            .map(|at| Duration::from_secs_f64(at - now))
+    }
+
+    fn with_asked(&self) -> Library {
+        let mut library = self.library.clone();
+        for (mod_id, active) in self.asked.iter().flat_map(|asked| &asked.states) {
+            for entry in library
+                .categories
+                .iter_mut()
+                .flat_map(|category| &mut category.mods)
+                .filter(|entry| &entry.id == mod_id)
+            {
+                entry.active = *active;
+            }
+        }
+        library
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay_protocol::{Category, ChangeAction, Mod};
+
+    fn library(active: &[&str]) -> Library {
+        Library {
+            game_id: "zzz".into(),
+            game_name: "ZZZ".into(),
+            categories: vec![Category {
+                id: "ellen".into(),
+                name: "Ellen".into(),
+                image: None,
+                character: None,
+                mods: ["a", "b", "c"]
+                    .into_iter()
+                    .map(|id| Mod {
+                        id: id.into(),
+                        name: id.into(),
+                        image: None,
+                        active: active.contains(&id),
+                        censored: false,
+                        gamebanana_id: None,
+                    })
+                    .collect(),
+            }],
+        }
+    }
+
+    fn active(library: &Library) -> Vec<&str> {
+        library.categories[0]
+            .mods
+            .iter()
+            .filter(|entry| entry.active)
+            .map(|entry| entry.id.as_str())
+            .collect()
+    }
+
+    fn use_b() -> ModRequest {
+        ModRequest {
+            mod_id: "b".into(),
+            action: ChangeAction::Use,
+            states: vec![("a".into(), false), ("b".into(), true)],
+        }
+    }
+
+    #[test]
+    fn a_change_shows_until_hestia_answers() {
+        let mut changes = Changes::new(library(&["a"]));
+        let change = changes.ask(use_b(), 1.0);
+        assert_eq!(change.mod_id, "b");
+        assert_eq!(change.action, ChangeAction::Use);
+        // The overlay already shows the change, so nothing to update.
+        assert_eq!(changes.take_update(), None);
+        assert!(changes.waiting(1.1).is_empty());
+        assert_eq!(changes.waiting(1.4), HashSet::from(["b".to_owned()]));
+
+        // A library Hestia sent before making the change doesn't undo it.
+        changes.receive(library(&["a", "c"]));
+        assert_eq!(active(&changes.take_update().unwrap()), ["b", "c"]);
+
+        changes.receive(library(&["b", "c"]));
+        assert_eq!(
+            changes.answer(Changed {
+                id: change.id,
+                error: None,
+                press_key: None,
+            }),
+            None
+        );
+        assert_eq!(changes.take_update(), None);
+        assert!(changes.waiting(2.0).is_empty());
+        assert_eq!(changes.next_frame(2.0), None);
+    }
+
+    #[test]
+    fn a_refused_change_goes_back_to_hestias_library() {
+        let mut changes = Changes::new(library(&["a"]));
+        let change = changes.ask(use_b(), 1.0);
+        let error = changes.answer(Changed {
+            id: change.id,
+            error: Some("Mods are locked".into()),
+            press_key: None,
+        });
+        assert_eq!(error.as_deref(), Some("Mods are locked"));
+        assert_eq!(active(&changes.take_update().unwrap()), ["a"]);
+        // An answer to nothing the overlay asked is ignored.
+        assert_eq!(
+            changes.answer(Changed {
+                id: 99,
+                error: Some("late".into()),
+                press_key: None,
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn a_change_hestia_never_answers_runs_out() {
+        let mut changes = Changes::new(library(&["a"]));
+        changes.ask(use_b(), 1.0);
+        assert_eq!(
+            changes.next_frame(1.0),
+            Some(Duration::from_secs_f64(WAITING_LOOK_SECONDS))
+        );
+        assert!(!changes.expire(1.0 + ANSWER_SECONDS - 0.1));
+        assert!(changes.expire(1.0 + ANSWER_SECONDS));
+        assert_eq!(active(&changes.take_update().unwrap()), ["a"]);
+    }
 
     #[test]
     fn the_strip_shows_for_its_time_then_fades_out() {

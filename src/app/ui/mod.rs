@@ -58,6 +58,7 @@ include!("widgets.rs");
 include!("chrome.rs");
 include!("profiles.rs");
 include!("windows.rs");
+include!("game_overlay_settings.rs");
 include!("library.rs");
 include!("browse.rs");
 include!("dialogs.rs");
