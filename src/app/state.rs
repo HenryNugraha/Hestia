@@ -633,6 +633,11 @@ pub struct HestiaApp {
     window_state_cache: Option<WindowStateSnapshot>,
     window_state_last_save: f64,
     window_was_maximized: bool,
+    /// The zoom the window's position and size were measured at.  They are
+    /// still in the old zoom's units on the frame a new zoom lands.
+    window_zoom: f32,
+    /// The smallest window size last asked of Windows, in points.
+    window_min_size: Option<egui::Vec2>,
     /// Trailing-debounce deadline (egui input time) for writing changed
     /// `static_prefs.floating_windows` to disk; `None` when nothing is pending.
     floating_window_save_due: Option<f64>,

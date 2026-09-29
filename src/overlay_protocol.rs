@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AppLanguage, OverlayHotkey, OverlaySize};
+use crate::model::{AppLanguage, OverlayHotkey};
 
 /// The command line flag that starts the overlay.
 pub(crate) const OVERLAY_ARG: &str = "--overlay";
@@ -72,7 +72,7 @@ pub(crate) struct Start {
 
 /// The settings the overlay takes from Hestia.  Saved samples from before a
 /// setting existed read it as its default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub language: AppLanguage,
@@ -87,7 +87,9 @@ pub(crate) struct Settings {
     /// Also list GameBanana's characters that no category stands for.
     pub all_characters: bool,
     pub key_hints: bool,
-    pub size: OverlaySize,
+    /// Hestia's interface zoom, 1 being Normal.  The overlay draws
+    /// `OVERLAY_ZOOM` times bigger.
+    pub zoom: f32,
 }
 
 impl Default for Settings {
@@ -101,7 +103,7 @@ impl Default for Settings {
             gamebanana: true,
             all_characters: false,
             key_hints: true,
-            size: OverlaySize::default(),
+            zoom: 1.0,
         }
     }
 }
@@ -417,7 +419,7 @@ mod tests {
                     gamebanana: false,
                     all_characters: true,
                     key_hints: false,
-                    size: OverlaySize::Large,
+                    zoom: 1.2,
                 },
                 library: library(),
                 selection: Some(Selection {

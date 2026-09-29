@@ -283,7 +283,7 @@ impl HestiaApp {
             gamebanana: prefs.game_overlay_gamebanana,
             all_characters: prefs.game_overlay_all_characters,
             key_hints: prefs.game_overlay_key_hints,
-            size: prefs.game_overlay_size,
+            zoom: prefs.interface_zoom,
         }
     }
 

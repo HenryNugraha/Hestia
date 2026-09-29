@@ -912,13 +912,15 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "显示 GameBanana 模组", // SettingsGameOverlayGameBanana
     "显示你没有分类的角色", // SettingsGameOverlayAllCharacters
     "显示按键提示", // SettingsGameOverlayKeyHints
-    "大小", // SettingsGameOverlaySize
-    "小", // SettingsGameOverlaySizeSmall
-    "正常", // SettingsGameOverlaySizeNormal
-    "大", // SettingsGameOverlaySizeLarge
+    "大小", // SettingsInterfaceSize
+    "小", // SettingsInterfaceSizeSmall
+    "标准", // SettingsInterfaceSizeNormal
+    "大", // SettingsInterfaceSizeLarge
     "预览", // SettingsGameOverlayPreview
     "无需启动游戏，在 Hestia 上方显示浮层以便试用。在其中启用或禁用的模组会真实生效。", // SettingsGameOverlayPreviewTooltip
     "需要使用 XXMI 的游戏。", // SettingsGameOverlayPreviewUnavailable
     "停止预览", // SettingsGameOverlayStopPreview
     "按 {key} 打开浮层。", // SettingsGameOverlayPreviewHint
+    "自定义", // SettingsInterfaceSizeCustom
+    "同时调整游戏内浮层的大小。Ctrl + = 和 Ctrl + - 也可调整，Ctrl + 0 恢复为标准。", // SettingsInterfaceSizeTooltip
 ];

@@ -19,6 +19,9 @@ const WORKSPACE_LEFT_PANE_RATIO: f32 = 0.515;
 
 // Outer chrome spacing and major titlebar/game art sizing.
 const WINDOW_INSET: i8 = 6;
+/// The smallest the main window goes at the Normal interface size.  Bigger
+/// sizes raise it.
+pub(crate) const MAIN_WINDOW_MIN_SIZE: egui::Vec2 = egui::vec2(1180.0, 760.0);
 const NAV_RAIL_WIDTH: f32 = 90.0;
 const GAME_ICON_TEXTURE_SIZE: u32 = 256;
 const TOOL_ICON_TEXTURE_SIZE: u32 = 96;

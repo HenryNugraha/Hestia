@@ -33,13 +33,16 @@ use gamebanana::InstallNews;
 
 use crate::{
     app::{TextCatalog, TextKey},
-    model::{AppLanguage, OverlayHotkey, OverlaySize},
+    model::{AppLanguage, InterfaceSize, OverlayHotkey},
     overlay_protocol::Settings,
 };
 
 pub(crate) const OVERLAY_OPACITY_MIN: u8 = 50;
 pub(crate) const OVERLAY_OPACITY_MAX: u8 = 94;
 pub(crate) const DEFAULT_OVERLAY_OPACITY: u8 = 78;
+/// How much bigger than Hestia's interface zoom the overlay draws, so it
+/// reads over a game.
+const OVERLAY_ZOOM: f32 = 1.2;
 const EXPANDED_SIZE: egui::Vec2 = egui::vec2(560.0, 392.0);
 const IDLE_SIZE: egui::Vec2 = egui::vec2(280.0, 48.0);
 // Reserve the hold-preview space without resizing or recentering the native
@@ -97,8 +100,10 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
         .and_then(|tag| AppLanguage::from_locale_tag(&tag))
         .unwrap_or(settings.language);
     LANGUAGE.set(language);
-    // And another hotkey or size, to check they fit.
+    // And another hotkey or size, to check they fit.  The capture runs'
+    // clicks are laid out at a zoom of 1, so it's the preview's.
     if preview {
+        settings.zoom = 1.0 / OVERLAY_ZOOM;
         if let Some(hotkey) = std::env::var("HESTIA_OVERLAY_PREVIEW_HOTKEY")
             .ok()
             .and_then(|name| OverlayHotkey::parse(&name))
@@ -106,14 +111,14 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             settings.hotkey = hotkey;
         }
         if let Ok(name) = std::env::var("HESTIA_OVERLAY_PREVIEW_SIZE")
-            && let Some(size) = OverlaySize::ALL
+            && let Some(size) = InterfaceSize::ALL
                 .into_iter()
                 .find(|size| format!("{size:?}").eq_ignore_ascii_case(&name))
         {
-            settings.size = size;
+            settings.zoom = size.zoom();
         }
     }
-    let zoom = settings.size.zoom();
+    let zoom = OVERLAY_ZOOM * settings.zoom;
     let game = catalog.game.clone();
     // The in-game overlay ignores the preview's test settings.
     let capture = preview
@@ -229,6 +234,9 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             }
             apply_preview_style(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(zoom);
+            // Hestia sets the size.  Ctrl + = here would outgrow the window.
+            cc.egui_ctx
+                .options_mut(|options| options.zoom_with_keyboard = false);
             keyboard::set_hotkey(settings.hotkey);
             let keyboard = capture
                 .is_none()
@@ -1236,9 +1244,10 @@ impl OverlayPreview {
                 }
             }
         }
-        if settings.size != old.size {
-            ctx.set_zoom_factor(settings.size.zoom());
-            platform::resize_canvas(CANVAS_SIZE * settings.size.zoom());
+        if settings.zoom != old.zoom {
+            let zoom = OVERLAY_ZOOM * settings.zoom;
+            ctx.set_zoom_factor(zoom);
+            platform::resize_canvas(CANVAS_SIZE * zoom);
         }
         // Only on a change, so it doesn't undo a click on the header's
         // button that Hestia hasn't saved yet.

@@ -190,6 +190,14 @@ fn active_renderer_display(label: &str, device: Option<&str>) -> String {
     }
 }
 
+fn interface_size_label(text: TextCatalog, size: InterfaceSize) -> &'static str {
+    text.get(match size {
+        InterfaceSize::Small => TextKey::SettingsInterfaceSizeSmall,
+        InterfaceSize::Normal => TextKey::SettingsInterfaceSizeNormal,
+        InterfaceSize::Large => TextKey::SettingsInterfaceSizeLarge,
+    })
+}
+
 /// Dropdown label for an explicit renderer preference. API names are not
 /// translated (they are product names), and the GPU qualifier rides in the same
 /// literal to avoid a catalog entry. `Auto` is labelled by the catalog instead.
@@ -4526,6 +4534,36 @@ impl HestiaApp {
                                 != always_translate_mod_details
                             {
                                 should_save = true;
+                            }
+                            ui.add_space(8.0);
+
+                            static_label(ui, text.get(TextKey::SettingsInterfaceSize));
+                            ui.add_space(-4.0);
+                            let named_size =
+                                InterfaceSize::at_zoom(self.state.static_prefs.interface_zoom);
+                            let mut picked_size = None;
+                            egui::ComboBox::from_id_salt("interface_size")
+                                .selected_text(match named_size {
+                                    Some(size) => interface_size_label(text, size),
+                                    None => text.get(TextKey::SettingsInterfaceSizeCustom),
+                                })
+                                .show_ui(ui, |ui| {
+                                    for size in InterfaceSize::ALL {
+                                        if ui
+                                            .selectable_label(
+                                                named_size == Some(size),
+                                                interface_size_label(text, size),
+                                            )
+                                            .clicked()
+                                        {
+                                            picked_size = Some(size);
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(text.get(TextKey::SettingsInterfaceSizeTooltip));
+                            if let Some(size) = picked_size {
+                                self.set_interface_zoom(ctx, size.zoom());
                             }
                             ui.add_space(8.0);
 

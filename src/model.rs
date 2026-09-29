@@ -20,6 +20,10 @@ fn serde_default_true() -> bool {
     true
 }
 
+fn serde_default_interface_zoom() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReloadHotkeyTrigger {
     EnablingMods,
@@ -155,6 +159,10 @@ pub struct StaticPreferences {
     pub scan_rabbitfx_requirement: bool,
     #[serde(default)]
     pub font_style: AppFontStyle,
+    /// How big Hestia draws, 1 being Normal.  Ctrl + = and Ctrl + - change
+    /// it in steps of 0.1.  The in-game overlay follows it.
+    #[serde(default = "serde_default_interface_zoom")]
+    pub interface_zoom: f32,
     #[serde(default)]
     pub language: AppLanguage,
     #[serde(default)]
@@ -207,8 +215,6 @@ pub struct StaticPreferences {
     pub game_overlay_all_characters: bool,
     #[serde(default = "serde_default_true")]
     pub game_overlay_key_hints: bool,
-    #[serde(default)]
-    pub game_overlay_size: OverlaySize,
     #[serde(default)]
     pub window_pos: Option<[f32; 2]>,
     #[serde(default)]
@@ -305,6 +311,7 @@ impl Default for StaticPreferences {
             hotkeys_simplified: true,
             scan_rabbitfx_requirement: false,
             font_style: AppFontStyle::default(),
+            interface_zoom: 1.0,
             language: AppLanguage::detect_system_supported().unwrap_or_default(),
             launch_behavior: LaunchBehavior::default(),
             tool_launch_behavior: LaunchBehavior::default(),
@@ -325,7 +332,6 @@ impl Default for StaticPreferences {
             game_overlay_gamebanana: true,
             game_overlay_all_characters: false,
             game_overlay_key_hints: true,
-            game_overlay_size: OverlaySize::default(),
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -1975,30 +1981,67 @@ impl From<OverlayHotkey> for String {
     }
 }
 
-/// How big the in-game overlay draws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum OverlaySize {
+/// The sizes Settings names.  Ctrl + = and Ctrl + - step between them, and
+/// the steps between are Custom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceSize {
     Small,
-    #[default]
     Normal,
     Large,
 }
 
-impl OverlaySize {
+impl InterfaceSize {
     pub const ALL: [Self; 3] = [Self::Small, Self::Normal, Self::Large];
+
+    /// The zoom Hestia keeps to, so a slip of Ctrl + - or Ctrl + = can't
+    /// leave it unusable.
+    pub const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
 
     pub fn zoom(self) -> f32 {
         match self {
-            Self::Small => 0.85,
+            Self::Small => 0.8,
             Self::Normal => 1.0,
             Self::Large => 1.2,
         }
+    }
+
+    /// `zoom` on a step of 0.1 and inside `ZOOM_RANGE`.
+    pub fn snap_zoom(zoom: f32) -> f32 {
+        if !zoom.is_finite() {
+            return Self::Normal.zoom();
+        }
+        ((zoom * 10.0).round() / 10.0).clamp(*Self::ZOOM_RANGE.start(), *Self::ZOOM_RANGE.end())
+    }
+
+    /// The named size at `zoom`, if it is one.
+    pub fn at_zoom(zoom: f32) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|size| (size.zoom() - zoom).abs() < 0.01)
     }
 }
 
 #[cfg(test)]
 mod overlay_hotkey_tests {
     use super::{OverlayHotkey, OverlayHotkeyProblem};
+
+    #[test]
+    fn two_zoom_steps_reach_the_next_named_size() {
+        use super::InterfaceSize;
+
+        assert_eq!(InterfaceSize::at_zoom(1.0), Some(InterfaceSize::Normal));
+        assert_eq!(InterfaceSize::at_zoom(1.1), None);
+        let one_step = InterfaceSize::snap_zoom(1.0 + 0.1);
+        assert_eq!(InterfaceSize::at_zoom(one_step), None);
+        assert_eq!(
+            InterfaceSize::at_zoom(InterfaceSize::snap_zoom(one_step + 0.1)),
+            Some(InterfaceSize::Large)
+        );
+        let down = InterfaceSize::snap_zoom(InterfaceSize::snap_zoom(1.0 - 0.1) - 0.1);
+        assert_eq!(InterfaceSize::at_zoom(down), Some(InterfaceSize::Small));
+        assert_eq!(InterfaceSize::snap_zoom(9.0), 2.0);
+        assert_eq!(InterfaceSize::snap_zoom(f32::NAN), 1.0);
+    }
 
     #[test]
     fn names_read_back_as_the_same_key() {

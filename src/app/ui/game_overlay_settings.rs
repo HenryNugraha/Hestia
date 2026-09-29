@@ -87,22 +87,6 @@ impl HestiaApp {
                     .changed();
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    static_label(ui, text.get(TextKey::SettingsGameOverlaySize));
-                    egui::ComboBox::from_id_salt("settings_game_overlay_size")
-                        .selected_text(game_overlay_size_label(text, prefs.game_overlay_size))
-                        .show_ui(ui, |ui| {
-                            for size in OverlaySize::ALL {
-                                should_save |= ui
-                                    .selectable_value(
-                                        &mut prefs.game_overlay_size,
-                                        size,
-                                        game_overlay_size_label(text, size),
-                                    )
-                                    .changed();
-                            }
-                        });
-                });
-                ui.horizontal(|ui| {
                     static_label(ui, text.get(TextKey::GameOverlayOpacity));
                     let mut opacity = prefs
                         .game_overlay_opacity
@@ -159,14 +143,6 @@ impl HestiaApp {
         ui.add_space(24.0);
         should_save
     }
-}
-
-fn game_overlay_size_label(text: TextCatalog, size: OverlaySize) -> &'static str {
-    text.get(match size {
-        OverlaySize::Small => TextKey::SettingsGameOverlaySizeSmall,
-        OverlaySize::Normal => TextKey::SettingsGameOverlaySizeNormal,
-        OverlaySize::Large => TextKey::SettingsGameOverlaySizeLarge,
-    })
 }
 
 /// "Open with [Alt + H] Change Reset".  Change listens for the next keys,

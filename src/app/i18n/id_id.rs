@@ -912,13 +912,15 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tampilkan mod GameBanana", // SettingsGameOverlayGameBanana
     "Tampilkan karakter yang belum punya kategori", // SettingsGameOverlayAllCharacters
     "Tampilkan petunjuk tombol", // SettingsGameOverlayKeyHints
-    "Ukuran", // SettingsGameOverlaySize
-    "Kecil", // SettingsGameOverlaySizeSmall
-    "Normal", // SettingsGameOverlaySizeNormal
-    "Besar", // SettingsGameOverlaySizeLarge
+    "Ukuran", // SettingsInterfaceSize
+    "Kecil", // SettingsInterfaceSizeSmall
+    "Normal", // SettingsInterfaceSizeNormal
+    "Besar", // SettingsInterfaceSizeLarge
     "Pratinjau", // SettingsGameOverlayPreview
     "Menampilkan overlay di atas Hestia tanpa game, untuk mencobanya. Mod yang kamu nyalakan atau matikan di sana benar-benar berubah.", // SettingsGameOverlayPreviewTooltip
     "Butuh game yang memakai XXMI.", // SettingsGameOverlayPreviewUnavailable
     "Hentikan pratinjau", // SettingsGameOverlayStopPreview
     "Tekan {key} untuk membuka overlay.", // SettingsGameOverlayPreviewHint
+    "Kustom", // SettingsInterfaceSizeCustom
+    "Juga mengatur ukuran overlay dalam game. Ctrl + = dan Ctrl + - juga mengubahnya, Ctrl + 0 kembali ke Normal.", // SettingsInterfaceSizeTooltip
 ];

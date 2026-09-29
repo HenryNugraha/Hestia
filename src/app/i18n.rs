@@ -899,19 +899,21 @@ pub(crate) enum TextKey {
     SettingsGameOverlayGameBanana,
     SettingsGameOverlayAllCharacters,
     SettingsGameOverlayKeyHints,
-    SettingsGameOverlaySize,
-    SettingsGameOverlaySizeSmall,
-    SettingsGameOverlaySizeNormal,
-    SettingsGameOverlaySizeLarge,
+    SettingsInterfaceSize,
+    SettingsInterfaceSizeSmall,
+    SettingsInterfaceSizeNormal,
+    SettingsInterfaceSizeLarge,
     SettingsGameOverlayPreview,
     SettingsGameOverlayPreviewTooltip,
     SettingsGameOverlayPreviewUnavailable,
     SettingsGameOverlayStopPreview,
     SettingsGameOverlayPreviewHint,
+    SettingsInterfaceSizeCustom,
+    SettingsInterfaceSizeTooltip,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsGameOverlayPreviewHint as usize + 1;
+    const COUNT: usize = Self::SettingsInterfaceSizeTooltip as usize + 1;
 }
 
 include!("i18n/en_us.rs");

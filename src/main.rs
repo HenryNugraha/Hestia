@@ -147,7 +147,7 @@ fn main() -> anyhow::Result<()> {
         app::RuntimeServices::new(custom_proxy).context("failed to create runtime services")?;
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1540.0, 960.0])
-        .with_min_inner_size([1180.0, 760.0])
+        .with_min_inner_size(app::MAIN_WINDOW_MIN_SIZE)
         .with_decorations(false)
         .with_icon(icon)
         .with_title("Hestia");

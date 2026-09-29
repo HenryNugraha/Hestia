@@ -136,6 +136,14 @@ impl HestiaApp {
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
+        // Hestia handles Ctrl + = and Ctrl + - itself, to keep the size in range
+        // and saved.
+        cc.egui_ctx
+            .options_mut(|options| options.zoom_with_keyboard = false);
+        state.static_prefs.interface_zoom =
+            InterfaceSize::snap_zoom(state.static_prefs.interface_zoom);
+        cc.egui_ctx
+            .set_zoom_factor(state.static_prefs.interface_zoom);
         let _ = UI_REPAINT_CONTEXT.set(cc.egui_ctx.clone());
         let (icon_request_tx, icon_request_rx) = worker_channel::<IconRequest>();
         let (icon_result_tx, icon_result_rx) = worker_channel::<IconResult>();
@@ -662,6 +670,9 @@ impl HestiaApp {
             window_state_last_save: 0.0,
             floating_window_save_due: None,
             window_was_maximized,
+            // The window opens at zoom 1, and the saved zoom lands a frame later.
+            window_zoom: 1.0,
+            window_min_size: None,
             selection_empty_at: None,
             startup_scan_loading: true,
             startup_launch_pending: true,
@@ -3195,24 +3206,77 @@ impl HestiaApp {
         }
     }
 
+    /// Ctrl + = and Ctrl + - step the interface size by 0.1, and Ctrl + 0 goes
+    /// back to Normal, like a browser.  Runs after the frame is drawn, so the
+    /// overlay hotkey picker gets these keys first.
+    fn handle_interface_zoom_keys(&mut self, ctx: &egui::Context) {
+        use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
+        let zoom = self.state.static_prefs.interface_zoom;
+        let zoom = ctx.input_mut(|input| {
+            if input.consume_shortcut(&ZOOM_RESET) {
+                Some(InterfaceSize::Normal.zoom())
+            } else if input.consume_shortcut(&ZOOM_IN)
+                || input.consume_shortcut(&ZOOM_IN_SECONDARY)
+            {
+                Some(zoom + 0.1)
+            } else if input.consume_shortcut(&ZOOM_OUT) {
+                Some(zoom - 0.1)
+            } else {
+                None
+            }
+        });
+        if let Some(zoom) = zoom {
+            self.set_interface_zoom(ctx, zoom);
+        }
+    }
+
+    /// Sizes Hestia, and the in-game overlay with it.  The new size shows
+    /// from the next frame.
+    fn set_interface_zoom(&mut self, ctx: &egui::Context, zoom: f32) {
+        let zoom = InterfaceSize::snap_zoom(zoom);
+        ctx.set_zoom_factor(zoom);
+        if zoom != self.state.static_prefs.interface_zoom {
+            self.state.static_prefs.interface_zoom = zoom;
+            self.save_state();
+        }
+    }
+
     fn update_main_window_state(&mut self, ctx: &egui::Context) {
         let viewport = ctx.input(|input| input.viewport().clone());
         let now = ctx.input(|input| input.time);
+        let zoom = ctx.zoom_factor();
+        if zoom != self.window_zoom {
+            self.window_zoom = zoom;
+            self.flush_floating_window_layouts(ctx, now);
+            return;
+        }
         if viewport.minimized.unwrap_or(false) {
             return;
         }
+        // Bigger sizes need a bigger window, but never more than the screen.
+        let mut min_size = MAIN_WINDOW_MIN_SIZE;
+        if let Some(monitor) = viewport.monitor_size {
+            min_size = min_size.min(monitor * 0.9);
+        }
+        if self.window_min_size != Some(min_size) {
+            self.window_min_size = Some(min_size);
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_size));
+        }
         let maximized = viewport.maximized.unwrap_or(false);
+        // Saved at zoom 1, the way Windows places the window at startup.
         let pos = if maximized {
             None
         } else {
-            viewport.outer_rect.map(|rect| [rect.min.x, rect.min.y])
+            viewport
+                .outer_rect
+                .map(|rect| [rect.min.x * zoom, rect.min.y * zoom])
         };
         let size = if maximized {
             None
         } else {
             viewport
                 .inner_rect
-                .map(|rect| [rect.size().x, rect.size().y])
+                .map(|rect| [rect.size().x * zoom, rect.size().y * zoom])
         };
         self.window_was_maximized = maximized;
         let snapshot = WindowStateSnapshot {

@@ -41,17 +41,16 @@ use crate::{
         ConflictChoice, CustomProxyConfig, DeleteBehavior, FileSetRecipe, FloatingWindowLayouts,
         FloatingWindowRect, GameBackend, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot,
         GameInstall, GpuChoice, IgnoredUpdateSignature, ImportInspection, ImportResolution,
-        ImportSource, LaunchBehavior, LibraryCategoryDisplayMode, LibraryGroupMode, LibrarySort,
-        MOD_META_DIR, MetadataSourceKind, ModCategory, ModCategorySortMode, ModEntry,
+        ImportSource, InterfaceSize, LaunchBehavior, LibraryCategoryDisplayMode, LibraryGroupMode,
+        LibrarySort, MOD_META_DIR, MetadataSourceKind, ModCategory, ModCategorySortMode, ModEntry,
         ModSourceData, ModStatus, ModStatusTargets, ModUpdateState, ModifiedUpdateBehavior,
-        OperationLogEntry, OverlayHotkey, OverlayHotkeyProblem, OverlaySize, ProfileCatalog,
-        ProfileId, ProfileRecord, ReloadHotkeyTrigger, RendererPreference, SearchSort,
-        StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus, TasksLayout,
-        TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode, UnsafeContentPreference,
-        default_modded_exe_candidates, default_mods_path, default_mods_path_from_launcher,
-        default_unreal_bypasser_paths_from_exe, default_unreal_pak_mods_path_from_exe,
-        default_vanilla_exe_candidates, feedback_survey, path_allows_dir_creation,
-        registry_modded_exe_candidates, registry_vanilla_exe_candidates,
+        OperationLogEntry, OverlayHotkey, OverlayHotkeyProblem, ProfileCatalog, ProfileId,
+        ProfileRecord, ReloadHotkeyTrigger, RendererPreference, SearchSort, StagedAppUpdate,
+        TaskEntry, TaskKind, TaskRetryPayload, TaskStatus, TasksLayout, TasksOrder, ToolEntry,
+        TrackedFileMeta, UnsafeContentMode, UnsafeContentPreference, default_modded_exe_candidates,
+        default_mods_path, default_mods_path_from_launcher, default_unreal_bypasser_paths_from_exe,
+        default_unreal_pak_mods_path_from_exe, default_vanilla_exe_candidates, feedback_survey,
+        path_allows_dir_creation, registry_modded_exe_candidates, registry_vanilla_exe_candidates,
         shortcut_modded_exe_candidates, vanilla_exe_file_names, xxmi_launcher_file_names,
     },
     persistence::{self, PortablePaths},
@@ -261,6 +260,7 @@ impl eframe::App for HestiaApp {
                 // Blocking profile operations are modal and must stay above every
                 // other Hestia window and overlay.
                 self.render_profile_dialogs(&ctx);
+                self.handle_interface_zoom_keys(&ctx);
                 self.update_main_window_state(&ctx);
             }
         });

@@ -912,13 +912,15 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Show GameBanana mods", // SettingsGameOverlayGameBanana
     "Show characters you have no category for", // SettingsGameOverlayAllCharacters
     "Show key hints", // SettingsGameOverlayKeyHints
-    "Size", // SettingsGameOverlaySize
-    "Small", // SettingsGameOverlaySizeSmall
-    "Normal", // SettingsGameOverlaySizeNormal
-    "Large", // SettingsGameOverlaySizeLarge
+    "Size", // SettingsInterfaceSize
+    "Small", // SettingsInterfaceSizeSmall
+    "Normal", // SettingsInterfaceSizeNormal
+    "Large", // SettingsInterfaceSizeLarge
     "Preview", // SettingsGameOverlayPreview
     "Shows the overlay over Hestia without a game, to try it out. Mods you turn on or off in it change for real.", // SettingsGameOverlayPreviewTooltip
     "Needs a game that uses XXMI.", // SettingsGameOverlayPreviewUnavailable
     "Stop preview", // SettingsGameOverlayStopPreview
     "Press {key} to open the overlay.", // SettingsGameOverlayPreviewHint
+    "Custom", // SettingsInterfaceSizeCustom
+    "Also sizes the in-game overlay. Ctrl + = and Ctrl + - change it too, Ctrl + 0 goes back to Normal.", // SettingsInterfaceSizeTooltip
 ];

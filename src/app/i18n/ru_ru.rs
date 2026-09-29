@@ -911,13 +911,15 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Показывать моды GameBanana", // SettingsGameOverlayGameBanana
     "Показывать персонажей без категории", // SettingsGameOverlayAllCharacters
     "Показывать подсказки клавиш", // SettingsGameOverlayKeyHints
-    "Размер", // SettingsGameOverlaySize
-    "Маленький", // SettingsGameOverlaySizeSmall
-    "Обычный", // SettingsGameOverlaySizeNormal
-    "Большой", // SettingsGameOverlaySizeLarge
+    "Размер", // SettingsInterfaceSize
+    "Маленький", // SettingsInterfaceSizeSmall
+    "Обычный", // SettingsInterfaceSizeNormal
+    "Большой", // SettingsInterfaceSizeLarge
     "Предпросмотр", // SettingsGameOverlayPreview
     "Показывает оверлей поверх Hestia без игры, чтобы его опробовать. Моды, включённые или выключенные в нём, меняются по-настоящему.", // SettingsGameOverlayPreviewTooltip
     "Нужна игра, использующая XXMI.", // SettingsGameOverlayPreviewUnavailable
     "Остановить предпросмотр", // SettingsGameOverlayStopPreview
     "Нажмите {key}, чтобы открыть оверлей.", // SettingsGameOverlayPreviewHint
+    "Свой", // SettingsInterfaceSizeCustom
+    "Также задаёт размер внутриигрового оверлея. Ctrl + = и Ctrl + - тоже меняют его, Ctrl + 0 возвращает к обычному.", // SettingsInterfaceSizeTooltip
 ];
