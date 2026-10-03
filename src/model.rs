@@ -202,10 +202,6 @@ pub struct StaticPreferences {
     /// The overlay's strip shows for a moment when a game starts.
     #[serde(default = "serde_default_true")]
     pub game_overlay_arrival_strip: bool,
-    /// The overlay's strip stays for a moment after it closes, as a reminder
-    /// of its key.
-    #[serde(default = "serde_default_true")]
-    pub game_overlay_close_strip: bool,
     /// The overlay lists GameBanana's mods after the installed ones.
     #[serde(default = "serde_default_true")]
     pub game_overlay_gamebanana: bool,
@@ -215,6 +211,12 @@ pub struct StaticPreferences {
     pub game_overlay_all_characters: bool,
     #[serde(default = "serde_default_true")]
     pub game_overlay_key_hints: bool,
+    /// The overlay's header has its opacity slider.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_opacity_slider: bool,
+    /// The overlay has its pin buttons.
+    #[serde(default = "serde_default_true")]
+    pub game_overlay_pin_button: bool,
     #[serde(default)]
     pub window_pos: Option<[f32; 2]>,
     #[serde(default)]
@@ -328,10 +330,11 @@ impl Default for StaticPreferences {
             game_overlay_opacity: None,
             game_overlay_hotkey: OverlayHotkey::default(),
             game_overlay_arrival_strip: true,
-            game_overlay_close_strip: true,
             game_overlay_gamebanana: true,
             game_overlay_all_characters: false,
             game_overlay_key_hints: true,
+            game_overlay_opacity_slider: true,
+            game_overlay_pin_button: true,
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -1999,9 +2002,9 @@ impl InterfaceSize {
 
     pub fn zoom(self) -> f32 {
         match self {
-            Self::Small => 0.8,
+            Self::Small => 0.7,
             Self::Normal => 1.0,
-            Self::Large => 1.2,
+            Self::Large => 1.3,
         }
     }
 
@@ -2026,19 +2029,20 @@ mod overlay_hotkey_tests {
     use super::{OverlayHotkey, OverlayHotkeyProblem};
 
     #[test]
-    fn two_zoom_steps_reach_the_next_named_size() {
+    fn three_zoom_steps_reach_the_next_named_size() {
         use super::InterfaceSize;
 
-        assert_eq!(InterfaceSize::at_zoom(1.0), Some(InterfaceSize::Normal));
-        assert_eq!(InterfaceSize::at_zoom(1.1), None);
-        let one_step = InterfaceSize::snap_zoom(1.0 + 0.1);
-        assert_eq!(InterfaceSize::at_zoom(one_step), None);
-        assert_eq!(
-            InterfaceSize::at_zoom(InterfaceSize::snap_zoom(one_step + 0.1)),
-            Some(InterfaceSize::Large)
-        );
-        let down = InterfaceSize::snap_zoom(InterfaceSize::snap_zoom(1.0 - 0.1) - 0.1);
-        assert_eq!(InterfaceSize::at_zoom(down), Some(InterfaceSize::Small));
+        let steps = |step: f32| {
+            let mut zoom = InterfaceSize::Normal.zoom();
+            (0..3)
+                .map(|_| {
+                    zoom = InterfaceSize::snap_zoom(zoom + step);
+                    InterfaceSize::at_zoom(zoom)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(steps(0.1), [None, None, Some(InterfaceSize::Large)]);
+        assert_eq!(steps(-0.1), [None, None, Some(InterfaceSize::Small)]);
         assert_eq!(InterfaceSize::snap_zoom(9.0), 2.0);
         assert_eq!(InterfaceSize::snap_zoom(f32::NAN), 1.0);
     }

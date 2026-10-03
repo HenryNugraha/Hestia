@@ -279,10 +279,11 @@ impl HestiaApp {
             opacity: prefs.game_overlay_opacity,
             hotkey: prefs.game_overlay_hotkey,
             arrival_strip: prefs.game_overlay_arrival_strip,
-            close_strip: prefs.game_overlay_close_strip,
             gamebanana: prefs.game_overlay_gamebanana,
             all_characters: prefs.game_overlay_all_characters,
             key_hints: prefs.game_overlay_key_hints,
+            opacity_slider: prefs.game_overlay_opacity_slider,
+            pin_button: prefs.game_overlay_pin_button,
             zoom: prefs.interface_zoom,
         }
     }

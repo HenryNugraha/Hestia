@@ -836,7 +836,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Sort & Order", // LibrarySortMenuTitle
 
     // In-game overlay
-    "In-game overlay", // SettingsGameOverlay
+    "In-game Overlay", // SettingsGameOverlay
     "Press {key} while a supported game runs to browse and switch mods over it.", // SettingsGameOverlayTooltip
     "Another app already uses {key}, so only the pin can open the overlay.", // GameOverlayHotkeyTaken
     "Couldn't register {key}, so only the pin can open the overlay.", // GameOverlayHotkeyFailed
@@ -897,22 +897,18 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Couldn't install. Space to try again.", // GameOverlayCouldNotInstallTryAgain
     "Couldn't install", // GameOverlayCouldNotInstall
     "No preview", // GameOverlayNoPreview
-    "Turn on the overlay", // SettingsGameOverlayEnable
-    "Open with", // SettingsGameOverlayOpenWith
-    "Change", // SettingsGameOverlayChangeKey
-    "Reset", // SettingsGameOverlayResetKey
+    "Hotkey:", // SettingsGameOverlayHotkey
+    "Click, then press the new keys.", // SettingsGameOverlayKeyButtonTooltip
+    "Reset to {key}", // SettingsGameOverlayResetKey
     "Press the keys, or Esc to cancel", // SettingsGameOverlayPressKeys
     "Use Alt or Ctrl with a letter, number or F key.", // SettingsGameOverlayKeyNotAllowed
     "{key} is used by Windows, the overlay or XXMI. Pick another.", // SettingsGameOverlayKeyReserved
     "Another app already uses {key}. Pick another.", // SettingsGameOverlayKeyTaken
-    "Show at game start", // SettingsGameOverlayArrivalStrip
-    "Shows the overlay's strip for a few seconds when the game starts.", // SettingsGameOverlayArrivalStripTooltip
-    "Show the reminder after closing", // SettingsGameOverlayCloseStrip
-    "Keeps the strip with {key} for a few seconds after the overlay closes.", // SettingsGameOverlayCloseStripTooltip
-    "Show GameBanana mods", // SettingsGameOverlayGameBanana
-    "Show characters you have no category for", // SettingsGameOverlayAllCharacters
-    "Show key hints", // SettingsGameOverlayKeyHints
-    "Size", // SettingsInterfaceSize
+    "Briefly show when a game starts", // SettingsGameOverlayArrivalStrip
+    "Shows the small \"{key} to browse\" bar for a few seconds when the game starts.", // SettingsGameOverlayArrivalStripTooltip
+    "GameBanana mods", // SettingsGameOverlayGameBanana
+    "Hotkeys ticker", // SettingsGameOverlayKeyHints
+    "Interface Size:", // SettingsInterfaceSize
     "Small", // SettingsInterfaceSizeSmall
     "Normal", // SettingsInterfaceSizeNormal
     "Large", // SettingsInterfaceSizeLarge
@@ -923,4 +919,11 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Press {key} to open the overlay.", // SettingsGameOverlayPreviewHint
     "Custom", // SettingsInterfaceSizeCustom
     "Also sizes the in-game overlay. Ctrl + = and Ctrl + - change it too, Ctrl + 0 goes back to Normal.", // SettingsInterfaceSizeTooltip
+    "Overlay components:", // SettingsGameOverlayComponents
+    "Lists GameBanana mods after your own, so you can install them without leaving the game. They install turned off.", // SettingsGameOverlayGameBananaTooltip
+    "Shows what the keys do at the top of the overlay.", // SettingsGameOverlayKeyHintsTooltip
+    "Transparency slider", // SettingsGameOverlayOpacitySlider
+    "Shows the slider at the top of the overlay that makes it see-through.", // SettingsGameOverlayOpacitySliderTooltip
+    "Pin button", // SettingsGameOverlayPinButton
+    "Shows the pin button, which keeps the overlay open while you play.", // SettingsGameOverlayPinButtonTooltip
 ];

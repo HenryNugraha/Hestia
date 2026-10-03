@@ -836,7 +836,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Urutkan & Susun", // LibrarySortMenuTitle
 
     // In-game overlay
-    "Overlay dalam game", // SettingsGameOverlay
+    "Overlay Dalam Game", // SettingsGameOverlay
     "Tekan {key} saat game yang didukung berjalan untuk menjelajah dan mengganti mod di atas game.", // SettingsGameOverlayTooltip
     "Aplikasi lain sudah memakai {key}, jadi overlay hanya bisa dibuka lewat pin.", // GameOverlayHotkeyTaken
     "Tidak dapat mendaftarkan {key}, jadi overlay hanya bisa dibuka lewat pin.", // GameOverlayHotkeyFailed
@@ -897,22 +897,18 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tidak dapat memasang. Tekan Space untuk mencoba lagi.", // GameOverlayCouldNotInstallTryAgain
     "Tidak dapat memasang", // GameOverlayCouldNotInstall
     "Tanpa pratinjau", // GameOverlayNoPreview
-    "Aktifkan overlay", // SettingsGameOverlayEnable
-    "Buka dengan", // SettingsGameOverlayOpenWith
-    "Ubah", // SettingsGameOverlayChangeKey
-    "Atur ulang", // SettingsGameOverlayResetKey
+    "Tombol pintasan:", // SettingsGameOverlayHotkey
+    "Klik, lalu tekan tombol yang baru.", // SettingsGameOverlayKeyButtonTooltip
+    "Kembalikan ke {key}", // SettingsGameOverlayResetKey
     "Tekan tombolnya, atau Esc untuk batal", // SettingsGameOverlayPressKeys
     "Gunakan Alt atau Ctrl dengan huruf, angka, atau tombol F.", // SettingsGameOverlayKeyNotAllowed
     "{key} dipakai oleh Windows, overlay, atau XXMI. Pilih yang lain.", // SettingsGameOverlayKeyReserved
     "Aplikasi lain sudah memakai {key}. Pilih yang lain.", // SettingsGameOverlayKeyTaken
-    "Tampilkan saat game dimulai", // SettingsGameOverlayArrivalStrip
-    "Menampilkan strip overlay selama beberapa detik saat game dimulai.", // SettingsGameOverlayArrivalStripTooltip
-    "Tampilkan pengingat setelah ditutup", // SettingsGameOverlayCloseStrip
-    "Strip dengan {key} tetap tampil beberapa detik setelah overlay ditutup.", // SettingsGameOverlayCloseStripTooltip
-    "Tampilkan mod GameBanana", // SettingsGameOverlayGameBanana
-    "Tampilkan karakter yang belum punya kategori", // SettingsGameOverlayAllCharacters
-    "Tampilkan petunjuk tombol", // SettingsGameOverlayKeyHints
-    "Ukuran", // SettingsInterfaceSize
+    "Tampilkan sebentar saat game dimulai", // SettingsGameOverlayArrivalStrip
+    "Menampilkan bilah kecil \"{key} untuk menjelajah\" selama beberapa detik saat game dimulai.", // SettingsGameOverlayArrivalStripTooltip
+    "Mod GameBanana", // SettingsGameOverlayGameBanana
+    "Teks berjalan pintasan", // SettingsGameOverlayKeyHints
+    "Ukuran Antarmuka:", // SettingsInterfaceSize
     "Kecil", // SettingsInterfaceSizeSmall
     "Normal", // SettingsInterfaceSizeNormal
     "Besar", // SettingsInterfaceSizeLarge
@@ -923,4 +919,11 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tekan {key} untuk membuka overlay.", // SettingsGameOverlayPreviewHint
     "Kustom", // SettingsInterfaceSizeCustom
     "Juga mengatur ukuran overlay dalam game. Ctrl + = dan Ctrl + - juga mengubahnya, Ctrl + 0 kembali ke Normal.", // SettingsInterfaceSizeTooltip
+    "Komponen overlay:", // SettingsGameOverlayComponents
+    "Menampilkan mod GameBanana setelah mod milikmu, agar bisa dipasang tanpa keluar dari game. Mod terpasang dalam keadaan mati.", // SettingsGameOverlayGameBananaTooltip
+    "Menampilkan fungsi tiap tombol di bagian atas overlay.", // SettingsGameOverlayKeyHintsTooltip
+    "Penggeser transparansi", // SettingsGameOverlayOpacitySlider
+    "Menampilkan penggeser di bagian atas overlay untuk membuatnya tembus pandang.", // SettingsGameOverlayOpacitySliderTooltip
+    "Tombol sematkan", // SettingsGameOverlayPinButton
+    "Menampilkan tombol sematkan, yang membuat overlay tetap terbuka saat kamu bermain.", // SettingsGameOverlayPinButtonTooltip
 ];

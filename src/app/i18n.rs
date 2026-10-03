@@ -884,9 +884,8 @@ pub(crate) enum TextKey {
     GameOverlayCouldNotInstallTryAgain,
     GameOverlayCouldNotInstall,
     GameOverlayNoPreview,
-    SettingsGameOverlayEnable,
-    SettingsGameOverlayOpenWith,
-    SettingsGameOverlayChangeKey,
+    SettingsGameOverlayHotkey,
+    SettingsGameOverlayKeyButtonTooltip,
     SettingsGameOverlayResetKey,
     SettingsGameOverlayPressKeys,
     SettingsGameOverlayKeyNotAllowed,
@@ -894,10 +893,7 @@ pub(crate) enum TextKey {
     SettingsGameOverlayKeyTaken,
     SettingsGameOverlayArrivalStrip,
     SettingsGameOverlayArrivalStripTooltip,
-    SettingsGameOverlayCloseStrip,
-    SettingsGameOverlayCloseStripTooltip,
     SettingsGameOverlayGameBanana,
-    SettingsGameOverlayAllCharacters,
     SettingsGameOverlayKeyHints,
     SettingsInterfaceSize,
     SettingsInterfaceSizeSmall,
@@ -910,10 +906,17 @@ pub(crate) enum TextKey {
     SettingsGameOverlayPreviewHint,
     SettingsInterfaceSizeCustom,
     SettingsInterfaceSizeTooltip,
+    SettingsGameOverlayComponents,
+    SettingsGameOverlayGameBananaTooltip,
+    SettingsGameOverlayKeyHintsTooltip,
+    SettingsGameOverlayOpacitySlider,
+    SettingsGameOverlayOpacitySliderTooltip,
+    SettingsGameOverlayPinButton,
+    SettingsGameOverlayPinButtonTooltip,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsInterfaceSizeTooltip as usize + 1;
+    const COUNT: usize = Self::SettingsGameOverlayPinButtonTooltip as usize + 1;
 }
 
 include!("i18n/en_us.rs");

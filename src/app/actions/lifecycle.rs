@@ -2894,6 +2894,13 @@ impl HestiaApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // Settings is waiting for the overlay's new hotkey, so the keys are
+        // its.  Ctrl+V is still noted as held, so taking it as the hotkey
+        // doesn't paste once Settings stops listening.
+        if game_overlay_hotkey_listening(ctx) {
+            let _ = self.poll_windows_ctrl_v_edge(ctx);
+            return;
+        }
         let ctrl = egui::Modifiers::CTRL;
         let ctrl_shift = egui::Modifiers {
             ctrl: true,

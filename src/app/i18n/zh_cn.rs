@@ -897,22 +897,18 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "无法安装。按 Space 重试。", // GameOverlayCouldNotInstallTryAgain
     "无法安装", // GameOverlayCouldNotInstall
     "无预览", // GameOverlayNoPreview
-    "启用浮层", // SettingsGameOverlayEnable
-    "打开快捷键", // SettingsGameOverlayOpenWith
-    "更改", // SettingsGameOverlayChangeKey
-    "重置", // SettingsGameOverlayResetKey
+    "快捷键：", // SettingsGameOverlayHotkey
+    "点击后按下新的按键。", // SettingsGameOverlayKeyButtonTooltip
+    "重置为 {key}", // SettingsGameOverlayResetKey
     "请按下按键，按 Esc 取消", // SettingsGameOverlayPressKeys
     "请使用 Alt 或 Ctrl 加字母、数字或 F 键。", // SettingsGameOverlayKeyNotAllowed
     "{key} 已被 Windows、浮层或 XXMI 使用，请换一个。", // SettingsGameOverlayKeyReserved
     "另一个应用已占用 {key}，请换一个。", // SettingsGameOverlayKeyTaken
-    "游戏启动时显示", // SettingsGameOverlayArrivalStrip
-    "游戏启动时显示浮层横条几秒钟。", // SettingsGameOverlayArrivalStripTooltip
-    "关闭后显示提示", // SettingsGameOverlayCloseStrip
-    "浮层关闭后，带有 {key} 的横条会保留几秒钟。", // SettingsGameOverlayCloseStripTooltip
-    "显示 GameBanana 模组", // SettingsGameOverlayGameBanana
-    "显示你没有分类的角色", // SettingsGameOverlayAllCharacters
-    "显示按键提示", // SettingsGameOverlayKeyHints
-    "大小", // SettingsInterfaceSize
+    "游戏启动时短暂显示", // SettingsGameOverlayArrivalStrip
+    "游戏启动时，显示“{key} 浏览”小横条几秒钟。", // SettingsGameOverlayArrivalStripTooltip
+    "GameBanana 模组", // SettingsGameOverlayGameBanana
+    "快捷键滚动提示", // SettingsGameOverlayKeyHints
+    "界面大小：", // SettingsInterfaceSize
     "小", // SettingsInterfaceSizeSmall
     "标准", // SettingsInterfaceSizeNormal
     "大", // SettingsInterfaceSizeLarge
@@ -923,4 +919,11 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "按 {key} 打开浮层。", // SettingsGameOverlayPreviewHint
     "自定义", // SettingsInterfaceSizeCustom
     "同时调整游戏内浮层的大小。Ctrl + = 和 Ctrl + - 也可调整，Ctrl + 0 恢复为标准。", // SettingsInterfaceSizeTooltip
+    "浮层组件：", // SettingsGameOverlayComponents
+    "在你自己的模组之后列出 GameBanana 模组，无需离开游戏即可安装。安装后默认禁用。", // SettingsGameOverlayGameBananaTooltip
+    "在浮层顶部显示各按键的作用。", // SettingsGameOverlayKeyHintsTooltip
+    "透明度滑块", // SettingsGameOverlayOpacitySlider
+    "在浮层顶部显示调节透明度的滑块。", // SettingsGameOverlayOpacitySliderTooltip
+    "固定按钮", // SettingsGameOverlayPinButton
+    "显示固定按钮，让浮层在游戏时保持打开。", // SettingsGameOverlayPinButtonTooltip
 ];

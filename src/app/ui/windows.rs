@@ -190,12 +190,15 @@ fn active_renderer_display(label: &str, device: Option<&str>) -> String {
     }
 }
 
-fn interface_size_label(text: TextCatalog, size: InterfaceSize) -> &'static str {
-    text.get(match size {
-        InterfaceSize::Small => TextKey::SettingsInterfaceSizeSmall,
-        InterfaceSize::Normal => TextKey::SettingsInterfaceSizeNormal,
-        InterfaceSize::Large => TextKey::SettingsInterfaceSizeLarge,
-    })
+/// "Normal / 100%", or "Custom / 110%" between the named sizes.
+fn interface_size_label(text: TextCatalog, zoom: f32) -> String {
+    let name = match InterfaceSize::at_zoom(zoom) {
+        Some(InterfaceSize::Small) => TextKey::SettingsInterfaceSizeSmall,
+        Some(InterfaceSize::Normal) => TextKey::SettingsInterfaceSizeNormal,
+        Some(InterfaceSize::Large) => TextKey::SettingsInterfaceSizeLarge,
+        None => TextKey::SettingsInterfaceSizeCustom,
+    };
+    format!("{} / {}%", text.get(name), (zoom * 100.0).round() as i32)
 }
 
 /// Dropdown label for an explicit renderer preference. API names are not
@@ -4539,20 +4542,17 @@ impl HestiaApp {
 
                             static_label(ui, text.get(TextKey::SettingsInterfaceSize));
                             ui.add_space(-4.0);
-                            let named_size =
-                                InterfaceSize::at_zoom(self.state.static_prefs.interface_zoom);
+                            let zoom = self.state.static_prefs.interface_zoom;
+                            let named_size = InterfaceSize::at_zoom(zoom);
                             let mut picked_size = None;
                             egui::ComboBox::from_id_salt("interface_size")
-                                .selected_text(match named_size {
-                                    Some(size) => interface_size_label(text, size),
-                                    None => text.get(TextKey::SettingsInterfaceSizeCustom),
-                                })
+                                .selected_text(interface_size_label(text, zoom))
                                 .show_ui(ui, |ui| {
                                     for size in InterfaceSize::ALL {
                                         if ui
                                             .selectable_label(
                                                 named_size == Some(size),
-                                                interface_size_label(text, size),
+                                                interface_size_label(text, size.zoom()),
                                             )
                                             .clicked()
                                         {

@@ -896,22 +896,18 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Не удалось установить. Нажмите Space, чтобы повторить.", // GameOverlayCouldNotInstallTryAgain
     "Не удалось установить", // GameOverlayCouldNotInstall
     "Нет превью", // GameOverlayNoPreview
-    "Включить оверлей", // SettingsGameOverlayEnable
-    "Открывать клавишами", // SettingsGameOverlayOpenWith
-    "Изменить", // SettingsGameOverlayChangeKey
-    "Сбросить", // SettingsGameOverlayResetKey
+    "Горячие клавиши:", // SettingsGameOverlayHotkey
+    "Щёлкните, затем нажмите новые клавиши.", // SettingsGameOverlayKeyButtonTooltip
+    "Сбросить на {key}", // SettingsGameOverlayResetKey
     "Нажмите клавиши или Esc для отмены", // SettingsGameOverlayPressKeys
     "Используйте Alt или Ctrl с буквой, цифрой или клавишей F.", // SettingsGameOverlayKeyNotAllowed
     "{key} занято Windows, оверлеем или XXMI. Выберите другое сочетание.", // SettingsGameOverlayKeyReserved
     "{key} уже занято другим приложением. Выберите другое сочетание.", // SettingsGameOverlayKeyTaken
-    "Показывать при запуске игры", // SettingsGameOverlayArrivalStrip
-    "Показывает полоску оверлея на несколько секунд при запуске игры.", // SettingsGameOverlayArrivalStripTooltip
-    "Показывать напоминание после закрытия", // SettingsGameOverlayCloseStrip
-    "Полоска с {key} остаётся на несколько секунд после закрытия оверлея.", // SettingsGameOverlayCloseStripTooltip
-    "Показывать моды GameBanana", // SettingsGameOverlayGameBanana
-    "Показывать персонажей без категории", // SettingsGameOverlayAllCharacters
-    "Показывать подсказки клавиш", // SettingsGameOverlayKeyHints
-    "Размер", // SettingsInterfaceSize
+    "Ненадолго показывать при запуске игры", // SettingsGameOverlayArrivalStrip
+    "Показывает небольшую полоску «{key} для просмотра» на несколько секунд при запуске игры.", // SettingsGameOverlayArrivalStripTooltip
+    "Моды с GameBanana", // SettingsGameOverlayGameBanana
+    "Бегущая строка клавиш", // SettingsGameOverlayKeyHints
+    "Размер интерфейса:", // SettingsInterfaceSize
     "Маленький", // SettingsInterfaceSizeSmall
     "Обычный", // SettingsInterfaceSizeNormal
     "Большой", // SettingsInterfaceSizeLarge
@@ -922,4 +918,11 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Нажмите {key}, чтобы открыть оверлей.", // SettingsGameOverlayPreviewHint
     "Свой", // SettingsInterfaceSizeCustom
     "Также задаёт размер внутриигрового оверлея. Ctrl + = и Ctrl + - тоже меняют его, Ctrl + 0 возвращает к обычному.", // SettingsInterfaceSizeTooltip
+    "Элементы оверлея:", // SettingsGameOverlayComponents
+    "Показывает моды с GameBanana после ваших, чтобы устанавливать их, не выходя из игры. Они устанавливаются выключенными.", // SettingsGameOverlayGameBananaTooltip
+    "Показывает в верхней части оверлея, что делают клавиши.", // SettingsGameOverlayKeyHintsTooltip
+    "Ползунок прозрачности", // SettingsGameOverlayOpacitySlider
+    "Показывает в верхней части оверлея ползунок, который делает его прозрачным.", // SettingsGameOverlayOpacitySliderTooltip
+    "Кнопка закрепления", // SettingsGameOverlayPinButton
+    "Показывает кнопку закрепления, которая оставляет оверлей открытым во время игры.", // SettingsGameOverlayPinButtonTooltip
 ];

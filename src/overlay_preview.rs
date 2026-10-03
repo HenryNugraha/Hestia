@@ -1206,12 +1206,8 @@ impl OverlayPreview {
         if self.hotkey_warning.is_some() && live.strip.shown(now) {
             live.strip.show(now);
         } else if expanded || self.motion.animating() {
-            // Without the reminder, the strip fades out as the overlay closes.
-            if self.settings.close_strip {
-                live.strip.show(now);
-            } else {
-                live.strip.keep(now);
-            }
+            // It stays a few seconds after the overlay closes.
+            live.strip.show(now);
         } else if platform::is_visible()
             && ctx.input(|input| input.pointer.hover_pos().is_some() || input.pointer.any_down())
         {
@@ -1244,6 +1240,10 @@ impl OverlayPreview {
                 }
             }
         }
+        // Without its button, nothing shows it's pinned.
+        if !settings.pin_button {
+            self.pinned = false;
+        }
         if settings.zoom != old.zoom {
             let zoom = OVERLAY_ZOOM * settings.zoom;
             ctx.set_zoom_factor(zoom);
@@ -1260,12 +1260,18 @@ impl OverlayPreview {
         }
     }
 
-    /// The idle strip's width, wider for a hotkey with more keys than Alt+H.
+    /// The idle strip's width, wider for a hotkey with more keys than Alt+H
+    /// and narrower without the pin button.
     fn idle_width(&self, ctx: &egui::Context) -> f32 {
         let gap = ctx.global_style().spacing.item_spacing.x;
         let extra =
             keycaps_width(self.settings.hotkey, gap) - keycaps_width(OverlayHotkey::DEFAULT, gap);
-        IDLE_SIZE.x + extra.max(0.0)
+        let pin = if self.settings.pin_button {
+            0.0
+        } else {
+            28.0 + gap
+        };
+        IDLE_SIZE.x + extra.max(0.0) - pin
     }
 
     /// The in-game overlay's header X: close like Esc, and unpin.
@@ -1347,13 +1353,14 @@ impl OverlayPreview {
                         None => ui.ctx().send_viewport_cmd(ViewportCommand::Close),
                     }
                 }
-                if header_button(
-                    ui,
-                    lucide_icons::Icon::Pin,
-                    text(TextKey::GameOverlayKeepExpanded),
-                    self.opacity,
-                )
-                .clicked()
+                if self.settings.pin_button
+                    && header_button(
+                        ui,
+                        lucide_icons::Icon::Pin,
+                        text(TextKey::GameOverlayKeepExpanded),
+                        self.opacity,
+                    )
+                    .clicked()
                 {
                     self.pinned = true;
                     ui.ctx().request_repaint();
@@ -1395,11 +1402,16 @@ impl OverlayPreview {
             }
             let _ = layouts::delayed_tooltip(drag, self.game.clone());
             // The lane holds the search field and the hints.  Reserve exactly
-            // the right-hand controls: three 28pt buttons, the 92pt slider,
-            // and their four 3pt gaps, and in the game one more button and
-            // gap.  The lane ends at the slider's hit rect.
+            // the right-hand controls: the 28pt buttons, the 92pt slider, and
+            // a 3pt gap before each.  The lane ends at the leftmost control.
             let show_all_button = self.live.is_some() && self.settings.gamebanana;
-            let controls = if show_all_button { 219.0 } else { 188.0 };
+            let buttons = 2 + usize::from(self.settings.pin_button) + usize::from(show_all_button);
+            let controls = buttons as f32 * (28.0 + 3.0)
+                + if self.settings.opacity_slider {
+                    92.0 + 3.0
+                } else {
+                    0.0
+                };
             let (lane, lane_drag) = ui.allocate_exact_size(
                 egui::vec2((ui.available_width() - controls).max(0.0), 30.0),
                 egui::Sense::drag(),
@@ -1446,7 +1458,14 @@ impl OverlayPreview {
                     TextKey::GameOverlayKeepExpanded
                 })
                 .replace("{key}", &self.settings.hotkey.label());
-                if header_button_state(ui, lucide_icons::Icon::Pin, &pin_help, opacity, self.pinned)
+                if self.settings.pin_button
+                    && header_button_state(
+                        ui,
+                        lucide_icons::Icon::Pin,
+                        &pin_help,
+                        opacity,
+                        self.pinned,
+                    )
                     .clicked()
                 {
                     self.pinned = !self.pinned;
@@ -1501,12 +1520,14 @@ impl OverlayPreview {
                         ctx.request_repaint();
                     }
                 }
-                let holding = opacity_slider(ui, &mut self.opacity);
-                // Saved once let go, not at every step of a drag.
-                if let Some(live) = &mut self.live
-                    && !holding
-                {
-                    live.link.report_opacity(self.opacity);
+                if self.settings.opacity_slider {
+                    let holding = opacity_slider(ui, &mut self.opacity);
+                    // Saved once let go, not at every step of a drag.
+                    if let Some(live) = &mut self.live
+                        && !holding
+                    {
+                        live.link.report_opacity(self.opacity);
+                    }
                 }
                 let (_, drag) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width().max(0.0), 30.0),

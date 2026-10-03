@@ -81,12 +81,12 @@ pub(crate) struct Settings {
     pub hotkey: OverlayHotkey,
     /// Show the strip for a moment when the game starts.
     pub arrival_strip: bool,
-    /// Keep the strip for a moment after the overlay closes.
-    pub close_strip: bool,
     pub gamebanana: bool,
     /// Also list GameBanana's characters that no category stands for.
     pub all_characters: bool,
     pub key_hints: bool,
+    pub opacity_slider: bool,
+    pub pin_button: bool,
     /// Hestia's interface zoom, 1 being Normal.  The overlay draws
     /// `OVERLAY_ZOOM` times bigger.
     pub zoom: f32,
@@ -99,10 +99,11 @@ impl Default for Settings {
             opacity: None,
             hotkey: OverlayHotkey::default(),
             arrival_strip: true,
-            close_strip: true,
             gamebanana: true,
             all_characters: false,
             key_hints: true,
+            opacity_slider: true,
+            pin_button: true,
             zoom: 1.0,
         }
     }
@@ -415,10 +416,11 @@ mod tests {
                     opacity: Some(70),
                     hotkey: OverlayHotkey::parse("Ctrl+Shift+F7").unwrap(),
                     arrival_strip: false,
-                    close_strip: true,
                     gamebanana: false,
                     all_characters: true,
                     key_hints: false,
+                    opacity_slider: false,
+                    pin_button: true,
                     zoom: 1.2,
                 },
                 library: library(),

@@ -265,12 +265,6 @@ impl Strip {
         self.show_for(now, STRIP_SECONDS);
     }
 
-    /// Shows the strip just while the overlay is open, so it fades out as
-    /// soon as it closes.
-    pub(super) fn keep(&mut self, now: f64) {
-        self.show_for(now, FADE_SECONDS);
-    }
-
     /// Shows the strip for the game's first time in front.
     pub(super) fn arrive(&mut self, now: f64) {
         self.show_for(now, ARRIVAL_SECONDS);
