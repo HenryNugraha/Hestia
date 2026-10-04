@@ -32,10 +32,6 @@ const HOVER_SECONDS: f64 = 1.5;
 /// The end of the strip's time, where it fades out.
 const FADE_SECONDS: f64 = 0.4;
 
-/// How long a change waits for Hestia before its card shows that it waits.
-/// Most answers come sooner, so their cards never flicker.
-const WAITING_LOOK_SECONDS: f64 = 0.3;
-
 /// How long the overlay waits for Hestia to answer a change.
 const ANSWER_SECONDS: f64 = 10.0;
 
@@ -397,21 +393,21 @@ impl Changes {
         })
     }
 
-    /// The mods whose change has waited long enough to show that it waits.
-    pub(super) fn waiting(&self, now: f64) -> HashSet<String> {
+    /// The mods whose change waits for Hestia.  Their cards show it from the
+    /// start: Hestia often takes longer than a moment, and a card that looked
+    /// done, then waiting, then done again flickered.
+    pub(super) fn waiting(&self) -> HashSet<String> {
         self.asked
             .iter()
-            .filter(|asked| now - asked.at >= WAITING_LOOK_SECONDS)
             .map(|asked| asked.mod_id.clone())
             .collect()
     }
 
-    /// When a card starts to look like it waits, or a change runs out of
-    /// time.
+    /// When a change runs out of time.
     pub(super) fn next_frame(&self, now: f64) -> Option<Duration> {
         self.asked
             .iter()
-            .flat_map(|asked| [asked.at + WAITING_LOOK_SECONDS, asked.at + ANSWER_SECONDS])
+            .map(|asked| asked.at + ANSWER_SECONDS)
             .filter(|at| *at > now)
             .min_by(f64::total_cmp)
             .map(|at| Duration::from_secs_f64(at - now))
@@ -487,8 +483,8 @@ mod tests {
         assert_eq!(change.action, ChangeAction::Use);
         // The overlay already shows the change, so nothing to update.
         assert_eq!(changes.take_update(), None);
-        assert!(changes.waiting(1.1).is_empty());
-        assert_eq!(changes.waiting(1.4), HashSet::from(["b".to_owned()]));
+        // Its card shows that it waits from the start.
+        assert_eq!(changes.waiting(), HashSet::from(["b".to_owned()]));
 
         // A library Hestia sent before making the change doesn't undo it.
         changes.receive(library(&["a", "c"]));
@@ -504,7 +500,7 @@ mod tests {
             None
         );
         assert_eq!(changes.take_update(), None);
-        assert!(changes.waiting(2.0).is_empty());
+        assert!(changes.waiting().is_empty());
         assert_eq!(changes.next_frame(2.0), None);
     }
 
@@ -536,7 +532,7 @@ mod tests {
         changes.ask(use_b(), 1.0);
         assert_eq!(
             changes.next_frame(1.0),
-            Some(Duration::from_secs_f64(WAITING_LOOK_SECONDS))
+            Some(Duration::from_secs_f64(ANSWER_SECONDS))
         );
         assert!(!changes.expire(1.0 + ANSWER_SECONDS - 0.1));
         assert!(changes.expire(1.0 + ANSWER_SECONDS));

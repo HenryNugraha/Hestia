@@ -39,6 +39,9 @@ const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
 /// place among the category's own.
 const CROSSING_SECS: f64 = 0.5;
 const ACTIVE_FEEDBACK_SECS: f64 = 0.15;
+/// A second click on the same card this soon is part of a double-click,
+/// which would otherwise turn a mod on and straight back off.
+const DOUBLE_CLICK_SECS: f64 = 0.35;
 /// How fast a card's badge pulses while its change waits for Hestia.
 const WAITING_PULSE_SPEED: f64 = 4.0;
 const CATEGORY_SPRITE_SIZE: f32 = 30.0;
@@ -385,6 +388,8 @@ pub(super) struct Layouts {
     carousel_wheel_suppress_until: f64,
     carousel_transition: Option<CarouselTransition>,
     carousel_pointer_press: Option<CarouselPointerPress>,
+    /// The card clicked last, by id, and when.
+    last_card_click: Option<(String, f64)>,
     held_preview: Option<HeldPreview>,
     reveal_progress: f32,
     visible_card_rects: Vec<Rect>,
@@ -397,8 +402,9 @@ pub(super) struct Layouts {
     filter: Filter,
     /// Changes made on screen since the last `take_requests`.
     requests: Vec<ModRequest>,
-    /// Mods whose change waits for Hestia, by id.
-    waiting: HashSet<String>,
+    /// Mods whose change waits for Hestia, by id.  None in the preview, whose
+    /// changes are made on screen only.
+    waiting: Option<HashSet<String>>,
     gamebanana: GameBanana,
     /// "Show all characters" adds the game's GameBanana characters without
     /// a category to the rail.
@@ -457,6 +463,7 @@ impl Layouts {
             carousel_wheel_suppress_until: f64::NEG_INFINITY,
             carousel_transition: None,
             carousel_pointer_press: None,
+            last_card_click: None,
             held_preview: None,
             reveal_progress: 1.0,
             visible_card_rects: Vec::new(),
@@ -468,7 +475,7 @@ impl Layouts {
             row: Row::default(),
             filter,
             requests: Vec::new(),
-            waiting: HashSet::new(),
+            waiting: None,
             gamebanana,
             show_all_characters: false,
             question_row: 0,
@@ -490,9 +497,19 @@ impl Layouts {
         std::mem::take(&mut self.requests)
     }
 
-    /// Shows which mods' changes wait for Hestia.
+    /// Shows which mods' changes wait for Hestia.  From then on, a change
+    /// shows that it waits in the frame it's made, before Hestia is asked.
     pub(super) fn set_waiting(&mut self, waiting: HashSet<String>) {
-        self.waiting = waiting;
+        self.waiting = Some(waiting);
+    }
+
+    /// Asks Hestia for a change made on screen.  In the game, its card shows
+    /// that it waits at once, never done first.
+    fn ask(&mut self, request: ModRequest) {
+        if let Some(waiting) = &mut self.waiting {
+            waiting.insert(request.mod_id.clone());
+        }
+        self.requests.push(request);
     }
 
     /// Shows GameBanana mods after the categories' own, which only the
@@ -1121,7 +1138,7 @@ impl Layouts {
         if let Some((mod_id, answers)) = question {
             // The cards stay behind the panel, dimmed and out of reach.
             for placement in &placements {
-                let reveal = card_reveal_progress(placement, self.reveal_progress, visible_count);
+                let reveal = card_reveal_progress(placement, self.reveal_progress, &placements);
                 self.show_carousel_card(
                     ui,
                     category_index,
@@ -1145,10 +1162,10 @@ impl Layouts {
             ui.ctx().request_repaint();
         }
 
-        self.update_held_preview(ui, category_index, &placements, visible_count);
+        self.update_held_preview(ui, category_index, &placements);
 
         if self.held_preview.is_none() {
-            self.capture_carousel_press(ui, category_index, &placements, visible_count);
+            self.capture_carousel_press(ui, category_index, &placements);
             if self
                 .carousel_pointer_press
                 .as_ref()
@@ -1170,7 +1187,7 @@ impl Layouts {
                 // different costume can occupy the same left/center/right rectangle. Use
                 // that stable slot for egui's interaction id so its widget-rect identity
                 // does not change underneath the pointer between passes.
-                let reveal = card_reveal_progress(placement, self.reveal_progress, visible_count);
+                let reveal = card_reveal_progress(placement, self.reveal_progress, &placements);
                 self.show_carousel_card(
                     ui,
                     category_index,
@@ -1184,15 +1201,15 @@ impl Layouts {
             }
             self.paint_gamebanana_divider(ui, &placements, carousel_rect, overlay_opacity);
         }
-        if self.held_preview.is_none() {
-            if let Some(costume_index) =
+        if self.held_preview.is_none()
+            && let Some(costume_index) =
                 self.release_carousel_press(ui, category_index, carousel_rect, now)
-            {
-                // A click activates in place. The focused card remains focused, so a side-card
-                // click never moves the target away from the pointer before the next action.
-                self.activate_costume_in_place(category_index, costume_index, now);
-                ui.ctx().request_repaint();
-            }
+            && !self.repeated_click(category_index, costume_index, now)
+        {
+            // A click activates in place. The focused card remains focused, so a side-card
+            // click never moves the target away from the pointer before the next action.
+            self.activate_costume_in_place(category_index, costume_index, now);
+            ui.ctx().request_repaint();
         }
         self.request_animation_repaint(ui.ctx(), now);
     }
@@ -1683,7 +1700,6 @@ impl Layouts {
         ui: &Ui,
         category_index: usize,
         placements: &[CarouselCardPlacement],
-        card_count: usize,
     ) {
         let (pressed_pos, released, down) = ui.input(|input| {
             let pressed_pos = input.events.iter().find_map(|event| match event {
@@ -1711,7 +1727,7 @@ impl Layouts {
             return;
         };
         let Some(card) = placements.iter().rev().find(|placement| {
-            card_reveal_progress(placement, self.reveal_progress, card_count)
+            card_reveal_progress(placement, self.reveal_progress, placements)
                 >= REVEAL_INTERACTION_THRESHOLD
                 && placement.rect.contains(pointer_pos)
         }) else {
@@ -1731,7 +1747,6 @@ impl Layouts {
         ui: &Ui,
         category_index: usize,
         placements: &[CarouselCardPlacement],
-        card_count: usize,
     ) {
         let Some(pointer_pos) = ui.input(|input| {
             if !input.pointer.primary_pressed() {
@@ -1757,7 +1772,7 @@ impl Layouts {
             return;
         }
         let Some(card) = placements.iter().rev().find(|placement| {
-            card_reveal_progress(placement, self.reveal_progress, card_count)
+            card_reveal_progress(placement, self.reveal_progress, placements)
                 >= REVEAL_INTERACTION_THRESHOLD
                 && placement.rect.contains(pointer_pos)
         }) else {
@@ -1841,8 +1856,15 @@ impl Layouts {
     /// Where the cards settle.  GameBanana cards sit a divider's width away
     /// from the category's own.
     fn target_placements(&self, carousel_rect: Rect) -> Vec<CarouselCardPlacement> {
-        let mut placements =
-            visible_card_placements(carousel_rect, self.visible_mods(), self.carousel_focus);
+        // A linked category's GameBanana cards come as its list loads.
+        let grows =
+            self.gamebanana.enabled() && self.gamebanana_key(self.selected_category).is_some();
+        let mut placements = visible_card_placements(
+            carousel_rect,
+            self.visible_mods(),
+            self.carousel_focus,
+            grows,
+        );
         let own = self
             .catalog
             .categories
@@ -1972,13 +1994,27 @@ impl Layouts {
             return;
         }
         if let Some(category) = self.catalog.categories.get_mut(category_index) {
-            self.requests
-                .extend(select_costume(category, costume_index));
+            let request = select_costume(category, costume_index);
             self.active_images[category_index] = active_image(category);
+            if let Some(request) = request {
+                self.ask(request);
+            }
         }
         self.forget_used_new_mods();
         self.active_feedback_until = now + ACTIVE_FEEDBACK_SECS;
         self.active_feedback_costume = Some(costume_index);
+    }
+
+    /// Whether a click on a card comes too soon after the last one on it to
+    /// be a click of its own, as in a double-click.  Every click counts.
+    fn repeated_click(&mut self, category_index: usize, index: usize, now: f64) -> bool {
+        let id = self.card_id(category_index, index);
+        let repeated = matches!(
+            (&self.last_card_click, &id),
+            (Some((last, at)), Some(id)) if last == id && now - at < DOUBLE_CLICK_SECS
+        );
+        self.last_card_click = id.map(|id| (id, now));
+        repeated
     }
 
     /// Draw the horizontally scrollable category strip. The parent paints its neutral base.
@@ -2446,7 +2482,9 @@ impl Layouts {
                     costume.name.clone(),
                     costume.image.clone(),
                     costume.active,
-                    self.waiting.contains(&costume.id),
+                    self.waiting
+                        .as_ref()
+                        .is_some_and(|waiting| waiting.contains(&costume.id)),
                     false,
                     None,
                 ),
@@ -3114,11 +3152,12 @@ impl Layouts {
                 ModAction::Toggle if costume.active => ChangeAction::TurnOff,
                 ModAction::Toggle => ChangeAction::TurnOn,
             };
-            if let Some(request) = change_costumes(category, costume_index, action) {
-                self.requests.push(request);
+            let request = change_costumes(category, costume_index, action);
+            self.active_images[category_index] = active_image(category);
+            if let Some(request) = request {
+                self.ask(request);
                 changed = true;
             }
-            self.active_images[category_index] = active_image(category);
         }
         if changed {
             self.forget_used_new_mods();
@@ -3226,14 +3265,14 @@ fn next_focus_index(len: usize, current: usize, direction: i32) -> usize {
 fn card_reveal_progress(
     placement: &CarouselCardPlacement,
     progress: f32,
-    card_count: usize,
+    cards: &[CarouselCardPlacement],
 ) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
     // Reveal the focused card first, then bring in its neighbors with a small stagger.
-    // Two-card carousels have no center slot, so their first card still appears promptly.
+    // A pair of cards has no center slot, so its other card still appears promptly.
     let delay = if placement.focused {
         0.0
-    } else if card_count <= 2 {
+    } else if !cards.iter().any(|card| card.slot == 1) {
         0.10
     } else if placement.slot == 0 {
         0.22
@@ -3248,14 +3287,18 @@ fn carousel_card_placements(
     carousel_rect: Rect,
     costume_count: usize,
     focus: usize,
+    grows: bool,
 ) -> Vec<CarouselCardPlacement> {
     if costume_count == 0 {
         return Vec::new();
     }
     let focus = focus.min(costume_count - 1);
+    // Two cards sit as a pair, unless more can come: then the focused card
+    // stays in the middle, so it doesn't move when they do.
+    let pair = costume_count == 2 && !grows;
     let center_y = carousel_rect.center().y;
     let center_x = carousel_rect.center().x;
-    let focused_center_x = if costume_count == 2 {
+    let focused_center_x = if pair {
         // Keep a two-card group centered as a whole, regardless of which card is focused.
         let offset = (CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x) * 0.5;
         if focus == 0 {
@@ -3269,23 +3312,9 @@ fn carousel_card_placements(
     let focused_rect =
         Rect::from_center_size(egui::pos2(focused_center_x, center_y), FOCUSED_CARD_SIZE);
     let mut placements = Vec::with_capacity(costume_count.min(3));
-    if costume_count > 2 && focus > 0 {
-        let left = focus - 1;
+    if focus > 0 {
         placements.push(CarouselCardPlacement {
-            index: left,
-            rect: Rect::from_center_size(
-                egui::pos2(
-                    focused_rect.min.x - CAROUSEL_CARD_GAP - NEIGHBOR_CARD_SIZE.x * 0.5,
-                    center_y,
-                ),
-                NEIGHBOR_CARD_SIZE,
-            ),
-            focused: false,
-            slot: 0,
-        });
-    } else if costume_count == 2 && focus == 1 {
-        placements.push(CarouselCardPlacement {
-            index: 0,
+            index: focus - 1,
             rect: Rect::from_center_size(
                 egui::pos2(
                     focused_rect.min.x - CAROUSEL_CARD_GAP - NEIGHBOR_CARD_SIZE.x * 0.5,
@@ -3297,23 +3326,9 @@ fn carousel_card_placements(
             slot: 0,
         });
     }
-    if costume_count > 2 && focus + 1 < costume_count {
-        let right = focus + 1;
+    if focus + 1 < costume_count {
         placements.push(CarouselCardPlacement {
-            index: right,
-            rect: Rect::from_center_size(
-                egui::pos2(
-                    focused_rect.max.x + CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x * 0.5,
-                    center_y,
-                ),
-                NEIGHBOR_CARD_SIZE,
-            ),
-            focused: false,
-            slot: 2,
-        });
-    } else if costume_count == 2 && focus == 0 {
-        placements.push(CarouselCardPlacement {
-            index: 1,
+            index: focus + 1,
             rect: Rect::from_center_size(
                 egui::pos2(
                     focused_rect.max.x + CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x * 0.5,
@@ -3329,7 +3344,7 @@ fn carousel_card_placements(
         index: focus,
         rect: focused_rect,
         focused: true,
-        slot: if costume_count == 2 {
+        slot: if pair {
             if focus == 0 { 0 } else { 2 }
         } else {
             1
@@ -3344,12 +3359,13 @@ fn visible_card_placements(
     carousel_rect: Rect,
     visible: &[usize],
     focus: usize,
+    grows: bool,
 ) -> Vec<CarouselCardPlacement> {
     let position = visible
         .iter()
         .position(|&index| index == focus)
         .unwrap_or(0);
-    let mut placements = carousel_card_placements(carousel_rect, visible.len(), position);
+    let mut placements = carousel_card_placements(carousel_rect, visible.len(), position, grows);
     for placement in &mut placements {
         placement.index = visible[placement.index];
     }
@@ -3964,8 +3980,8 @@ fn paint_card_name_revealed(
     elided
 }
 
-/// Select a costume according to the switcher's exclusivity rule: with at
-/// most one mod on, use it, otherwise turn it on or off.
+/// What a click on a costume does: one that's on turns off.  One that's off
+/// is used while at most one is on, otherwise it's turned on next to them.
 fn select_costume(category: &mut Category, index: usize) -> Option<ModRequest> {
     let costume = category.costumes.get(index)?;
     let active_count = category
@@ -3973,10 +3989,10 @@ fn select_costume(category: &mut Category, index: usize) -> Option<ModRequest> {
         .iter()
         .filter(|costume| costume.active)
         .count();
-    let action = if active_count <= 1 {
-        ChangeAction::Use
-    } else if costume.active {
+    let action = if costume.active {
         ChangeAction::TurnOff
+    } else if active_count <= 1 {
+        ChangeAction::Use
     } else {
         ChangeAction::TurnOn
     };
@@ -4085,8 +4101,8 @@ mod tests {
     #[test]
     fn endpoint_carousel_placements_show_only_real_neighbors() {
         let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
-        let first = carousel_card_placements(carousel, 4, 0);
-        let last = carousel_card_placements(carousel, 4, 3);
+        let first = carousel_card_placements(carousel, 4, 0, false);
+        let last = carousel_card_placements(carousel, 4, 3, false);
         assert_eq!(
             first.iter().map(|card| card.index).collect::<Vec<_>>(),
             vec![1, 0]
@@ -4102,22 +4118,22 @@ mod tests {
     #[test]
     fn staged_reveal_makes_focused_card_available_before_neighbors() {
         let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
-        let cards = carousel_card_placements(carousel, 3, 1);
+        let cards = carousel_card_placements(carousel, 3, 1, false);
         let focused = cards.iter().find(|card| card.focused).unwrap();
         let left = cards.iter().find(|card| card.slot == 0).unwrap();
         let right = cards.iter().find(|card| card.slot == 2).unwrap();
-        assert!(card_reveal_progress(focused, 0.15, 3) > 0.0);
-        assert_eq!(card_reveal_progress(left, 0.15, 3), 0.0);
-        assert_eq!(card_reveal_progress(right, 0.30, 3), 0.0);
-        assert!(card_reveal_progress(left, 0.30, 3) > 0.0);
-        assert!(card_reveal_progress(right, 0.50, 3) > 0.0);
+        assert!(card_reveal_progress(focused, 0.15, &cards) > 0.0);
+        assert_eq!(card_reveal_progress(left, 0.15, &cards), 0.0);
+        assert_eq!(card_reveal_progress(right, 0.30, &cards), 0.0);
+        assert!(card_reveal_progress(left, 0.30, &cards) > 0.0);
+        assert!(card_reveal_progress(right, 0.50, &cards) > 0.0);
     }
 
     #[test]
     fn two_card_carousel_stays_balanced_when_focus_changes() {
         let carousel = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(560.0, 266.0));
         for focus in [0, 1] {
-            let cards = carousel_card_placements(carousel, 2, focus);
+            let cards = carousel_card_placements(carousel, 2, focus, false);
             let min_x = cards
                 .iter()
                 .map(|card| card.rect.min.x)
@@ -4160,7 +4176,7 @@ mod tests {
         let settled = layouts.current_carousel_placements(rect, 2.0);
         assert!(same_card_geometry(
             &settled,
-            &carousel_card_placements(rect, 3, 2)
+            &carousel_card_placements(rect, 3, 2, false)
         ));
         assert!(layouts.carousel_transition.is_none());
     }
@@ -4214,7 +4230,7 @@ mod tests {
                 note: None,
             });
             for focus in 0..count {
-                let from = carousel_card_placements(rect, count, focus);
+                let from = carousel_card_placements(rect, count, focus, false);
                 layouts.carousel_focus = (focus + 1) % count;
                 layouts.begin_carousel_transition(from, rect, 1.0);
                 for step in 0..=14 {
@@ -4244,6 +4260,7 @@ mod tests {
                 Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
                 3,
                 0,
+                false,
             ),
             started_at: 1.0,
             seconds: CAROUSEL_TRANSITION_SECS,
@@ -4292,6 +4309,7 @@ mod tests {
             Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
             3,
             0,
+            false,
         )
         .into_iter()
         .find(|card| card.index == 1)
@@ -4314,11 +4332,52 @@ mod tests {
     }
 
     #[test]
+    fn frame_double_click_turns_a_mod_on_once() {
+        let mut layouts = test_layouts(1);
+        let context = egui::Context::default();
+        let cards = carousel_card_placements(
+            Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
+            3,
+            0,
+            false,
+        );
+        let click = |layouts: &mut Layouts, index: usize, time: f64| {
+            let pos = cards
+                .iter()
+                .find(|card| card.index == index)
+                .expect("visible card")
+                .rect
+                .center();
+            run_layout_frame(
+                &context,
+                layouts,
+                Vec2::new(560.0, 266.0),
+                time,
+                vec![
+                    pointer_button_event(pos, true),
+                    pointer_button_event(pos, false),
+                ],
+                false,
+            );
+        };
+
+        click(&mut layouts, 1, 1.0);
+        click(&mut layouts, 1, 1.2);
+        click(&mut layouts, 1, 1.4);
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
+        click(&mut layouts, 1, 2.0);
+        assert!(active_indices(&layouts.catalog.categories[0]).is_empty());
+        // Another card is a click of its own.
+        click(&mut layouts, 0, 2.1);
+        assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
+    }
+
+    #[test]
     fn frame_release_resumes_an_animation_from_the_frozen_press_geometry() {
         let mut layouts = test_layouts(1);
         let context = egui::Context::default();
         let carousel = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
-        let start = carousel_card_placements(carousel, 3, 0);
+        let start = carousel_card_placements(carousel, 3, 0, false);
         layouts.carousel_focus = 1;
         layouts.begin_carousel_transition(start, carousel, 1.0);
         let midway = layouts.current_carousel_placements(carousel, 1.12);
@@ -4372,6 +4431,7 @@ mod tests {
             Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
             3,
             0,
+            false,
         )
         .into_iter()
         .find(|card| card.index == 1)
@@ -4409,6 +4469,7 @@ mod tests {
             Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0)),
             3,
             0,
+            false,
         )
         .into_iter()
         .find(|card| card.index == 1)
@@ -4668,6 +4729,20 @@ mod tests {
                 .map(|costume| costume.active)
                 .collect::<Vec<_>>(),
             vec![true, false, false]
+        );
+    }
+
+    #[test]
+    fn selecting_the_only_active_costume_turns_it_off() {
+        let mut character = category(&[false, true, false]);
+        select_costume(&mut character, 1);
+        assert_eq!(
+            character
+                .costumes
+                .iter()
+                .map(|costume| costume.active)
+                .collect::<Vec<_>>(),
+            vec![false, false, false]
         );
     }
 
@@ -5132,7 +5207,7 @@ mod tests {
         let mut shown = cards.iter().map(|card| card.index).collect::<Vec<_>>();
         shown.sort_unstable();
         assert_eq!(shown, vec![0, 2]);
-        let two = carousel_card_placements(rect, 2, 0);
+        let two = carousel_card_placements(rect, 2, 0, false);
         for (card, plain) in cards.iter().zip(&two) {
             assert_eq!((card.rect, card.slot), (plain.rect, plain.slot));
         }
@@ -5420,9 +5495,11 @@ mod tests {
         )]));
         layouts.carousel_focus = 1;
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        // Using the mod that is already the only one on changes nothing.
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
         layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
         layouts.activate_costume_in_place(0, 2, 1.0);
-        // Using the mod that is already the only one on changes nothing.
+        // A click on a mod that's on turns it off, even the only one.
         layouts.activate_costume_in_place(0, 2, 1.0);
         assert_eq!(
             layouts.take_requests(),
@@ -5434,9 +5511,29 @@ mod tests {
                 ),
                 request("Beach", ChangeAction::TurnOff, &[("Beach", false)]),
                 request("Classic", ChangeAction::Use, &[("Classic", true)]),
+                request("Classic", ChangeAction::TurnOff, &[("Classic", false)]),
             ]
         );
         assert!(layouts.take_requests().is_empty());
+    }
+
+    #[test]
+    fn in_the_game_a_change_shows_that_it_waits_in_the_frame_it_is_made() {
+        let mut layouts = Layouts::new(live_catalog(vec![with_active(
+            named("Ardelia", &["Vow", "Beach"]),
+            "Vow",
+        )]));
+        layouts.carousel_focus = 1;
+        // The preview makes changes on screen only.
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        assert_eq!(layouts.waiting, None);
+        layouts.set_waiting(HashSet::new());
+        layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
+        layouts.activate_costume_in_place(0, 0, 1.0);
+        assert_eq!(
+            layouts.waiting,
+            Some(HashSet::from(["Beach".to_owned(), "Vow".to_owned()]))
+        );
     }
 
     #[test]
@@ -5454,6 +5551,12 @@ mod tests {
         );
         // Both on now, so there is nothing left to use.
         assert!(!layouts.shortcut_availability().exclusive);
+        // A click turns one off and leaves the other on.
+        layouts.activate_costume_in_place(0, 0, 1.0);
+        assert_eq!(
+            layouts.take_requests(),
+            [request("UI", ChangeAction::TurnOff, &[("UI", false)])]
+        );
     }
 
     fn gamebanana_page(character: u64, ids: &[u64], more: bool) -> ToOverlay {
@@ -5508,6 +5611,32 @@ mod tests {
         assert!(layouts.visible_mods().contains(&layouts.carousel_focus));
         layouts.set_gamebanana(true, false);
         assert_eq!(layouts.visible_mods(), [0, 1, 2, 4], "the pages it had");
+    }
+
+    #[test]
+    fn a_gamebanana_list_loading_leaves_the_cards_in_place() {
+        let carousel = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
+        let cards = |layouts: &Layouts| {
+            layouts
+                .target_placements(carousel)
+                .into_iter()
+                .map(|card| (card.index, card.rect, card.slot, card.focused))
+                .collect::<Vec<_>>()
+        };
+        let mut akekuri = named("Akekuri", &["Flame"]);
+        akekuri.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![akekuri]));
+        let context = egui::Context::default();
+        let alone = cards(&layouts);
+        layouts.set_gamebanana(true, false);
+        layouts.update_gamebanana(&context, 0.0);
+        assert_eq!(layouts.visible_mods(), [0, 1], "a loading card");
+        let loading = cards(&layouts);
+        assert_eq!(loading.iter().find(|card| card.3), alone.first());
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1], false)]);
+        assert_eq!(layouts.visible_mods(), [0, 1], "the mod in its place");
+        assert_eq!(cards(&layouts), loading);
     }
 
     #[test]

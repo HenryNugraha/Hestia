@@ -578,7 +578,7 @@ impl eframe::App for OverlayPreview {
                 }
                 None => {}
             }
-            self.samples.set_waiting(live.changes.waiting(now));
+            self.samples.set_waiting(live.changes.waiting());
             if live.link.take_closed() {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
