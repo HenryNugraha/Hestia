@@ -1623,6 +1623,19 @@ struct StartupPathScanState {
     run_initial_mod_scan_after: bool,
 }
 
+impl StartupPathScanState {
+    fn request_stop(&mut self) {
+        self.cancel_requested = true;
+        self.stopped = true;
+        self.finished = true;
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    fn accepts_worker_event(&self) -> bool {
+        !self.finished && !self.stopped
+    }
+}
+
 enum StartupPathScanEvent {
     Found {
         kind: StartupPathTargetKind,
@@ -1631,6 +1644,85 @@ enum StartupPathScanEvent {
     Finished {
         stopped: bool,
     },
+}
+
+fn reset_startup_path_scan_channel(
+    tx: &mut WorkerTx<StartupPathScanEvent>,
+    rx: &mut WorkerRx<StartupPathScanEvent>,
+) {
+    let (new_tx, new_rx) = worker_channel();
+    *tx = new_tx;
+    *rx = new_rx;
+}
+
+#[cfg(test)]
+mod startup_path_scan_state_tests {
+    use super::*;
+
+    fn test_scan_state() -> StartupPathScanState {
+        let candidate = PathBuf::from(r"C:\Games\test.exe");
+        StartupPathScanState {
+            statuses: vec![StartupPathScanStatus {
+                kind: StartupPathTargetKind::Game("test-game".to_string()),
+                label: "Test game".to_string(),
+                candidates: vec![candidate.clone()],
+                selected_candidate: Some(candidate),
+                choosing: false,
+            }],
+            cancel: Arc::new(AtomicBool::new(false)),
+            cancel_requested: false,
+            stopped: false,
+            finished: false,
+            run_initial_mod_scan_after: true,
+        }
+    }
+
+    #[test]
+    fn request_stop_finishes_scan_and_preserves_results() {
+        let mut scan = test_scan_state();
+        let candidates = scan.statuses[0].candidates.clone();
+        let selected_candidate = scan.statuses[0].selected_candidate.clone();
+
+        scan.request_stop();
+
+        assert!(scan.cancel_requested);
+        assert!(scan.stopped);
+        assert!(scan.finished);
+        assert!(scan.cancel.load(Ordering::Relaxed));
+        assert_eq!(scan.statuses[0].candidates, candidates);
+        assert_eq!(scan.statuses[0].selected_candidate, selected_candidate);
+        assert!(!scan.accepts_worker_event());
+    }
+
+    #[test]
+    fn reset_scan_channel_drops_events_from_previous_scan() {
+        let (mut tx, mut rx) = worker_channel::<StartupPathScanEvent>();
+        let old_tx = tx.clone();
+        old_tx
+            .send(StartupPathScanEvent::Found {
+                kind: StartupPathTargetKind::Game("old-game".to_string()),
+                path: PathBuf::from(r"C:\Games\old.exe"),
+            })
+            .unwrap();
+        old_tx
+            .send(StartupPathScanEvent::Finished { stopped: false })
+            .unwrap();
+
+        reset_startup_path_scan_channel(&mut tx, &mut rx);
+
+        assert!(rx.try_recv().is_err());
+        assert!(
+            old_tx
+                .send(StartupPathScanEvent::Finished { stopped: false })
+                .is_err()
+        );
+        tx.send(StartupPathScanEvent::Finished { stopped: false })
+            .unwrap();
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(StartupPathScanEvent::Finished { stopped: false })
+        ));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

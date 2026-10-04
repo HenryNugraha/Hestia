@@ -166,9 +166,9 @@ impl HestiaApp {
                             .clicked()
                         {
                             if let Some(scan) = self.startup_path_scan.as_mut() {
-                                scan.cancel_requested = true;
-                                scan.cancel.store(true, Ordering::Relaxed);
+                                scan.request_stop();
                             }
+                            ctx.request_repaint();
                         }
                     }
                 });

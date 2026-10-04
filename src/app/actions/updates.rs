@@ -1492,6 +1492,13 @@ impl HestiaApp {
         let mut saw_event = false;
         while let Ok(event) = self.startup_path_scan_rx.try_recv() {
             saw_event = true;
+            if !self
+                .startup_path_scan
+                .as_ref()
+                .is_some_and(StartupPathScanState::accepts_worker_event)
+            {
+                continue;
+            }
             match event {
                 StartupPathScanEvent::Found { kind, path } => {
                     let mut should_save_found_path = false;

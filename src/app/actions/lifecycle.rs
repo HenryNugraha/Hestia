@@ -1150,6 +1150,10 @@ impl HestiaApp {
             return;
         }
         let targets = Self::startup_path_scan_targets(&self.state, true);
+        reset_startup_path_scan_channel(
+            &mut self.startup_path_scan_tx,
+            &mut self.startup_path_scan_rx,
+        );
         self.startup_path_scan = Self::build_startup_path_scan_state(&targets, true);
         self.dispatch_startup_path_scan(targets);
     }
