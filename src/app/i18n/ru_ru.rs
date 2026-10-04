@@ -336,7 +336,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Старые → новые", // LibrarySortDateAsc
     "Наименьший → Наибольший размер", // LibrarySortSizeAsc
     "Наибольший → Наименьший размер", // LibrarySortSizeDesc
-    "Сортировка, группировка и вид установленных модов", // LibrarySortMenuTooltip
+    "Изменить макет категорий и отсортировать установленные моды", // LibrarySortMenuTooltip
     "Порядок модов", // LibrarySortModsHeading
     "Сортировка по названию мода, при отсутствии — по имени папки", // LibrarySortNameTooltip
     "Используется самая новая известная дата установки, изменения содержимого или обновления", // LibrarySortNewestTooltip
@@ -362,7 +362,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Разное", // LibraryMiscellaneousHeading
     "Внутри статусных групп сначала учитывается порядок категорий, затем выбранная сортировка", // LibrarySortCategoryFirstTooltip
     "Сначала размещает активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка", // LibrarySortStatusFirstTooltip
-    "Доступно при группировке по категориям в виде списка", // LibraryUncategorizedFirstListOnlyTooltip
+    "Размещает категорию «Без категории» первой в виде списка и в менеджере категорий", // LibraryUncategorizedFirstListOnlyTooltip
     "Показать/скрыть", // LibraryToggleVisibility
     "Состояние мода", // LibraryModStateHeading
     "Показать все состояния модов", // LibraryShowAllModStates
@@ -832,7 +832,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Для этого мода не привязан источник GameBanana. Нажмите, чтобы привязать.", // LibraryUnlinkedClickToLink
     "Название Я-А", // LibraryCategorySortByNameDesc
     "Без категории: {status}", // LibraryUncategorizedStatusHeader
-    "Сортировка и порядок", // LibrarySortMenuTitle
+    "Макет и порядок", // LibrarySortMenuTitle
 
     // In-game overlay
     "Внутриигровой оверлей", // SettingsGameOverlay

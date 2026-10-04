@@ -269,7 +269,11 @@ impl HestiaApp {
         // that folder as the target so both the Install button and drag-and-drop
         // drop the mod where the user is looking. Only meaningful in the library
         // folder view; a drop from Browse/overview assigns nothing.
-        let target_category_id = if self.current_view == ViewMode::Library {
+        let target_category_id = if self.current_view == ViewMode::Library
+            && self.state.static_prefs.effective_library_group_mode() == LibraryGroupMode::Category
+            && self.state.static_prefs.effective_library_category_display_mode()
+                == LibraryCategoryDisplayMode::Folders
+        {
             self.selected_category_folder_id.clone()
         } else {
             None

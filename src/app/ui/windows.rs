@@ -3123,16 +3123,14 @@ impl HestiaApp {
                             let mut show_archived = !self.state.static_prefs.hide_archived;
                             let selected_game_id =
                                 self.selected_game().map(|game| game.definition.id.clone());
+                            let mut category_display_mode =
+                                self.state.static_prefs.library_category_display_mode;
 
-                            // Group-by (Category/Status/None), category layout (Folders/List),
-                            // the card-detail toggle, and "uncategorized first" are hidden while
-                            // the category folder view is enforced. Kept behind
-                            // ENFORCE_CATEGORY_FOLDER_VIEW so they can be brought back in a future
-                            // version (the panel would need a re-layout pass then).
-                            if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                            // Group-by (Category/Status/None) remains hidden while category
+                            // grouping is enforced. The category layout itself is available in
+                            // Settings even when the grouping choice is fixed to Category.
+                            if !crate::model::ENFORCE_CATEGORY_GROUPING {
                                 let group_mode = self.state.static_prefs.library_group_mode;
-                                let category_display_mode =
-                                    self.state.static_prefs.library_category_display_mode;
                                 setting_block(ui, text.group_list_by(), &mut |ui| {
                                     egui::ComboBox::from_id_salt("library_group_mode")
                                         .selected_text(text.library_group_mode(self.state.static_prefs.library_group_mode))
@@ -3143,32 +3141,14 @@ impl HestiaApp {
                                         });
                                 });
                                 ui.add_space(8.0);
-                                setting_block(ui, text.category_layout(), &mut |ui| {
-                                    ui.add_enabled_ui(
-                                        matches!(self.state.static_prefs.library_group_mode, LibraryGroupMode::Category),
-                                        |ui| {
-                                            egui::ComboBox::from_id_salt("library_category_display_mode")
-                                                .selected_text(text.library_category_display_mode(self.state.static_prefs.library_category_display_mode))
-                                                .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut self.state.static_prefs.library_category_display_mode, LibraryCategoryDisplayMode::GroupedSections, text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections));
-                                                    ui.selectable_value(&mut self.state.static_prefs.library_category_display_mode, LibraryCategoryDisplayMode::Folders, text.library_category_display_mode(LibraryCategoryDisplayMode::Folders));
-                                                });
-                                        },
-                                    );
-                                });
-                                ui.add_space(8.0);
                                 if self.state.static_prefs.library_group_mode != group_mode {
-                                    should_save = true;
-                                }
-                                if self.state.static_prefs.library_category_display_mode != category_display_mode {
                                     should_save = true;
                                 }
                             }
 
-                            // Two columns: #1 Mod Order + #2 status-first on the left, #3 Category
-                            // Order + #4 empty-folders on the right. The left column is sized with
-                            // the SAME inputs as the Behavior section above, so the two panels'
-                            // first columns line up in every language (incl. Russian).
+                            // Size both Installed Mods List rows with the SAME inputs as the
+                            // Behavior section above, so the panels' first columns line up in
+                            // every language (incl. Russian).
                             let left_column_needed = settings_column_width(
                                 ui,
                                 &[text.when_launching_game(), text.after_installing_mod()],
@@ -3192,6 +3172,55 @@ impl HestiaApp {
                             );
                             let left_column_width =
                                 settings_left_column_width(ui, left_column_needed, right_column_needed);
+
+                            // First row: the category layout spans the left column, while the
+                            // visibility controls stay together in the right column.
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(left_column_width);
+                                    setting_block(ui, text.category_layout(), &mut |ui| {
+                                        egui::ComboBox::from_id_salt("settings_library_category_display_mode")
+                                            .selected_text(text.library_category_display_mode(category_display_mode))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut category_display_mode,
+                                                    LibraryCategoryDisplayMode::Folders,
+                                                    text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
+                                                );
+                                                ui.selectable_value(
+                                                    &mut category_display_mode,
+                                                    LibraryCategoryDisplayMode::GroupedSections,
+                                                    text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+                                                );
+                                            });
+                                    });
+                                });
+                                ui.vertical(|ui| {
+                                    if ui
+                                        .checkbox(&mut show_disabled, text.show_disabled_mods())
+                                        .changed()
+                                    {
+                                        self.state.static_prefs.hide_disabled = !show_disabled;
+                                        should_save = true;
+                                    }
+                                    if ui
+                                        .checkbox(&mut show_archived, text.show_archived_mods())
+                                        .changed()
+                                    {
+                                        self.state.static_prefs.hide_archived = !show_archived;
+                                        should_save = true;
+                                    }
+                                });
+                            });
+                            if category_display_mode
+                                != self.state.static_prefs.library_category_display_mode
+                            {
+                                self.set_library_category_display_mode(category_display_mode);
+                            }
+                            ui.add_space(8.0);
+
+                            // Second row: Mod Order + status-first on the left, Category Order
+                            // + the layout-specific category option on the right.
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
@@ -3240,37 +3269,37 @@ impl HestiaApp {
                                             }
                                         });
                                     });
-                                    // 4. Show empty category folders.
+                                    // Show the option that applies to the selected category layout;
+                                    // preserve the inactive option's stored preference.
                                     ui.add_space(4.0);
-                                    if ui
-                                        .checkbox(
-                                            &mut self.state.static_prefs.library_show_empty_category_folders,
-                                            text.show_empty_category_folders(),
-                                        )
-                                        .changed()
-                                    {
-                                        should_save = true;
+                                    match category_display_mode {
+                                        LibraryCategoryDisplayMode::Folders => {
+                                            if ui
+                                                .checkbox(
+                                                    &mut self.state.static_prefs.library_show_empty_category_folders,
+                                                    text.show_empty_category_folders(),
+                                                )
+                                                .changed()
+                                            {
+                                                should_save = true;
+                                            }
+                                        }
+                                        LibraryCategoryDisplayMode::GroupedSections => {
+                                            if ui
+                                                .checkbox(
+                                                    &mut self.state.static_prefs.library_uncategorized_first,
+                                                    text.show_uncategorized_mods_first(),
+                                                )
+                                                .on_hover_text(text.library_uncategorized_first_list_only_tooltip())
+                                                .changed()
+                                            {
+                                                should_save = true;
+                                            }
+                                        }
                                     }
                                 });
                             });
                             ui.add_space(10.0);
-
-                            // 5. Show disabled mods.
-                            if ui
-                                .checkbox(&mut show_disabled, text.show_disabled_mods())
-                                .changed()
-                            {
-                                self.state.static_prefs.hide_disabled = !show_disabled;
-                                should_save = true;
-                            }
-                            // 6. Show archived mods.
-                            if ui
-                                .checkbox(&mut show_archived, text.show_archived_mods())
-                                .changed()
-                            {
-                                self.state.static_prefs.hide_archived = !show_archived;
-                                should_save = true;
-                            }
 
                             if self.state.static_prefs.library_sort != library_sort {
                                 should_save = true;

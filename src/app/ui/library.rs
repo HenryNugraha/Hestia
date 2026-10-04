@@ -1456,28 +1456,28 @@ impl HestiaApp {
         should_save
     }
 
-    fn render_library_category_layout_radio_rows(&mut self, ui: &mut Ui) -> bool {
+    fn render_library_category_layout_radio_rows(&mut self, ui: &mut Ui) {
         let text = self.text();
-        let mut should_save = false;
         let mut display_mode = self.state.static_prefs.library_category_display_mode;
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut display_mode,
-            LibraryCategoryDisplayMode::Folders,
-            text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
-            Some(text.library_category_folders_tooltip()),
-        );
-        should_save |= Self::sort_menu_radio(
-            ui,
-            &mut display_mode,
-            LibraryCategoryDisplayMode::GroupedSections,
-            text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
-            Some(text.library_category_list_tooltip()),
-        );
+        ui.horizontal(|ui| {
+            Self::sort_menu_radio(
+                ui,
+                &mut display_mode,
+                LibraryCategoryDisplayMode::Folders,
+                text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
+                Some(text.library_category_folders_tooltip()),
+            );
+            Self::sort_menu_radio(
+                ui,
+                &mut display_mode,
+                LibraryCategoryDisplayMode::GroupedSections,
+                text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+                Some(text.library_category_list_tooltip()),
+            );
+        });
         if display_mode != self.state.static_prefs.library_category_display_mode {
-            self.state.static_prefs.library_category_display_mode = display_mode;
+            let _ = self.set_library_category_display_mode(display_mode);
         }
-        should_save
     }
 
     fn render_library_sort_menu_button(&mut self, ui: &mut Ui, width: f32) {
@@ -1608,6 +1608,11 @@ impl HestiaApp {
                 .on_hover_cursor(egui::CursorIcon::Default);
                 menu_section_separator(ui);
 
+                menu_section_header(ui, text.library_category_layout_heading(), &[]);
+                ui.add_space(-2.0);
+                self.render_library_category_layout_radio_rows(ui);
+                menu_section_separator(ui);
+
                 // ===== SORT (mods) =====
                 menu_section_header(ui, text.library_sort_mods_heading(), &[]);
                 ui.add_space(-2.0);
@@ -1636,40 +1641,12 @@ impl HestiaApp {
 
                 menu_section_separator(ui);
 
-                // Group-by (Category/Status/None) and category layout (Folders/List) are
-                // hidden for now to enforce the category folder view; kept behind the flag so
-                // they can be brought back in a future version. See ENFORCE_CATEGORY_FOLDER_VIEW.
-                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                // Group-by (Category/Status/None) remains hidden while category grouping is
+                // enforced. Category layout is independent and remains available above.
+                if !crate::model::ENFORCE_CATEGORY_GROUPING {
                     menu_section_header(ui, text.library_group_mods_heading(), &[]);
                     ui.add_space(-2.0);
                     should_save |= self.render_library_group_radio_rows(ui);
-
-                    menu_section_separator(ui);
-
-                    menu_section_header(ui, text.library_category_layout_heading(), &[]);
-                    ui.add_space(-2.0);
-                    if !matches!(
-                        self.state.static_prefs.library_group_mode,
-                        LibraryGroupMode::Category
-                    ) {
-                        static_label(
-                            ui,
-                            RichText::new(text.library_available_when_grouped_by_category())
-                                .size(11.0)
-                                .italics()
-                                .color(Color32::from_gray(135)),
-                        );
-                        ui.add_space(-1.0);
-                    }
-                    ui.add_enabled_ui(
-                        matches!(
-                            self.state.static_prefs.library_group_mode,
-                            LibraryGroupMode::Category
-                        ),
-                        |ui| {
-                            should_save |= self.render_library_category_layout_radio_rows(ui);
-                        },
-                    );
 
                     menu_section_separator(ui);
                 }
@@ -1747,47 +1724,41 @@ impl HestiaApp {
                 );
                 // Tiny gap so the modifier switch detaches from the category radio list (no hairline).
                 ui.add_space(4.0);
-                // Show empty category folders (Folders layout only).
-                ui.add_enabled_ui(
-                    matches!(
-                        self.state.static_prefs.effective_library_group_mode(),
-                        LibraryGroupMode::Category
-                    ) && matches!(
-                        self.state.static_prefs.effective_library_category_display_mode(),
-                        LibraryCategoryDisplayMode::Folders
-                    ),
-                    |ui| {
-                        should_save |= Self::sort_menu_toggle(
-                            ui,
-                            &mut self.state.static_prefs.library_show_empty_category_folders,
-                            text.show_empty_category_folders(),
-                            None,
+                // Keep the mode-specific option compact: only the active layout's control is
+                // shown, while grouping still gates both controls if grouping is restored.
+                match self.state.static_prefs.effective_library_category_display_mode() {
+                    LibraryCategoryDisplayMode::Folders => {
+                        ui.add_enabled_ui(
+                            matches!(
+                                self.state.static_prefs.effective_library_group_mode(),
+                                LibraryGroupMode::Category
+                            ),
+                            |ui| {
+                                should_save |= Self::sort_menu_toggle(
+                                    ui,
+                                    &mut self.state.static_prefs.library_show_empty_category_folders,
+                                    text.show_empty_category_folders(),
+                                    None,
+                                );
+                            },
                         );
-                    },
-                );
-                // "Show uncategorized mods first" only applies to the List layout, which is
-                // hidden while the folder view is enforced. Kept behind the flag so it can be
-                // brought back in a future version.
-                if !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
-                    ui.add_enabled_ui(
-                        matches!(
-                            self.state.static_prefs.effective_library_group_mode(),
-                            LibraryGroupMode::Category
-                        ) && matches!(
-                            self.state.static_prefs.effective_library_category_display_mode(),
-                            LibraryCategoryDisplayMode::GroupedSections
-                        ),
-                        |ui| {
-                            should_save |= ui
-                                .checkbox(
+                    }
+                    LibraryCategoryDisplayMode::GroupedSections => {
+                        ui.add_enabled_ui(
+                            matches!(
+                                self.state.static_prefs.effective_library_group_mode(),
+                                LibraryGroupMode::Category
+                            ),
+                            |ui| {
+                                should_save |= Self::sort_menu_toggle(
+                                    ui,
                                     &mut self.state.static_prefs.library_uncategorized_first,
                                     text.show_uncategorized_mods_first(),
-                                )
-                                .on_hover_text(text.library_uncategorized_first_list_only_tooltip())
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .changed();
-                        },
-                    );
+                                    Some(text.library_uncategorized_first_list_only_tooltip()),
+                                );
+                            },
+                        );
+                    }
                 }
 
                 if should_save {
@@ -6849,11 +6820,11 @@ impl HestiaApp {
                                                                                 )
                                                                                 .on_hover_cursor(egui::CursorIcon::Default);
                                                                                 let category_grouped = matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category);
-                                                                                // Card label: in the enforced Category Folder view we always show the
-                                                                                // status word + dot on cards (the show-status / show-category toggles are
-                                                                                // hidden for now to enforce that view, might bring them back in a future
-                                                                                // version). The original toggle-driven logic is preserved below.
-                                                                                let (show_status_on_card, show_category_on_card) = if crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+                                                                                // Card label: in both category layouts we always show the
+                                                                                // status word + dot on cards (the show-status / show-category toggles remain
+                                                                                // hidden while category grouping is enforced). The original toggle-driven
+                                                                                // logic is preserved below.
+                                                                                let (show_status_on_card, show_category_on_card) = if crate::model::ENFORCE_CATEGORY_GROUPING {
                                                                                     (true, false)
                                                                                 } else {
                                                                                     let show_status_on_card = category_grouped
@@ -8658,15 +8629,23 @@ impl HestiaApp {
                                                 .is_some_and(|rect| rect.contains(pos))
                                     })
                             });
-                        let drilled_category =
-                            selected_category_folder_id.as_deref().and_then(|selected_id| {
-                                category_sections
-                                    .iter()
-                                    .find(|category| category.id == selected_id)
-                                    .map(|category| {
-                                        (category.id.clone(), category.name.clone())
-                                    })
-                            });
+                        let drilled_category = if matches!(
+                            category_display_mode,
+                            LibraryCategoryDisplayMode::Folders
+                        ) {
+                            selected_category_folder_id
+                                .as_deref()
+                                .and_then(|selected_id| {
+                                    category_sections
+                                        .iter()
+                                        .find(|category| category.id == selected_id)
+                                        .map(|category| {
+                                            (category.id.clone(), category.name.clone())
+                                        })
+                                })
+                        } else {
+                            None
+                        };
                         self.render_library_background_context_menu(
                             ui,
                             open_background_menu,
@@ -8953,22 +8932,19 @@ impl HestiaApp {
                             self.state.static_prefs.effective_library_category_display_mode(),
                             LibraryCategoryDisplayMode::Folders
                         );
-                        let new_id = self.create_category_for_game(
-                            selected_game_id,
-                            CategoryRenameSurface::LibraryFolder,
-                        );
                         if folders_mode {
+                            let new_id = self.create_category_for_game(
+                                selected_game_id,
+                                CategoryRenameSurface::LibraryFolder,
+                            );
                             self.library_scroll_to_category_id = Some(new_id);
                         } else {
-                            self.clear_category_rename();
-                            let name = self
-                                .state
-                                .categories
-                                .iter()
-                                .find(|category| category.id == new_id)
-                                .map(|category| category.name.clone())
-                                .unwrap_or_default();
-                            self.set_message_ok(text.created_folder(&name));
+                            self.settings_open = true;
+                            self.settings_tab = SettingsTab::Categories;
+                            self.create_category_for_game(
+                                selected_game_id,
+                                CategoryRenameSurface::Settings,
+                            );
                         }
                         ui.close();
                     }
@@ -8993,33 +8969,36 @@ impl HestiaApp {
             )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-            // Group-by / category-layout submenu hidden for now to enforce the category
-            // folder view; kept behind the flag to bring back in a future version.
-            if drilled_category.is_none() && !crate::model::ENFORCE_CATEGORY_FOLDER_VIEW {
+            // Group-by remains hidden while category grouping is enforced. Category layout has
+            // its own menu and remains available even while drilled into a folder or selecting.
+            if drilled_category.is_none() && !crate::model::ENFORCE_CATEGORY_GROUPING {
                 ui.menu_button(
                     icon_text_sized(Icon::SquareStack, text.context_group_by(), 12.0, 12.0),
                     |ui| {
                         ui.set_min_width(200.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         should_save |= self.render_library_group_radio_rows(ui);
-                        menu_section_separator(ui);
-                        menu_section_header(ui, text.library_category_layout_heading(), &[]);
-                        ui.add_space(-2.0);
-                        ui.add_enabled_ui(
-                            matches!(
-                                self.state.static_prefs.library_group_mode,
-                                LibraryGroupMode::Category
-                            ),
-                            |ui| {
-                                should_save |=
-                                    self.render_library_category_layout_radio_rows(ui);
-                            },
-                        );
                     },
                 )
                 .response
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             }
+
+            ui.menu_button(
+                icon_text_sized(
+                    Icon::SquareStack,
+                    text.library_category_layout_heading(),
+                    12.0,
+                    12.0,
+                ),
+                |ui| {
+                    ui.set_min_width(200.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    self.render_library_category_layout_radio_rows(ui);
+                },
+            )
+            .response
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
             ui.add_space(-2.0);
             ui.separator();

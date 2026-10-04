@@ -336,7 +336,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Terlama → Terbaru", // LibrarySortDateAsc
     "Ukuran Terkecil → Terbesar", // LibrarySortSizeAsc
     "Ukuran Terbesar → Terkecil", // LibrarySortSizeDesc
-    "Urutkan, kelompokkan, dan atur tampilan mod terpasang", // LibrarySortMenuTooltip
+    "Ubah tata letak kategori dan urutkan mod terpasang", // LibrarySortMenuTooltip
     "Urutan Mod", // LibrarySortModsHeading
     "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada", // LibrarySortNameTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui", // LibrarySortNewestTooltip
@@ -362,7 +362,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Lain-lain", // LibraryMiscellaneousHeading
     "Di dalam grup status, mengikuti urutan kategori sebelum urutan terpilih", // LibrarySortCategoryFirstTooltip
     "Menempatkan mod Aktif lebih dulu, lalu Dinonaktifkan, lalu Diarsipkan sebelum urutan terpilih", // LibrarySortStatusFirstTooltip
-    "Tersedia saat dikelompokkan berdasarkan kategori dalam tampilan daftar", // LibraryUncategorizedFirstListOnlyTooltip
+    "Menempatkan Tanpa Kategori di urutan pertama dalam tampilan daftar dan pengelola kategori", // LibraryUncategorizedFirstListOnlyTooltip
     "Alihkan Visibilitas", // LibraryToggleVisibility
     "Status Mod", // LibraryModStateHeading
     "Tampilkan semua status mod", // LibraryShowAllModStates
@@ -833,7 +833,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Belum ada sumber GameBanana yang ditautkan untuk mod ini. Klik untuk menautkannya.", // LibraryUnlinkedClickToLink
     "Nama Z-A", // LibraryCategorySortByNameDesc
     "Tanpa kategori: {status}", // LibraryUncategorizedStatusHeader
-    "Urutkan & Susun", // LibrarySortMenuTitle
+    "Tata Letak & Urutan", // LibrarySortMenuTitle
 
     // In-game overlay
     "Overlay Dalam Game", // SettingsGameOverlay

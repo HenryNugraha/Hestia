@@ -2740,6 +2740,33 @@ impl HestiaApp {
         Self::cycle_ordered_value(&mut self.tasks_tab, TasksTab::TAB_ORDER, forward);
     }
 
+    /// Apply the same layout transition from Library menus and Settings.
+    fn set_library_category_display_mode(&mut self, mode: LibraryCategoryDisplayMode) -> bool {
+        if self.state.static_prefs.library_category_display_mode == mode {
+            return false;
+        }
+        self.state.static_prefs.library_category_display_mode = mode;
+        self.selected_category_folder_id = None;
+        self.library_scroll_to_category_id = None;
+        self.dragging_category_id = None;
+        self.dragging_category_target_index = None;
+        self.dragging_mod_ids.clear();
+        self.clear_category_rename();
+
+        // List exposes every filtered card; the folder overview exposes only
+        // Uncategorized cards. Retain a batch selection only where it remains visible.
+        let cards = self.library_cards_for_selected_game();
+        let visible_ids: HashSet<&str> = cards
+            .iter()
+            .filter(|card| mode == LibraryCategoryDisplayMode::GroupedSections || card.13.is_none())
+            .map(|card| card.0.as_str())
+            .collect();
+        self.selected_mods
+            .retain(|id| visible_ids.contains(id.as_str()));
+        self.save_state();
+        true
+    }
+
     fn leave_category_folder_view(&mut self) -> bool {
         if self.selected_category_folder_id.is_none() {
             return false;

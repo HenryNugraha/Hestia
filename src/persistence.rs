@@ -1524,6 +1524,46 @@ mod tests {
     }
 
     #[test]
+    fn library_category_layout_restores_saved_list_without_restoring_status_grouping() {
+        let old_config: AppPreferences = toml::from_str(
+            "version = 7\ngames = []\nlibrary_group_mode = \"Status\"\nlibrary_category_display_mode = \"GroupedSections\"\nhide_disabled = true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            old_config.static_prefs.effective_library_group_mode(),
+            crate::model::LibraryGroupMode::Category
+        );
+        assert_eq!(
+            old_config
+                .static_prefs
+                .effective_library_category_display_mode(),
+            crate::model::LibraryCategoryDisplayMode::GroupedSections
+        );
+
+        let mut state = AppState::default();
+        state.static_prefs = old_config.static_prefs;
+        let raw = toml::to_string(&AppPreferences::from(&state)).unwrap();
+        let saved: AppPreferences = toml::from_str(&raw).unwrap();
+        assert_eq!(
+            saved.static_prefs.effective_library_category_display_mode(),
+            crate::model::LibraryCategoryDisplayMode::GroupedSections
+        );
+        assert_eq!(
+            saved.static_prefs.library_group_mode,
+            crate::model::LibraryGroupMode::Status
+        );
+        assert!(saved.static_prefs.hide_disabled);
+
+        let missing_layout: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
+        assert_eq!(
+            missing_layout
+                .static_prefs
+                .effective_library_category_display_mode(),
+            crate::model::LibraryCategoryDisplayMode::Folders
+        );
+    }
+
+    #[test]
     fn always_translate_mod_details_defaults_false_and_roundtrips() {
         let old_config: AppPreferences = toml::from_str("version = 7\ngames = []\n").unwrap();
         assert!(!old_config.static_prefs.always_translate_mod_details);

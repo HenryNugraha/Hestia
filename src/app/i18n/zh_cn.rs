@@ -336,7 +336,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "最旧 → 最新", // LibrarySortDateAsc
     "大小：最小 → 最大", // LibrarySortSizeAsc
     "大小：最大 → 最小", // LibrarySortSizeDesc
-    "排序、分组并设置已安装 Mod 的布局", // LibrarySortMenuTooltip
+    "更改分类布局并排序已安装的 Mod", // LibrarySortMenuTooltip
     "Mod 顺序", // LibrarySortModsHeading
     "按 Mod 标题排序，没有标题时使用文件夹名", // LibrarySortNameTooltip
     "使用已知最新的安装、内容或刷新时间", // LibrarySortNewestTooltip
@@ -362,7 +362,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "其他", // LibraryMiscellaneousHeading
     "在状态分组内，先按分类顺序排列，再使用所选排序", // LibrarySortCategoryFirstTooltip
     "在所选排序之前，先显示启用的 Mod，然后是禁用和已归档的 Mod", // LibrarySortStatusFirstTooltip
-    "在分类分组的列表布局中可用", // LibraryUncategorizedFirstListOnlyTooltip
+    "在列表布局和分类管理器中将未分类置于首位", // LibraryUncategorizedFirstListOnlyTooltip
     "切换可见性", // LibraryToggleVisibility
     "Mod 状态", // LibraryModStateHeading
     "显示所有 Mod 状态", // LibraryShowAllModStates
@@ -833,7 +833,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "此模组尚未关联 GameBanana 来源。点击以关联。", // LibraryUnlinkedClickToLink
     "名称 Z-A", // LibraryCategorySortByNameDesc
     "未分类：{status}", // LibraryUncategorizedStatusHeader
-    "排序与顺序", // LibrarySortMenuTitle
+    "布局与排序", // LibrarySortMenuTitle
 
     // In-game overlay
     "游戏内浮层", // SettingsGameOverlay

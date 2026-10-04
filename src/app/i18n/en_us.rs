@@ -336,7 +336,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Oldest → Newest", // LibrarySortDateAsc
     "Smallest → Largest Size", // LibrarySortSizeAsc
     "Largest → Smallest Size", // LibrarySortSizeDesc
-    "Sort, group, and layout installed mods", // LibrarySortMenuTooltip
+    "Change category layout and sort installed mods", // LibrarySortMenuTooltip
     "Mod Order", // LibrarySortModsHeading
     "Sorts by mod title, falling back to folder name", // LibrarySortNameTooltip
     "Uses the newest known install, content, or refresh timestamp", // LibrarySortNewestTooltip
@@ -362,7 +362,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Miscellaneous", // LibraryMiscellaneousHeading
     "Within status groups, follows category order before the selected sort", // LibrarySortCategoryFirstTooltip
     "Places Active mods first, then Disabled, then Archived before the selected sort", // LibrarySortStatusFirstTooltip
-    "Available when grouped by category in list layout", // LibraryUncategorizedFirstListOnlyTooltip
+    "Places Uncategorized first in List layout and the category manager", // LibraryUncategorizedFirstListOnlyTooltip
     "Toggle Visibility", // LibraryToggleVisibility
     "Mod State", // LibraryModStateHeading
     "Show all mod states", // LibraryShowAllModStates
@@ -833,7 +833,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "No GameBanana source is linked for this mod. Click to link it.", // LibraryUnlinkedClickToLink
     "Name Z-A", // LibraryCategorySortByNameDesc
     "Uncategorized: {status}", // LibraryUncategorizedStatusHeader
-    "Sort & Order", // LibrarySortMenuTitle
+    "Layout & Order", // LibrarySortMenuTitle
 
     // In-game overlay
     "In-game Overlay", // SettingsGameOverlay

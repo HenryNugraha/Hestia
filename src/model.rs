@@ -271,35 +271,27 @@ pub struct StaticPreferences {
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
-/// The library view is currently locked to the Category grouping + Folders layout.
+/// Keep the library organized by categories while allowing Folders and List layouts.
 ///
-/// Status/None grouping and the List (grouped-sections) category layout are hidden for
-/// now to enforce the category folder view, but their preferences are still persisted
-/// and every code path behind them is kept intact. Setting this to `false` brings them
-/// all back exactly as the user last left them. Might bring them back in a future version.
-pub const ENFORCE_CATEGORY_FOLDER_VIEW: bool = true;
+/// Status/None grouping preferences and rendering paths remain available internally
+/// for a future restoration. Category layout always honors the saved preference.
+pub const ENFORCE_CATEGORY_GROUPING: bool = true;
 
 impl StaticPreferences {
     /// Effective library grouping used by all rendering and sorting. While the category
-    /// folder view is enforced this is always `Category`; otherwise it is the user's
+    /// grouping is enforced this is always `Category`; otherwise it is the user's
     /// stored [`library_group_mode`](Self::library_group_mode).
     pub fn effective_library_group_mode(&self) -> LibraryGroupMode {
-        if ENFORCE_CATEGORY_FOLDER_VIEW {
+        if ENFORCE_CATEGORY_GROUPING {
             LibraryGroupMode::Category
         } else {
             self.library_group_mode
         }
     }
 
-    /// Effective category layout used by all rendering. While the category folder view is
-    /// enforced this is always `Folders`; otherwise it is the user's stored
-    /// [`library_category_display_mode`](Self::library_category_display_mode).
+    /// Effective category layout used by all rendering, honoring the saved preference.
     pub fn effective_library_category_display_mode(&self) -> LibraryCategoryDisplayMode {
-        if ENFORCE_CATEGORY_FOLDER_VIEW {
-            LibraryCategoryDisplayMode::Folders
-        } else {
-            self.library_category_display_mode
-        }
+        self.library_category_display_mode
     }
 }
 

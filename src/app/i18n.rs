@@ -359,7 +359,7 @@ pub(crate) enum TextKey {
     LibraryCategorySortByLeastModsTooltip,
     // No longer shown: the "Miscellaneous" section was folded into SORT/CATEGORIES when the
     // sort menu was restructured. Kept (with its catalog strings) to preserve TextKey ordering
-    // and in case the section returns. See ENFORCE_CATEGORY_FOLDER_VIEW.
+    // and in case the section returns. See ENFORCE_CATEGORY_GROUPING.
     #[allow(dead_code)]
     LibraryMiscellaneousHeading,
     LibrarySortCategoryFirstTooltip,
@@ -444,6 +444,8 @@ pub(crate) enum TextKey {
     LibraryContextOpenModsFolder,
     LibraryContextInstallArchive,
     LibraryContextInstallFolder,
+    // Retained to preserve catalog ordering; category creation now opens an editor.
+    #[allow(dead_code)]
     LibraryCreatedFolder,
     LibraryStatusActive,
     LibraryStatusDisabled,
@@ -2694,6 +2696,7 @@ impl TextCatalog {
         self.get(TextKey::LibraryContextInstallFolder)
     }
 
+    #[allow(dead_code)]
     fn created_folder(self, category_name: &str) -> String {
         self.get(TextKey::LibraryCreatedFolder)
             .replace("{category}", category_name)
@@ -3381,7 +3384,7 @@ impl TextCatalog {
     }
 
     // Backs the Status-grouping "sort by category first" control, hidden behind
-    // ENFORCE_CATEGORY_FOLDER_VIEW; kept so the string returns when that view does.
+    // ENFORCE_CATEGORY_GROUPING; kept so the string returns when that view does.
     #[allow(dead_code)]
     fn sort_by_category_first_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsSortByCategoryFirstTooltip)
@@ -3396,7 +3399,7 @@ impl TextCatalog {
     }
 
     // The card-detail toggles (status word vs category name on a card) are hidden behind
-    // ENFORCE_CATEGORY_FOLDER_VIEW; kept so the strings return when that view does.
+    // ENFORCE_CATEGORY_GROUPING; kept so the strings return when that view does.
     #[allow(dead_code)]
     fn show_mod_status_on_card(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowModStatusOnCard)
