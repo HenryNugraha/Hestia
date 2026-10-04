@@ -1070,7 +1070,7 @@ fn directory_has_entries(root: &Path) -> Result<bool> {
     if !root.is_dir() {
         return Ok(false);
     }
-    for entry in fs::read_dir(root)? {
+    if let Some(entry) = fs::read_dir(root)?.next() {
         entry?;
         return Ok(true);
     }

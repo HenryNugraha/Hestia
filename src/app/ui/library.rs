@@ -209,6 +209,7 @@ struct CategoryFolderTile {
     archived_count: usize,
     has_update: bool,
     representative_mod_id: Option<String>,
+    representative_unsafe_content: bool,
 }
 
 #[cfg(test)]
@@ -6222,6 +6223,8 @@ impl HestiaApp {
                                         .or_else(|| section_cards.first());
                                     let representative_mod_id =
                                         representative_card.map(|card| card.0.clone());
+                                    let representative_unsafe_content =
+                                        representative_card.is_some_and(|card| card.7);
 
                                     Some(CategoryFolderTile {
                                         id: category.id.clone(),
@@ -6238,6 +6241,7 @@ impl HestiaApp {
                                         archived_count,
                                         has_update,
                                         representative_mod_id,
+                                        representative_unsafe_content,
                                     })
                                 })
                                 .collect()
@@ -6379,6 +6383,7 @@ impl HestiaApp {
 
                         // Viewport culling: calculate row dimensions
                         let row_height = CARD_HEIGHT + card_spacing;
+                        let should_censor_unsafe = self.should_censor_unsafe();
                         
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<&LibraryCardRow>| {
@@ -6594,7 +6599,7 @@ impl HestiaApp {
                                                             Color32::from_gray(150),
                                                         );
                                                     }
-                                                    if *unsafe_content && self.should_censor_unsafe() {
+                                                    if *unsafe_content && should_censor_unsafe {
                                                         paint_unsafe_overlay(
                                                             ui,
                                                             rect,
@@ -7444,6 +7449,18 @@ impl HestiaApp {
                                             FontFamily::Name(LUCIDE_FAMILY.into()),
                                         ),
                                         Color32::from_rgba_premultiplied(205, 213, 220, 78),
+                                    );
+                                }
+                                if tile.representative_unsafe_content && should_censor_unsafe {
+                                    paint_unsafe_overlay(
+                                        ui,
+                                        thumb_rect,
+                                        egui::CornerRadius {
+                                            nw: 8,
+                                            ne: 8,
+                                            sw: 0,
+                                            se: 0,
+                                        },
                                     );
                                 }
 
