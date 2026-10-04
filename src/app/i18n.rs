@@ -913,10 +913,13 @@ pub(crate) enum TextKey {
     SettingsGameOverlayOpacitySliderTooltip,
     SettingsGameOverlayPinButton,
     SettingsGameOverlayPinButtonTooltip,
+    GameOverlayHintHotkeys,
+    GameOverlayShowHotkeys,
+    GameOverlayHideHotkeys,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsGameOverlayPinButtonTooltip as usize + 1;
+    const COUNT: usize = Self::GameOverlayHideHotkeys as usize + 1;
 }
 
 include!("i18n/en_us.rs");

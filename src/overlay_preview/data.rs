@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     model::{DISABLED_CONTAINER, MOD_META_DIR},
-    overlay_protocol::{Settings, Start},
+    overlay_protocol::{ModHotkey, ModHotkeys, Settings, Start},
 };
 
 /// The preview's sample library, in target/overlay-preview.
@@ -73,6 +73,35 @@ pub(super) fn catalog_from_library(library: crate::overlay_protocol::Library) ->
             })
             .collect(),
         note: None,
+    }
+}
+
+/// The hotkeys the preview gives every mod, enough to scroll.
+pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
+    let hotkeys = [
+        ("Alt+H", "Menu"),
+        ("H", "Hat"),
+        ("J", "Jacket"),
+        ("K", "Skirt length"),
+        ("Ctrl+L", "Long hair"),
+        ("Shift+O", "Outfit color"),
+        ("Up", "Glasses"),
+        ("Num 5", "Weapon glow"),
+        (
+            "Ctrl+Shift+Num 9",
+            "Reset everything to how the mod's author set it up",
+        ),
+        ("F7", "Swap / pose"),
+    ];
+    ModHotkeys {
+        mod_id: mod_id.to_owned(),
+        hotkeys: hotkeys
+            .into_iter()
+            .map(|(key, label)| ModHotkey {
+                key: key.to_owned(),
+                label: label.to_owned(),
+            })
+            .collect(),
     }
 }
 

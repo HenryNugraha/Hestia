@@ -926,4 +926,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "在浮层顶部显示调节透明度的滑块。", // SettingsGameOverlayOpacitySliderTooltip
     "固定按钮", // SettingsGameOverlayPinButton
     "显示固定按钮，让浮层在游戏时保持打开。", // SettingsGameOverlayPinButtonTooltip
+    "模组快捷键", // GameOverlayHintHotkeys
+    "显示快捷键", // GameOverlayShowHotkeys
+    "隐藏快捷键", // GameOverlayHideHotkeys
 ];

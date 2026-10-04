@@ -33,6 +33,8 @@ pub(super) enum Command {
     /// Enable the highlighted mod and disable the others.
     Exclusive,
     Toggle,
+    /// Turn the focused card over to its hotkeys, or back.
+    Flip,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -75,6 +77,7 @@ mod vk {
     #[cfg(test)]
     pub(super) const H: u32 = 0x48;
     pub(super) const Q: u32 = 0x51;
+    pub(super) const R: u32 = 0x52;
     pub(super) const S: u32 = 0x53;
     pub(super) const W: u32 = 0x57;
     pub(super) const X: u32 = 0x58;
@@ -148,7 +151,7 @@ impl Role {
 
 /// Every key the overlay tracks.  A key's bit in the router masks is
 /// `1 << index`.
-const KEYS: [(u32, Role); 28] = [
+const KEYS: [(u32, Role); 29] = [
     (vk::W, Role::Activate(Command::Row(-1))),
     (vk::UP, Role::Activate(Command::Row(-1))),
     (vk::S, Role::Activate(Command::Row(1))),
@@ -164,6 +167,7 @@ const KEYS: [(u32, Role); 28] = [
     (vk::SPACE, Role::Enable),
     (vk::RETURN, Role::Enable),
     (vk::X, Role::Activate(Command::Toggle)),
+    (vk::R, Role::Activate(Command::Flip)),
     (vk::TAB, Role::Search),
     (vk::F, Role::Search),
     (vk::ESCAPE, Role::Escape),
@@ -250,6 +254,7 @@ fn types(key: u32) -> bool {
                 | vk::Z
                 | vk::C
                 | vk::X
+                | vk::R
                 | vk::F
                 | vk::SPACE
         )
@@ -284,6 +289,7 @@ fn egui_vk(key: egui::Key) -> Option<u32> {
         Key::Space => vk::SPACE,
         Key::Enter => vk::RETURN,
         Key::X => vk::X,
+        Key::R => vk::R,
         Key::Escape => vk::ESCAPE,
         Key::F10 => vk::F10,
         Key::Tab => vk::TAB,
@@ -883,6 +889,7 @@ mod tests {
             (vk::SPACE, Command::Exclusive),
             (vk::RETURN, Command::Exclusive),
             (vk::X, Command::Toggle),
+            (vk::R, Command::Flip),
         ] {
             router.key(key, true, now);
             router.key(key, true, after(now, 500));
@@ -1280,6 +1287,7 @@ mod tests {
             (Key::Space, Modifiers::SHIFT, Some(command(Command::Toggle))),
             (Key::Enter, Modifiers::SHIFT, Some(command(Command::Toggle))),
             (Key::X, none, Some(command(Command::Toggle))),
+            (Key::R, none, Some(command(Command::Flip))),
             (Key::Tab, none, Some(Event::Search)),
             (Key::F, none, Some(Event::Search)),
             (Key::F, Modifiers::CTRL, Some(Event::Search)),
@@ -1317,6 +1325,7 @@ mod tests {
             (Key::Space, false),
             (Key::Enter, false),
             (Key::X, false),
+            (Key::R, false),
             (Key::Tab, false),
             (Key::Escape, false),
         ] {

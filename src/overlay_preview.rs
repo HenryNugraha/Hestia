@@ -34,7 +34,7 @@ use gamebanana::InstallNews;
 use crate::{
     app::{TextCatalog, TextKey},
     model::{AppLanguage, InterfaceSize, OverlayHotkey},
-    overlay_protocol::Settings,
+    overlay_protocol::{FromOverlay, Settings},
 };
 
 pub(crate) const OVERLAY_OPACITY_MIN: u8 = 50;
@@ -181,14 +181,12 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
         .and_then(|_| std::env::var("HESTIA_OVERLAY_PREVIEW_KEYS").ok())
         .map(|keys| keys.split_whitespace().map(str::to_owned).collect())
         .unwrap_or_default();
-    let capture_wheel = capture.as_ref().and_then(|_| {
-        let value = std::env::var("HESTIA_OVERLAY_PREVIEW_WHEEL").ok()?;
-        let mut parts = value.split(',');
-        Some((
-            egui::pos2(parts.next()?.parse().ok()?, parts.next()?.parse().ok()?),
-            parts.next()?.parse::<f32>().ok()?,
-        ))
-    });
+    let capture_wheel = capture
+        .as_ref()
+        .and_then(|_| capture_wheel(&std::env::var("HESTIA_OVERLAY_PREVIEW_WHEEL").ok()?));
+    // The preview has no Hestia to read hotkeys, so it can give every mod
+    // the same few.
+    let sample_hotkeys = preview && std::env::var_os("HESTIA_OVERLAY_PREVIEW_HOTKEYS").is_some();
     let app_icon = eframe::icon_data::from_png_bytes(include_bytes!("asset/icon.png"))?;
     let brand_source =
         image::RgbaImage::from_raw(app_icon.width, app_icon.height, app_icon.rgba.clone())
@@ -306,6 +304,7 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
                 capture_text,
                 capture_keys,
                 capture_wheel,
+                sample_hotkeys,
                 capture_requested: false,
                 capture_frame,
                 frames_drawn: 0,
@@ -355,6 +354,8 @@ struct OverlayPreview {
     capture_text: Option<String>,
     capture_keys: VecDeque<String>,
     capture_wheel: Option<(egui::Pos2, f32)>,
+    /// The preview gives every mod sample hotkeys.
+    sample_hotkeys: bool,
     capture_requested: bool,
     capture_frame: u32,
     frames_drawn: u32,
@@ -428,6 +429,23 @@ impl eframe::App for OverlayPreview {
             if let Some(token) = self.capture_keys.pop_front() {
                 if let Some(text) = token.strip_prefix("text:") {
                     push_capture_text(input, text);
+                } else if let Some(wheel) = token.strip_prefix("wheel:") {
+                    match capture_wheel(wheel) {
+                        Some((pos, delta)) => push_capture_wheel(input, pos, delta),
+                        None => tracing::warn!(%token, "Unknown capture wheel"),
+                    }
+                } else if let Some((click, pos)) = capture_pointer(&token) {
+                    input.events.push(egui::Event::PointerMoved(pos));
+                    for pressed in [true, false].into_iter().filter(|_| click) {
+                        input.events.push(egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                    }
+                } else if token == "_" {
+                    // A frame without a key, to wait for an animation.
                 } else {
                     match capture_key(&token) {
                         Some((key, modifiers)) => push_capture_key(input, key, modifiers),
@@ -436,13 +454,7 @@ impl eframe::App for OverlayPreview {
                 }
             }
             if let Some((pos, delta)) = self.capture_wheel.take() {
-                input.events.push(egui::Event::PointerMoved(pos));
-                input.events.push(egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Line,
-                    delta: egui::vec2(0.0, delta),
-                    phase: egui::TouchPhase::Move,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                push_capture_wheel(input, pos, delta);
             }
         }
         if let Some(keys) = &mut self.egui_keys {
@@ -526,6 +538,7 @@ impl eframe::App for OverlayPreview {
                 self.samples
                     .replace_catalog(data::catalog_from_library(library));
             }
+            self.samples.receive_hotkeys(news.hotkeys);
             // After the library, which has the mods an install added.
             for news in self.samples.receive_gamebanana(news.gamebanana) {
                 let (key, name, warning) = match news {
@@ -758,6 +771,7 @@ impl eframe::App for OverlayPreview {
                 keyboard::Command::Toggle => self
                     .samples
                     .apply_focused_action(&ctx, layouts::ModAction::Toggle),
+                keyboard::Command::Flip => self.samples.flip_focused(&ctx),
                 // Settled when the key arrived.
                 keyboard::Command::Row(_) | keyboard::Command::Move(_) => {}
             }
@@ -936,11 +950,25 @@ impl eframe::App for OverlayPreview {
         // The preview only changes mods on screen.  The in-game overlay asks
         // Hestia to make each change.
         let requests = self.samples.take_requests();
+        let hotkey_requests = self.samples.take_hotkey_requests();
+        if self.live.is_none() && self.sample_hotkeys {
+            let answers = hotkey_requests
+                .iter()
+                .filter_map(|request| match request {
+                    FromOverlay::Hotkeys { mod_id } => Some(data::sample_hotkeys(mod_id)),
+                    _ => None,
+                })
+                .collect();
+            self.samples.receive_hotkeys(answers);
+        }
         if let Some(live) = &mut self.live {
             for request in requests {
                 live.link.send_change(live.changes.ask(request, now));
             }
             for request in self.samples.take_gamebanana_requests() {
+                live.link.ask(request);
+            }
+            for request in hotkey_requests {
                 live.link.ask(request);
             }
             if let Some(after) = live.changes.next_frame(now) {
@@ -986,6 +1014,35 @@ fn move_in_row(row: layouts::Row, direction: i32) -> keyboard::Command {
 }
 
 /// Reads a capture key such as `E`, `Space`, or `Shift+Enter`.
+/// `x,y,lines` in a capture run.
+fn capture_wheel(value: &str) -> Option<(egui::Pos2, f32)> {
+    let mut parts = value.split(',');
+    Some((
+        egui::pos2(parts.next()?.parse().ok()?, parts.next()?.parse().ok()?),
+        parts.next()?.parse::<f32>().ok()?,
+    ))
+}
+
+/// `hover:x,y` or `click:x,y` in a capture run: whether it clicks, and where.
+fn capture_pointer(token: &str) -> Option<(bool, egui::Pos2)> {
+    let (click, pos) = match token.strip_prefix("click:") {
+        Some(pos) => (true, pos),
+        None => (false, token.strip_prefix("hover:")?),
+    };
+    let (x, y) = pos.split_once(',')?;
+    Some((click, egui::pos2(x.parse().ok()?, y.parse().ok()?)))
+}
+
+fn push_capture_wheel(input: &mut egui::RawInput, pos: egui::Pos2, delta: f32) {
+    input.events.push(egui::Event::PointerMoved(pos));
+    input.events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, delta),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+}
+
 fn capture_key(token: &str) -> Option<(egui::Key, egui::Modifiers)> {
     let (modifier_names, name) = token.rsplit_once('+').unwrap_or(("", token));
     let mut modifiers = egui::Modifiers::NONE;

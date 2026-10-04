@@ -163,6 +163,7 @@ impl HestiaApp {
         let mut changes = Vec::new();
         let mut browse = Vec::new();
         let mut installs = Vec::new();
+        let mut hotkeys = Vec::new();
         let mut opacity_changed = None;
         let mut all_characters_changed = None;
         let mut exited = false;
@@ -190,6 +191,9 @@ impl HestiaApp {
                 }
                 OverlayEvent::Message(overlay_protocol::FromOverlay::ListCharacters) => {
                     browse.push(None);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Hotkeys { mod_id }) => {
+                    hotkeys.push(mod_id);
                 }
                 OverlayEvent::Message(
                     message @ (overlay_protocol::FromOverlay::Install(_)
@@ -227,6 +231,19 @@ impl HestiaApp {
         if !exited {
             for message in installs {
                 self.handle_game_overlay_install(&game_id, message);
+            }
+            if let Some(process) = &self.game_overlay.process {
+                for mod_id in hotkeys {
+                    // A mod that's gone leaves the overlay with the next library.
+                    if let Some(entry) = self
+                        .state
+                        .mods
+                        .iter()
+                        .find(|entry| entry.id == mod_id && entry.game_id == game_id)
+                    {
+                        process.send_hotkeys(mod_id, entry.root_path.clone());
+                    }
+                }
             }
         }
         if exited && let Some(process) = self.game_overlay.process.take() {

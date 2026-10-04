@@ -926,4 +926,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Menampilkan penggeser di bagian atas overlay untuk membuatnya tembus pandang.", // SettingsGameOverlayOpacitySliderTooltip
     "Tombol sematkan", // SettingsGameOverlayPinButton
     "Menampilkan tombol sematkan, yang membuat overlay tetap terbuka saat kamu bermain.", // SettingsGameOverlayPinButtonTooltip
+    "Tombol mod", // GameOverlayHintHotkeys
+    "Tampilkan tombol", // GameOverlayShowHotkeys
+    "Sembunyikan tombol", // GameOverlayHideHotkeys
 ];

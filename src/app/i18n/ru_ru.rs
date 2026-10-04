@@ -925,4 +925,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Показывает в верхней части оверлея ползунок, который делает его прозрачным.", // SettingsGameOverlayOpacitySliderTooltip
     "Кнопка закрепления", // SettingsGameOverlayPinButton
     "Показывает кнопку закрепления, которая оставляет оверлей открытым во время игры.", // SettingsGameOverlayPinButtonTooltip
+    "Горячие клавиши мода", // GameOverlayHintHotkeys
+    "Показать горячие клавиши", // GameOverlayShowHotkeys
+    "Скрыть горячие клавиши", // GameOverlayHideHotkeys
 ];

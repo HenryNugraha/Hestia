@@ -926,4 +926,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Shows the slider at the top of the overlay that makes it see-through.", // SettingsGameOverlayOpacitySliderTooltip
     "Pin button", // SettingsGameOverlayPinButton
     "Shows the pin button, which keeps the overlay open while you play.", // SettingsGameOverlayPinButtonTooltip
+    "Mod hotkeys", // GameOverlayHintHotkeys
+    "Show hotkeys", // GameOverlayShowHotkeys
+    "Hide hotkeys", // GameOverlayHideHotkeys
 ];

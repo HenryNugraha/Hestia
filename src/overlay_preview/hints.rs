@@ -13,6 +13,8 @@ pub(super) enum Hint {
     Categories,
     Exclusive,
     Toggle,
+    /// R turns the focused card over to its hotkeys.
+    Hotkeys,
     Search,
     /// Enter while typing a search.
     TypedExclusive,
@@ -54,6 +56,7 @@ impl Mode {
                 Hint::Categories,
                 Hint::Exclusive,
                 Hint::Toggle,
+                Hint::Hotkeys,
                 Hint::Search,
             ],
             Self::Typing => &[
@@ -68,6 +71,7 @@ impl Mode {
                 Hint::Categories,
                 Hint::Exclusive,
                 Hint::Toggle,
+                Hint::Hotkeys,
                 Hint::EditSearch,
                 Hint::ClearSearch,
             ],
@@ -83,6 +87,7 @@ impl Hint {
             Self::Categories => &["Z", "C"],
             Self::Exclusive => &["Space"],
             Self::Toggle => &["X"],
+            Self::Hotkeys => &["R"],
             Self::Search | Self::DoneTyping | Self::EditSearch => &["Tab"],
             Self::TypedExclusive => &["Enter"],
             Self::TypedToggle => &["Shift", "Enter"],
@@ -102,6 +107,7 @@ impl Hint {
             Self::Mods => TextKey::GameOverlayHintMods,
             Self::Categories => TextKey::GameOverlayHintCategories,
             Self::Toggle | Self::TypedToggle => TextKey::GameOverlayHintToggle,
+            Self::Hotkeys => TextKey::GameOverlayHintHotkeys,
             Self::Search => TextKey::GameOverlayHintSearch,
             Self::DoneTyping => TextKey::GameOverlayHintDoneTyping,
             Self::EditSearch => TextKey::GameOverlayHintEditSearch,
@@ -117,6 +123,7 @@ impl Hint {
             Self::Categories => available.categories,
             Self::Exclusive | Self::TypedExclusive => available.exclusive,
             Self::Toggle | Self::TypedToggle => available.toggle,
+            Self::Hotkeys => available.hotkeys,
             Self::Search | Self::DoneTyping | Self::EditSearch | Self::ClearSearch => true,
         }
     }
@@ -261,6 +268,7 @@ mod tests {
             ("Z+C", "Browse categories"),
             ("Space", "Enable this mod, disable others"),
             ("X", "Toggle Enable/Disable"),
+            ("R", "Mod hotkeys"),
         ];
         let expected = |extra: &[(&'static str, &'static str)]| {
             normal
@@ -295,6 +303,7 @@ mod tests {
             exclusive: true,
             toggle: true,
             space: Space::Exclusive,
+            hotkeys: true,
         };
         for (typed, key) in [
             (Hint::TypedExclusive, Hint::Exclusive),
@@ -313,6 +322,8 @@ mod tests {
         }
         assert!(!Hint::Navigate.enabled(none));
         assert!(Hint::Navigate.enabled(ShortcutAvailability { mods: true, ..none }));
+        assert!(!Hint::Hotkeys.enabled(none));
+        assert!(Hint::Hotkeys.enabled(all));
     }
 
     #[test]

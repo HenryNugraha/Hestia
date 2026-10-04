@@ -51,6 +51,8 @@ pub(crate) enum ToOverlay {
     Pictures(Pictures),
     /// How an install the overlay asked for with `FromOverlay::Install` goes.
     Install(InstallUpdate),
+    /// A mod's hotkeys the overlay asked for with `FromOverlay::Hotkeys`.
+    Hotkeys(ModHotkeys),
     /// Hestia's settings changed.
     Settings(Settings),
 }
@@ -200,6 +202,10 @@ pub(crate) enum FromOverlay {
     AllCharacters {
         show: bool,
     },
+    /// A library mod's hotkeys.  Hestia answers with `ToOverlay::Hotkeys`.
+    Hotkeys {
+        mod_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +256,21 @@ pub(crate) struct Pictures {
     pub mods: Vec<(u64, PathBuf)>,
     #[serde(default)]
     pub characters: Vec<(u64, PathBuf)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ModHotkeys {
+    pub mod_id: String,
+    /// In the order of the library's hotkey list.  Empty for a mod without
+    /// any.
+    pub hotkeys: Vec<ModHotkey>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ModHotkey {
+    /// The key as the library shows it, such as "Ctrl+H".
+    pub key: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -485,6 +506,13 @@ mod tests {
                 mod_id: 6_000,
                 stage: InstallStage::Waiting,
             }),
+            ToOverlay::Hotkeys(ModHotkeys {
+                mod_id: "mod-1".into(),
+                hotkeys: vec![ModHotkey {
+                    key: "Ctrl+H".into(),
+                    label: "Hat".into(),
+                }],
+            }),
             ToOverlay::Settings(Settings::default()),
         ];
         for message in messages {
@@ -545,6 +573,9 @@ mod tests {
             FromOverlay::CancelInstall { mod_id: 6_000 },
             FromOverlay::Opacity { opacity: 64 },
             FromOverlay::AllCharacters { show: true },
+            FromOverlay::Hotkeys {
+                mod_id: "mod-1".into(),
+            },
         ] {
             let line = encode(&message).unwrap();
             assert_eq!(decode::<FromOverlay>(&line).unwrap(), message);

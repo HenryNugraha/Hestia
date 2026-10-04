@@ -8,14 +8,18 @@ use egui::{
     Ui, Vec2,
 };
 
+mod card_keys;
+
+use card_keys::{CardKeys, Face};
+
 use super::data::{Catalog, Category, Costume};
 use super::gamebanana::{self, GameBanana, InstallNews, ListKey, StatusCard};
 use super::text;
 use super::thumbnails::ThumbnailCache;
 use crate::app::TextKey;
 use crate::overlay_protocol::{
-    BrowseMod, ChangeAction, FromOverlay, InstallStage, SameNameChoice, Selection, ToOverlay,
-    UNCATEGORIZED_ID, names_character,
+    BrowseMod, ChangeAction, FromOverlay, InstallStage, ModHotkeys, SameNameChoice, Selection,
+    ToOverlay, UNCATEGORIZED_ID, names_character,
 };
 
 const OVERLAY_OPACITY_MIN: u8 = 50;
@@ -124,6 +128,8 @@ enum PendingCommand {
     Mod(i32),
     Category(i32),
     Action(ModAction),
+    /// Turn the focused card over to its hotkeys, or back.
+    Flip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +163,8 @@ pub(super) struct ShortcutAvailability {
     pub exclusive: bool,
     pub toggle: bool,
     pub space: Space,
+    /// The focused card has hotkeys to turn over to.
+    pub hotkeys: bool,
 }
 
 /// What Space does on the focused card.
@@ -404,6 +412,7 @@ pub(super) struct Layouts {
     /// "... is now with your mods", for the installed mods that crossed out
     /// of sight since the last `take_arrivals`.
     arrivals: Vec<String>,
+    keys: CardKeys,
 }
 
 impl Layouts {
@@ -466,6 +475,7 @@ impl Layouts {
             question_for: None,
             new_mods: HashSet::new(),
             arrivals: Vec::new(),
+            keys: CardKeys::default(),
         }
     }
 
@@ -503,6 +513,17 @@ impl Layouts {
     /// What to ask Hestia for since the last call.
     pub(super) fn take_gamebanana_requests(&mut self) -> Vec<FromOverlay> {
         self.gamebanana.take_requests()
+    }
+
+    /// The mods whose hotkeys to ask Hestia for since the last call.
+    pub(super) fn take_hotkey_requests(&mut self) -> Vec<FromOverlay> {
+        self.keys.take_requests()
+    }
+
+    pub(super) fn receive_hotkeys(&mut self, answers: Vec<ModHotkeys>) {
+        for answer in answers {
+            self.keys.receive(answer);
+        }
     }
 
     /// Takes GameBanana pages, characters, pictures and installs from
@@ -912,6 +933,7 @@ impl Layouts {
     /// same place in the rail.  A category left on its active mod follows the
     /// active mod, as it would on a fresh start.
     pub(super) fn replace_catalog(&mut self, catalog: Catalog) {
+        self.keys.library_changed();
         let selection = self.selection();
         let previous_index = self.selected_category;
         let query = std::mem::take(&mut self.filter.query);
@@ -1045,6 +1067,12 @@ impl Layouts {
         self.cross_installs(ui.ctx(), carousel_rect, now);
         let category_index = self.selected_category;
         let visible_count = self.visible_mods().len();
+        self.keys.begin_frame();
+        let focused_mod = self.focused_mod_id();
+        self.keys.keep_focused(focused_mod.as_deref());
+        if let Some(mod_id) = &focused_mod {
+            self.keys.ask(mod_id);
+        }
         // An install's question covers the carousel until it's answered.
         let question = self.current_question();
         if question.is_some() {
@@ -1109,6 +1137,7 @@ impl Layouts {
             self.request_animation_repaint(ui.ctx(), now);
             return;
         }
+        self.keys.scroll_with_wheel(ui);
         let wheel_direction = self.consume_carousel_wheel(ui, carousel_rect, visible_count);
         if let Some(direction) = wheel_direction {
             self.advance_mod_focus(carousel_rect, direction, now);
@@ -1216,6 +1245,23 @@ impl Layouts {
         self.pending_commands
             .push_back(PendingCommand::Action(action));
         ctx.request_repaint();
+    }
+
+    /// Turns the focused card over to its hotkeys, or back, after the
+    /// commands queued before it.
+    pub(super) fn flip_focused(&mut self, ctx: &egui::Context) {
+        self.pending_commands.push_back(PendingCommand::Flip);
+        ctx.request_repaint();
+    }
+
+    /// The focused card's mod, when it's one of the library's.
+    fn focused_mod_id(&self) -> Option<String> {
+        match self.card(self.selected_category, self.carousel_focus)? {
+            Card::Own(costume) if self.visible_mods().contains(&self.carousel_focus) => {
+                Some(costume.id.clone())
+            }
+            _ => None,
+        }
     }
 
     /// An install asks a question, which W/S, Space and Esc answer until
@@ -1482,6 +1528,7 @@ impl Layouts {
                 exclusive: space.is_some(),
                 toggle: false,
                 space: space.unwrap_or_default(),
+                hotkeys: false,
             };
         };
         // Exclusive also disables mods the search hides, so count them all.
@@ -1502,6 +1549,7 @@ impl Layouts {
             } else {
                 Space::Exclusive
             },
+            hotkeys: self.keys.has(&focused.id),
         }
     }
 
@@ -1580,6 +1628,7 @@ impl Layouts {
         self.held_preview = None;
         self.visible_card_rects.clear();
         self.pending_commands.clear();
+        self.keys.reset();
         suppress_tooltips(ctx);
     }
 
@@ -1704,6 +1753,9 @@ impl Layouts {
         }) else {
             return;
         };
+        if self.keys.owns_press(pointer_pos) {
+            return;
+        }
         let Some(card) = placements.iter().rev().find(|placement| {
             card_reveal_progress(placement, self.reveal_progress, card_count)
                 >= REVEAL_INTERACTION_THRESHOLD
@@ -1853,6 +1905,11 @@ impl Layouts {
                     }
                     self.apply_focused_costume_action(action, now);
                 }
+                PendingCommand::Flip => {
+                    if let Some(mod_id) = self.focused_mod_id() {
+                        self.keys.toggle(&mod_id, now);
+                    }
+                }
             }
         }
     }
@@ -1895,7 +1952,7 @@ impl Layouts {
             .unwrap_or(0.0)
             .max(feedback_remaining)
             .max(boundary_remaining);
-        if remaining > 0.0 {
+        if remaining > 0.0 || self.keys.turning(now) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining.min(0.016)));
         }
     }
@@ -1906,6 +1963,7 @@ impl Layouts {
             .is_some_and(|transition| now - transition.started_at < transition.seconds)
             || now < self.active_feedback_until
             || now < self.boundary_feedback_until
+            || self.keys.turning(now)
     }
 
     fn activate_costume_in_place(&mut self, category_index: usize, costume_index: usize, now: f64) {
@@ -2442,6 +2500,7 @@ impl Layouts {
             });
 
         let hovered = interactable && response.hovered();
+        let card_id = response.id;
         let now = ui.input(|input| input.time);
         let border = if installed {
             content_color(ACCENT, overlay_opacity)
@@ -2454,12 +2513,73 @@ impl Layouts {
         } else {
             content_gray(82, overlay_opacity)
         };
-        let visual_rect = rect.translate(Vec2::new(0.0, (1.0 - reveal) * REVEAL_OFFSET));
+        // The focused card of a library mod can turn over to its hotkeys.
+        let own_focused = match self.card(category_index, costume_index) {
+            Some(Card::Own(costume)) if focused => Some(costume.id.clone()),
+            _ => None,
+        };
+        let face = own_focused
+            .as_deref()
+            .map_or(Face::FRONT, |mod_id| self.keys.face(mod_id, now));
+        let full_rect = rect.translate(Vec2::new(0.0, (1.0 - reveal) * REVEAL_OFFSET));
+        let visual_rect = card_keys::narrowed(full_rect, face.width);
         if reveal > 0.01 {
             self.visible_card_rects.push(visual_rect);
         }
+        let settled = interactable && face.settled();
+        if let Some(mod_id) = own_focused.as_deref().filter(|_| face.back) {
+            let button = settled.then(|| {
+                self.keys
+                    .keys_button(ui, full_rect, card_id.with("keys"), true, overlay_opacity)
+            });
+            let clicked = self.keys.paint_back(
+                ui,
+                full_rect,
+                visual_rect,
+                mod_id,
+                &name,
+                Stroke::new(1.5, border),
+                reveal,
+                overlay_opacity,
+                button,
+            );
+            if clicked || (settled && response.clicked()) {
+                self.keys.toggle(mod_id, now);
+                ui.ctx().request_repaint();
+            }
+            return;
+        }
+        let has_keys = own_focused
+            .as_deref()
+            .is_some_and(|mod_id| self.keys.has(mod_id));
+        let keys_button = (settled && has_keys).then(|| {
+            self.keys.keys_button(
+                ui,
+                visual_rect,
+                card_id.with("keys"),
+                false,
+                overlay_opacity,
+            )
+        });
         let image_rect = visual_rect.shrink(1.0);
         let texture = self.texture_for(ui, image.as_deref());
+        if !face.settled() {
+            // Turning, only the picture shows.
+            paint_thumbnail_squeezed(
+                ui,
+                full_rect.shrink(1.0),
+                image_rect,
+                texture.as_ref(),
+                scaled_alpha(image_alpha(overlay_opacity), reveal),
+            );
+            ui.painter().rect_stroke(
+                visual_rect.shrink(0.5),
+                CornerRadius::ZERO,
+                Stroke::new(1.5, scale_color_alpha(border, reveal)),
+                StrokeKind::Inside,
+            );
+            return;
+        }
         // How the install goes, on a line under the name.
         let status = install
             .as_ref()
@@ -2591,7 +2711,11 @@ impl Layouts {
             paint_gamebanana_badge(ui, visual_rect, focused, installed, reveal, overlay_opacity);
         }
         if new {
-            paint_new_tag(ui, visual_rect, reveal, overlay_opacity);
+            // The keys button's label covers the tag while it's out.
+            let (room, shown) = keys_button.as_ref().map_or((0.0, 1.0), |button| {
+                (card_keys::BUTTON_ROOM, 1.0 - button.open)
+            });
+            paint_new_tag(ui, visual_rect, room, reveal * shown, overlay_opacity);
         }
         if let Some((galley, color, bar)) = status {
             let position = egui::pos2(
@@ -2608,6 +2732,13 @@ impl Layouts {
             if truncated && interactable {
                 let _ = delayed_tooltip(response, clean_display_name(&name));
             }
+        }
+        if let Some(button) = keys_button
+            && self.keys.button(ui, button, overlay_opacity)
+            && let Some(mod_id) = own_focused
+        {
+            self.keys.toggle(&mod_id, now);
+            ui.ctx().request_repaint();
         }
     }
 
@@ -3298,7 +3429,8 @@ fn character_name(name: &str) -> &str {
 }
 
 /// Marks a mod the overlay installed, until it's used.
-fn paint_new_tag(ui: &Ui, card: Rect, reveal: f32, overlay_opacity: u8) {
+/// `room` is what the keys button beside it takes.
+fn paint_new_tag(ui: &Ui, card: Rect, room: f32, reveal: f32, overlay_opacity: u8) {
     let color = scale_color_alpha(content_gray(27, overlay_opacity), reveal);
     let label = ui
         .painter()
@@ -3312,7 +3444,10 @@ fn paint_new_tag(ui: &Ui, card: Rect, reveal: f32, overlay_opacity: u8) {
             },
         ));
     let tag = Rect::from_min_size(
-        egui::pos2(card.max.x - 8.0 - label.size().x - 14.0, card.min.y + 8.0),
+        egui::pos2(
+            card.max.x - 8.0 - room - label.size().x - 14.0,
+            card.min.y + 8.0,
+        ),
         Vec2::new(label.size().x + 14.0, 18.0),
     );
     ui.painter().rect_filled(
@@ -3659,21 +3794,44 @@ fn paint_thumbnail_tinted(
         return;
     };
 
-    let source_size = texture.size_vec2();
     if crop {
-        let scale = (rect.width() / source_size.x).max(rect.height() / source_size.y);
-        let uv_size = rect.size() / (source_size * scale);
-        // Portrait covers tend to place faces above center; keep that region visible.
-        let center_y = uv_size.y * 0.5 + (1.0 - uv_size.y) * 0.08;
-        let uv = Rect::from_center_size(egui::pos2(0.5, center_y), uv_size);
         egui::Image::from_texture(texture)
-            .uv(uv)
+            .uv(cover_uv(rect.size(), texture.size_vec2()))
             .tint(Color32::from_white_alpha(tint_alpha))
             .corner_radius(CornerRadius::ZERO)
             .paint_at(ui, rect);
         return;
     }
     paint_fitted_image_tinted(ui, rect, Some(texture), tint_alpha);
+}
+
+/// The part of a picture that covers `size`.
+fn cover_uv(size: Vec2, source_size: Vec2) -> Rect {
+    let scale = (size.x / source_size.x).max(size.y / source_size.y);
+    let uv_size = size / (source_size * scale);
+    // Portrait covers tend to place faces above center; keep that region visible.
+    let center_y = uv_size.y * 0.5 + (1.0 - uv_size.y) * 0.08;
+    Rect::from_center_size(egui::pos2(0.5, center_y), uv_size)
+}
+
+/// A card's picture cropped for `full` and squeezed into `shown`, so a
+/// turning card keeps showing the same part of it.
+fn paint_thumbnail_squeezed(
+    ui: &mut Ui,
+    full: Rect,
+    shown: Rect,
+    texture: Option<&egui::TextureHandle>,
+    tint_alpha: u8,
+) {
+    let Some(texture) = texture else {
+        paint_thumbnail_tinted(ui, shown, None, true, false, tint_alpha);
+        return;
+    };
+    egui::Image::from_texture(texture)
+        .uv(cover_uv(full.size(), texture.size_vec2()))
+        .tint(Color32::from_white_alpha(tint_alpha))
+        .corner_radius(CornerRadius::ZERO)
+        .paint_at(ui, shown);
 }
 
 fn paint_fitted_image_tinted(
@@ -4697,6 +4855,7 @@ mod tests {
                 exclusive: false,
                 toggle: true,
                 space: Space::Exclusive,
+                hotkeys: false,
             }
         );
 
@@ -4709,6 +4868,7 @@ mod tests {
                 exclusive: true,
                 toggle: true,
                 space: Space::Exclusive,
+                hotkeys: false,
             }
         );
     }
@@ -5031,6 +5191,7 @@ mod tests {
                 exclusive: true,
                 toggle: true,
                 space: Space::Exclusive,
+                hotkeys: false,
             }
         );
 
@@ -5043,6 +5204,7 @@ mod tests {
                 exclusive: true,
                 toggle: true,
                 space: Space::Exclusive,
+                hotkeys: false,
             }
         );
 
@@ -5059,6 +5221,7 @@ mod tests {
                 exclusive: false,
                 toggle: false,
                 space: Space::Exclusive,
+                hotkeys: false,
             }
         );
     }

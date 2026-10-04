@@ -1887,8 +1887,8 @@ impl OverlayHotkey {
     };
 
     /// The open overlay's own keys, and XXMI's reload key.
-    const RESERVED_KEYS: [u8; 11] = [
-        b'W', b'A', b'S', b'D', b'Q', b'E', b'Z', b'C', b'X', b'F', VK_F10,
+    const RESERVED_KEYS: [u8; 12] = [
+        b'W', b'A', b'S', b'D', b'Q', b'E', b'Z', b'C', b'X', b'R', b'F', VK_F10,
     ];
 
     pub fn new(ctrl: bool, alt: bool, shift: bool, key: u8) -> Result<Self, OverlayHotkeyProblem> {

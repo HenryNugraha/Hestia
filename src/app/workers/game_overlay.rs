@@ -472,6 +472,8 @@ struct OverlayProcess {
     child: std::process::Child,
     outbox: Arc<OverlayOutbox>,
     events: std::sync::mpsc::Receiver<OverlayEvent>,
+    /// Mods whose hotkeys the overlay asked for, with their folders.
+    hotkeys: std::sync::mpsc::Sender<(String, PathBuf)>,
 }
 
 impl OverlayProcess {
@@ -487,7 +489,8 @@ impl OverlayProcess {
         let outbox = Arc::new(OverlayOutbox::default());
         outbox.update(|pending| pending.start = Some(start));
         let (report, events) = std::sync::mpsc::channel();
-        if let Err(error) = Self::link(&mut child, &outbox, report) {
+        let (hotkeys, hotkey_requests) = std::sync::mpsc::channel();
+        if let Err(error) = Self::link(&mut child, &outbox, report, hotkey_requests) {
             outbox.close();
             let _ = child.kill();
             let _ = child.wait();
@@ -501,6 +504,7 @@ impl OverlayProcess {
             child,
             outbox,
             events,
+            hotkeys,
         })
     }
 
@@ -508,17 +512,22 @@ impl OverlayProcess {
         child: &mut std::process::Child,
         outbox: &Arc<OverlayOutbox>,
         report: std::sync::mpsc::Sender<OverlayEvent>,
+        hotkey_requests: std::sync::mpsc::Receiver<(String, PathBuf)>,
     ) -> std::io::Result<()> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(std::io::Error::other("the overlay has no pipes"));
         };
-        let outbox = Arc::clone(outbox);
+        let writer_outbox = Arc::clone(outbox);
         std::thread::Builder::new()
             .name("hestia-overlay-writer".to_owned())
-            .spawn(move || write_to_overlay(&outbox, stdin))?;
+            .spawn(move || write_to_overlay(&writer_outbox, stdin))?;
         std::thread::Builder::new()
             .name("hestia-overlay-reader".to_owned())
             .spawn(move || read_from_overlay(stdout, &report))?;
+        let outbox = Arc::clone(outbox);
+        std::thread::Builder::new()
+            .name("hestia-overlay-hotkeys".to_owned())
+            .spawn(move || read_hotkeys(&outbox, &hotkey_requests))?;
         Ok(())
     }
 
@@ -539,6 +548,11 @@ impl OverlayProcess {
             }
             pending.answers.push(answer);
         });
+    }
+
+    /// Reads the mod's hotkeys and sends them to the overlay.
+    fn send_hotkeys(&self, mod_id: String, root: PathBuf) {
+        let _ = self.hotkeys.send((mod_id, root));
     }
 
     fn send_settings(&self, settings: overlay_protocol::Settings) {
@@ -627,6 +641,24 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
                 return;
             }
         }
+    }
+}
+
+/// Reads mods' hotkeys, the way the library lists them, one mod at a time,
+/// so the last answer about a mod is about it as it is now.  Ends with the
+/// overlay.
+fn read_hotkeys(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<(String, PathBuf)>) {
+    for (mod_id, root) in requests {
+        let hotkeys = hotkeys_list_rows(&parse_mod_config_inis(&root))
+            .into_iter()
+            .map(|row| overlay_protocol::ModHotkey {
+                key: row.key,
+                label: row.label,
+            })
+            .collect();
+        outbox.send(overlay_protocol::ToOverlay::Hotkeys(
+            overlay_protocol::ModHotkeys { mod_id, hotkeys },
+        ));
     }
 }
 

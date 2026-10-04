@@ -13,7 +13,7 @@ use anyhow::{Context, bail};
 
 use super::{layouts::ModRequest, platform};
 use crate::overlay_protocol::{
-    self, Change, Changed, FromOverlay, Library, Selection, Settings, Start, ToOverlay,
+    self, Change, Changed, FromOverlay, Library, ModHotkeys, Selection, Settings, Start, ToOverlay,
 };
 
 /// How long the strip shows after the overlay closes.
@@ -74,6 +74,8 @@ pub(super) struct News {
     pub answers: Vec<Changed>,
     /// GameBanana pages, characters and pictures, in the order they came.
     pub gamebanana: Vec<ToOverlay>,
+    /// Mods' hotkeys, in the order they came.
+    pub hotkeys: Vec<ModHotkeys>,
 }
 
 pub(super) struct Link {
@@ -217,6 +219,10 @@ fn read_messages(inbox: &Mutex<Inbox>, ctx: &egui::Context) {
                 | ToOverlay::Install(_)),
             ) => {
                 lock(inbox).news.gamebanana.push(message);
+                ctx.request_repaint();
+            }
+            Ok(ToOverlay::Hotkeys(hotkeys)) => {
+                lock(inbox).news.hotkeys.push(hotkeys);
                 ctx.request_repaint();
             }
             Ok(ToOverlay::GameProcesses { pids }) => platform::set_game_processes(&pids),
