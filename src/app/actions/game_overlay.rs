@@ -43,6 +43,9 @@ struct GameOverlay {
     restart_at: Option<Instant>,
     /// The GameBanana installs it asked for that aren't done.
     installs: Vec<OverlayInstall>,
+    /// The GameBanana downloads Hestia's window started for its game that
+    /// aren't done, which it shows like its own installs.
+    window_downloads: Vec<WindowDownload>,
     /// The game the preview in Settings shows the overlay for, while no
     /// game runs.  Hestia's own window stands in for the game.
     preview: Option<String>,
@@ -554,6 +557,11 @@ impl HestiaApp {
             return;
         }
         self.game_overlay.next_library_check = Some(now + GAME_OVERLAY_LIBRARY_INTERVAL);
+        self.send_game_overlay_library_now();
+    }
+
+    /// Sends the library when it changed.
+    fn send_game_overlay_library_now(&mut self) {
         let Some(process) = &self.game_overlay.process else {
             return;
         };

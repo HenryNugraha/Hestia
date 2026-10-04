@@ -15,6 +15,9 @@ impl HestiaApp {
     /// changed.
     fn game_overlay_settings_section(&mut self, ui: &mut Ui, text: TextCatalog) -> bool {
         let mut should_save = false;
+        // Only games Hestia mods with XXMI have the overlay, so like XXMI
+        // Features, the section is greyed out while another game is picked.
+        let xxmi = self.selected_game().is_some_and(|game| game.is_xxmi());
         // The preview shows the game picked in Hestia, or else the first one
         // with the overlay.
         let watched = &self.game_overlay.watched;
@@ -37,9 +40,16 @@ impl HestiaApp {
             let (_, slot) = ui.allocate_space(switch_size);
             let mut switch_ui =
                 ui.new_child(egui::UiBuilder::new().max_rect(slot.translate(egui::vec2(0.0, 2.0))));
+            if !xxmi {
+                switch_ui.disable();
+            }
             should_save |=
                 toggle_switch_sized(&mut switch_ui, &mut prefs.game_overlay, switch_size)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_cursor(if xxmi {
+                        egui::CursorIcon::PointingHand
+                    } else {
+                        egui::CursorIcon::NotAllowed
+                    })
                     .on_hover_text(
                         text.settings_game_overlay_tooltip()
                             .replace("{key}", &hotkey),
@@ -47,7 +57,7 @@ impl HestiaApp {
                     .changed();
         });
         ui.indent("setting_general_game_overlay", |ui| {
-            ui.add_enabled_ui(prefs.game_overlay, |ui| {
+            ui.add_enabled_ui(xxmi && prefs.game_overlay, |ui| {
                 static_label(ui, text.get(TextKey::SettingsGameOverlayHotkey));
                 ui.add_space(-4.0);
                 should_save |=
@@ -196,8 +206,9 @@ fn game_overlay_hotkey_picker(
     let id = egui::Id::new("settings_game_overlay_hotkey_picker");
     let mut picker: HotkeyPicker = ui.data(|data| data.get_temp(id)).unwrap_or_default();
     let mut changed = false;
-    // Turning the overlay off greys the picker out, and it stops listening.
-    // So does closing Settings or leaving its tab.
+    // Turning the overlay off or picking a game without it greys the picker
+    // out, and it stops listening.  So does closing Settings or leaving its
+    // tab.
     if picker == HotkeyPicker::Listening
         && (!ui.is_enabled() || !game_overlay_hotkey_listening(ui.ctx()))
     {

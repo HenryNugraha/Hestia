@@ -929,4 +929,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "模组快捷键", // GameOverlayHintHotkeys
     "显示快捷键", // GameOverlayShowHotkeys
     "隐藏快捷键", // GameOverlayHideHotkeys
+    "已安装 {name}。", // GameOverlayInstalledOnNotice
 ];

@@ -929,4 +929,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tombol mod", // GameOverlayHintHotkeys
     "Tampilkan tombol", // GameOverlayShowHotkeys
     "Sembunyikan tombol", // GameOverlayHideHotkeys
+    "{name} terpasang.", // GameOverlayInstalledOnNotice
 ];

@@ -2,7 +2,10 @@
 //! what came back.  The carousel shows a character's list after the
 //! category's own mods.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    path::PathBuf,
+};
 
 use crate::overlay_protocol::{
     self, Browse, BrowseMod, BrowsePage, Character, FromOverlay, InstallStage, InstallUpdate,
@@ -101,10 +104,7 @@ impl Install {
 
     /// Hestia works on it, or it waits for an answer.
     fn running(&self) -> bool {
-        !matches!(
-            self.stage,
-            InstallStage::Installed { .. } | InstallStage::Failed | InstallStage::Canceled
-        )
+        runs(&self.stage)
     }
 
     fn asking(&self) -> bool {
@@ -115,10 +115,21 @@ impl Install {
     }
 }
 
+/// An install at `stage` isn't done yet.
+fn runs(stage: &InstallStage) -> bool {
+    !matches!(
+        stage,
+        InstallStage::Installed { .. } | InstallStage::Failed | InstallStage::Canceled
+    )
+}
+
 /// What an install's news tells someone who has the overlay closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum InstallNews {
+    /// It's installed, turned off.
     Installed(String),
+    /// Hestia's window installed it turned on.
+    InstalledOn(String),
     Failed(String),
     /// It needs an answer.
     Question(String),
@@ -345,14 +356,33 @@ impl GameBanana {
         (crossed, next)
     }
 
-    /// Takes how an install goes from Hestia.  Says what the strip should
+    /// Takes how an install goes from Hestia, or a download Hestia's window
+    /// started, which comes with the mod's name.  Says what the strip should
     /// tell about it.
     pub(super) fn receive_install(&mut self, update: InstallUpdate) -> Option<InstallNews> {
-        let install = self.installs.get_mut(&update.mod_id)?;
-        if install.stage == update.stage {
+        let InstallUpdate {
+            mod_id,
+            stage,
+            name,
+        } = update;
+        let install = match self.installs.entry(mod_id) {
+            Entry::Occupied(entry) if entry.get().running() || !runs(&stage) => entry.into_mut(),
+            Entry::Vacant(_) if !runs(&stage) => return None,
+            // Hestia's window started it, or started it again after it ended.
+            entry => entry
+                .insert_entry(Install {
+                    name: name.filter(|_| self.enabled)?,
+                    stage: InstallStage::Waiting,
+                    asked: 0,
+                    hold_until: None,
+                    crossed: false,
+                })
+                .into_mut(),
+        };
+        if install.stage == stage {
             return None;
         }
-        install.stage = update.stage;
+        install.stage = stage;
         let name = install.name.clone();
         match install.stage {
             InstallStage::Installed { .. } => Some(InstallNews::Installed(name)),
@@ -552,7 +582,11 @@ mod tests {
     }
 
     fn update(mod_id: u64, stage: InstallStage) -> InstallUpdate {
-        InstallUpdate { mod_id, stage }
+        InstallUpdate {
+            mod_id,
+            stage,
+            name: None,
+        }
     }
 
     #[test]
@@ -635,5 +669,62 @@ mod tests {
             None,
             "not the overlay's"
         );
+    }
+
+    #[test]
+    fn a_download_hestias_window_started_shows_like_an_install() {
+        let mut gamebanana = GameBanana::default();
+        let window = |stage: InstallStage| InstallUpdate {
+            mod_id: 3,
+            stage,
+            name: Some("Mod 3".into()),
+        };
+        assert_eq!(
+            gamebanana.receive_install(window(InstallStage::Waiting)),
+            None
+        );
+        assert!(gamebanana.install_state(3).is_none(), "GameBanana is off");
+        gamebanana.set_enabled(true);
+        assert_eq!(
+            gamebanana.receive_install(window(InstallStage::Canceled)),
+            None
+        );
+        assert!(
+            gamebanana.install_state(3).is_none(),
+            "over before the overlay heard of it"
+        );
+        assert_eq!(
+            gamebanana.receive_install(window(InstallStage::Downloading { percent: Some(10) })),
+            None
+        );
+        assert!(gamebanana.holds(3));
+        let item = BrowseMod {
+            id: 3,
+            name: "Mod 3".into(),
+            ..Default::default()
+        };
+        assert!(
+            !gamebanana.install(&item, None),
+            "Hestia installs it already"
+        );
+        assert!(gamebanana.take_requests().is_empty());
+        assert_eq!(
+            gamebanana.receive_install(window(InstallStage::Installed {
+                mods: vec!["three".into()]
+            })),
+            Some(InstallNews::Installed("Mod 3".into()))
+        );
+        assert_eq!(gamebanana.cross_finished(0.0).0, Vec::<u64>::new());
+        assert_eq!(gamebanana.cross_finished(1.0).0, [3]);
+        assert!(!gamebanana.holds(3));
+
+        // The mod got deleted, and the window downloads it again.
+        assert_eq!(
+            gamebanana.receive_install(window(InstallStage::Waiting)),
+            None
+        );
+        let install = gamebanana.install_state(3).unwrap();
+        assert_eq!(install.stage, InstallStage::Waiting);
+        assert!(!install.crossed);
     }
 }

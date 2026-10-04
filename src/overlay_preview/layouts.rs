@@ -566,10 +566,25 @@ impl Layouts {
                     lists_changed = true;
                 }
                 ToOverlay::Install(update) => {
-                    if let InstallStage::Installed { mods } = &update.stage {
-                        self.new_mods.extend(mods.iter().cloned());
+                    let mods = match &update.stage {
+                        InstallStage::Installed { mods } => mods.clone(),
+                        _ => Vec::new(),
+                    };
+                    match self.gamebanana.receive_install(update) {
+                        // Hestia's window can install a mod turned on, which
+                        // is in use then, not new.
+                        Some(InstallNews::Installed(name)) => {
+                            let (on, off): (Vec<String>, Vec<String>) =
+                                mods.into_iter().partition(|id| self.mod_active(id));
+                            self.new_mods.extend(off);
+                            news.push(if on.is_empty() {
+                                InstallNews::Installed(name)
+                            } else {
+                                InstallNews::InstalledOn(name)
+                            });
+                        }
+                        item => news.extend(item),
                     }
-                    news.extend(self.gamebanana.receive_install(update));
                 }
                 _ => {}
             }
@@ -2447,6 +2462,15 @@ impl Layouts {
                 Stroke::new(1.5, content_gray(47, overlay_opacity)),
             );
         }
+    }
+
+    /// Whether the library's mod `id` is on.
+    fn mod_active(&self, id: &str) -> bool {
+        self.catalog
+            .categories
+            .iter()
+            .flat_map(|category| &category.costumes)
+            .any(|costume| costume.id == id && costume.active)
     }
 
     /// Mods tagged NEW lose the tag once they're used.
@@ -5732,7 +5756,11 @@ mod tests {
     }
 
     fn install_update(mod_id: u64, stage: InstallStage) -> ToOverlay {
-        ToOverlay::Install(crate::overlay_protocol::InstallUpdate { mod_id, stage })
+        ToOverlay::Install(crate::overlay_protocol::InstallUpdate {
+            mod_id,
+            stage,
+            name: None,
+        })
     }
 
     #[test]
@@ -5792,6 +5820,69 @@ mod tests {
         assert!(layouts.new_mods.contains("Mod 2"));
         layouts.apply_focused_costume_action(ModAction::Exclusive, 3.0);
         assert!(layouts.new_mods.is_empty(), "used, so no longer new");
+    }
+
+    #[test]
+    fn a_download_hestias_window_started_holds_its_card_like_an_install() {
+        let mut ardelia = named("Ardelia", &["Vow", "Zest"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia.clone()]));
+        layouts.set_gamebanana(true, false);
+        let context = egui::Context::default();
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.take_gamebanana_requests();
+        layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2], false)]);
+        let window = |mod_id: u64, stage: InstallStage| {
+            ToOverlay::Install(crate::overlay_protocol::InstallUpdate {
+                mod_id,
+                stage,
+                name: Some(format!("Mod {mod_id}")),
+            })
+        };
+        let news = layouts.receive_gamebanana(vec![
+            window(1, InstallStage::Downloading { percent: Some(30) }),
+            window(2, InstallStage::Waiting),
+        ]);
+        assert!(news.is_empty());
+        // Vow, Zest, Mod 1, Mod 2.
+        layouts.carousel_focus = 3;
+        assert!(
+            !layouts.shortcut_availability().exclusive,
+            "Hestia installs it"
+        );
+        layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
+        assert!(layouts.take_gamebanana_requests().is_empty());
+
+        // The window installed Mod 1 turned on, and Mod 2 turned off.
+        let mut on = installed_from_gamebanana("Mod 1", 1);
+        on.active = true;
+        ardelia.costumes.push(on);
+        ardelia.costumes.push(installed_from_gamebanana("Mod 2", 2));
+        layouts.replace_catalog(live_catalog(vec![ardelia]));
+        let news = layouts.receive_gamebanana(vec![
+            window(
+                1,
+                InstallStage::Installed {
+                    mods: vec!["Mod 1".into()],
+                },
+            ),
+            window(
+                2,
+                InstallStage::Installed {
+                    mods: vec!["Mod 2".into()],
+                },
+            ),
+        ]);
+        assert_eq!(
+            news,
+            [
+                InstallNews::InstalledOn("Mod 1".into()),
+                InstallNews::Installed("Mod 2".into())
+            ]
+        );
+        assert!(!layouts.new_mods.contains("Mod 1"), "in use");
+        assert!(layouts.new_mods.contains("Mod 2"));
     }
 
     #[test]

@@ -929,4 +929,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Mod hotkeys", // GameOverlayHintHotkeys
     "Show hotkeys", // GameOverlayShowHotkeys
     "Hide hotkeys", // GameOverlayHideHotkeys
+    "Installed {name}.", // GameOverlayInstalledOnNotice
 ];

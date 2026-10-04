@@ -545,6 +545,9 @@ impl eframe::App for OverlayPreview {
                     InstallNews::Installed(name) => {
                         (TextKey::GameOverlayInstalledNotice, name, false)
                     }
+                    InstallNews::InstalledOn(name) => {
+                        (TextKey::GameOverlayInstalledOnNotice, name, false)
+                    }
                     InstallNews::Failed(name) => {
                         (TextKey::GameOverlayInstallFailedNotice, name, true)
                     }

@@ -916,10 +916,11 @@ pub(crate) enum TextKey {
     GameOverlayHintHotkeys,
     GameOverlayShowHotkeys,
     GameOverlayHideHotkeys,
+    GameOverlayInstalledOnNotice,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::GameOverlayHideHotkeys as usize + 1;
+    const COUNT: usize = Self::GameOverlayInstalledOnNotice as usize + 1;
 }
 
 include!("i18n/en_us.rs");

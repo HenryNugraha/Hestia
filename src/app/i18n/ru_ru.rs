@@ -928,4 +928,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Горячие клавиши мода", // GameOverlayHintHotkeys
     "Показать горячие клавиши", // GameOverlayShowHotkeys
     "Скрыть горячие клавиши", // GameOverlayHideHotkeys
+    "{name} установлен.", // GameOverlayInstalledOnNotice
 ];

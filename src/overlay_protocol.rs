@@ -49,7 +49,8 @@ pub(crate) enum ToOverlay {
     /// GameBanana pictures Hestia has downloaded since it sent their mods or
     /// characters, by GameBanana id.
     Pictures(Pictures),
-    /// How an install the overlay asked for with `FromOverlay::Install` goes.
+    /// How an install the overlay asked for with `FromOverlay::Install` goes,
+    /// or a GameBanana download Hestia's window started.
     Install(InstallUpdate),
     /// A mod's hotkeys the overlay asked for with `FromOverlay::Hotkeys`.
     Hotkeys(ModHotkeys),
@@ -288,6 +289,10 @@ pub(crate) struct InstallUpdate {
     /// The GameBanana mod.
     pub mod_id: u64,
     pub stage: InstallStage,
+    /// The mod's name, for a download Hestia's window started.  The overlay
+    /// shows that like an install of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,14 +502,17 @@ mod tests {
                         description: None,
                     }],
                 },
+                name: None,
             }),
             ToOverlay::Install(InstallUpdate {
                 mod_id: 6_000,
                 stage: InstallStage::Downloading { percent: Some(40) },
+                name: None,
             }),
             ToOverlay::Install(InstallUpdate {
                 mod_id: 6_000,
                 stage: InstallStage::Waiting,
+                name: Some("Summer".into()),
             }),
             ToOverlay::Hotkeys(ModHotkeys {
                 mod_id: "mod-1".into(),
