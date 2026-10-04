@@ -386,8 +386,9 @@ impl HestiaApp {
     }
 
     /// Which category an overlay install's mods go into: `Some(Some(id))`
-    /// for the category the overlay showed it in, `Some(None)` for a new one
-    /// even where Browse downloads get none, and None for other installs.
+    /// for the category the overlay showed it in, `Some(None)` for their
+    /// character's even where Browse downloads get none, and None for other
+    /// installs.
     fn game_overlay_install_category(&self, job_id: u64) -> Option<Option<String>> {
         let install = self
             .game_overlay

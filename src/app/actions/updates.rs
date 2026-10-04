@@ -2306,8 +2306,8 @@ impl HestiaApp {
                 candidate_labels,
             );
         }
-        // The in-game overlay's installs go where it showed them, or into a
-        // new category for their character.
+        // The in-game overlay's installs go where it showed them, or into
+        // their character's category.
         let overlay_category = self.game_overlay_install_category(job_id);
         for id in &newly_installed_ids {
             match &overlay_category {
@@ -2489,23 +2489,25 @@ impl HestiaApp {
             return;
         };
 
-        // A unique explicit link survives local renames. Several local folders
-        // can share a character, so do not arbitrarily choose between them.
-        let remote_category_id = gb_profile.and_then(|profile| profile.category.as_ref()).map(|category| category.id).filter(|id| *id != 0);
-        let mut linked_categories = self.state.categories.iter().filter(|category| {
-            category.game_id == meta.game_id && category.gamebanana_character.as_ref().is_some_and(|link| Some(link.id) == remote_category_id)
-        });
-        let first_linked = linked_categories.next();
-        let unique_linked = first_linked.filter(|_| linked_categories.next().is_none());
-        let (category_id, category_name) = if let Some(existing) = unique_linked.or_else(|| self
-            .state
-            .categories
-            .iter()
-            .find(|category| {
-                category.game_id == meta.game_id
-                    && category.name.eq_ignore_ascii_case(category_name.as_str())
-            }))
-        {
+        let remote_category_id = gb_profile
+            .and_then(|profile| profile.category.as_ref())
+            .map(|category| category.id)
+            .filter(|id| *id != 0);
+        // Set only for a character's mods.
+        let character_super_category_id =
+            gamebanana::character_super_category_id_for_hestia(&meta.game_id).filter(|id| {
+                gb_profile
+                    .and_then(|profile| profile.super_category.as_ref())
+                    .is_some_and(|category| category.id == *id)
+            });
+        let (category_id, category_name) = if let Some(existing) = download_category(
+            &self.state.categories,
+            &self.state.mods,
+            &meta.game_id,
+            &category_name,
+            remote_category_id,
+            character_super_category_id,
+        ) {
             (existing.id.clone(), existing.name.clone())
         } else {
             let category_id = Uuid::new_v4().to_string();
@@ -2876,6 +2878,190 @@ impl HestiaApp {
         }
     }
 
+}
+
+/// The category a mod from GameBanana category `name` (id `remote_id`) goes
+/// into, if there is one: the only one linked to it by hand, then one with
+/// its name. The link button is gone, but the links people made before stay.
+/// A character's mods, whose `character_super_id` is the game's character
+/// section, also go into one with its short name ("Tangtang" for "Operators:
+/// Tangtang"), then the only one whose GameBanana mods are all its own, like
+/// the overlay matches them. Several categories can share a character, so
+/// none is picked over the others.
+fn download_category<'a>(
+    categories: &'a [ModCategory],
+    mods: &[ModEntry],
+    game_id: &str,
+    name: &str,
+    remote_id: Option<u64>,
+    character_super_id: Option<u64>,
+) -> Option<&'a ModCategory> {
+    let game_categories = || {
+        categories
+            .iter()
+            .filter(move |category| category.game_id == game_id)
+    };
+    let linked = only(game_categories().filter(|category| {
+        category
+            .gamebanana_character
+            .as_ref()
+            .is_some_and(|link| Some(link.id) == remote_id)
+    }));
+    if linked.is_some() {
+        return linked;
+    }
+    if let Some(named) = game_categories().find(|category| category.name.eq_ignore_ascii_case(name)) {
+        return Some(named);
+    }
+    let super_id = character_super_id?;
+    if let Some(named) = game_categories()
+        .find(|category| overlay_protocol::names_character(&category.name, name))
+    {
+        return Some(named);
+    }
+    let remote_id = remote_id?;
+    let mut members: HashMap<&str, Vec<&GameBananaSnapshot>> = HashMap::new();
+    for entry in mods.iter().filter(|entry| entry.game_id == game_id) {
+        if let Some(category_id) = effective_category_id(categories, entry)
+            && let Some(snapshot) = entry.source.as_ref().and_then(|source| source.snapshot.as_ref())
+        {
+            members.entry(category_id).or_default().push(snapshot);
+        }
+    }
+    only(game_categories().filter(|category| {
+        category
+            .resolved_gamebanana_character(
+                members.get(category.id.as_str()).into_iter().flatten().copied(),
+                Some(super_id),
+            )
+            .is_some_and(|link| link.id == remote_id)
+    }))
+}
+
+/// The item, when there is exactly one.
+fn only<T>(mut items: impl Iterator<Item = T>) -> Option<T> {
+    let first = items.next()?;
+    items.next().is_none().then_some(first)
+}
+
+#[cfg(test)]
+mod download_category_tests {
+    use super::*;
+    use crate::model::GameBananaCategoryLink;
+
+    const OPERATORS: u64 = 42770;
+    const TANGTANG: u64 = 7;
+    const ARCLIGHT: u64 = 8;
+
+    fn category(id: &str, name: &str) -> ModCategory {
+        ModCategory {
+            id: id.to_owned(),
+            game_id: "endfield".to_owned(),
+            name: name.to_owned(),
+            order: 0,
+            gamebanana_character: None,
+        }
+    }
+
+    /// A mod in `category_id`, downloaded from the character `character`.
+    fn mod_from(id: &str, category_id: &str, character: Option<u64>) -> ModEntry {
+        let mut metadata = crate::model::ModMetadata::default();
+        metadata.user.category_id = Some(category_id.to_owned());
+        ModEntry {
+            id: id.to_owned(),
+            game_id: "endfield".to_owned(),
+            folder_name: id.to_owned(),
+            root_path: PathBuf::from(format!(r"D:\Mods\{id}")),
+            status: ModStatus::Disabled,
+            metadata,
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: Default::default(),
+            source: character.map(|character| ModSourceData {
+                snapshot: Some(GameBananaSnapshot {
+                    category: Some(GameBananaCategoryLink {
+                        id: character,
+                        name: String::new(),
+                    }),
+                    super_category_id: Some(OPERATORS),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            update_state: ModUpdateState::Unlinked,
+        }
+    }
+
+    /// Where a Tangtang mod goes, by category id.
+    fn tangtang(categories: &[ModCategory], mods: &[ModEntry]) -> Option<String> {
+        download_category(
+            categories,
+            mods,
+            "endfield",
+            "Operators: Tangtang",
+            Some(TANGTANG),
+            Some(OPERATORS),
+        )
+        .map(|category| category.id.clone())
+    }
+
+    #[test]
+    fn a_character_mod_finds_its_category_by_name() {
+        let both = [category("short", "tangtang"), category("full", "Operators: Tangtang")];
+        assert_eq!(tangtang(&both, &[]).as_deref(), Some("full"), "GameBanana's name first");
+        assert_eq!(tangtang(&both[..1], &[]).as_deref(), Some("short"), "then the short name");
+
+        let mut other_game = category("short", "Tangtang");
+        other_game.game_id = "zzz".to_owned();
+        assert_eq!(tangtang(&[other_game], &[]), None, "another game's");
+
+        let swords = [category("swords", "Swords")];
+        assert_eq!(
+            download_category(&swords, &[], "endfield", "Weapons: Swords", Some(3), None)
+                .map(|category| category.id.as_str()),
+            None,
+            "only a character's mods go by the short name"
+        );
+        assert_eq!(
+            download_category(&swords, &[], "endfield", "swords", Some(3), None)
+                .map(|category| category.id.as_str()),
+            Some("swords"),
+            "any mod goes by the whole name"
+        );
+    }
+
+    #[test]
+    fn a_character_mod_finds_its_category_by_the_mods_inside() {
+        let categories = [
+            category("tang", "Tang"),
+            category("mixed", "Mixed"),
+            category("arc", "Operators: Arclight"),
+        ];
+        let mut mods = vec![
+            mod_from("t1", "tang", Some(TANGTANG)),
+            mod_from("t2", "tang", None),
+            mod_from("m1", "mixed", Some(TANGTANG)),
+            mod_from("m2", "mixed", Some(ARCLIGHT)),
+        ];
+        assert_eq!(tangtang(&categories, &mods).as_deref(), Some("tang"));
+
+        mods.push(mod_from("a1", "arc", Some(TANGTANG)));
+        assert_eq!(tangtang(&categories, &mods), None, "two categories hold only Tangtang");
+
+        let mut linked = categories.clone();
+        linked[1].gamebanana_character = Some(GameBananaCategoryLink {
+            id: TANGTANG,
+            name: "Tangtang".to_owned(),
+        });
+        assert_eq!(tangtang(&linked, &mods).as_deref(), Some("mixed"), "a link made by hand");
+    }
 }
 
 #[cfg(test)]

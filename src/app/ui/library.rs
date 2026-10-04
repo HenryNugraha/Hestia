@@ -2403,88 +2403,6 @@ impl HestiaApp {
         );
     }
 
-    fn category_character_label(&self) -> &'static str {
-        match self.state.static_prefs.language {
-            AppLanguage::English => "GameBanana character",
-            AppLanguage::Indonesian => "Karakter GameBanana",
-            AppLanguage::ChineseSimplified => "GameBanana 角色",
-            AppLanguage::Russian => "Персонаж GameBanana",
-        }
-    }
-
-    fn render_category_character_picker(&mut self, ui: &mut Ui, category: &ModCategory) {
-        let super_id = gamebanana::character_super_category_id_for_hestia(&category.game_id);
-        if super_id.is_none() || self.selected_game().is_none_or(|game| game.definition.id != category.game_id) {
-            ui.label(self.text().no_configured_character_category_list());
-            return;
-        }
-        let inferred = category.resolved_gamebanana_character(
-            self.state.mods.iter().filter(|entry| {
-                entry.game_id == category.game_id && match entry.metadata.user.category_id.as_deref() {
-                    Some(id) => id == category.id,
-                    None => entry.metadata.user.category.eq_ignore_ascii_case(&category.name),
-                }
-            }).filter_map(|entry| entry.source.as_ref().and_then(|source| source.snapshot.as_ref())),
-            super_id,
-        );
-        ui.label(self.category_character_label());
-        if let Some(link) = &inferred {
-            ui.label(&link.name);
-            if ui.button(self.text().browse()).clicked() {
-                self.current_view = ViewMode::Browse;
-                self.settings_open = false;
-                self.select_browse_character_category(BrowseCharacterCategory {
-                    id: link.id,
-                    name: link.name.clone(),
-                    item_count: 0,
-                    icon_url: None,
-                });
-                ui.close();
-            }
-        }
-        let automatic = match self.state.static_prefs.language {
-            AppLanguage::English => "Automatic",
-            AppLanguage::Indonesian => "Otomatis",
-            AppLanguage::ChineseSimplified => "自动",
-            AppLanguage::Russian => "Автоматически",
-        };
-        let mut chosen: Option<Option<crate::model::GameBananaCategoryLink>> = None;
-        if ui.selectable_label(category.gamebanana_character.is_none(), automatic).clicked() {
-            chosen = Some(None);
-        }
-        ui.separator();
-        if self.browse_state.character_categories_game_id.as_deref() != Some(category.game_id.as_str()) {
-            self.request_browse_character_categories(false);
-        }
-        let options = if self.browse_state.character_categories_game_id.as_deref() == Some(category.game_id.as_str()) {
-            self.browse_state.character_categories.clone()
-        } else {
-            Vec::new()
-        };
-        if self.browse_state.character_categories_loading {
-            ui.spinner();
-        } else if options.is_empty() {
-            if ui.button(self.text().task_retry()).clicked() {
-                self.request_browse_character_categories(true);
-            }
-        }
-        ScrollArea::vertical().max_height(230.0).show(ui, |ui| {
-            for character in options {
-                let selected = category.gamebanana_character.as_ref().is_some_and(|link| link.id == character.id);
-                if ui.selectable_label(selected, &character.name).clicked() {
-                    chosen = Some(Some(crate::model::GameBananaCategoryLink { id: character.id, name: character.name }));
-                }
-            }
-        });
-        if let Some(value) = chosen {
-            if let Some(saved) = self.state.categories.iter_mut().find(|entry| entry.id == category.id && entry.game_id == category.game_id) {
-                saved.gamebanana_character = value;
-                self.save_state();
-                ui.close();
-            }
-        }
-    }
-
     fn create_category_for_game(
         &mut self,
         game_id: &str,
@@ -3009,12 +2927,6 @@ impl HestiaApp {
                                                 Some((category.name.clone(), row_response.rect));
                                         }
                                         ui.menu_button("", |ui| {
-                                            if gamebanana::character_super_category_id_for_hestia(&category.game_id).is_some() {
-                                                let character_label = self.category_character_label();
-                                                ui.menu_button(character_label, |ui| {
-                                                    self.render_category_character_picker(ui, &category);
-                                                });
-                                            }
                                             if ui
                                                 .button(icon_text_sized(
                                                     Icon::Pencil,
