@@ -148,8 +148,6 @@ pub(crate) enum TextKey {
     DialogOpenUnlinkedModDetailFirst,
     DialogInstallingCount,
     DialogCouldNotCreateModsFolder,
-    DialogCouldNotDisableInstalledMod,
-    DialogCouldNotKeepModDisabled,
     DialogInstalledAction,
     DialogInstalledCount,
     DialogInstalledName,
@@ -218,6 +216,7 @@ pub(crate) enum TextKey {
     ChromeInstallFolderTooltip,
     ChromeOpenModsFolderTooltip,
     ChromeInstall,
+    ChromeInstallEnabled,
     ChromeInstallDisabled,
     ChromeReloadLibraryTooltip,
     ChromeReloadBrowseTooltip,
@@ -359,7 +358,7 @@ pub(crate) enum TextKey {
     LibraryCategorySortByLeastModsTooltip,
     // No longer shown: the "Miscellaneous" section was folded into SORT/CATEGORIES when the
     // sort menu was restructured. Kept (with its catalog strings) to preserve TextKey ordering
-    // and in case the section returns. See ENFORCE_CATEGORY_GROUPING.
+    // and in case the section returns. See HIDE_LEGACY_LIBRARY_GROUPING.
     #[allow(dead_code)]
     LibraryMiscellaneousHeading,
     LibrarySortCategoryFirstTooltip,
@@ -600,12 +599,16 @@ pub(crate) enum TextKey {
     SettingsGeneralBehaviorSection,
     SettingsGeneralBehaviorWhenLaunchingGame,
     SettingsGeneralBehaviorAfterInstallingMod,
+    SettingsGeneralBehaviorNewModInstallState,
     SettingsGeneralBehaviorWhenLaunchingTool,
     SettingsGeneralBehaviorDoNothing,
     SettingsGeneralBehaviorMinimizeHestia,
     SettingsGeneralBehaviorExitHestia,
     SettingsGeneralBehaviorAddToSelection,
     SettingsGeneralBehaviorOpenModDetail,
+    SettingsGeneralBehaviorModInstallStateEnabled,
+    SettingsGeneralBehaviorModInstallStateDisabled,
+    SettingsGeneralBehaviorModInstallStateAuto,
 
     SettingsGeneralInstalledModsListSection,
     SettingsGeneralInstalledModsGroupListBy,
@@ -919,10 +922,11 @@ pub(crate) enum TextKey {
     GameOverlayShowHotkeys,
     GameOverlayHideHotkeys,
     GameOverlayInstalledOnNotice,
+    SettingsGeneralInstalledModsLayoutStatusList,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::GameOverlayInstalledOnNotice as usize + 1;
+    const COUNT: usize = Self::SettingsGeneralInstalledModsLayoutStatusList as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -1488,14 +1492,6 @@ impl TextCatalog {
         self.get(TextKey::DialogCouldNotCreateModsFolder)
     }
 
-    fn could_not_disable_installed_mod(self) -> &'static str {
-        self.get(TextKey::DialogCouldNotDisableInstalledMod)
-    }
-
-    fn could_not_keep_mod_disabled(self) -> &'static str {
-        self.get(TextKey::DialogCouldNotKeepModDisabled)
-    }
-
     fn installed_action(self) -> &'static str {
         self.get(TextKey::DialogInstalledAction)
     }
@@ -1772,6 +1768,10 @@ impl TextCatalog {
 
     fn install(self) -> &'static str {
         self.get(TextKey::ChromeInstall)
+    }
+
+    fn install_enabled(self) -> &'static str {
+        self.get(TextKey::ChromeInstallEnabled)
     }
 
     fn install_disabled(self) -> &'static str {
@@ -2299,6 +2299,7 @@ impl TextCatalog {
         self.get(TextKey::LibraryCategoryLayoutHeading)
     }
 
+    #[allow(dead_code)]
     fn library_available_when_grouped_by_category(self) -> &'static str {
         self.get(TextKey::LibraryAvailableWhenGroupedByCategory)
     }
@@ -3376,6 +3377,9 @@ impl TextCatalog {
             LibraryCategoryDisplayMode::Folders => {
                 self.get(TextKey::SettingsGeneralInstalledModsLayoutFolders)
             }
+            LibraryCategoryDisplayMode::StatusSections => {
+                self.get(TextKey::SettingsGeneralInstalledModsLayoutStatusList)
+            }
         }
     }
 
@@ -3383,9 +3387,6 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralInstalledModsSortByCategoryFirst)
     }
 
-    // Backs the Status-grouping "sort by category first" control, hidden behind
-    // ENFORCE_CATEGORY_GROUPING; kept so the string returns when that view does.
-    #[allow(dead_code)]
     fn sort_by_category_first_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsSortByCategoryFirstTooltip)
     }
@@ -3398,8 +3399,7 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralInstalledModsSortByStatusFirstTooltip)
     }
 
-    // The card-detail toggles (status word vs category name on a card) are hidden behind
-    // ENFORCE_CATEGORY_GROUPING; kept so the strings return when that view does.
+    // Retain legacy card-detail strings; each Library View now chooses its card labels.
     #[allow(dead_code)]
     fn show_mod_status_on_card(self) -> &'static str {
         self.get(TextKey::SettingsGeneralInstalledModsShowModStatusOnCard)
@@ -3820,6 +3820,10 @@ impl TextCatalog {
         self.get(TextKey::SettingsGeneralBehaviorAfterInstallingMod)
     }
 
+    fn new_mod_install_state(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralBehaviorNewModInstallState)
+    }
+
     fn when_launching_tool(self) -> &'static str {
         self.get(TextKey::SettingsGeneralBehaviorWhenLaunchingTool)
     }
@@ -3840,6 +3844,20 @@ impl TextCatalog {
             }
             AfterInstallBehavior::OpenModDetail => {
                 self.get(TextKey::SettingsGeneralBehaviorOpenModDetail)
+            }
+        }
+    }
+
+    fn mod_install_state(self, state: crate::model::ModInstallState) -> &'static str {
+        match state {
+            crate::model::ModInstallState::Enabled => {
+                self.get(TextKey::SettingsGeneralBehaviorModInstallStateEnabled)
+            }
+            crate::model::ModInstallState::Disabled => {
+                self.get(TextKey::SettingsGeneralBehaviorModInstallStateDisabled)
+            }
+            crate::model::ModInstallState::Auto => {
+                self.get(TextKey::SettingsGeneralBehaviorModInstallStateAuto)
             }
         }
     }

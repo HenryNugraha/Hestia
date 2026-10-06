@@ -146,8 +146,6 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Open an unlinked mod detail first", // DialogOpenUnlinkedModDetailFirst
     "Installing: {count} mod(s)", // DialogInstallingCount
     "Could not create mods folder", // DialogCouldNotCreateModsFolder
-    "Could not disable installed mod", // DialogCouldNotDisableInstalledMod
-    "Could not keep mod disabled", // DialogCouldNotKeepModDisabled
     "Installed", // DialogInstalledAction
     "Installed {count} mods", // DialogInstalledCount
     "Installed: {name}", // DialogInstalledName
@@ -218,6 +216,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Install a mod from an already extracted folder", // ChromeInstallFolderTooltip
     "Open the selected game's mods folder", // ChromeOpenModsFolderTooltip
     "Install", // ChromeInstall
+    "Install & Enable", // ChromeInstallEnabled
     "Install & Disable", // ChromeInstallDisabled
     "Rescan installed mods and check for updates on GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip
     "Reload the current list (Ctrl+R)", // ChromeReloadBrowseTooltip
@@ -336,7 +335,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Oldest → Newest", // LibrarySortDateAsc
     "Smallest → Largest Size", // LibrarySortSizeAsc
     "Largest → Smallest Size", // LibrarySortSizeDesc
-    "Change category layout and sort installed mods", // LibrarySortMenuTooltip
+    "Change library view and sort installed mods", // LibrarySortMenuTooltip
     "Mod Order", // LibrarySortModsHeading
     "Sorts by mod title, falling back to folder name", // LibrarySortNameTooltip
     "Uses the newest known install, content, or refresh timestamp", // LibrarySortNewestTooltip
@@ -346,7 +345,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Groups mods by your per-game categories", // LibraryGroupCategoryTooltip
     "Groups mods into Active, Disabled, and Archived sections", // LibraryGroupStatusTooltip
     "Shows one continuous sorted mod list", // LibraryGroupNoneTooltip
-    "Category Layout", // LibraryCategoryLayoutHeading
+    "Library View", // LibraryCategoryLayoutHeading
     "Available when grouped by category.", // LibraryAvailableWhenGroupedByCategory
     "Shows category tiles first, then opens one category at a time", // LibraryCategoryFoldersTooltip
     "Shows every category as a section in the mod list", // LibraryCategoryListTooltip
@@ -356,13 +355,13 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "By Least Mods", // LibraryCategorySortByLeastMods
     "By Most Mods", // LibraryCategorySortByMostMods
     "Uses your manual category order", // LibraryCategorySortManualTooltip
-    "Sorts category folders and sections by category name", // LibraryCategorySortByNameTooltip
+    "Sorts categories by name, including category-first ordering within status groups", // LibraryCategorySortByNameTooltip
     "Shows categories with the most mods first", // LibraryCategorySortByMostModsTooltip
     "Shows categories with the fewest mods first", // LibraryCategorySortByLeastModsTooltip
     "Miscellaneous", // LibraryMiscellaneousHeading
     "Within status groups, follows category order before the selected sort", // LibrarySortCategoryFirstTooltip
     "Places Active mods first, then Disabled, then Archived before the selected sort", // LibrarySortStatusFirstTooltip
-    "Places Uncategorized first in List layout and the category manager", // LibraryUncategorizedFirstListOnlyTooltip
+    "Places Uncategorized first in the category list and the category manager", // LibraryUncategorizedFirstListOnlyTooltip
     "Toggle Visibility", // LibraryToggleVisibility
     "Mod State", // LibraryModStateHeading
     "Show all mod states", // LibraryShowAllModStates
@@ -599,21 +598,25 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Behavior", // SettingsGeneralBehaviorSection
     "When launching a game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "After installing a mod:", // SettingsGeneralBehaviorAfterInstallingMod
+    "New mod install state:", // SettingsGeneralBehaviorNewModInstallState
     "When launching a tool:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Do Nothing", // SettingsGeneralBehaviorDoNothing
     "Minimize Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Exit Hestia", // SettingsGeneralBehaviorExitHestia
     "Add to Selection", // SettingsGeneralBehaviorAddToSelection
     "Open Mod Detail", // SettingsGeneralBehaviorOpenModDetail
+    "Enabled", // SettingsGeneralBehaviorModInstallStateEnabled
+    "Disabled", // SettingsGeneralBehaviorModInstallStateDisabled
+    "Auto", // SettingsGeneralBehaviorModInstallStateAuto
 
     // Window: Settings > General > Installed Mods List
     "Installed Mods List", // SettingsGeneralInstalledModsListSection
     "Group list by:", // SettingsGeneralInstalledModsGroupListBy
-    "Category Layout:", // SettingsGeneralInstalledModsCategoryLayout
+    "Library View:", // SettingsGeneralInstalledModsCategoryLayout
     "Category", // SettingsGeneralInstalledModsGroupCategory
     "Status", // SettingsGeneralInstalledModsGroupStatus
     "None", // SettingsGeneralInstalledModsGroupNone
-    "List", // SettingsGeneralInstalledModsLayoutList
+    "List: group by category", // SettingsGeneralInstalledModsLayoutList
     "Folders", // SettingsGeneralInstalledModsLayoutFolders
     "Sort by category first", // SettingsGeneralInstalledModsSortByCategoryFirst
     "Sorts by category order (not necessarily alphabetical)", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
@@ -930,4 +933,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Show hotkeys", // GameOverlayShowHotkeys
     "Hide hotkeys", // GameOverlayHideHotkeys
     "Installed {name}.", // GameOverlayInstalledOnNotice
+    "List: group by status", // SettingsGeneralInstalledModsLayoutStatusList
 ];

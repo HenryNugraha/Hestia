@@ -250,7 +250,8 @@ impl HestiaApp {
         unsafe_content: bool,
         update_folder_name: Option<String>,
         update_target_mod_id: Option<String>,
-        install_disabled: bool,
+        install_state: ModInstallState,
+        preserve_existing_state: bool,
         post_install_rename_to: Option<String>,
     ) -> BrowseDownloadTaskPayload {
         let selected_files = if selected_files.is_empty() {
@@ -269,7 +270,9 @@ impl HestiaApp {
             unsafe_content,
             update_folder_name,
             update_target_mod_id,
-            install_disabled,
+            install_state,
+            install_disabled: None,
+            preserve_existing_state,
             post_install_rename_to,
             profile_json: self
                 .browse_state
@@ -319,7 +322,8 @@ impl HestiaApp {
             update_folder_name: payload.update_folder_name.clone(),
             update_target_mod_id: payload.update_target_mod_id.clone(),
             update_target_was_disabled,
-            install_disabled: payload.install_disabled,
+            install_state: payload.effective_install_state(),
+            preserve_existing_state: payload.preserve_existing_state,
             post_install_rename_to: payload.post_install_rename_to.clone(),
         }
     }
@@ -1286,8 +1290,7 @@ impl HestiaApp {
                             |image| {
                                 gamebanana::thumbnail_url(image)
                                     .unwrap_or_else(|| gamebanana::full_image_url(image))
-                            },
-                        );
+                            });
                         if let Some(url) = thumbnail_url.clone() {
                             self.queue_browse_image_with_profile(
                                 url,
@@ -1802,7 +1805,8 @@ impl HestiaApp {
         unsafe_content: bool,
         update_folder_name: Option<String>,
         update_target_mod_id: Option<String>,
-        install_disabled: bool,
+        install_state: ModInstallState,
+        preserve_existing_state: bool,
         post_install_rename_to: Option<String>,
     ) {
         if !self.game_can_download_mods(&game_id) {
@@ -1826,7 +1830,8 @@ impl HestiaApp {
             unsafe_content,
             update_folder_name,
             update_target_mod_id,
-            install_disabled,
+            install_state,
+            preserve_existing_state,
             post_install_rename_to,
         );
         if task_id == self.install_next_job_id {
@@ -2157,7 +2162,8 @@ impl HestiaApp {
                                 detail.unsafe_content,
                                 update_folder_name.clone(),
                                 pending.update_target_id.clone(),
-                                pending.install_disabled,
+                                pending.install_state,
+                                pending.preserve_existing_state,
                                 post_install_rename_to.clone(),
                             );
                         }
@@ -2178,7 +2184,8 @@ impl HestiaApp {
                             update_folder_name,
                             update_target_mod_id: pending.update_target_id.clone(),
                             post_install_rename_to: post_install_rename_to.clone(),
-                            install_disabled: pending.install_disabled,
+                            install_state: pending.install_state,
+                            preserve_existing_state: pending.preserve_existing_state,
                         });
                     }
                     return;
@@ -2218,7 +2225,8 @@ impl HestiaApp {
                                     detail.unsafe_content,
                                     update_folder_name.clone(),
                                     pending.update_target_id.clone(),
-                                    pending.install_disabled,
+                                    pending.install_state,
+                                    pending.preserve_existing_state,
                                     post_install_rename_to.clone(),
                                 );
                             }
@@ -2239,7 +2247,8 @@ impl HestiaApp {
                                 update_folder_name,
                                 update_target_mod_id: pending.update_target_id.clone(),
                                 post_install_rename_to: post_install_rename_to.clone(),
-                                install_disabled: pending.install_disabled,
+                                install_state: pending.install_state,
+                                preserve_existing_state: pending.preserve_existing_state,
                             });
                         }
                         return;
@@ -2266,7 +2275,8 @@ impl HestiaApp {
                     detail.unsafe_content,
                     update_folder_name,
                     pending.update_target_id,
-                    pending.install_disabled,
+                    pending.install_state,
+                    pending.preserve_existing_state,
                     post_install_rename_to,
                 );
             }
@@ -2292,13 +2302,18 @@ impl HestiaApp {
                     update_folder_name,
                     update_target_mod_id: pending.update_target_id,
                     post_install_rename_to,
-                    install_disabled: pending.install_disabled,
+                    install_state: pending.install_state,
+                    preserve_existing_state: pending.preserve_existing_state,
                 });
             }
         }
     }
 
-    fn queue_install_for_browse_mod(&mut self, mod_id: u64, install_disabled: bool) {
+    fn queue_install_for_browse_mod(
+        &mut self,
+        mod_id: u64,
+        explicit_state: Option<ModInstallState>,
+    ) {
         let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
             return;
         };
@@ -2329,6 +2344,10 @@ impl HestiaApp {
             .find(|card| card.id == mod_id)
             .map(|card| card.name.clone())
             .unwrap_or_else(|| format!("Mod {mod_id}"));
+        let (install_state, preserve_existing_state) = match explicit_state {
+            Some(state) => (state, false),
+            None => (self.state.static_prefs.mod_install_state, true),
+        };
         let task_id = self.next_background_job_id();
         self.add_task(
             task_id,
@@ -2345,7 +2364,8 @@ impl HestiaApp {
             mod_id,
             game_id,
             update_target_id: None,
-            install_disabled,
+            install_state,
+            preserve_existing_state,
         });
         self.set_message_ok(self.text().resolving_download(&title));
     }
@@ -2385,7 +2405,8 @@ impl HestiaApp {
                 unsafe_content,
                 prompt.update_folder_name.clone(),
                 prompt.update_target_mod_id.clone(),
-                prompt.install_disabled,
+                prompt.install_state,
+                prompt.preserve_existing_state,
                 prompt.post_install_rename_to.clone(),
             );
         }
@@ -2625,10 +2646,7 @@ mod browse_file_prompt_tests {
             .collect();
         let page_cards: Vec<BrowseCard> = cards.iter().take(24).cloned().collect();
 
-        fn old_pass(
-            cards: &[BrowseCard],
-            local_links: &[(String, u64)],
-        ) -> (Vec<u64>, Vec<bool>) {
+        fn old_pass(cards: &[BrowseCard], local_links: &[(String, u64)]) -> (Vec<u64>, Vec<bool>) {
             // Baseline shape: deep-copy every displayed card and scan local links for every
             // visible card.
             let displayed: Vec<BrowseCard> = cards
@@ -2649,10 +2667,7 @@ mod browse_file_prompt_tests {
             (ids, installed)
         }
 
-        fn new_pass(
-            cards: &[BrowseCard],
-            local_links: &[(String, u64)],
-        ) -> (Vec<u64>, Vec<bool>) {
+        fn new_pass(cards: &[BrowseCard], local_links: &[(String, u64)]) -> (Vec<u64>, Vec<bool>) {
             // Current shape: retain indices, snapshot membership once, and copy only visible
             // cards.
             let indices = browse_card_indices_for_display(cards, UnsafeContentMode::HideShowCounter);

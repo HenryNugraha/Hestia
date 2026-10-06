@@ -146,8 +146,6 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Сначала откройте сведения о непривязанном моде", // DialogOpenUnlinkedModDetailFirst
     "Установка: {count} модов", // DialogInstallingCount
     "Не удалось создать папку модов", // DialogCouldNotCreateModsFolder
-    "Не удалось отключить установленный мод", // DialogCouldNotDisableInstalledMod
-    "Не удалось оставить мод отключённым", // DialogCouldNotKeepModDisabled
     "Установлено", // DialogInstalledAction
     "Установлено: {count} модов", // DialogInstalledCount
     "Установлено: {name}", // DialogInstalledName
@@ -218,6 +216,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Установить мод из уже распакованной папки", // ChromeInstallFolderTooltip
     "Открыть папку модов выбранной игры", // ChromeOpenModsFolderTooltip
     "Поставить", // ChromeInstall
+    "Поставить и включить", // ChromeInstallEnabled
     "Поставить выкл.", // ChromeInstallDisabled
     "Повторно просканировать установленные моды и проверить обновления на GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip
     "Обновить текущий список (Ctrl+R)", // ChromeReloadBrowseTooltip
@@ -336,7 +335,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Старые → новые", // LibrarySortDateAsc
     "Наименьший → Наибольший размер", // LibrarySortSizeAsc
     "Наибольший → Наименьший размер", // LibrarySortSizeDesc
-    "Изменить макет категорий и отсортировать установленные моды", // LibrarySortMenuTooltip
+    "Изменить вид библиотеки и отсортировать установленные моды", // LibrarySortMenuTooltip
     "Порядок модов", // LibrarySortModsHeading
     "Сортировка по названию мода, при отсутствии — по имени папки", // LibrarySortNameTooltip
     "Используется самая новая известная дата установки, изменения содержимого или обновления", // LibrarySortNewestTooltip
@@ -346,7 +345,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Группирует моды по категориям для каждой игры", // LibraryGroupCategoryTooltip
     "Группирует моды по разделам «Активные», «Отключённые» и «В архиве»", // LibraryGroupStatusTooltip
     "Показывает один непрерывный отсортированный список модов", // LibraryGroupNoneTooltip
-    "Макет категорий", // LibraryCategoryLayoutHeading
+    "Вид библиотеки", // LibraryCategoryLayoutHeading
     "Доступно при группировке по категориям.", // LibraryAvailableWhenGroupedByCategory
     "Сначала показывает плитки категорий, затем открывает по одной категории за раз", // LibraryCategoryFoldersTooltip
     "Показывает каждую категорию отдельным разделом в списке модов", // LibraryCategoryListTooltip
@@ -356,13 +355,13 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Меньше всего модов", // LibraryCategorySortByLeastMods
     "Больше всего модов", // LibraryCategorySortByMostMods
     "Используется ваш ручной порядок категорий", // LibraryCategorySortManualTooltip
-    "Сортирует папки и разделы категорий по названию категории", // LibraryCategorySortByNameTooltip
+    "Сортирует категории по названию, а внутри статусных групп сначала учитывает порядок категорий", // LibraryCategorySortByNameTooltip
     "Сначала показываются категории с наибольшим количеством модов", // LibraryCategorySortByMostModsTooltip
     "Сначала показываются категории с наименьшим количеством модов", // LibraryCategorySortByLeastModsTooltip
     "Разное", // LibraryMiscellaneousHeading
     "Внутри статусных групп сначала учитывается порядок категорий, затем выбранная сортировка", // LibrarySortCategoryFirstTooltip
     "Сначала размещает активные моды, затем отключённые и архивные, после чего применяется выбранная сортировка", // LibrarySortStatusFirstTooltip
-    "Размещает категорию «Без категории» первой в виде списка и в менеджере категорий", // LibraryUncategorizedFirstListOnlyTooltip
+    "Ставит «Без категории» на первое место в списке категорий и в менеджере категорий", // LibraryUncategorizedFirstListOnlyTooltip
     "Показать/скрыть", // LibraryToggleVisibility
     "Состояние мода", // LibraryModStateHeading
     "Показать все состояния модов", // LibraryShowAllModStates
@@ -599,21 +598,25 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Поведение", // SettingsGeneralBehaviorSection
     "При запуске игры:", // SettingsGeneralBehaviorWhenLaunchingGame
     "После установки мода:", // SettingsGeneralBehaviorAfterInstallingMod
+    "Состояние нового мода:", // SettingsGeneralBehaviorNewModInstallState
     "При запуске утилиты:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Ничего не делать", // SettingsGeneralBehaviorDoNothing
     "Свернуть Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Выйти из Hestia", // SettingsGeneralBehaviorExitHestia
     "Добавить в выделенное", // SettingsGeneralBehaviorAddToSelection
     "Открыть сведения о моде", // SettingsGeneralBehaviorOpenModDetail
+    "Включён", // SettingsGeneralBehaviorModInstallStateEnabled
+    "Отключён", // SettingsGeneralBehaviorModInstallStateDisabled
+    "Авто", // SettingsGeneralBehaviorModInstallStateAuto
 
     // Window: Settings > General > Installed Mods List
     "Список установленных модов", // SettingsGeneralInstalledModsListSection
     "Группировать список:", // SettingsGeneralInstalledModsGroupListBy
-    "Макет категорий:", // SettingsGeneralInstalledModsCategoryLayout
+    "Вид библиотеки:", // SettingsGeneralInstalledModsCategoryLayout
     "Категория", // SettingsGeneralInstalledModsGroupCategory
     "Статус", // SettingsGeneralInstalledModsGroupStatus
     "Нет", // SettingsGeneralInstalledModsGroupNone
-    "Список", // SettingsGeneralInstalledModsLayoutList
+    "Список: группировать по категориям", // SettingsGeneralInstalledModsLayoutList
     "Папки", // SettingsGeneralInstalledModsLayoutFolders
     "Сначала сортировать по категории", // SettingsGeneralInstalledModsSortByCategoryFirst
     "Сортировка по порядку категорий (не обязательно по алфавиту)", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
@@ -929,4 +932,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Показать горячие клавиши", // GameOverlayShowHotkeys
     "Скрыть горячие клавиши", // GameOverlayHideHotkeys
     "{name} установлен.", // GameOverlayInstalledOnNotice
+    "Список: группировать по статусу", // SettingsGeneralInstalledModsLayoutStatusList
 ];

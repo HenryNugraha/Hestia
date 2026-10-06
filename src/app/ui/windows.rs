@@ -3025,38 +3025,65 @@ impl HestiaApp {
                             ui.add_space(-4.0);
                             add_control(ui);
                         };
+                        let behavior_left_column_needed = |ui: &Ui| {
+                            settings_column_width(
+                                ui,
+                                &[text.new_mod_install_state(), text.when_launching_game()],
+                                &[
+                                    text.mod_install_state(ModInstallState::Enabled),
+                                    text.mod_install_state(ModInstallState::Disabled),
+                                    text.mod_install_state(ModInstallState::Auto),
+                                    text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
+                                    text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+                                    text.library_category_display_mode(LibraryCategoryDisplayMode::StatusSections),
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                ],
+                            )
+                        };
+                        let behavior_right_column_needed = |ui: &Ui| {
+                            settings_column_width(
+                                ui,
+                                &[text.after_installing_mod(), text.when_launching_tool()],
+                                &[
+                                    text.after_install_behavior(AfterInstallBehavior::DoNothing),
+                                    text.after_install_behavior(AfterInstallBehavior::AddToSelection),
+                                    text.after_install_behavior(AfterInstallBehavior::OpenModDetail),
+                                    text.launch_behavior(LaunchBehavior::DoNothing),
+                                    text.launch_behavior(LaunchBehavior::Minimize),
+                                    text.launch_behavior(LaunchBehavior::Exit),
+                                ],
+                            )
+                        };
 
                         static_label(ui, bold(text.behavior(), Some(16.0)).underline());
                         ui.indent("setting_general_behavior", |ui| {
                             let launch_behavior = self.state.static_prefs.launch_behavior;
                             let tool_launch_behavior = self.state.static_prefs.tool_launch_behavior;
                             let after_install = self.state.static_prefs.after_install_behavior;
-                            let left_column_needed = settings_column_width(
-                                ui,
-                                &[text.when_launching_game(), text.after_installing_mod()],
-                                &[
-                                    text.launch_behavior(LaunchBehavior::DoNothing),
-                                    text.launch_behavior(LaunchBehavior::Minimize),
-                                    text.launch_behavior(LaunchBehavior::Exit),
-                                    text.after_install_behavior(AfterInstallBehavior::DoNothing),
-                                    text.after_install_behavior(AfterInstallBehavior::AddToSelection),
-                                    text.after_install_behavior(AfterInstallBehavior::OpenModDetail),
-                                ],
-                            );
-                            let right_column_needed = settings_column_width(
-                                ui,
-                                &[text.when_launching_tool()],
-                                &[
-                                    text.launch_behavior(LaunchBehavior::DoNothing),
-                                    text.launch_behavior(LaunchBehavior::Minimize),
-                                    text.launch_behavior(LaunchBehavior::Exit),
-                                ],
-                            );
+                            let mod_install_state = self.state.static_prefs.mod_install_state;
+                            let left_column_needed = behavior_left_column_needed(ui);
+                            let right_column_needed = behavior_right_column_needed(ui);
                             let left_column_width =
                                 settings_left_column_width(ui, left_column_needed, right_column_needed);
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
+                                    setting_block(
+                                        ui,
+                                        text.new_mod_install_state(),
+                                        &mut |ui| {
+                                            egui::ComboBox::from_id_salt("mod_install_state")
+                                                .selected_text(text.mod_install_state(self.state.static_prefs.mod_install_state))
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Enabled, text.mod_install_state(ModInstallState::Enabled));
+                                                    ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Disabled, text.mod_install_state(ModInstallState::Disabled));
+                                                    ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Auto, text.mod_install_state(ModInstallState::Auto));
+                                                });
+                                        },
+                                    );
+                                    ui.add_space(8.0);
                                     setting_block(
                                         ui,
                                         text.when_launching_game(),
@@ -3070,7 +3097,8 @@ impl HestiaApp {
                                                 });
                                         },
                                     );
-                                    ui.add_space(8.0);
+                                });
+                                ui.vertical(|ui| {
                                     setting_block(
                                         ui,
                                         text.after_installing_mod(),
@@ -3084,8 +3112,7 @@ impl HestiaApp {
                                                 });
                                         },
                                     );
-                                });
-                                ui.vertical(|ui| {
+                                    ui.add_space(8.0);
                                     setting_block(
                                         ui,
                                         text.when_launching_tool(),
@@ -3110,6 +3137,9 @@ impl HestiaApp {
                             if self.state.static_prefs.after_install_behavior != after_install {
                                 should_save = true;
                             }
+                            if self.state.static_prefs.mod_install_state != mod_install_state {
+                                should_save = true;
+                            }
                             ui.add_space(1.0);
                         });
                         ui.add_space(24.0);
@@ -3119,6 +3149,8 @@ impl HestiaApp {
                             let library_sort = self.state.static_prefs.library_sort;
                             let library_sort_status_first =
                                 self.state.static_prefs.library_sort_status_first;
+                            let library_sort_category_first =
+                                self.state.static_prefs.library_sort_category_first;
                             let mut show_disabled = !self.state.static_prefs.hide_disabled;
                             let mut show_archived = !self.state.static_prefs.hide_archived;
                             let selected_game_id =
@@ -3126,10 +3158,9 @@ impl HestiaApp {
                             let mut category_display_mode =
                                 self.state.static_prefs.library_category_display_mode;
 
-                            // Group-by (Category/Status/None) remains hidden while category
-                            // grouping is enforced. The category layout itself is available in
-                            // Settings even when the grouping choice is fixed to Category.
-                            if !crate::model::ENFORCE_CATEGORY_GROUPING {
+                            // Legacy Group-by (Category/Status/None) remains hidden while the
+                            // Library View controls the effective grouping.
+                            if !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                                 let group_mode = self.state.static_prefs.library_group_mode;
                                 setting_block(ui, text.group_list_by(), &mut |ui| {
                                     egui::ComboBox::from_id_salt("library_group_mode")
@@ -3149,27 +3180,8 @@ impl HestiaApp {
                             // Size both Installed Mods List rows with the SAME inputs as the
                             // Behavior section above, so the panels' first columns line up in
                             // every language (incl. Russian).
-                            let left_column_needed = settings_column_width(
-                                ui,
-                                &[text.when_launching_game(), text.after_installing_mod()],
-                                &[
-                                    text.launch_behavior(LaunchBehavior::DoNothing),
-                                    text.launch_behavior(LaunchBehavior::Minimize),
-                                    text.launch_behavior(LaunchBehavior::Exit),
-                                    text.after_install_behavior(AfterInstallBehavior::DoNothing),
-                                    text.after_install_behavior(AfterInstallBehavior::AddToSelection),
-                                    text.after_install_behavior(AfterInstallBehavior::OpenModDetail),
-                                ],
-                            );
-                            let right_column_needed = settings_column_width(
-                                ui,
-                                &[text.when_launching_tool()],
-                                &[
-                                    text.launch_behavior(LaunchBehavior::DoNothing),
-                                    text.launch_behavior(LaunchBehavior::Minimize),
-                                    text.launch_behavior(LaunchBehavior::Exit),
-                                ],
-                            );
+                            let left_column_needed = behavior_left_column_needed(ui);
+                            let right_column_needed = behavior_right_column_needed(ui);
                             let left_column_width =
                                 settings_left_column_width(ui, left_column_needed, right_column_needed);
 
@@ -3191,6 +3203,11 @@ impl HestiaApp {
                                                     &mut category_display_mode,
                                                     LibraryCategoryDisplayMode::GroupedSections,
                                                     text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+                                                );
+                                                ui.selectable_value(
+                                                    &mut category_display_mode,
+                                                    LibraryCategoryDisplayMode::StatusSections,
+                                                    text.library_category_display_mode(LibraryCategoryDisplayMode::StatusSections),
                                                 );
                                             });
                                     });
@@ -3219,8 +3236,8 @@ impl HestiaApp {
                             }
                             ui.add_space(8.0);
 
-                            // Second row: Mod Order + status-first on the left, Category Order
-                            // + the layout-specific category option on the right.
+                            // Second row: Mod Order + the active modifier on the left, Category
+                            // Order + the layout-specific category option on the right.
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
@@ -3237,43 +3254,55 @@ impl HestiaApp {
                                                 ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::SizeDesc, text.library_sort_label(LibrarySort::SizeDesc));
                                             });
                                     });
-                                    // 2. Sort by status first.
+                                    // 2. The modifier follows the selected Library View.
                                     ui.add_space(4.0);
-                                    ui.checkbox(
-                                        &mut self.state.static_prefs.library_sort_status_first,
-                                        text.sort_by_status_first(),
-                                    )
-                                    .on_hover_text(text.sort_by_status_first_tooltip());
+                                    if category_display_mode == LibraryCategoryDisplayMode::StatusSections {
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.library_sort_category_first,
+                                            text.sort_by_category_first(),
+                                        )
+                                        .on_hover_text(text.sort_by_category_first_tooltip());
+                                    } else {
+                                        ui.checkbox(
+                                            &mut self.state.static_prefs.library_sort_status_first,
+                                            text.sort_by_status_first(),
+                                        )
+                                        .on_hover_text(text.sort_by_status_first_tooltip());
+                                    }
                                 });
+                                let category_order_applies =
+                                    self.state.static_prefs.library_category_order_applies();
                                 ui.vertical(|ui| {
                                     // 3. Category Order. Stored per game (like the sort menu), so it
                                     // acts on the currently selected game; disabled when none is
                                     // selected. set_category_sort_mode_for_game saves internally.
-                                    setting_block(ui, text.library_sort_categories_heading(), &mut |ui| {
-                                        ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
-                                            if let Some(game_id) = selected_game_id.as_deref() {
-                                                let mut category_sort_mode =
-                                                    self.category_sort_mode_for_game(game_id);
-                                                egui::ComboBox::from_id_salt("settings_category_sort")
-                                                    .selected_text(text.library_category_sort_label(category_sort_mode))
-                                                    .show_ui(ui, |ui| {
-                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameAsc, text.library_category_sort_label(ModCategorySortMode::ByNameAsc));
-                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameDesc, text.library_category_sort_label(ModCategorySortMode::ByNameDesc));
-                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountDesc, text.library_category_sort_label(ModCategorySortMode::ByModCountDesc));
-                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountAsc, text.library_category_sort_label(ModCategorySortMode::ByModCountAsc));
-                                                        ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::Manual, text.library_category_sort_label(ModCategorySortMode::Manual));
-                                                    });
-                                                if category_sort_mode != self.category_sort_mode_for_game(game_id) {
-                                                    self.set_category_sort_mode_for_game(game_id, category_sort_mode);
+                                    if category_order_applies {
+                                        setting_block(ui, text.library_sort_categories_heading(), &mut |ui| {
+                                            ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
+                                                if let Some(game_id) = selected_game_id.as_deref() {
+                                                    let mut category_sort_mode =
+                                                        self.category_sort_mode_for_game(game_id);
+                                                    egui::ComboBox::from_id_salt("settings_category_sort")
+                                                        .selected_text(text.library_category_sort_label(category_sort_mode))
+                                                        .show_ui(ui, |ui| {
+                                                            ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameAsc, text.library_category_sort_label(ModCategorySortMode::ByNameAsc));
+                                                            ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByNameDesc, text.library_category_sort_label(ModCategorySortMode::ByNameDesc));
+                                                            ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountDesc, text.library_category_sort_label(ModCategorySortMode::ByModCountDesc));
+                                                            ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::ByModCountAsc, text.library_category_sort_label(ModCategorySortMode::ByModCountAsc));
+                                                            ui.selectable_value(&mut category_sort_mode, ModCategorySortMode::Manual, text.library_category_sort_label(ModCategorySortMode::Manual));
+                                                        });
+                                                    if category_sort_mode != self.category_sort_mode_for_game(game_id) {
+                                                        self.set_category_sort_mode_for_game(game_id, category_sort_mode);
+                                                    }
                                                 }
-                                            }
+                                            });
                                         });
-                                    });
+                                    }
                                     // Show the option that applies to the selected category layout;
                                     // preserve the inactive option's stored preference.
-                                    ui.add_space(4.0);
                                     match category_display_mode {
                                         LibraryCategoryDisplayMode::Folders => {
+                                            ui.add_space(4.0);
                                             if ui
                                                 .checkbox(
                                                     &mut self.state.static_prefs.library_show_empty_category_folders,
@@ -3285,6 +3314,7 @@ impl HestiaApp {
                                             }
                                         }
                                         LibraryCategoryDisplayMode::GroupedSections => {
+                                            ui.add_space(4.0);
                                             if ui
                                                 .checkbox(
                                                     &mut self.state.static_prefs.library_uncategorized_first,
@@ -3296,6 +3326,7 @@ impl HestiaApp {
                                                 should_save = true;
                                             }
                                         }
+                                        LibraryCategoryDisplayMode::StatusSections => {}
                                     }
                                 });
                             });
@@ -3305,6 +3336,11 @@ impl HestiaApp {
                                 should_save = true;
                             }
                             if self.state.static_prefs.library_sort_status_first != library_sort_status_first {
+                                should_save = true;
+                            }
+                            if self.state.static_prefs.library_sort_category_first
+                                != library_sort_category_first
+                            {
                                 should_save = true;
                             }
                             ui.add_space(1.0);

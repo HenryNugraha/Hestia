@@ -146,8 +146,6 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "请先打开未链接 Mod 的详情", // DialogOpenUnlinkedModDetailFirst
     "正在安装：{count} 个 Mod", // DialogInstallingCount
     "无法创建 Mod 文件夹", // DialogCouldNotCreateModsFolder
-    "无法禁用已安装的 Mod", // DialogCouldNotDisableInstalledMod
-    "无法保持 Mod 为禁用状态", // DialogCouldNotKeepModDisabled
     "已安装", // DialogInstalledAction
     "已安装 {count} 个 Mod", // DialogInstalledCount
     "已安装：{name}", // DialogInstalledName
@@ -218,6 +216,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "从已解压的文件夹安装 Mod", // ChromeInstallFolderTooltip
     "打开所选游戏的 Mod 文件夹", // ChromeOpenModsFolderTooltip
     "安装", // ChromeInstall
+    "安装并启用", // ChromeInstallEnabled
     "安装并禁用", // ChromeInstallDisabled
     "重新扫描已安装 Mod 并在 GameBanana 检查更新 (Ctrl+R)", // ChromeReloadLibraryTooltip
     "重新加载当前列表 (Ctrl+R)", // ChromeReloadBrowseTooltip
@@ -336,7 +335,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "最旧 → 最新", // LibrarySortDateAsc
     "大小：最小 → 最大", // LibrarySortSizeAsc
     "大小：最大 → 最小", // LibrarySortSizeDesc
-    "更改分类布局并排序已安装的 Mod", // LibrarySortMenuTooltip
+    "更改 Mod 库视图并排序已安装的 Mod", // LibrarySortMenuTooltip
     "Mod 顺序", // LibrarySortModsHeading
     "按 Mod 标题排序，没有标题时使用文件夹名", // LibrarySortNameTooltip
     "使用已知最新的安装、内容或刷新时间", // LibrarySortNewestTooltip
@@ -346,7 +345,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "按每个游戏的分类对 Mod 分组", // LibraryGroupCategoryTooltip
     "将 Mod 分组到启用、禁用和已归档分区", // LibraryGroupStatusTooltip
     "显示一个连续排序的 Mod 列表", // LibraryGroupNoneTooltip
-    "分类布局", // LibraryCategoryLayoutHeading
+    "Mod 库视图", // LibraryCategoryLayoutHeading
     "按分类分组时可用。", // LibraryAvailableWhenGroupedByCategory
     "先显示分类磁贴，然后一次打开一个分类", // LibraryCategoryFoldersTooltip
     "将每个分类作为 Mod 列表中的一个分区显示", // LibraryCategoryListTooltip
@@ -356,13 +355,13 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "Mod 最少", // LibraryCategorySortByLeastMods
     "Mod 最多", // LibraryCategorySortByMostMods
     "使用你的手动分类顺序", // LibraryCategorySortManualTooltip
-    "按分类名称排序分类文件夹和分区", // LibraryCategorySortByNameTooltip
+    "按分类名称排序，包括在状态分组中优先按分类排序", // LibraryCategorySortByNameTooltip
     "优先显示 Mod 数量最多的分类", // LibraryCategorySortByMostModsTooltip
     "优先显示 Mod 数量最少的分类", // LibraryCategorySortByLeastModsTooltip
     "其他", // LibraryMiscellaneousHeading
     "在状态分组内，先按分类顺序排列，再使用所选排序", // LibrarySortCategoryFirstTooltip
     "在所选排序之前，先显示启用的 Mod，然后是禁用和已归档的 Mod", // LibrarySortStatusFirstTooltip
-    "在列表布局和分类管理器中将未分类置于首位", // LibraryUncategorizedFirstListOnlyTooltip
+    "在分类列表和分类管理器中将未分类置于首位", // LibraryUncategorizedFirstListOnlyTooltip
     "切换可见性", // LibraryToggleVisibility
     "Mod 状态", // LibraryModStateHeading
     "显示所有 Mod 状态", // LibraryShowAllModStates
@@ -599,21 +598,25 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "行为", // SettingsGeneralBehaviorSection
     "启动游戏时：", // SettingsGeneralBehaviorWhenLaunchingGame
     "安装 Mod 后：", // SettingsGeneralBehaviorAfterInstallingMod
+    "新 Mod 的安装状态：", // SettingsGeneralBehaviorNewModInstallState
     "启动工具时：", // SettingsGeneralBehaviorWhenLaunchingTool
     "不执行操作", // SettingsGeneralBehaviorDoNothing
     "最小化 Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "退出 Hestia", // SettingsGeneralBehaviorExitHestia
     "加入选中项", // SettingsGeneralBehaviorAddToSelection
     "打开 Mod 详情", // SettingsGeneralBehaviorOpenModDetail
+    "启用", // SettingsGeneralBehaviorModInstallStateEnabled
+    "禁用", // SettingsGeneralBehaviorModInstallStateDisabled
+    "自动", // SettingsGeneralBehaviorModInstallStateAuto
 
     // Window: Settings > General > Installed Mods List
     "已安装 Mod 列表", // SettingsGeneralInstalledModsListSection
     "列表分组方式：", // SettingsGeneralInstalledModsGroupListBy
-    "分类布局：", // SettingsGeneralInstalledModsCategoryLayout
+    "Mod 库视图：", // SettingsGeneralInstalledModsCategoryLayout
     "分类", // SettingsGeneralInstalledModsGroupCategory
     "状态", // SettingsGeneralInstalledModsGroupStatus
     "无", // SettingsGeneralInstalledModsGroupNone
-    "列表", // SettingsGeneralInstalledModsLayoutList
+    "列表：按分类分组", // SettingsGeneralInstalledModsLayoutList
     "文件夹", // SettingsGeneralInstalledModsLayoutFolders
     "优先按分类排序", // SettingsGeneralInstalledModsSortByCategoryFirst
     "按分类的预设顺序排序（不一定是字母顺序）", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
@@ -930,4 +933,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "显示快捷键", // GameOverlayShowHotkeys
     "隐藏快捷键", // GameOverlayHideHotkeys
     "已安装 {name}。", // GameOverlayInstalledOnNotice
+    "列表：按状态分组", // SettingsGeneralInstalledModsLayoutStatusList
 ];

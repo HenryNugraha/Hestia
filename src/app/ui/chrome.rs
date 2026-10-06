@@ -135,6 +135,7 @@ impl HestiaApp {
                             let play_modded_ready = self.selected_game_can_launch_modded();
                             let play_vanilla_ready = self.selected_game_can_launch_vanilla();
                             let play_ready = play_modded_ready || play_vanilla_ready;
+                            let mod_install_state = self.state.static_prefs.mod_install_state;
                             let tooltip = text.game_not_installed();
                             let mod_setup_tooltip = self.selected_game_mod_setup_message();
                             ui.add_enabled_ui(play_ready, |ui| {
@@ -254,30 +255,44 @@ impl HestiaApp {
                                         }
                                         ui.close();
                                     }
-                                    if ui
-                                        .button(icon_text_sized(
-                                            Icon::PackagePlus,
-                                            text.install_disabled(),
-                                            14.0,
-                                            13.0,
-                                        ))
-                                        .clicked()
-                                    {
-                                        if let Some(paths) = FileDialog::new()
-                                            .add_filter(
-                                                text.file_filter_archives(),
-                                                importing::archive_picker_extensions(),
-                                            )
-                                            .add_filter(text.file_filter_all_files(), &["*"])
-                                            .pick_files()
-                                        {
-                                            let sources = paths
-                                                .into_iter()
-                                                .map(ImportSource::Archive)
-                                                .collect::<Vec<_>>();
-                                            self.enqueue_install_sources_with_disabled(sources, true);
+                                    let explicit_states = match mod_install_state {
+                                        ModInstallState::Enabled => vec![ModInstallState::Disabled],
+                                        ModInstallState::Disabled => vec![ModInstallState::Enabled],
+                                        ModInstallState::Auto => {
+                                            vec![ModInstallState::Enabled, ModInstallState::Disabled]
                                         }
-                                        ui.close();
+                                    };
+                                    for state in explicit_states {
+                                        let label = match state {
+                                            ModInstallState::Enabled => text.install_enabled(),
+                                            ModInstallState::Disabled => text.install_disabled(),
+                                            ModInstallState::Auto => unreachable!(),
+                                        };
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::PackagePlus,
+                                                label,
+                                                14.0,
+                                                13.0,
+                                            ))
+                                            .clicked()
+                                        {
+                                            if let Some(paths) = FileDialog::new()
+                                                .add_filter(
+                                                    text.file_filter_archives(),
+                                                    importing::archive_picker_extensions(),
+                                                )
+                                                .add_filter(text.file_filter_all_files(), &["*"])
+                                                .pick_files()
+                                            {
+                                                let sources = paths
+                                                    .into_iter()
+                                                    .map(ImportSource::Archive)
+                                                    .collect::<Vec<_>>();
+                                                self.enqueue_install_sources_with_state(sources, state);
+                                            }
+                                            ui.close();
+                                        }
                                     }
                                 });
                             });
@@ -317,22 +332,36 @@ impl HestiaApp {
                                         }
                                         ui.close();
                                     }
-                                    if ui
-                                        .button(icon_text_sized(
-                                            Icon::FolderPlus,
-                                            text.install_disabled(),
-                                            14.0,
-                                            13.0,
-                                        ))
-                                        .clicked()
-                                    {
-                                        if let Some(path) = FileDialog::new().pick_folder() {
-                                            self.enqueue_install_sources_with_disabled(
-                                                vec![ImportSource::Folder(path)],
-                                                true,
-                                            );
+                                    let explicit_states = match mod_install_state {
+                                        ModInstallState::Enabled => vec![ModInstallState::Disabled],
+                                        ModInstallState::Disabled => vec![ModInstallState::Enabled],
+                                        ModInstallState::Auto => {
+                                            vec![ModInstallState::Enabled, ModInstallState::Disabled]
                                         }
-                                        ui.close();
+                                    };
+                                    for state in explicit_states {
+                                        let label = match state {
+                                            ModInstallState::Enabled => text.install_enabled(),
+                                            ModInstallState::Disabled => text.install_disabled(),
+                                            ModInstallState::Auto => unreachable!(),
+                                        };
+                                        if ui
+                                            .button(icon_text_sized(
+                                                Icon::FolderPlus,
+                                                label,
+                                                14.0,
+                                                13.0,
+                                            ))
+                                            .clicked()
+                                        {
+                                            if let Some(path) = FileDialog::new().pick_folder() {
+                                                self.enqueue_install_sources_with_state(
+                                                    vec![ImportSource::Folder(path)],
+                                                    state,
+                                                );
+                                            }
+                                            ui.close();
+                                        }
                                     }
                                 });
                             });

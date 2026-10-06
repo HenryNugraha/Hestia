@@ -1,22 +1,3 @@
-/// Dispose of the folder a Replace install swapped aside.
-///
-/// The new mod is already live at this point, so nothing here may fail the
-/// install. Prefer the recycle bin, fall back to a permanent delete (Replace
-/// means the user asked for this folder to go), and if even that is refused
-/// leave the `.hestia_old_*` folder behind rather than tearing it apart —
-/// a stray folder is recoverable, a half-deleted one is not.
-fn dispose_replaced_folder(retired: &Path) {
-    if xxmi::recycle_path(retired).is_ok() {
-        return;
-    }
-    if let Err(err) = fs::remove_dir_all(retired) {
-        tracing::warn!(
-            "replaced mod folder left behind at {}: {err}",
-            retired.display()
-        );
-    }
-}
-
 fn spawn_install_workers(
     runtime_services: &RuntimeServices,
     portable: PortablePaths,
@@ -88,6 +69,9 @@ fn spawn_install_workers(
                         job_id,
                         candidate_indices,
                         preferred_names,
+                        candidate_install_states,
+                        game_backend,
+                        disabled_target_root,
                         choice,
                         target_root,
                         gb_profile,
@@ -120,6 +104,11 @@ fn spawn_install_workers(
                                     Vec<String>,
                                 )> {
                                 fs::create_dir_all(&target_root)?;
+                                if candidate_indices.len() != preferred_names.len()
+                                    || candidate_indices.len() != candidate_install_states.len()
+                                {
+                                    bail!("install candidate data is misaligned");
+                                }
                                 let mut installed_paths = Vec::new();
                                 let mut installed_candidate_labels = Vec::new();
                                 let mut target_cleaned =
@@ -145,85 +134,19 @@ fn spawn_install_workers(
                                         choice
                                     };
 
-                                    let installed_path = if current_choice == ConflictChoice::Replace {
-                                        let temp_target =
-                                            target_root.join(format!(".hestia_tmp_{}_{}", job_id, i));
-                                        if temp_target.exists() {
-                                            fs::remove_dir_all(&temp_target)?;
-                                        }
-                                        if source_is_archive {
-                                            importing::move_or_copy_archive_candidate_cancelable(
-                                                &candidate.path,
-                                                &temp_target,
-                                                &cancel,
-                                            )?;
-                                        } else {
-                                            importing::copy_dir_cancelable(
-                                                &candidate.path,
-                                                &temp_target,
-                                                false,
-                                                &cancel,
-                                            )?;
-                                        }
-                                        if cancel.load(Ordering::Relaxed) {
-                                            let _ = fs::remove_dir_all(&temp_target);
-                                            bail!(importing::CANCELLED_ERROR);
-                                        }
-                                        let live_target = target_root.join(preferred_name);
-                                        // Replace destroys the whole folder, including the
-                                        // ⬢HESTIA settings stash — for a disabled/archived
-                                        // mod that stash is the only copy of its saved
-                                        // in-game settings, so carry it across.
-                                        let preserved_stash =
-                                            crate::integrations::xxmi_persist::read_stash_bytes(
-                                                &live_target,
-                                            );
-                                        if live_target.exists() {
-                                            // Swap the old folder aside before the new one
-                                            // lands: recycling it first makes the whole
-                                            // install hinge on the recycle bin accepting a
-                                            // folder it may well refuse (open file handles,
-                                            // a disabled or undersized bin on that volume,
-                                            // an over-long path). A rename touches none of
-                                            // that, so disposal becomes a cleanup step that
-                                            // is allowed to fail.
-                                            let retired = target_root
-                                                .join(format!(".hestia_old_{}_{}", job_id, i));
-                                            if retired.exists() {
-                                                let _ = fs::remove_dir_all(&retired);
-                                            }
-                                            fs::rename(&live_target, &retired).map_err(|err| {
-                                                anyhow!(
-                                                    "could not move the existing folder aside \
-                                                     (is the game or a file explorer holding it \
-                                                     open?): {err}"
-                                                )
-                                            })?;
-                                            if let Err(err) = fs::rename(&temp_target, &live_target)
-                                            {
-                                                let _ = fs::rename(&retired, &live_target);
-                                                return Err(anyhow!(err));
-                                            }
-                                            dispose_replaced_folder(&retired);
-                                        } else {
-                                            fs::rename(&temp_target, &live_target)?;
-                                        }
-                                        crate::integrations::xxmi_persist::restore_stash_bytes(
-                                            &live_target,
-                                            &preserved_stash,
-                                        );
-                                        live_target
-                                    } else {
-                                        importing::install_candidate_cancelable(
+                                    let installed_path =
+                                        importing::install_candidate_with_state_cancelable(
                                             &candidate.path,
                                             preferred_name,
                                             &target_root,
+                                            disabled_target_root.as_deref(),
                                             current_choice,
                                             source_is_archive,
+                                            game_backend,
+                                            candidate_install_states[i].clone(),
                                             &cancel,
                                         )?
-                                        .ok_or_else(|| anyhow!("Import cancelled"))?
-                                    };
+                                        .ok_or_else(|| anyhow!("Import cancelled"))?;
                                     if !installed_paths.contains(&installed_path) {
                                         installed_paths.push(installed_path.clone());
                                     }

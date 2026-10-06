@@ -791,7 +791,7 @@ impl HestiaApp {
                                                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                     }
                                                     if install_response.clicked() {
-                                                        self.queue_install_for_browse_mod(card.id, false);
+                                                        self.queue_install_for_browse_mod(card.id, None);
                                                     }
                                                 });
                                                 ui.add_space(24.0);
@@ -913,6 +913,7 @@ impl HestiaApp {
                                 gamebanana::install_block_reason(profile)
                                     .unwrap_or_default();
                             let install_blocked = !install_disabled_reason.is_empty();
+                            let mod_install_state = self.state.static_prefs.mod_install_state;
 
                             let install_enabled = !install_blocked && selected_game_ready;
                             let install_response = Self::browse_card_install_context_menu_row(
@@ -933,37 +934,51 @@ impl HestiaApp {
                                     .on_hover_text_at_pointer(install_disabled_reason.clone());
                             }
                             if install_response.clicked() {
-                                self.queue_install_for_browse_mod(card.id, false);
+                                self.queue_install_for_browse_mod(card.id, None);
                                 ui.close();
                             }
 
-                            let install_disabled_response = ui.add_enabled(
-                                install_enabled,
-                                egui::Button::new(icon_text_sized(
-                                    Icon::PackagePlus,
-                                    text.install_disabled(),
-                                    13.0,
-                                    13.0,
-                                ))
-                                .corner_radius(radius),
-                            );
-                            if !selected_game_ready {
-                                install_disabled_response
-                                    .clone()
-                                    .on_hover_text_at_pointer(&selected_game_setup_message)
-                                    .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                            } else if install_blocked {
-                                install_disabled_response
-                                    .clone()
-                                    .on_hover_text_at_pointer(install_disabled_reason.clone());
-                            } else {
-                                install_disabled_response
-                                    .clone()
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                            }
-                            if install_disabled_response.clicked() {
-                                self.queue_install_for_browse_mod(card.id, true);
-                                ui.close();
+                            let explicit_states = match mod_install_state {
+                                ModInstallState::Enabled => vec![ModInstallState::Disabled],
+                                ModInstallState::Disabled => vec![ModInstallState::Enabled],
+                                ModInstallState::Auto => {
+                                    vec![ModInstallState::Enabled, ModInstallState::Disabled]
+                                }
+                            };
+                            for state in explicit_states {
+                                let label = match state {
+                                    ModInstallState::Enabled => text.install_enabled(),
+                                    ModInstallState::Disabled => text.install_disabled(),
+                                    ModInstallState::Auto => unreachable!(),
+                                };
+                                let explicit_response = ui.add_enabled(
+                                    install_enabled,
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::PackagePlus,
+                                        label,
+                                        13.0,
+                                        13.0,
+                                    ))
+                                    .corner_radius(radius),
+                                );
+                                if !selected_game_ready {
+                                    explicit_response
+                                        .clone()
+                                        .on_hover_text_at_pointer(&selected_game_setup_message)
+                                        .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                                } else if install_blocked {
+                                    explicit_response
+                                        .clone()
+                                        .on_hover_text_at_pointer(install_disabled_reason.clone());
+                                } else {
+                                    explicit_response
+                                        .clone()
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                }
+                                if explicit_response.clicked() {
+                                    self.queue_install_for_browse_mod(card.id, Some(state));
+                                    ui.close();
+                                }
                             }
 
                             let browser_response = ui.button(icon_text_sized(
@@ -1706,7 +1721,7 @@ impl HestiaApp {
                             install_response
                         };
                         if install_response.clicked() {
-                            self.queue_install_for_browse_mod(mod_id, false);
+                            self.queue_install_for_browse_mod(mod_id, None);
                         }
                         install_response.context_menu(|ui| {
                             if ui
@@ -1721,23 +1736,38 @@ impl HestiaApp {
                                 )
                                 .clicked()
                             {
-                                self.queue_install_for_browse_mod(mod_id, false);
+                                self.queue_install_for_browse_mod(mod_id, None);
                                 ui.close();
                             }
-                            if ui
-                                .add_enabled(
-                                    selected_game_ready && !install_blocked,
-                                    egui::Button::new(icon_text_sized(
-                                        Icon::PackagePlus,
-                                        text.install_disabled(),
-                                        13.0,
-                                        13.0,
-                                    )),
-                                )
-                                .clicked()
-                            {
-                                self.queue_install_for_browse_mod(mod_id, true);
-                                ui.close();
+                            let mod_install_state = self.state.static_prefs.mod_install_state;
+                            let explicit_states = match mod_install_state {
+                                ModInstallState::Enabled => vec![ModInstallState::Disabled],
+                                ModInstallState::Disabled => vec![ModInstallState::Enabled],
+                                ModInstallState::Auto => {
+                                    vec![ModInstallState::Enabled, ModInstallState::Disabled]
+                                }
+                            };
+                            for state in explicit_states {
+                                let label = match state {
+                                    ModInstallState::Enabled => text.install_enabled(),
+                                    ModInstallState::Disabled => text.install_disabled(),
+                                    ModInstallState::Auto => unreachable!(),
+                                };
+                                if ui
+                                    .add_enabled(
+                                        selected_game_ready && !install_blocked,
+                                        egui::Button::new(icon_text_sized(
+                                            Icon::PackagePlus,
+                                            label,
+                                            13.0,
+                                            13.0,
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    self.queue_install_for_browse_mod(mod_id, Some(state));
+                                    ui.close();
+                                }
                             }
                             if !selected_game_ready {
                                 static_label(
@@ -2495,7 +2525,8 @@ impl HestiaApp {
                                     .unwrap_or(false),
                                 None,
                                 None,
-                                false,
+                                self.state.static_prefs.mod_install_state,
+                                true,
                                 None,
                             );
                         }

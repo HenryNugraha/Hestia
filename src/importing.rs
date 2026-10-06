@@ -17,8 +17,12 @@ use std::sync::{
 };
 use tempfile::TempDir;
 use walkdir::WalkDir;
+use uuid::Uuid;
 
-use crate::model::{ConflictChoice, ImportCandidate, ImportInspection, ImportSource};
+use crate::model::{
+    ConflictChoice, GameBackend, ImportCandidate, ImportInspection, ImportSource, ModStatus,
+    DISABLED_CONTAINER, MOD_META_DIR,
+};
 use crate::persistence;
 
 pub const CANCELLED_ERROR: &str = "install canceled";
@@ -1282,6 +1286,7 @@ fn is_cross_device_rename_error(err: &io::Error) -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn install_candidate_cancelable(
     candidate_path: &Path,
     preferred_name: &str,
@@ -1331,6 +1336,489 @@ pub fn install_candidate_cancelable(
         copy_dir_cancelable(candidate_path, &initial_target, false, cancel)?;
     }
     Ok(Some(initial_target))
+}
+
+/// Publish one candidate with the state it should have when it first becomes visible to a game
+/// scan.  Staging happens in a sibling of the destination root so a partially copied candidate
+/// cannot be mistaken for a live mod.  XXMI represents a disabled mod as one folder containing
+/// `DISABLED_BY_HESTIA`; Unreal keeps disabled mods in its separate disabled root.
+pub fn install_candidate_with_state_cancelable(
+    candidate_path: &Path,
+    preferred_name: &str,
+    target_root: &Path,
+    disabled_target_root: Option<&Path>,
+    choice: ConflictChoice,
+    source_is_archive: bool,
+    backend: GameBackend,
+    status: ModStatus,
+    cancel: &CancelFlag,
+) -> Result<Option<PathBuf>> {
+    validate_install_folder_name(preferred_name)?;
+    if !matches!(status, ModStatus::Active | ModStatus::Disabled) {
+        bail!("install candidates must be active or disabled");
+    }
+    if choice == ConflictChoice::Cancel {
+        return Ok(None);
+    }
+
+    let destination_root = match (backend, &status) {
+        (GameBackend::UnrealEngine, ModStatus::Disabled) => disabled_target_root
+            .ok_or_else(|| anyhow!("disabled Unreal mod path is not configured"))?,
+        _ => target_root,
+    };
+    fs::create_dir_all(target_root)?;
+    if let Some(root) = disabled_target_root {
+        fs::create_dir_all(root)?;
+    }
+    let destination = destination_root.join(preferred_name);
+    let alternate_root = match backend {
+        GameBackend::UnrealEngine => {
+            if destination_root == target_root {
+                disabled_target_root
+            } else {
+                Some(target_root)
+            }
+        }
+        GameBackend::Xxmi => None,
+    };
+    let alternate = alternate_root.map(|root| root.join(preferred_name));
+
+    let stage_parent = if backend == GameBackend::UnrealEngine {
+        disabled_target_root
+            .and_then(Path::parent)
+            .or_else(|| destination_root.parent())
+    } else {
+        destination_root.parent()
+    }
+    .ok_or_else(|| anyhow!("destination root has no parent"))?;
+    fs::create_dir_all(stage_parent)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".hestia-install-")
+        .tempdir_in(stage_parent)
+        .context("failed to create install staging directory")?;
+    let staged_candidate = stage.path().join("candidate");
+    stage_candidate_payload(
+        candidate_path,
+        &staged_candidate,
+        source_is_archive,
+        cancel,
+    )?;
+
+    let existing_destination = destination.is_dir().then_some(destination.as_path());
+    let existing_alternate = alternate.as_deref().filter(|path| path.is_dir());
+    let existing = existing_destination.or(existing_alternate);
+
+    let actual_destination = match choice {
+        ConflictChoice::Replace => {
+            let staged_final = stage.path().join("final");
+            prepare_candidate_stage(
+                &staged_candidate,
+                &staged_final,
+                backend,
+                &status,
+                cancel,
+            )?;
+            check_cancel(cancel)?;
+            let stash = (backend == GameBackend::Xxmi)
+                .then(|| existing.and_then(crate::integrations::xxmi_persist::read_stash_bytes))
+                .flatten();
+            let preserved_state = existing.and_then(read_portable_state);
+            atomic_publish_staged_dir(
+                &staged_final,
+                &destination,
+                existing,
+                stash,
+                preserved_state,
+            )?;
+            destination
+        }
+        ConflictChoice::Merge => {
+            if let Some(existing) = existing_destination {
+                if backend == GameBackend::Xxmi {
+                    let staged_final = stage.path().join("final");
+                    copy_dir_cancelable(existing, &staged_final, false, cancel)?;
+                    normalize_existing_xxmi_stage(&staged_final, &status, cancel)?;
+                    merge_candidate_stage(
+                        &staged_candidate,
+                        &staged_final,
+                        backend,
+                        &status,
+                        cancel,
+                    )?;
+                    check_cancel(cancel)?;
+                    let stash = crate::integrations::xxmi_persist::read_stash_bytes(existing);
+                    let preserved_state = read_portable_state(existing);
+                    atomic_publish_staged_dir(
+                        &staged_final,
+                        &destination,
+                        Some(existing),
+                        stash,
+                        preserved_state,
+                    )?;
+                } else {
+                    let staged_final = stage.path().join("final");
+                    copy_dir_cancelable(existing, &staged_final, false, cancel)?;
+                    merge_candidate_stage(
+                        &staged_candidate,
+                        &staged_final,
+                        backend,
+                        &status,
+                        cancel,
+                    )?;
+                    check_cancel(cancel)?;
+                    let preserved_state = read_portable_state(existing);
+                    atomic_publish_staged_dir(
+                        &staged_final,
+                        &destination,
+                        Some(existing),
+                        None,
+                        preserved_state,
+                    )?;
+                }
+                destination
+            } else if let Some(existing) = existing_alternate {
+                let staged_final = stage.path().join("final");
+                copy_dir_cancelable(existing, &staged_final, false, cancel)?;
+                merge_candidate_stage(
+                    &staged_candidate,
+                    &staged_final,
+                    backend,
+                    &status,
+                    cancel,
+                )?;
+                check_cancel(cancel)?;
+                let stash = (backend == GameBackend::Xxmi)
+                    .then(|| crate::integrations::xxmi_persist::read_stash_bytes(existing))
+                    .flatten();
+                let preserved_state = read_portable_state(existing);
+                atomic_publish_staged_dir(
+                    &staged_final,
+                    &destination,
+                    Some(existing),
+                    stash,
+                    preserved_state,
+                )?;
+                destination
+            } else {
+                let staged_final = stage.path().join("final");
+                prepare_candidate_stage(
+                    &staged_candidate,
+                    &staged_final,
+                    backend,
+                    &status,
+                    cancel,
+                )?;
+                check_cancel(cancel)?;
+                fs::rename(&staged_final, &destination)?;
+                destination
+            }
+        }
+        ConflictChoice::KeepBoth => {
+            let destination = next_available_name_across_roots(
+                destination_root,
+                alternate_root,
+                preferred_name,
+            );
+            let staged_final = stage.path().join("final");
+            prepare_candidate_stage(
+                &staged_candidate,
+                &staged_final,
+                backend,
+                &status,
+                cancel,
+            )?;
+            check_cancel(cancel)?;
+            // A KeepBoth clone must be a new library identity. Preserve the
+            // candidate's metadata and source information, changing only the
+            // UUID that identifies the cloned library entry.
+            let portable_state = staged_final.join(MOD_META_DIR).join(crate::model::MOD_META_FILE);
+            if portable_state.exists() {
+                match crate::persistence::load_portable_mod_state(&staged_final) {
+                    Ok(Some(mut state)) => {
+                        state.id = Uuid::new_v4().to_string();
+                        crate::persistence::save_portable_mod_state(&staged_final, &state)?;
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            "could not read cloned portable mod state at {}: {err}",
+                            portable_state.display()
+                        );
+                        fs::remove_file(portable_state)?;
+                    }
+                }
+            }
+            check_cancel(cancel)?;
+            fs::rename(&staged_final, &destination)?;
+            destination
+        }
+        ConflictChoice::Cancel => unreachable!(),
+    };
+
+    Ok(Some(actual_destination))
+}
+
+fn stage_candidate_payload(
+    source: &Path,
+    destination: &Path,
+    source_is_archive: bool,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    if source_is_archive {
+        move_or_copy_archive_candidate_cancelable(source, destination, cancel)
+    } else {
+        copy_dir_cancelable(source, destination, false, cancel)
+    }
+}
+
+fn next_available_name_across_roots(
+    primary: &Path,
+    alternate: Option<&Path>,
+    base_name: &str,
+) -> PathBuf {
+    let occupied = |name: &str| {
+        primary.join(name).exists()
+            || alternate
+                .is_some_and(|root| root.join(name).exists())
+    };
+    if !occupied(base_name) {
+        return primary.join(base_name);
+    }
+    let mut counter = 2;
+    loop {
+        let name = format!("{base_name} ({counter})");
+        if !occupied(&name) {
+            return primary.join(name);
+        }
+        counter += 1;
+    }
+}
+
+fn copy_entry_cancelable(source: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
+    check_cancel(cancel)?;
+    if source.is_dir() {
+        copy_dir_cancelable(source, destination, false, cancel)
+    } else {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        copy_file_with_parent_recovery(source, destination)?;
+        Ok(())
+    }
+}
+
+fn prepare_candidate_stage(
+    source: &Path,
+    destination: &Path,
+    backend: GameBackend,
+    status: &ModStatus,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    check_cancel(cancel)?;
+    fs::rename(source, destination)?;
+    if backend == GameBackend::Xxmi {
+        normalize_existing_xxmi_stage(destination, status, cancel)?;
+    }
+    check_cancel(cancel)?;
+    Ok(())
+}
+
+fn copy_candidate_into_xxmi_disabled_container(
+    source: &Path,
+    destination_root: &Path,
+    disabled_root: &Path,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    fs::create_dir_all(destination_root)?;
+    fs::create_dir_all(disabled_root)?;
+    for entry in fs::read_dir(source)? {
+        check_cancel(cancel)?;
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == OsStr::new(DISABLED_CONTAINER) && path.is_dir() {
+            copy_dir_cancelable(&path, disabled_root, false, cancel)?;
+        } else if name == OsStr::new(MOD_META_DIR) {
+            copy_entry_cancelable(&path, &destination_root.join(&name), cancel)?;
+        } else {
+            copy_entry_cancelable(&path, &disabled_root.join(&name), cancel)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_candidate_into_xxmi_active_root(
+    source: &Path,
+    destination_root: &Path,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    fs::create_dir_all(destination_root)?;
+    for entry in fs::read_dir(source)? {
+        check_cancel(cancel)?;
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == OsStr::new(DISABLED_CONTAINER) && path.is_dir() {
+            copy_dir_cancelable(&path, destination_root, false, cancel)?;
+        } else {
+            copy_entry_cancelable(&path, &destination_root.join(&name), cancel)?;
+        }
+    }
+    if destination_root.join(DISABLED_CONTAINER).exists() {
+        normalize_existing_xxmi_stage(destination_root, &ModStatus::Active, cancel)?;
+    }
+    Ok(())
+}
+
+fn normalize_existing_xxmi_stage(
+    root: &Path,
+    desired_status: &ModStatus,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    if *desired_status == ModStatus::Disabled {
+        let disabled_root = root.join(DISABLED_CONTAINER);
+        fs::create_dir_all(&disabled_root)?;
+        let entries = fs::read_dir(root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        for entry in entries {
+            check_cancel(cancel)?;
+            let path = entry.path();
+            let name = entry.file_name();
+            if name == OsStr::new(DISABLED_CONTAINER) || name == OsStr::new(MOD_META_DIR) {
+                continue;
+            }
+            move_entry_into(&path, &disabled_root.join(name), cancel)?;
+        }
+    } else {
+        let disabled_root = root.join(DISABLED_CONTAINER);
+        if disabled_root.is_dir() {
+            let entries = fs::read_dir(&disabled_root)
+                .and_then(|entries| entries.collect::<std::result::Result<Vec<_>, _>>())?;
+            for entry in entries {
+                check_cancel(cancel)?;
+                let path = entry.path();
+                let name = entry.file_name();
+                move_entry_into(&path, &root.join(name), cancel)?;
+            }
+            fs::remove_dir_all(disabled_root)?;
+        }
+    }
+    Ok(())
+}
+
+fn move_entry_into(source: &Path, destination: &Path, cancel: &CancelFlag) -> Result<()> {
+    check_cancel(cancel)?;
+    if destination.exists() {
+        if source.is_dir() && destination.is_dir() {
+            copy_dir_cancelable(source, destination, true, cancel)?;
+            fs::remove_dir_all(source)?;
+        } else {
+            fs::remove_dir_all(source).or_else(|_| fs::remove_file(source))?;
+        }
+    } else {
+        fs::rename(source, destination)?;
+    }
+    Ok(())
+}
+
+fn merge_candidate_stage(
+    source: &Path,
+    destination: &Path,
+    backend: GameBackend,
+    status: &ModStatus,
+    cancel: &CancelFlag,
+) -> Result<()> {
+    if backend == GameBackend::Xxmi && *status == ModStatus::Disabled {
+        let disabled_root = destination.join(DISABLED_CONTAINER);
+        fs::create_dir_all(&disabled_root)?;
+        copy_candidate_into_xxmi_disabled_container(
+            source,
+            destination,
+            &disabled_root,
+            cancel,
+        )?;
+    } else if backend == GameBackend::Xxmi && *status == ModStatus::Active {
+        normalize_existing_xxmi_stage(destination, &ModStatus::Active, cancel)?;
+        copy_candidate_into_xxmi_active_root(source, destination, cancel)?;
+    } else {
+        copy_dir_cancelable(source, destination, false, cancel)?;
+    }
+    Ok(())
+}
+
+fn atomic_publish_staged_dir(
+    staged: &Path,
+    destination: &Path,
+    existing: Option<&Path>,
+    preserved_stash: Option<Vec<u8>>,
+    preserved_state: Option<crate::model::PortableModState>,
+) -> Result<()> {
+    // Complete the replacement payload while it is still outside every scan root.  This keeps
+    // the portable identity and the saved XXMI settings visible atomically with the content.
+    crate::integrations::xxmi_persist::restore_stash_bytes(staged, &preserved_stash);
+    if let Some(state) = &preserved_state {
+        crate::persistence::save_portable_mod_state(staged, state).with_context(|| {
+            format!("could not preserve portable mod state at {}", staged.display())
+        })?;
+    }
+    let staging_parent = staged
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow!("staging directory has no external parent"))?;
+    let retired = existing.map(|_| {
+        let stage_name = staged
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(OsStr::to_str)
+            .unwrap_or("install");
+        staging_parent.join(format!(".hestia-retired-{stage_name}"))
+    });
+    if let Some(existing) = existing {
+        let retired = retired.as_ref().unwrap();
+        if retired.exists() {
+            let _ = fs::remove_dir_all(retired);
+        }
+        fs::rename(existing, retired).with_context(|| {
+            format!("could not move existing mod aside: {}", existing.display())
+        })?;
+        if let Err(err) = fs::rename(staged, destination) {
+            if let Err(rollback_err) = fs::rename(retired, existing) {
+                tracing::error!(
+                    "could not roll back replaced mod {} after publish failure: {rollback_err}",
+                    existing.display()
+                );
+            }
+            return Err(err.into());
+        }
+        dispose_replaced_install_path(retired);
+    } else {
+        fs::rename(staged, destination)?;
+    }
+    Ok(())
+}
+
+fn read_portable_state(root: &Path) -> Option<crate::model::PortableModState> {
+    match crate::persistence::load_portable_mod_state(root) {
+        Ok(state) => state,
+        Err(err) => {
+            tracing::warn!(
+                "could not read portable mod state from {}: {err}",
+                root.display()
+            );
+            None
+        }
+    }
+}
+
+fn dispose_replaced_install_path(retired: &Path) {
+    if crate::integrations::xxmi::recycle_path(retired).is_ok() {
+        return;
+    }
+    if let Err(err) = fs::remove_dir_all(retired) {
+        tracing::warn!(
+            "replaced mod folder left behind at {}: {err}",
+            retired.display()
+        );
+    }
 }
 
 /// How deep below the mod root a named preview file is still considered part of
@@ -1972,5 +2460,256 @@ mod tests {
             fs::read_to_string(installed.join("mod.ini")).unwrap(),
             "demo"
         );
+    }
+
+    #[test]
+    fn disabled_xxmi_publish_wraps_normal_and_already_disabled_candidates() {
+        let temp = tempfile::tempdir().unwrap();
+        let target_root = temp.path().join("mods");
+        let normal = temp.path().join("normal");
+        let already_disabled = temp.path().join("already-disabled");
+        fs::create_dir_all(&normal).unwrap();
+        fs::write(normal.join("mod.ini"), "normal").unwrap();
+        fs::create_dir_all(already_disabled.join(DISABLED_CONTAINER)).unwrap();
+        fs::write(
+            already_disabled.join(DISABLED_CONTAINER).join("mod.ini"),
+            "disabled",
+        )
+        .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let first = install_candidate_with_state_cancelable(
+            &normal,
+            "Disabled Mod",
+            &target_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!first.join("mod.ini").exists());
+        assert_eq!(
+            fs::read_to_string(first.join(DISABLED_CONTAINER).join("mod.ini")).unwrap(),
+            "normal"
+        );
+
+        let second = install_candidate_with_state_cancelable(
+            &already_disabled,
+            "Already Disabled",
+            &target_root,
+            None,
+            ConflictChoice::Replace,
+            true,
+            GameBackend::Xxmi,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!second.join(DISABLED_CONTAINER).join(DISABLED_CONTAINER).exists());
+        assert_eq!(
+            fs::read_to_string(second.join(DISABLED_CONTAINER).join("mod.ini")).unwrap(),
+            "disabled"
+        );
+
+        let merge_source = temp.path().join("merge-source");
+        fs::create_dir_all(&merge_source).unwrap();
+        fs::write(merge_source.join("extra.ini"), "merged").unwrap();
+        let merged = install_candidate_with_state_cancelable(
+            &merge_source,
+            "Disabled Mod",
+            &target_root,
+            None,
+            ConflictChoice::Merge,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(merged.join(DISABLED_CONTAINER).join("extra.ini")).unwrap(),
+            "merged"
+        );
+        assert!(!merged.join("extra.ini").exists());
+    }
+
+    #[test]
+    fn disabled_unreal_publish_uses_disabled_root_and_keep_both_checks_peer_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let active_root = temp.path().join("Paks");
+        let disabled_root = temp.path().join("~mods-disabledByHestia");
+        let source = temp.path().join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("mod.pak"), "pak").unwrap();
+        fs::create_dir_all(source.join(MOD_META_DIR)).unwrap();
+        let mut source_state = crate::model::PortableModState {
+            id: "source-id".to_string(),
+            metadata: Default::default(),
+            source: None,
+            unsafe_content: false,
+            unsafe_content_auto: None,
+            unsafe_content_preference: Default::default(),
+            created_at: None,
+            updated_at: None,
+        };
+        source_state.metadata.user.title = Some("Imported title".to_string());
+        fs::write(
+            source.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+            serde_json::to_vec(&source_state).unwrap(),
+        )
+        .unwrap();
+        fs::create_dir_all(active_root.join("My Mod")).unwrap();
+        fs::write(active_root.join("My Mod").join("active.pak"), "active").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let installed = install_candidate_with_state_cancelable(
+            &source,
+            "My Mod",
+            &active_root,
+            Some(&disabled_root),
+            ConflictChoice::KeepBoth,
+            false,
+            GameBackend::UnrealEngine,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(installed, disabled_root.join("My Mod (2)"));
+        assert!(!active_root.join("My Mod (2)").exists());
+        assert!(installed.join("mod.pak").exists());
+        let cloned_state = crate::persistence::load_portable_mod_state(&installed)
+            .unwrap()
+            .unwrap();
+        assert_ne!(cloned_state.id, source_state.id);
+        assert_eq!(
+            cloned_state.metadata.user.title.as_deref(),
+            Some("Imported title")
+        );
+    }
+
+    #[test]
+    fn replace_preserves_xxmi_stash_and_cancellation_leaves_target_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let target_root = temp.path().join("mods");
+        let existing = target_root.join("Mod");
+        let source = temp.path().join("source");
+        fs::create_dir_all(existing.join(MOD_META_DIR)).unwrap();
+        fs::write(existing.join("old.ini"), "old").unwrap();
+        fs::write(existing.join(MOD_META_DIR).join("mod.cfg"), "stash").unwrap();
+        let old_state = crate::model::PortableModState {
+            id: "preserved-id".to_string(),
+            metadata: Default::default(),
+            source: None,
+            unsafe_content: false,
+            unsafe_content_auto: None,
+            unsafe_content_preference: Default::default(),
+            created_at: None,
+            updated_at: None,
+        };
+        fs::write(
+            existing.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+            serde_json::to_vec(&old_state).unwrap(),
+        )
+        .unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("new.ini"), "new").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let installed = install_candidate_with_state_cancelable(
+            &source,
+            "Mod",
+            &target_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(fs::read_to_string(installed.join("new.ini")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(installed.join(MOD_META_DIR).join("mod.cfg")).unwrap(),
+            "stash"
+        );
+        assert_eq!(
+            crate::persistence::load_portable_mod_state(&installed)
+                .unwrap()
+                .unwrap()
+                .id,
+            "preserved-id"
+        );
+        assert!(!installed.join("old.ini").exists());
+
+        cancel.store(true, Ordering::Relaxed);
+        let err = install_candidate_with_state_cancelable(
+            &source,
+            "Mod",
+            &target_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), CANCELLED_ERROR);
+        assert_eq!(fs::read_to_string(installed.join("new.ini")).unwrap(), "new");
+    }
+
+    #[test]
+    fn atomic_publish_rolls_back_when_destination_is_a_blocking_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("active").join("Old Mod");
+        let destination = temp.path().join("disabled").join("New Mod");
+        fs::create_dir_all(existing.join("nested")).unwrap();
+        fs::write(existing.join("nested").join("old.ini"), b"old payload").unwrap();
+        // Windows can replace a regular file when renaming a directory over it;
+        // a non-empty destination directory gives the same blocking condition
+        // while keeping the regular file as an observable invariant.
+        fs::create_dir_all(destination.join("blocking")).unwrap();
+        let blocking_file = destination.join("blocking").join("file.txt");
+        fs::write(&blocking_file, b"blocking file").unwrap();
+
+        let result;
+        {
+            let stage = tempfile::Builder::new()
+                .prefix(".hestia-test-stage-")
+                .tempdir_in(temp.path())
+                .unwrap();
+            let staged = stage.path().join("final");
+            fs::create_dir_all(&staged).unwrap();
+            fs::write(staged.join("new.ini"), b"new payload").unwrap();
+            result = atomic_publish_staged_dir(
+                &staged,
+                &destination,
+                Some(&existing),
+                None,
+                None,
+            );
+            assert!(result.is_err());
+            assert!(existing.join("nested").join("old.ini").is_file());
+            assert_eq!(
+                fs::read(existing.join("nested").join("old.ini")).unwrap(),
+                b"old payload"
+            );
+            assert_eq!(fs::read(&blocking_file).unwrap(), b"blocking file");
+        }
+
+        assert!(existing.join("nested").join("old.ini").is_file());
+        assert!(!temp
+            .path()
+            .read_dir()
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".hestia-retired-")));
     }
 }

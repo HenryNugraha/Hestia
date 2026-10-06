@@ -707,7 +707,14 @@ struct PendingInstallFinalize {
     rel_paths: Vec<String>,
     pending_meta: Option<PendingBrowseInstallMeta>,
     pending_unsafe: bool,
-    install_disabled: bool,
+    /// Requested state captured when this job was queued.  It must not be
+    /// reread from preferences after a queued install starts.
+    install_state: ModInstallState,
+    preserve_existing_state: bool,
+    /// Existing states captured before Replace/Merge, keyed by both possible
+    /// active/disabled output roots so refresh can restore a replacement
+    /// without publishing it active during the filesystem swap.
+    preserved_states: Vec<(PathBuf, ModStatus)>,
     /// Category folder the user was drilled into when the install was queued.
     /// Applied to the new mod(s) only for external installs (no GameBanana
     /// listing to derive a category from). See `finalize_install_after_refresh`.
@@ -721,7 +728,11 @@ struct InstallJob {
     source: ImportSource,
     title: Option<String>,
     reuse_existing_task: bool,
-    install_disabled: bool,
+    install_state: ModInstallState,
+    /// Normal Replace/Merge and update installs preserve an existing target's
+    /// state.  Explicit Enable/Disable requests set this to false.
+    preserve_existing_state: bool,
+    preserved_states: Vec<(PathBuf, ModStatus)>,
     /// Open category folder captured at enqueue time; see `target_category_id`
     /// on `PendingInstallFinalize`.
     category_id: Option<String>,
@@ -847,7 +858,8 @@ struct PendingBrowseInstall {
     mod_id: u64,
     game_id: String,
     update_target_id: Option<String>,
-    install_disabled: bool,
+    install_state: ModInstallState,
+    preserve_existing_state: bool,
 }
 
 #[derive(Clone)]
@@ -858,7 +870,8 @@ struct PendingBrowseInstallMeta {
     update_folder_name: Option<String>,
     update_target_mod_id: Option<String>,
     update_target_was_disabled: bool,
-    install_disabled: bool,
+    install_state: ModInstallState,
+    preserve_existing_state: bool,
     post_install_rename_to: Option<String>,
 }
 
@@ -886,7 +899,8 @@ struct BrowseFilePrompt {
     update_folder_name: Option<String>,
     update_target_mod_id: Option<String>,
     post_install_rename_to: Option<String>,
-    install_disabled: bool,
+    install_state: ModInstallState,
+    preserve_existing_state: bool,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -1294,9 +1308,18 @@ enum InstallRequest {
     Install {
         job_id: u64,
         candidate_indices: Vec<usize>,
+        /// Initial on-disk status for each selected candidate.  Auto requests
+        /// are always Disabled here; their final state is resolved after the
+        /// refresh once category assignment and successful installs are known.
+        candidate_install_states: Vec<ModStatus>,
         preferred_names: Vec<String>,
         choice: ConflictChoice,
         target_root: PathBuf,
+        game_backend: GameBackend,
+        /// Root used by the worker when it must publish a disabled candidate
+        /// before the library refresh.  `None` means no disabled publication
+        /// is necessary for this request.
+        disabled_target_root: Option<PathBuf>,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
     },
     SyncImages {

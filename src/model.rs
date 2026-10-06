@@ -171,6 +171,11 @@ pub struct StaticPreferences {
     pub tool_launch_behavior: LaunchBehavior,
     #[serde(default)]
     pub after_install_behavior: AfterInstallBehavior,
+    /// The state assigned to a mod when an install finishes.  `Auto` keeps
+    /// the first mod in a category active and stages every other new mod
+    /// disabled until the category has been refreshed.
+    #[serde(default)]
+    pub mod_install_state: ModInstallState,
     #[serde(default)]
     pub unsafe_content_mode: UnsafeContentMode,
     #[serde(default)]
@@ -271,27 +276,32 @@ pub struct StaticPreferences {
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
-/// Keep the library organized by categories while allowing Folders and List layouts.
-///
-/// Status/None grouping preferences and rendering paths remain available internally
-/// for a future restoration. Category layout always honors the saved preference.
-pub const ENFORCE_CATEGORY_GROUPING: bool = true;
+/// Expose the three explicit library views instead of the legacy grouping selector.
+/// The legacy grouping preference remains serialized for compatibility, but does not
+/// override the saved view.
+pub const HIDE_LEGACY_LIBRARY_GROUPING: bool = true;
 
 impl StaticPreferences {
-    /// Effective library grouping used by all rendering and sorting. While the category
-    /// grouping is enforced this is always `Category`; otherwise it is the user's
-    /// stored [`library_group_mode`](Self::library_group_mode).
+    /// Derive grouping from the saved view so folders can never be grouped by status.
     pub fn effective_library_group_mode(&self) -> LibraryGroupMode {
-        if ENFORCE_CATEGORY_GROUPING {
-            LibraryGroupMode::Category
-        } else {
-            self.library_group_mode
+        match self.library_category_display_mode {
+            LibraryCategoryDisplayMode::Folders | LibraryCategoryDisplayMode::GroupedSections => {
+                LibraryGroupMode::Category
+            }
+            LibraryCategoryDisplayMode::StatusSections => LibraryGroupMode::Status,
         }
     }
 
     /// Effective category layout used by all rendering, honoring the saved preference.
     pub fn effective_library_category_display_mode(&self) -> LibraryCategoryDisplayMode {
         self.library_category_display_mode
+    }
+
+    /// Category order controls section order, or optional category-first sorting
+    /// within each status section.
+    pub fn library_category_order_applies(&self) -> bool {
+        self.effective_library_group_mode() == LibraryGroupMode::Category
+            || self.library_sort_category_first
     }
 }
 
@@ -310,6 +320,7 @@ impl Default for StaticPreferences {
             launch_behavior: LaunchBehavior::default(),
             tool_launch_behavior: LaunchBehavior::default(),
             after_install_behavior: AfterInstallBehavior::default(),
+            mod_install_state: ModInstallState::default(),
             unsafe_content_mode: UnsafeContentMode::default(),
             cache_size_tier: CacheSizeTier::default(),
             renderer: RendererPreference::default(),
@@ -1546,9 +1557,11 @@ pub enum LibraryGroupMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum LibraryCategoryDisplayMode {
+    /// Preserve the serialized value used by the original category List view.
     GroupedSections,
     #[default]
     Folders,
+    StatusSections,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -1787,6 +1800,48 @@ pub enum AfterInstallBehavior {
     DoNothing,
     AddToSelection,
     OpenModDetail,
+}
+
+/// The requested state for a newly installed mod.
+///
+/// `Auto` is deliberately the persisted default.  It is resolved only after
+/// the destination category is known, so a batch can stage every candidate
+/// safely and enable one successful candidate after the refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModInstallState {
+    Enabled,
+    Disabled,
+    Auto,
+}
+
+impl Default for ModInstallState {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl ModInstallState {
+    /// Status written by the installer before the library refresh.  Auto is
+    /// intentionally staged disabled and resolved only after categorization.
+    pub fn staged_status(self) -> ModStatus {
+        match self {
+            Self::Enabled => ModStatus::Active,
+            Self::Disabled | Self::Auto => ModStatus::Disabled,
+        }
+    }
+
+    /// Resolve Auto's category policy after the destination is known.
+    pub fn resolve_auto(
+        category_id: Option<&str>,
+        category_has_active: bool,
+        first_candidate: bool,
+    ) -> ModStatus {
+        if category_id.is_none() || category_has_active || !first_candidate {
+            ModStatus::Disabled
+        } else {
+            ModStatus::Active
+        }
+    }
 }
 
 impl Default for AfterInstallBehavior {
@@ -2243,12 +2298,32 @@ pub struct BrowseDownloadTaskPayload {
     pub update_folder_name: Option<String>,
     #[serde(default)]
     pub update_target_mod_id: Option<String>,
+    /// The requested install state.  Old task records only have
+    /// `install_disabled`; that field is retained as an optional compatibility
+    /// shim and is converted by `effective_install_state`.
     #[serde(default)]
-    pub install_disabled: bool,
+    pub install_state: ModInstallState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_disabled: Option<bool>,
+    #[serde(default)]
+    pub preserve_existing_state: bool,
     #[serde(default)]
     pub post_install_rename_to: Option<String>,
     #[serde(default)]
     pub profile_json: Option<String>,
+}
+
+impl BrowseDownloadTaskPayload {
+    /// Resolve task records written before `ModInstallState` existed.  Those
+    /// records represented an explicit choice, so `false` means Enabled and
+    /// `true` means Disabled rather than inheriting the new Auto default.
+    pub fn effective_install_state(&self) -> ModInstallState {
+        match self.install_disabled {
+            Some(true) => ModInstallState::Disabled,
+            Some(false) => ModInstallState::Enabled,
+            None => self.install_state,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3447,5 +3522,88 @@ mod custom_proxy_tests {
     fn disabled_proxy_does_not_require_an_endpoint() {
         let preferences = StaticPreferences::default();
         assert_eq!(CustomProxyConfig::from_preferences(&preferences), Ok(None));
+    }
+}
+
+#[cfg(test)]
+mod install_state_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn new_preferences_default_to_auto() {
+        let mut value = serde_json::to_value(StaticPreferences::default()).unwrap();
+        value
+            .as_object_mut()
+            .expect("preferences serialize as object")
+            .remove("mod_install_state");
+        let parsed: StaticPreferences = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.mod_install_state, ModInstallState::Auto);
+    }
+
+    #[test]
+    fn legacy_retry_flags_keep_their_explicit_meaning() {
+        let payload = |install_disabled| {
+            serde_json::from_value::<BrowseDownloadTaskPayload>(json!({
+                "game_id": "game",
+                "mod_id": 7,
+                "file": {
+                    "id": 3,
+                    "file_name": "mod.zip",
+                    "file_size": 1,
+                    "date_added": 0
+                },
+                "install_disabled": install_disabled
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            payload(false).effective_install_state(),
+            ModInstallState::Enabled
+        );
+        assert_eq!(
+            payload(true).effective_install_state(),
+            ModInstallState::Disabled
+        );
+    }
+
+    #[test]
+    fn missing_retry_state_uses_auto_and_stages_disabled() {
+        let payload: BrowseDownloadTaskPayload = serde_json::from_value(json!({
+            "game_id": "game",
+            "mod_id": 7,
+            "file": {
+                "id": 3,
+                "file_name": "mod.zip",
+                "file_size": 1,
+                "date_added": 0
+            }
+        }))
+        .unwrap();
+        assert_eq!(payload.effective_install_state(), ModInstallState::Auto);
+        assert_eq!(
+            payload.effective_install_state().staged_status(),
+            ModStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn auto_policy_handles_uncategorized_existing_and_first_candidates() {
+        assert_eq!(
+            ModInstallState::resolve_auto(None, false, true),
+            ModStatus::Disabled
+        );
+        assert_eq!(
+            ModInstallState::resolve_auto(Some("cat"), true, true),
+            ModStatus::Disabled
+        );
+        assert_eq!(
+            ModInstallState::resolve_auto(Some("cat"), false, false),
+            ModStatus::Disabled
+        );
+        assert_eq!(
+            ModInstallState::resolve_auto(Some("cat"), false, true),
+            ModStatus::Active
+        );
     }
 }

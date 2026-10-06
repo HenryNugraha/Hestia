@@ -85,7 +85,9 @@ fn update_candidate_files_from_signature(
             .then_with(|| a.file_name.cmp(&b.file_name))
             .then_with(|| a.id.cmp(&b.id))
     });
-    files.dedup_by(|a, b| a.id == b.id || (a.file_name == b.file_name && a.date_added == b.date_added));
+    files.dedup_by(|a, b| {
+        a.id == b.id || (a.file_name == b.file_name && a.date_added == b.date_added)
+    });
     files
 }
 
@@ -392,11 +394,7 @@ fn lineage_core_similarity(source_core: &str, candidate_core: &str) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-fn file_lineage_similarity(
-    source_name: &str,
-    candidate_name: &str,
-    common_prefix: &str,
-) -> f32 {
+fn file_lineage_similarity(source_name: &str, candidate_name: &str, common_prefix: &str) -> f32 {
     let source_core = lineage_match_core(source_name, common_prefix);
     let candidate_core = lineage_match_core(candidate_name, common_prefix);
     let distinctive_score = lineage_core_similarity(&source_core, &candidate_core);
@@ -525,10 +523,13 @@ fn compute_update_signature(
     file_set: &FileSetRecipe,
     profile: &gamebanana::ProfileResponse,
 ) -> Option<IgnoredUpdateSignature> {
-    evaluate_file_set_update_group(&[(selected_file_baseline_ts(file_set), file_set.clone())], profile)
-        .into_iter()
-        .next()
-        .and_then(|evaluation| evaluation.signature)
+    evaluate_file_set_update_group(
+        &[(selected_file_baseline_ts(file_set), file_set.clone())],
+        profile,
+    )
+    .into_iter()
+    .next()
+    .and_then(|evaluation| evaluation.signature)
 }
 
 fn profile_update_signature(
@@ -545,9 +546,7 @@ fn profile_update_signature(
         })
 }
 
-fn prearm_next_update_signature(
-    mut signature: IgnoredUpdateSignature,
-) -> IgnoredUpdateSignature {
+fn prearm_next_update_signature(mut signature: IgnoredUpdateSignature) -> IgnoredUpdateSignature {
     signature.prearmed_next_update = true;
     signature
 }
@@ -630,7 +629,12 @@ fn source_profile_for_compare(source: &ModSourceData) -> Option<gamebanana::Prof
         .raw_profile_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<gamebanana::ProfileResponse>(raw).ok())
-        .or_else(|| source.snapshot.as_ref().map(|snapshot| profile_to_response(Some(snapshot))))
+        .or_else(|| {
+            source
+                .snapshot
+                .as_ref()
+                .map(|snapshot| profile_to_response(Some(snapshot)))
+        })
 }
 
 fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
@@ -641,7 +645,11 @@ fn compute_raw_update_state(mod_entry: &ModEntry) -> Option<ModUpdateState> {
     } else {
         let local_sync_ts = selected_file_baseline_ts(&source.file_set)
             .or(profile.date_updated.or(Some(profile.date_modified)));
-        Some(determine_file_set_update_state(&source.file_set, local_sync_ts, &profile))
+        Some(determine_file_set_update_state(
+            &source.file_set,
+            local_sync_ts,
+            &profile,
+        ))
     }
 }
 
@@ -774,8 +782,9 @@ fn apply_ignored_update_override(
         source.ignored_update_signature = None;
         return ModUpdateState::IgnoringUpdateAlways;
     }
-    let current_signature =
-        profile.and_then(|profile| current_update_signature_for_state(&source.file_set, profile, raw_state));
+    let current_signature = profile.and_then(|profile| {
+        current_update_signature_for_state(&source.file_set, profile, raw_state)
+    });
     match raw_state {
         ModUpdateState::UpdateAvailable => {
             if let Some(current) = current_signature.as_ref() {
@@ -849,9 +858,14 @@ fn ignore_once_signature_for_mod(mod_entry: &ModEntry) -> Option<IgnoredUpdateSi
     let source = mod_entry.source.as_ref()?;
     let profile = source_profile_for_compare(source)?;
     let raw_state = if matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally) {
-            let local_sync_ts = selected_file_baseline_ts(&source.file_set)
-                .or_else(|| source.snapshot.as_ref().and_then(|snapshot| snapshot.update_ts))
-                .or_else(|| mod_entry.content_mtime.map(|t| t.timestamp()));
+        let local_sync_ts = selected_file_baseline_ts(&source.file_set)
+            .or_else(|| {
+                source
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.update_ts)
+            })
+            .or_else(|| mod_entry.content_mtime.map(|t| t.timestamp()));
         determine_file_set_update_state(&source.file_set, local_sync_ts, &profile)
     } else {
         mod_entry.update_state
@@ -872,7 +886,10 @@ fn determine_file_set_update_state(
         .unwrap_or(ModUpdateState::MissingSource)
 }
 
-fn backfill_selected_files_meta(file_set: &mut FileSetRecipe, profile: &gamebanana::ProfileResponse) -> bool {
+fn backfill_selected_files_meta(
+    file_set: &mut FileSetRecipe,
+    profile: &gamebanana::ProfileResponse,
+) -> bool {
     if !file_set.selected_files_meta.is_empty() || file_set.selected_file_ids.is_empty() {
         return false;
     }
@@ -918,7 +935,10 @@ fn backfill_tracked_file_labels(
     changed
 }
 
-fn determine_update_state(local_ts: Option<i64>, profile: &gamebanana::ProfileResponse) -> ModUpdateState {
+fn determine_update_state(
+    local_ts: Option<i64>,
+    profile: &gamebanana::ProfileResponse,
+) -> ModUpdateState {
     if gamebanana::is_unavailable(profile) {
         return ModUpdateState::MissingSource;
     }
@@ -943,8 +963,19 @@ fn profile_to_response(snapshot: Option<&GameBananaSnapshot>) -> gamebanana::Pro
             is_trashed: s.is_trashed,
             is_withheld: s.is_withheld,
             date_updated: s.update_ts,
-            category: s.category.as_ref().map(|category| gamebanana::SubmissionCategory { id: category.id, name: category.name.clone() }),
-            super_category: s.super_category_id.map(|id| gamebanana::SubmissionCategory { id, name: String::new() }),
+            category: s
+                .category
+                .as_ref()
+                .map(|category| gamebanana::SubmissionCategory {
+                    id: category.id,
+                    name: category.name.clone(),
+                }),
+            super_category: s
+                .super_category_id
+                .map(|id| gamebanana::SubmissionCategory {
+                    id,
+                    name: String::new(),
+                }),
             ..Default::default()
         })
         .unwrap_or_default()
@@ -986,7 +1017,13 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
         preview_urls: profile
             .preview_media
             .as_ref()
-            .map(|preview| preview.images.iter().map(gamebanana::full_image_url).collect())
+            .map(|preview| {
+                preview
+                    .images
+                    .iter()
+                    .map(gamebanana::full_image_url)
+                    .collect()
+            })
             .unwrap_or_default(),
         files,
         category: profile.category.as_ref().filter(|category| category.id != 0).map(|category| crate::model::GameBananaCategoryLink {
@@ -1071,7 +1108,11 @@ impl HestiaApp {
         self.queue_update_check_for_linked_mods_internal(target_game_id, true);
     }
 
-    fn queue_update_check_for_linked_mods_internal(&mut self, target_game_id: Option<&str>, force: bool) {
+    fn queue_update_check_for_linked_mods_internal(
+        &mut self,
+        target_game_id: Option<&str>,
+        force: bool,
+    ) {
         if self.update_check_inflight {
             self.pending_update_check_game = target_game_id.map(|id| id.to_string());
             return;
@@ -1312,8 +1353,11 @@ impl HestiaApp {
                             state
                         };
                         if !fetch_failed {
-                            mod_entry.update_state =
-                                apply_ignored_update_override(source, raw_state, profile.as_deref());
+                            mod_entry.update_state = apply_ignored_update_override(
+                                source,
+                                raw_state,
+                                profile.as_deref(),
+                            );
                         } else if has_local_changes {
                             mod_entry.update_state = ModUpdateState::ModifiedLocally;
                         }
@@ -1337,7 +1381,10 @@ impl HestiaApp {
                     let should_auto_apply = !fetch_failed
                         && auto_update_allowed
                         && !has_pending_update_finalization
-                        && Self::status_target_enabled(&mod_entry.status, self.state.static_prefs.auto_update_statuses)
+                        && Self::status_target_enabled(
+                            &mod_entry.status,
+                            self.state.static_prefs.auto_update_statuses,
+                        )
                         && !active_update_tasks.contains(&(
                             text.updating_task(
                                 mod_entry
@@ -1714,10 +1761,10 @@ impl HestiaApp {
                         if game.is_unreal_engine()
                             && game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir())
                         {
-                            game.mods_path_override = game
-                                .vanilla_exe_path_override
-                                .as_ref()
-                                .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                            game.mods_path_override =
+                                game.vanilla_exe_path_override.as_ref().and_then(|path| {
+                                    default_unreal_pak_mods_path_from_exe(&game.definition.id, path)
+                                });
                         }
                         if !game.enabled {
                             enabled_game_id = Some(game.definition.id.clone());
@@ -1769,10 +1816,11 @@ impl HestiaApp {
             .statuses
             .iter()
             .filter_map(|status| {
-                let path = status
-                    .selected_candidate
-                    .clone()
-                    .or_else(|| allow_fallback.then(|| status.candidates.first().cloned()).flatten())?;
+                let path = status.selected_candidate.clone().or_else(|| {
+                    allow_fallback
+                        .then(|| status.candidates.first().cloned())
+                        .flatten()
+                })?;
                 Some((status.kind.clone(), path))
             })
             .collect::<Vec<_>>();
@@ -1835,10 +1883,10 @@ impl HestiaApp {
                         if game.is_unreal_engine()
                             && game.mods_path_override.as_ref().is_none_or(|path| !path.is_dir())
                         {
-                            game.mods_path_override = game
-                                .vanilla_exe_path_override
-                                .as_ref()
-                                .and_then(|path| default_unreal_pak_mods_path_from_exe(&game.definition.id, path));
+                            game.mods_path_override =
+                                game.vanilla_exe_path_override.as_ref().and_then(|path| {
+                                    default_unreal_pak_mods_path_from_exe(&game.definition.id, path)
+                                });
                         }
                         if !game.enabled {
                             enabled_game_id = Some(game.definition.id.clone());
@@ -2012,6 +2060,8 @@ impl HestiaApp {
     fn resolve_pending_install_finalization_for_game(&mut self, game_id: &str) -> Vec<String> {
         let mut installed_mod_ids = Vec::new();
         let job_ids: Vec<u64> = self.pending_install_finalize.keys().copied().collect();
+        let mut job_ids = job_ids;
+        job_ids.sort_unstable();
         for job_id in job_ids {
             let Some(payload) = self.pending_install_finalize.get(&job_id).cloned() else {
                 continue;
@@ -2045,7 +2095,9 @@ impl HestiaApp {
             rel_paths,
             pending_meta,
             pending_unsafe,
-            install_disabled: local_install_disabled,
+            install_state: local_install_state,
+            preserve_existing_state,
+            preserved_states,
             target_category_id,
         } = payload;
         let post_install_rename = pending_meta
@@ -2101,190 +2153,12 @@ impl HestiaApp {
             }
         }
 
-        let install_disabled = pending_meta
-            .as_ref()
-            .is_some_and(|meta| meta.install_disabled)
-            || local_install_disabled;
-        if install_disabled {
-            for mod_id in &newly_installed_ids {
-                let game = self
-                    .state
-                    .mods
-                    .iter()
-                    .find(|m| m.id == *mod_id)
-                    .and_then(|m| {
-                        self.state
-                            .games
-                            .iter()
-                            .find(|game| game.definition.id == m.game_id)
-                            .cloned()
-                    });
-                let use_default = self.state.static_prefs.use_default_mods_path;
-                let (result, name) = if let Some(mod_entry) = self
-                    .state
-                    .mods
-                    .iter()
-                    .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
-                {
-                    let name = mod_entry.folder_name.clone();
-                    if self
-                        .mod_action_lock_reason(mod_entry, ModMutationKind::DisableActive)
-                        .is_some()
-                    {
-                        (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
-                    } else {
-                        let result = match game.as_ref().map(|game| game.definition.backend) {
-                            Some(GameBackend::Xxmi) => {
-                                let mut ptx = game
-                                    .as_ref()
-                                    .and_then(|game| self.begin_xxmi_persist_tx(game));
-                                let result = self
-                                    .state
-                                    .mods
-                                    .iter_mut()
-                                    .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
-                                    .map(|mod_entry| {
-                                        Self::persisted_xxmi_disable(&mut ptx, mod_entry)
-                                    })
-                                    .unwrap_or_else(|| Err(anyhow!("mod not found")));
-                                if let Some(game) = game.clone() {
-                                    let request_reload =
-                                        result.is_ok().then_some(ReloadHotkeyTrigger::UpdatingMods);
-                                    self.finish_xxmi_persist_tx(&game, ptx, request_reload);
-                                }
-                                result
-                            }
-                            Some(GameBackend::UnrealEngine) => self
-                                .state
-                                .mods
-                                .iter_mut()
-                                .find(|m| m.id == *mod_id && m.status == ModStatus::Active)
-                                .map(|mod_entry| {
-                                    unrealengine::disable_mod(
-                                        mod_entry,
-                                        game.as_ref().expect("game checked"),
-                                        use_default,
-                                    )
-                                })
-                                .unwrap_or_else(|| Err(anyhow!("mod not found"))),
-                            None => Err(anyhow!("game not found")),
-                        };
-                        (Some(result), Some(name))
-                    }
-                } else {
-                    (None, None)
-                };
-                if let (Some(Err(err)), Some(name)) = (result, name) {
-                    let toast = self.mod_action_error_toast(
-                        &err,
-                        self.text().could_not_disable_installed_mod(),
-                    );
-                    self.report_error_message(
-                        format!("installed mod could not be disabled for {name}: {err:#}"),
-                        Some(toast),
-                    );
-                }
-            }
-        } else if pending_meta
-            .as_ref()
-            .is_some_and(|meta| meta.update_target_was_disabled)
-        {
-            if let Some(target_mod_id) = pending_meta
-                .as_ref()
-                .and_then(|meta| meta.update_target_mod_id.as_deref())
-            {
-                let game = self
-                    .state
-                    .mods
-                    .iter()
-                    .find(|m| m.id == target_mod_id)
-                    .and_then(|m| {
-                        self.state
-                            .games
-                            .iter()
-                            .find(|game| game.definition.id == m.game_id)
-                            .cloned()
-                    });
-                let use_default = self.state.static_prefs.use_default_mods_path;
-                let (result, name) = if newly_installed_ids.iter().any(|id| id == target_mod_id) {
-                    if let Some(mod_entry) = self
-                        .state
-                        .mods
-                        .iter()
-                        .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
-                    {
-                        let name = mod_entry.folder_name.clone();
-                        if self
-                            .mod_action_lock_reason(mod_entry, ModMutationKind::DisableActive)
-                            .is_some()
-                        {
-                            (Some(Err(anyhow!(self.text().mods_locked_probably_by_game()))), Some(name))
-                        } else {
-                            let result = match game.as_ref().map(|game| game.definition.backend) {
-                                Some(GameBackend::Xxmi) => {
-                                    let mut ptx = game
-                                        .as_ref()
-                                        .and_then(|game| self.begin_xxmi_persist_tx(game));
-                                    let result = self
-                                        .state
-                                        .mods
-                                        .iter_mut()
-                                        .find(|m| {
-                                            m.id == target_mod_id && m.status == ModStatus::Active
-                                        })
-                                        .map(|mod_entry| {
-                                            Self::persisted_xxmi_disable(&mut ptx, mod_entry)
-                                        })
-                                        .unwrap_or_else(|| Err(anyhow!("mod not found")));
-                                    if let Some(game) = game.clone() {
-                                        let request_reload = result
-                                            .is_ok()
-                                            .then_some(ReloadHotkeyTrigger::UpdatingMods);
-                                        self.finish_xxmi_persist_tx(&game, ptx, request_reload);
-                                    }
-                                    result
-                                }
-                                Some(GameBackend::UnrealEngine) => self
-                                    .state
-                                    .mods
-                                    .iter_mut()
-                                    .find(|m| m.id == target_mod_id && m.status == ModStatus::Active)
-                                    .map(|mod_entry| {
-                                        unrealengine::disable_mod(
-                                            mod_entry,
-                                            game.as_ref().expect("game checked"),
-                                            use_default,
-                                        )
-                                    })
-                                    .unwrap_or_else(|| Err(anyhow!("mod not found"))),
-                                None => Err(anyhow!("game not found")),
-                            };
-                            (Some(result), Some(name))
-                        }
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                };
-                if let (Some(Err(err)), Some(name)) = (result, name) {
-                    let toast = self.mod_action_error_toast(
-                        &err,
-                        self.text().could_not_keep_mod_disabled(),
-                    );
-                    self.report_error_message(
-                        format!("updated mod could not be kept disabled for {name}: {err:#}"),
-                        Some(toast),
-                    );
-                }
-            }
-        }
-
+        // The publish worker stages the requested state atomically. Final state is resolved after
+        // category assignment below; no second disable pass can transiently mutate a replacement.
         // An external install (no Browse metadata, no GameBanana profile) may
         // ship its own preview image; adopt it as the initial mod image the
-        // same way a manually supplied one lands. This runs after the
-        // install-disabled handling above so the scan sees the files in their
-        // final place, DISABLED_BY_HESTIA included.
+        // same way a manually supplied one lands. The scan sees the files in
+        // their final place, including DISABLED_BY_HESTIA when applicable.
         if pending_meta.is_none() && gb_profile.is_none() {
             for id in &newly_installed_ids {
                 self.enqueue_adopt_bundled_preview_images(id);
@@ -2338,6 +2212,78 @@ impl HestiaApp {
             }) {
                 for id in &newly_installed_ids {
                     self.assign_mod_category(id, Some(category_id.clone()));
+                }
+            }
+        }
+
+        // The worker publishes Auto candidates disabled.  Resolve their final
+        // state only after the refresh has assigned categories. Auto candidates
+        // are still disabled here, so only pre-existing or successfully enabled
+        // peers count and one candidate can claim an otherwise empty category.
+        let preserved_status_for = |mod_entry: &ModEntry| {
+            preserved_states.iter().find_map(|(path, status)| {
+                Self::install_path_matches_mod_root(path, &mod_entry.root_path)
+                    .then_some(status.clone())
+            })
+        };
+        let preserve_state = preserve_existing_state
+            || pending_meta
+                .as_ref()
+                .is_some_and(|meta| meta.preserve_existing_state);
+        let mut auto_category_claims = HashSet::new();
+        for mod_id in &newly_installed_ids {
+            let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == *mod_id).cloned() else {
+                continue;
+            };
+            let desired = if preserve_state {
+                preserved_status_for(&mod_entry)
+            } else {
+                None
+            }
+            .or_else(|| match local_install_state {
+                ModInstallState::Enabled => Some(ModStatus::Active),
+                ModInstallState::Disabled => Some(ModStatus::Disabled),
+                ModInstallState::Auto => {
+                    if pending_meta
+                        .as_ref()
+                        .is_some_and(|meta| meta.update_target_mod_id.as_deref() == Some(mod_id))
+                    {
+                        return Some(
+                            if pending_meta
+                                .as_ref()
+                                .is_some_and(|meta| meta.update_target_was_disabled)
+                            {
+                                ModStatus::Disabled
+                            } else {
+                                ModStatus::Active
+                            },
+                        );
+                    }
+                    let desired = auto_install_status(
+                        &self.state.categories,
+                        &mod_entry,
+                        &self.state.mods,
+                        &auto_category_claims,
+                    );
+                    Some(desired)
+                }
+            });
+            if desired != Some(ModStatus::Active) {
+                continue;
+            }
+            if mod_entry.status == ModStatus::Disabled {
+                self.enable_or_restore_mod_by_id(&mod_entry.id);
+            }
+            if local_install_state == ModInstallState::Auto {
+                if let Some(category_id) = effective_category_id(&self.state.categories, &mod_entry)
+                    && self
+                        .state
+                        .mods
+                        .iter()
+                        .find(|entry| entry.id == mod_entry.id)
+                        .is_some_and(|entry| entry.status == ModStatus::Active)
+                {
+                    auto_category_claims.insert(category_id.to_string());
                 }
             }
         }
@@ -2470,12 +2416,9 @@ impl HestiaApp {
             return;
         }
 
-        let Some(mod_index) = self
-            .state
-            .mods
-            .iter()
-            .position(|mod_entry| mod_entry.id == mod_entry_id && mod_entry.game_id == meta.game_id)
-        else {
+        let Some(mod_index) = self.state.mods.iter().position(|mod_entry| {
+            mod_entry.id == mod_entry_id && mod_entry.game_id == meta.game_id
+        }) else {
             return;
         };
         let mod_name = self.state.mods[mod_index]
@@ -2535,7 +2478,10 @@ impl HestiaApp {
                 gamebanana_character: None,
             });
             let text = self.text();
-            self.log_action(text.category_action(), &text.category_created(&category_name));
+            self.log_action(
+                text.category_action(),
+                &text.category_created(&category_name),
+            );
             (category_id, category_name)
         };
 
@@ -2558,13 +2504,16 @@ impl HestiaApp {
         pending_meta: Option<&PendingBrowseInstallMeta>,
         gb_profile: Option<&gamebanana::ProfileResponse>,
     ) {
-        let Some(meta) = pending_meta else { return; };
-        let Some(target_mod_id) = meta.update_target_mod_id.as_deref() else { return; };
-        let Some(mod_entry) = self
-            .state
-            .mods
-            .iter_mut()
-            .find(|mod_entry| mod_entry.id == target_mod_id && mod_entry.game_id == meta.game_id)
+        let Some(meta) = pending_meta else {
+            return;
+        };
+        let Some(target_mod_id) = meta.update_target_mod_id.as_deref() else {
+            return;
+        };
+        let Some(mod_entry) =
+            self.state.mods.iter_mut().find(|mod_entry| {
+                mod_entry.id == target_mod_id && mod_entry.game_id == meta.game_id
+            })
         else {
             return;
         };
@@ -2658,15 +2607,25 @@ impl HestiaApp {
             } else {
                 profile_to_response(source.snapshot.as_ref())
             };
-            let local_sync_ts = selected_file_baseline_ts(&source.file_set)
-                .or(profile_compare.date_updated.or(Some(profile_compare.date_modified)));
-            let raw_state = determine_file_set_update_state(&source.file_set, local_sync_ts, &profile_compare);
-            mod_entry.update_state =
-                apply_ignored_update_override(source, raw_state, gb_profile.as_deref().or(Some(&profile_compare)));
+            let local_sync_ts = selected_file_baseline_ts(&source.file_set).or(profile_compare
+                .date_updated
+                .or(Some(profile_compare.date_modified)));
+            let raw_state =
+                determine_file_set_update_state(&source.file_set, local_sync_ts, &profile_compare);
+            mod_entry.update_state = apply_ignored_update_override(
+                source,
+                raw_state,
+                gb_profile.as_deref().or(Some(&profile_compare)),
+            );
             mod_entry.unsafe_content_auto = gb_profile
                 .as_ref()
                 .map(|p| !p.content_ratings.is_empty())
-                .or_else(|| source.snapshot.as_ref().map(|snapshot| snapshot.unsafe_content))
+                .or_else(|| {
+                    source
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.unsafe_content)
+                })
                 .unwrap_or(mod_entry.unsafe_content_auto);
             mod_entry.unsafe_content = mod_entry
                 .unsafe_content_preference
@@ -2688,15 +2647,20 @@ impl HestiaApp {
 
     fn backfill_missing_mod_images(&mut self, target_game_id: Option<&str>) {
         if let Some(id) = self.selected_mod_id.clone() {
-            let needs_sync = self.state.mods.iter().find(|m| m.id == id).map_or(false, |m| {
-                if let Some(game_id) = target_game_id {
-                    if m.game_id != game_id {
-                        return false;
+            let needs_sync = self
+                .state
+                .mods
+                .iter()
+                .find(|m| m.id == id)
+                .map_or(false, |m| {
+                    if let Some(game_id) = target_game_id {
+                        if m.game_id != game_id {
+                            return false;
+                        }
                     }
-                }
-                m.source.as_ref().is_some_and(|s| s.gamebanana.is_some())
-                    && m.metadata.user.screenshots.is_empty()
-            });
+                    m.source.as_ref().is_some_and(|s| s.gamebanana.is_some())
+                        && m.metadata.user.screenshots.is_empty()
+                });
 
             if needs_sync {
                 self.enqueue_mod_image_sync(&id);
@@ -2849,7 +2813,11 @@ impl HestiaApp {
             mod_id,
             game_id,
             update_target_id: Some(mod_entry_id.to_string()),
-            install_disabled: false,
+            // Updates preserve the target state during finalization; staging
+            // is still disabled so a failed refresh can never expose a new
+            // active tree prematurely.
+            install_state: ModInstallState::Auto,
+            preserve_existing_state: true,
         });
         true
     }
@@ -2884,7 +2852,29 @@ impl HestiaApp {
             self.cancel_task(task_id);
         }
     }
+}
 
+/// Resolve the Auto policy for one candidate after refresh has hydrated its
+/// category. `mods` includes candidates from this and other ready jobs; the
+/// caller's `claims` set records a successful enable whose status may not yet
+/// be visible to a subsequent decision in the same frame.
+fn auto_install_status(
+    categories: &[ModCategory],
+    candidate: &ModEntry,
+    mods: &[ModEntry],
+    claims: &HashSet<String>,
+) -> ModStatus {
+    let category_id = effective_category_id(categories, candidate);
+    let category_has_active = category_id.is_some_and(|category_id| {
+        mods.iter().any(|other| {
+            other.id != candidate.id
+                && other.game_id == candidate.game_id
+                && effective_category_id(categories, other) == Some(category_id)
+                && other.status == ModStatus::Active
+        })
+    });
+    let first_candidate = category_id.is_some_and(|category_id| !claims.contains(category_id));
+    ModInstallState::resolve_auto(category_id, category_has_active, first_candidate)
 }
 
 /// The category a mod from GameBanana category `name` (id `remote_id`) goes
@@ -3006,6 +2996,85 @@ mod download_category_tests {
         }
     }
 
+    #[test]
+    fn auto_install_uncategorized_candidate_stays_disabled() {
+        let mut candidate = mod_from("new", "cat", None);
+        candidate.metadata.user.category_id = None;
+        assert_eq!(
+            auto_install_status(&[category("cat", "Outfits")], &candidate, &[candidate.clone()], &HashSet::new()),
+            ModStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn auto_install_sees_active_peer_in_the_same_category() {
+        let candidate = mod_from("new", "cat", None);
+        let mut peer = mod_from("peer", "cat", None);
+        peer.status = ModStatus::Active;
+        assert_eq!(
+            auto_install_status(
+                &[category("cat", "Outfits")],
+                &candidate,
+                &[candidate.clone(), peer],
+                &HashSet::new(),
+            ),
+            ModStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn auto_install_resolves_legacy_category_names() {
+        let mut candidate = mod_from("new", "cat", None);
+        candidate.metadata.user.category_id = None;
+        candidate.metadata.user.category = "Outfits".to_owned();
+        assert_eq!(
+            auto_install_status(
+                &[category("cat", "Outfits")],
+                &candidate,
+                &[candidate.clone()],
+                &HashSet::new(),
+            ),
+            ModStatus::Active
+        );
+    }
+
+    #[test]
+    fn auto_install_active_replacement_blocks_new_sibling() {
+        let mut replacement = mod_from("replacement", "cat", None);
+        replacement.status = ModStatus::Active;
+        let candidate = mod_from("new", "cat", None);
+        assert_eq!(
+            auto_install_status(
+                &[category("cat", "Outfits")],
+                &candidate,
+                &[replacement, candidate.clone()],
+                &HashSet::new(),
+            ),
+            ModStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn auto_install_enables_first_successful_candidate_only() {
+        let first = mod_from("first", "cat", None);
+        let mut second = mod_from("second", "cat", None);
+        let categories = [category("cat", "Outfits")];
+        let mut mods = vec![first.clone(), second.clone()];
+        let mut claims = HashSet::new();
+        assert_eq!(
+            auto_install_status(&categories, &mods[0], &mods, &claims),
+            ModStatus::Active
+        );
+        // Mimic the backend's successful enable and the finalizer's claim.
+        mods[0].status = ModStatus::Active;
+        claims.insert("cat".to_owned());
+        second.status = ModStatus::Disabled;
+        assert_eq!(
+            auto_install_status(&categories, &mods[1], &mods, &claims),
+            ModStatus::Disabled
+        );
+    }
+
     /// Where a Tangtang mod goes, by category id.
     fn tangtang(categories: &[ModCategory], mods: &[ModEntry]) -> Option<String> {
         download_category(
@@ -3021,9 +3090,20 @@ mod download_category_tests {
 
     #[test]
     fn a_character_mod_finds_its_category_by_name() {
-        let both = [category("short", "tangtang"), category("full", "Operators: Tangtang")];
-        assert_eq!(tangtang(&both, &[]).as_deref(), Some("full"), "GameBanana's name first");
-        assert_eq!(tangtang(&both[..1], &[]).as_deref(), Some("short"), "then the short name");
+        let both = [
+            category("short", "tangtang"),
+            category("full", "Operators: Tangtang"),
+        ];
+        assert_eq!(
+            tangtang(&both, &[]).as_deref(),
+            Some("full"),
+            "GameBanana's name first"
+        );
+        assert_eq!(
+            tangtang(&both[..1], &[]).as_deref(),
+            Some("short"),
+            "then the short name"
+        );
 
         let mut other_game = category("short", "Tangtang");
         other_game.game_id = "zzz".to_owned();
@@ -3209,7 +3289,13 @@ mod update_signature_tests {
 
     #[test]
     fn update_signature_uses_legacy_selected_file_ids() {
-        let profile = profile(vec![mod_file(10, "old.zip", 100), mod_file(20, "old v2.zip", 200)], 200);
+        let profile = profile(
+            vec![
+                mod_file(10, "old.zip", 100),
+                mod_file(20, "old v2.zip", 200),
+            ],
+            200,
+        );
         let file_set = FileSetRecipe {
             selected_file_ids: vec![10],
             ..Default::default()
@@ -3340,7 +3426,12 @@ mod update_signature_tests {
         let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
         let hair_update = mod_file(2000001, "covencarlottahair v2.zip", 200);
         let profile = profile(
-            vec![body.clone(), hair.clone(), crystal.clone(), hair_update.clone()],
+            vec![
+                body.clone(),
+                hair.clone(),
+                crystal.clone(),
+                hair_update.clone(),
+            ],
             200,
         );
         let items = vec![
@@ -3389,7 +3480,12 @@ mod update_signature_tests {
         let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
         let hair_update = mod_file(2000001, "covencarlottanewhair.zip", 200);
         let profile = profile(
-            vec![body.clone(), hair.clone(), crystal.clone(), hair_update.clone()],
+            vec![
+                body.clone(),
+                hair.clone(),
+                crystal.clone(),
+                hair_update.clone(),
+            ],
             200,
         );
         let items = vec![
@@ -3438,7 +3534,12 @@ mod update_signature_tests {
         let crystal = mod_file(1357844, "covencarlottacrystalhair.zip", 100);
         let crystal_update = mod_file(2000001, "covencarlottacrystalhair FIX.zip", 200);
         let profile = profile(
-            vec![body.clone(), hair.clone(), crystal.clone(), crystal_update.clone()],
+            vec![
+                body.clone(),
+                hair.clone(),
+                crystal.clone(),
+                crystal_update.clone(),
+            ],
             200,
         );
         let items = vec![
@@ -3515,9 +3616,12 @@ mod update_signature_tests {
     #[test]
     fn update_signature_falls_back_to_profile_timestamp_for_update_available() {
         let profile = profile(Vec::new(), 200);
-        let signature =
-            current_update_signature_for_state(&FileSetRecipe::default(), &profile, ModUpdateState::UpdateAvailable)
-                .unwrap();
+        let signature = current_update_signature_for_state(
+            &FileSetRecipe::default(),
+            &profile,
+            ModUpdateState::UpdateAvailable,
+        )
+        .unwrap();
 
         assert!(signature.files.is_empty());
         assert_eq!(signature.profile_update_ts, Some(200));
@@ -3582,8 +3686,11 @@ mod update_signature_tests {
             ..Default::default()
         };
 
-        let state =
-            apply_ignored_update_override(&mut source, ModUpdateState::UpdateAvailable, Some(&update_profile));
+        let state = apply_ignored_update_override(
+            &mut source,
+            ModUpdateState::UpdateAvailable,
+            Some(&update_profile),
+        );
 
         let signature = source.ignored_update_signature.as_ref().unwrap();
         assert_eq!(state, ModUpdateState::IgnoringUpdateOnce);
@@ -3608,8 +3715,11 @@ mod update_signature_tests {
             ..Default::default()
         };
 
-        let state =
-            apply_ignored_update_override(&mut source, ModUpdateState::ModifiedLocally, Some(&update_profile));
+        let state = apply_ignored_update_override(
+            &mut source,
+            ModUpdateState::ModifiedLocally,
+            Some(&update_profile),
+        );
 
         let signature = source.ignored_update_signature.as_ref().unwrap();
         assert_eq!(state, ModUpdateState::ModifiedLocally);
@@ -3638,8 +3748,11 @@ mod update_signature_tests {
             ..Default::default()
         };
 
-        let state =
-            apply_ignored_update_override(&mut source, ModUpdateState::UpdateAvailable, Some(&update_profile));
+        let state = apply_ignored_update_override(
+            &mut source,
+            ModUpdateState::UpdateAvailable,
+            Some(&update_profile),
+        );
 
         assert_eq!(state, ModUpdateState::UpdateAvailable);
         assert!(source.ignored_update_signature.is_none());

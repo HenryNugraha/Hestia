@@ -113,7 +113,8 @@ impl HestiaApp {
                     unsafe_content,
                     None,
                     None,
-                    true,
+                    ModInstallState::Disabled,
+                    false,
                     None,
                 );
             }
@@ -224,7 +225,8 @@ impl HestiaApp {
             mod_id: request.mod_id,
             game_id: game_id.to_owned(),
             update_target_id: None,
-            install_disabled: true,
+            install_state: ModInstallState::Disabled,
+            preserve_existing_state: false,
         });
         self.set_message_ok(self.text().resolving_download(&request.name));
     }
@@ -314,8 +316,7 @@ impl HestiaApp {
             [candidate] => {
                 let preferred =
                     self.preferred_browse_folder_name(mod_name.as_deref(), &candidate.label);
-                let existing_target = target_root.join(&preferred);
-                if existing_target.exists() {
+                if let Some(existing_target) = self.existing_install_target(&game, &preferred) {
                     if let Some(install) = self
                         .game_overlay
                         .installs

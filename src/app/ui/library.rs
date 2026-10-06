@@ -1459,22 +1459,27 @@ impl HestiaApp {
     fn render_library_category_layout_radio_rows(&mut self, ui: &mut Ui) {
         let text = self.text();
         let mut display_mode = self.state.static_prefs.library_category_display_mode;
-        ui.horizontal(|ui| {
-            Self::sort_menu_radio(
-                ui,
-                &mut display_mode,
-                LibraryCategoryDisplayMode::Folders,
-                text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
-                Some(text.library_category_folders_tooltip()),
-            );
-            Self::sort_menu_radio(
-                ui,
-                &mut display_mode,
-                LibraryCategoryDisplayMode::GroupedSections,
-                text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
-                Some(text.library_category_list_tooltip()),
-            );
-        });
+        Self::sort_menu_radio(
+            ui,
+            &mut display_mode,
+            LibraryCategoryDisplayMode::Folders,
+            text.library_category_display_mode(LibraryCategoryDisplayMode::Folders),
+            Some(text.library_category_folders_tooltip()),
+        );
+        Self::sort_menu_radio(
+            ui,
+            &mut display_mode,
+            LibraryCategoryDisplayMode::GroupedSections,
+            text.library_category_display_mode(LibraryCategoryDisplayMode::GroupedSections),
+            Some(text.library_category_list_tooltip()),
+        );
+        Self::sort_menu_radio(
+            ui,
+            &mut display_mode,
+            LibraryCategoryDisplayMode::StatusSections,
+            text.library_category_display_mode(LibraryCategoryDisplayMode::StatusSections),
+            Some(text.library_group_status_tooltip()),
+        );
         if display_mode != self.state.static_prefs.library_category_display_mode {
             let _ = self.set_library_category_display_mode(display_mode);
         }
@@ -1619,10 +1624,9 @@ impl HestiaApp {
                 should_save |= self.render_library_sort_radio_rows(ui);
                 // Tiny gap so the modifier switch detaches from the radio list above (no hairline).
                 ui.add_space(4.0);
-                // Status-first clusters mods by status within the chosen sort. In the enforced
-                // Category view effective_library_group_mode() == Category, so this always hits
-                // the status-first arm; the category-first arm is only reachable when the
-                // (hidden) Status grouping is restored.
+                // Status-first clusters mods by status within the chosen sort. StatusSections
+                // uses the category-first switch instead, so its category ordering remains
+                // available without restoring the legacy group selector.
                 let detail_changed = match self.state.static_prefs.effective_library_group_mode() {
                     LibraryGroupMode::Status => Self::sort_menu_toggle(
                         ui,
@@ -1641,9 +1645,9 @@ impl HestiaApp {
 
                 menu_section_separator(ui);
 
-                // Group-by (Category/Status/None) remains hidden while category grouping is
-                // enforced. Category layout is independent and remains available above.
-                if !crate::model::ENFORCE_CATEGORY_GROUPING {
+                // Group-by (Category/Status/None) remains hidden by policy. Category layout is
+                // independent and remains available above.
+                if !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                     menu_section_header(ui, text.library_group_mods_heading(), &[]);
                     ui.add_space(-2.0);
                     should_save |= self.render_library_group_radio_rows(ui);
@@ -1651,29 +1655,13 @@ impl HestiaApp {
                     menu_section_separator(ui);
                 }
 
-                // ===== CATEGORIES (folder order) =====
-                menu_section_header(ui, text.library_sort_categories_heading(), &[]);
-                ui.add_space(-2.0);
-                let selected_game_id = self.selected_game().map(|game| game.definition.id.clone());
-                if !matches!(
-                    self.state.static_prefs.effective_library_group_mode(),
-                    LibraryGroupMode::Category
-                ) {
-                    static_label(
-                        ui,
-                        RichText::new(text.library_available_when_grouped_by_category())
-                            .size(11.0)
-                            .italics()
-                            .color(Color32::from_gray(135)),
-                    );
-                    ui.add_space(-1.0);
-                }
-                ui.add_enabled_ui(
-                    matches!(
-                        self.state.static_prefs.effective_library_group_mode(),
-                        LibraryGroupMode::Category
-                    ) && selected_game_id.is_some(),
-                    |ui| {
+                if self.state.static_prefs.library_category_order_applies() {
+                    // ===== CATEGORIES (folder order) =====
+                    menu_section_header(ui, text.library_sort_categories_heading(), &[]);
+                    ui.add_space(-2.0);
+                    let selected_game_id =
+                        self.selected_game().map(|game| game.definition.id.clone());
+                    ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
                         if let Some(game_id) = selected_game_id.as_deref() {
                             let mut category_sort_mode = self.category_sort_mode_for_game(game_id);
                             // Order: Name A-Z, Name Z-A, Most mods, Fewest mods, Manual (last).
@@ -1720,10 +1708,10 @@ impl HestiaApp {
                                 self.set_category_sort_mode_for_game(game_id, category_sort_mode);
                             }
                         }
-                    },
-                );
-                // Tiny gap so the modifier switch detaches from the category radio list (no hairline).
-                ui.add_space(4.0);
+                    });
+                    // Tiny gap so the modifier switch detaches from the category radio list (no hairline).
+                    ui.add_space(4.0);
+                }
                 // Keep the mode-specific option compact: only the active layout's control is
                 // shown, while grouping still gates both controls if grouping is restored.
                 match self.state.static_prefs.effective_library_category_display_mode() {
@@ -1759,6 +1747,7 @@ impl HestiaApp {
                             },
                         );
                     }
+                    LibraryCategoryDisplayMode::StatusSections => {}
                 }
 
                 if should_save {
@@ -6819,30 +6808,25 @@ impl HestiaApp {
                                                                                     .selectable(false),
                                                                                 )
                                                                                 .on_hover_cursor(egui::CursorIcon::Default);
-                                                                                let category_grouped = matches!(self.state.static_prefs.effective_library_group_mode(), LibraryGroupMode::Category);
-                                                                                // Card label: in both category layouts we always show the
-                                                                                // status word + dot on cards (the show-status / show-category toggles remain
-                                                                                // hidden while category grouping is enforced). The original toggle-driven
-                                                                                // logic is preserved below.
-                                                                                let (show_status_on_card, show_category_on_card) = if crate::model::ENFORCE_CATEGORY_GROUPING {
-                                                                                    (true, false)
+                                                                                // Category views show status; StatusSections shows category. The
+                                                                                // legacy card-detail preferences stay hidden and do not affect this.
+                                                                                let show_status_on_card = !matches!(
+                                                                                    category_display_mode,
+                                                                                    LibraryCategoryDisplayMode::StatusSections
+                                                                                );
+                                                                                let show_category_on_card = !show_status_on_card;
+                                                                                let card_label_color = if show_category_on_card {
+                                                                                    Color32::from_rgb(176, 198, 218)
                                                                                 } else {
-                                                                                    let show_status_on_card = category_grouped
-                                                                                        && self.state.static_prefs.library_category_group_show_status;
-                                                                                    let show_category_on_card = if category_grouped {
-                                                                                        !self.state.static_prefs.library_category_group_show_status
-                                                                                    } else {
-                                                                                        self.state.static_prefs.library_status_group_show_category
-                                                                                    };
-                                                                                    (show_status_on_card, show_category_on_card)
+                                                                                    status_color
                                                                                 };
                                                                                 if show_category_on_card {
                                                                                     let clamped = category_label_display != category_label.as_str();
                                                                                     let category_response = ui.add(
                                                                                         egui::Label::new(
-                                                                                            RichText::new(category_label_display)
-                                                                                                .size(12.0)
-                                                                                                .color(Color32::from_rgb(176, 198, 218)),
+                                                                                             RichText::new(category_label_display)
+                                                                                                 .size(12.0)
+                                                                                                 .color(card_label_color),
                                                                                         )
                                                                                         .selectable(false),
                                                                                     );
@@ -6853,7 +6837,7 @@ impl HestiaApp {
                                                                                     };
                                                                                     category_response
                                                                                         .on_hover_cursor(egui::CursorIcon::Default);
-                                                                                } else if show_status_on_card || !category_grouped {
+                                                                                } else if show_status_on_card {
                                                                                     ui.add(
                                                                                         egui::Label::new(
                                                                                             RichText::new(status_label)
@@ -7803,29 +7787,23 @@ impl HestiaApp {
                                 render_cards(ui, cards.iter().collect());
                             }
                             LibraryGroupMode::Status => {
-                                let visible_sections = sections
-                                    .iter()
-                                    .filter(|(status, _, _)| cards.iter().any(|card| card.5 == *status))
-                                    .count();
                                 for (status, label, color) in sections {
                                     let section_cards: Vec<_> =
                                         cards.iter().filter(|card| card.5 == status).collect();
                                     if section_cards.is_empty() {
                                         continue;
                                     }
-                                    if visible_sections > 1 {
-                                        let response =
-                                            render_section_label(ui, label, color, section_cards.len());
-                                        if response.clicked() {
-                                            let ids: Vec<String> = section_cards
-                                                .iter()
-                                                .map(|card| card.0.clone())
-                                                .collect();
-                                            let all_selected = ids
-                                                .iter()
-                                                .all(|id| selected_mods_snapshot.contains(id));
-                                            section_select_changes.push((ids, !all_selected));
-                                        }
+                                    let response =
+                                        render_section_label(ui, label, color, section_cards.len());
+                                    if response.clicked() {
+                                        let ids: Vec<String> = section_cards
+                                            .iter()
+                                            .map(|card| card.0.clone())
+                                            .collect();
+                                        let all_selected = ids
+                                            .iter()
+                                            .all(|id| selected_mods_snapshot.contains(id));
+                                        section_select_changes.push((ids, !all_selected));
                                     }
                                     render_cards(ui, section_cards);
                                 }
@@ -8630,6 +8608,9 @@ impl HestiaApp {
                                     })
                             });
                         let drilled_category = if matches!(
+                            library_group_mode,
+                            LibraryGroupMode::Category
+                        ) && matches!(
                             category_display_mode,
                             LibraryCategoryDisplayMode::Folders
                         ) {
@@ -8969,9 +8950,9 @@ impl HestiaApp {
             )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-            // Group-by remains hidden while category grouping is enforced. Category layout has
-            // its own menu and remains available even while drilled into a folder or selecting.
-            if drilled_category.is_none() && !crate::model::ENFORCE_CATEGORY_GROUPING {
+            // Group-by remains hidden by policy. Category layout has its own menu and remains
+            // available even while drilled into a folder or selecting.
+            if drilled_category.is_none() && !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                 ui.menu_button(
                     icon_text_sized(Icon::SquareStack, text.context_group_by(), 12.0, 12.0),
                     |ui| {

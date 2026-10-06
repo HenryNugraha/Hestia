@@ -2347,6 +2347,10 @@ impl HestiaApp {
         });
 
         if let Some(game_id) = selected_game_id {
+            Self::hash_discriminant_for_library_cache(
+                &mut hasher,
+                &self.category_sort_mode_for_game(game_id),
+            );
             let mut category_count = 0usize;
             for category in self
                 .state
@@ -2621,17 +2625,24 @@ impl HestiaApp {
                 true
             })
             .collect();
+        let category_first = self.state.static_prefs.library_sort_category_first
+            && self.state.static_prefs.effective_library_group_mode() == LibraryGroupMode::Status;
+        // Use the current display order, including live mod counts, rather than
+        // the last stored manual ranks. Both views then honor Category Order.
+        let ordered_categories = if category_first {
+            self.categories_for_game(&game.definition.id)
+        } else {
+            Vec::new()
+        };
+        let category_ranks: HashMap<_, _> = ordered_categories
+            .iter()
+            .enumerate()
+            .map(|(rank, category)| (category.id.as_str(), rank))
+            .collect();
         let category_order = |item: &&ModEntry| {
-            let category_id = item.metadata.user.category_id.as_deref();
-            category_id
-                .and_then(|id| {
-                    self.state
-                        .categories
-                        .iter()
-                        .find(|category| category.id == id && category.game_id == item.game_id)
-                        .map(|category| category.order)
-                })
-                .unwrap_or(i32::MAX / 4)
+            effective_category_id(&self.state.categories, item)
+                .and_then(|id| category_ranks.get(id).copied())
+                .unwrap_or(usize::MAX)
         };
         mods.sort_by(|a, b| {
             let status_cmp = if self.state.static_prefs.library_sort_status_first
@@ -2643,16 +2654,8 @@ impl HestiaApp {
             } else {
                 std::cmp::Ordering::Equal
             };
-            let category_cmp = if self.state.static_prefs.library_sort_category_first
-                && !matches!(
-                    self.state.static_prefs.effective_library_group_mode(),
-                    LibraryGroupMode::Category
-                ) {
-                category_order(a).cmp(&category_order(b)).then_with(|| {
-                    let left = a.metadata.user.category.trim().to_ascii_lowercase();
-                    let right = b.metadata.user.category.trim().to_ascii_lowercase();
-                    left.cmp(&right)
-                })
+            let category_cmp = if category_first {
+                category_order(a).cmp(&category_order(b))
             } else {
                 std::cmp::Ordering::Equal
             };
@@ -2753,12 +2756,12 @@ impl HestiaApp {
         self.dragging_mod_ids.clear();
         self.clear_category_rename();
 
-        // List exposes every filtered card; the folder overview exposes only
+        // Both Lists expose every filtered card; the folder overview exposes only
         // Uncategorized cards. Retain a batch selection only where it remains visible.
         let cards = self.library_cards_for_selected_game();
         let visible_ids: HashSet<&str> = cards
             .iter()
-            .filter(|card| mode == LibraryCategoryDisplayMode::GroupedSections || card.13.is_none())
+            .filter(|card| mode != LibraryCategoryDisplayMode::Folders || card.13.is_none())
             .map(|card| card.0.as_str())
             .collect();
         self.selected_mods

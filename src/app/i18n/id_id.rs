@@ -146,8 +146,6 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Buka detail mod yang belum tertaut terlebih dahulu", // DialogOpenUnlinkedModDetailFirst
     "Memasang: {count} mod", // DialogInstallingCount
     "Tidak dapat membuat folder mod", // DialogCouldNotCreateModsFolder
-    "Tidak dapat menonaktifkan mod terpasang", // DialogCouldNotDisableInstalledMod
-    "Tidak dapat mempertahankan mod tetap nonaktif", // DialogCouldNotKeepModDisabled
     "Terpasang", // DialogInstalledAction
     "{count} mod terpasang", // DialogInstalledCount
     "Terpasang: {name}", // DialogInstalledName
@@ -218,6 +216,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Pasang mod dari folder yang sudah diekstrak", // ChromeInstallFolderTooltip
     "Buka folder mod untuk game yang dipilih", // ChromeOpenModsFolderTooltip
     "Pasang", // ChromeInstall
+    "Pasang & Aktifkan", // ChromeInstallEnabled
     "Pasang & Nonaktifkan", // ChromeInstallDisabled
     "Pindai ulang mod terpasang dan periksa pembaruan di GameBanana (Ctrl+R)", // ChromeReloadLibraryTooltip
     "Muat ulang daftar saat ini (Ctrl+R)", // ChromeReloadBrowseTooltip
@@ -336,7 +335,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Terlama → Terbaru", // LibrarySortDateAsc
     "Ukuran Terkecil → Terbesar", // LibrarySortSizeAsc
     "Ukuran Terbesar → Terkecil", // LibrarySortSizeDesc
-    "Ubah tata letak kategori dan urutkan mod terpasang", // LibrarySortMenuTooltip
+    "Ubah tampilan pustaka dan urutkan mod terpasang", // LibrarySortMenuTooltip
     "Urutan Mod", // LibrarySortModsHeading
     "Mengurutkan berdasarkan judul mod, lalu nama folder jika tidak ada", // LibrarySortNameTooltip
     "Menggunakan timestamp pemasangan, konten, atau refresh terbaru yang diketahui", // LibrarySortNewestTooltip
@@ -346,7 +345,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mengelompokkan mod berdasarkan kategori per game", // LibraryGroupCategoryTooltip
     "Mengelompokkan mod ke bagian Aktif, Dinonaktifkan, dan Diarsipkan", // LibraryGroupStatusTooltip
     "Menampilkan satu daftar mod berurutan tanpa grup", // LibraryGroupNoneTooltip
-    "Tampilan Kategori", // LibraryCategoryLayoutHeading
+    "Tampilan Pustaka", // LibraryCategoryLayoutHeading
     "Tersedia saat dikelompokkan berdasarkan kategori.", // LibraryAvailableWhenGroupedByCategory
     "Menampilkan tile kategori lebih dulu, lalu membuka satu kategori pada satu waktu", // LibraryCategoryFoldersTooltip
     "Menampilkan setiap kategori sebagai bagian dalam daftar mod", // LibraryCategoryListTooltip
@@ -356,13 +355,13 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Mod Paling Sedikit", // LibraryCategorySortByLeastMods
     "Mod Paling Banyak", // LibraryCategorySortByMostMods
     "Menggunakan urutan kategori manual Anda", // LibraryCategorySortManualTooltip
-    "Mengurutkan folder dan bagian kategori berdasarkan nama kategori", // LibraryCategorySortByNameTooltip
+    "Mengurutkan kategori berdasarkan nama, termasuk menerapkan urutan kategori lebih dulu dalam grup status", // LibraryCategorySortByNameTooltip
     "Menampilkan kategori dengan mod terbanyak lebih dulu", // LibraryCategorySortByMostModsTooltip
     "Menampilkan kategori dengan mod tersedikit lebih dulu", // LibraryCategorySortByLeastModsTooltip
     "Lain-lain", // LibraryMiscellaneousHeading
     "Di dalam grup status, mengikuti urutan kategori sebelum urutan terpilih", // LibrarySortCategoryFirstTooltip
     "Menempatkan mod Aktif lebih dulu, lalu Dinonaktifkan, lalu Diarsipkan sebelum urutan terpilih", // LibrarySortStatusFirstTooltip
-    "Menempatkan Tanpa Kategori di urutan pertama dalam tampilan daftar dan pengelola kategori", // LibraryUncategorizedFirstListOnlyTooltip
+    "Menempatkan Tanpa Kategori di urutan pertama dalam daftar kategori dan pengelola kategori", // LibraryUncategorizedFirstListOnlyTooltip
     "Alihkan Visibilitas", // LibraryToggleVisibility
     "Status Mod", // LibraryModStateHeading
     "Tampilkan semua status mod", // LibraryShowAllModStates
@@ -599,21 +598,25 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Perilaku", // SettingsGeneralBehaviorSection
     "Saat menjalankan game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "Setelah memasang mod:", // SettingsGeneralBehaviorAfterInstallingMod
+    "Status pemasangan mod baru:", // SettingsGeneralBehaviorNewModInstallState
     "Saat menjalankan alat:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Jangan lakukan apa-apa", // SettingsGeneralBehaviorDoNothing
     "Minimalkan Hestia", // SettingsGeneralBehaviorMinimizeHestia
     "Keluar dari Hestia", // SettingsGeneralBehaviorExitHestia
     "Tambahkan ke pilihan", // SettingsGeneralBehaviorAddToSelection
     "Buka detail mod", // SettingsGeneralBehaviorOpenModDetail
+    "Aktif", // SettingsGeneralBehaviorModInstallStateEnabled
+    "Nonaktif", // SettingsGeneralBehaviorModInstallStateDisabled
+    "Otomatis", // SettingsGeneralBehaviorModInstallStateAuto
 
     // Window: Settings > General > Installed Mods List
     "Daftar Mod Terpasang", // SettingsGeneralInstalledModsListSection
     "Bagi berdasarkan:", // SettingsGeneralInstalledModsGroupListBy
-    "Tampilan kategori:", // SettingsGeneralInstalledModsCategoryLayout
+    "Tampilan pustaka:", // SettingsGeneralInstalledModsCategoryLayout
     "Kategori", // SettingsGeneralInstalledModsGroupCategory
     "Status", // SettingsGeneralInstalledModsGroupStatus
     "Tidak ada", // SettingsGeneralInstalledModsGroupNone
-    "Daftar", // SettingsGeneralInstalledModsLayoutList
+    "Daftar: kelompokkan berdasarkan kategori", // SettingsGeneralInstalledModsLayoutList
     "Folder", // SettingsGeneralInstalledModsLayoutFolders
     "Urutkan kategori lebih dulu", // SettingsGeneralInstalledModsSortByCategoryFirst
     "Mengurutkan berdasarkan urutan kategori, tidak selalu alfabetis", // SettingsGeneralInstalledModsSortByCategoryFirstTooltip
@@ -930,4 +933,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tampilkan tombol", // GameOverlayShowHotkeys
     "Sembunyikan tombol", // GameOverlayHideHotkeys
     "{name} terpasang.", // GameOverlayInstalledOnNotice
+    "Daftar: kelompokkan berdasarkan status", // SettingsGeneralInstalledModsLayoutStatusList
 ];
