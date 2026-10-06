@@ -676,6 +676,9 @@ impl HestiaApp {
         mod_entry: &ModEntry,
         kind: ModMutationKind,
     ) -> Option<&'static str> {
+        if self.folder_batch_game_busy(&mod_entry.game_id) {
+            return Some(FOLDER_BATCH_BUSY_BLOCK_REASON);
+        }
         let touches_active_unreal_root = match kind {
             ModMutationKind::DisableActive
             | ModMutationKind::Delete
@@ -693,11 +696,31 @@ impl HestiaApp {
 
     fn report_locked_mods(&mut self, toast_summary: Option<&str>) {
         let text = self.text();
+        if self
+            .selected_game()
+            .is_some_and(|game| self.folder_batch_game_busy(&game.definition.id))
+        {
+            self.report_warn(
+                text.folder_batch_busy_tooltip(),
+                Some(text.folder_batch_busy_tooltip()),
+            );
+            return;
+        }
         self.report_warn(text.mods_locked_probably_by_game(), toast_summary);
     }
 
     fn report_skipped_locked_mods(&mut self) {
         let text = self.text();
+        if self
+            .selected_game()
+            .is_some_and(|game| self.folder_batch_game_busy(&game.definition.id))
+        {
+            self.report_warn(
+                text.folder_batch_busy_tooltip(),
+                Some(text.folder_batch_busy_tooltip()),
+            );
+            return;
+        }
         self.report_warn(
             text.skipped_locked_mods_probably_by_game(),
             Some(text.mods_locked_probably_by_game()),
@@ -1441,6 +1464,10 @@ impl HestiaApp {
     }
 
     fn archive_mod_by_id(&mut self, mod_id: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         if let Some(snapshot) = self.state.mods.iter().find(|m| m.id == mod_id).cloned() {
             self.clear_mod_image_runtime_state(&snapshot);
         }
@@ -1712,6 +1739,14 @@ impl HestiaApp {
             return;
         }
 
+        if self
+            .selected_mod()
+            .is_some_and(|mod_entry| self.folder_batch_game_busy(&mod_entry.game_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
+
         if let Some(snapshot) = self.selected_mod().cloned() {
             self.clear_mod_image_runtime_state(&snapshot);
         }
@@ -1782,6 +1817,14 @@ impl HestiaApp {
     }
 
     fn batch_disable_selected(&mut self) {
+        if self
+            .selected_mods
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
         let locked_unreal_game_ids: HashSet<String> = games
@@ -1853,6 +1896,14 @@ impl HestiaApp {
     }
 
     fn batch_enable_selected(&mut self) {
+        if self
+            .selected_mods
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
         let locked_unreal_game_ids: HashSet<String> = games
@@ -2047,6 +2098,14 @@ impl HestiaApp {
     }
 
     fn batch_archive_selected(&mut self) {
+        if self
+            .selected_mods
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
         // Collect mod entries to clear image state (need owned data to avoid borrow conflicts)
@@ -2116,6 +2175,14 @@ impl HestiaApp {
     }
 
     fn batch_delete_selected(&mut self) {
+        if self
+            .selected_mods
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         // Single iteration: collect selected mods to delete in one pass
         let mods_to_delete: Vec<ModEntry> = self.state.mods
             .iter()
@@ -2182,6 +2249,7 @@ impl HestiaApp {
     }
 
     fn toggle_mod_selection(&mut self, mod_id: &str, checked: bool) {
+        self.begin_library_mod_selection();
         if checked {
             self.selected_mods.insert(mod_id.to_string());
         } else {

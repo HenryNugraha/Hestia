@@ -367,7 +367,7 @@ impl HestiaApp {
             let target_root = game
                 .mods_path(self.state.static_prefs.use_default_mods_path)
                 .unwrap_or_default();
-            if let Some(existing_target) = self.existing_install_target(&game, &preferred) {
+            if let Some(existing_target) = self.existing_install_target(&game, &preferred, job_id) {
                 if update_folder_name.is_some() {
                     self.pending_imports.pop_front();
                     if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
@@ -478,7 +478,7 @@ impl HestiaApp {
                         .clone()
                         .unwrap_or_else(|| text.imported_mod().to_string());
                     let preferred_names = vec![preferred.clone(); candidate_indices.len()];
-                    let existing_target = self.existing_install_target(&game, &preferred);
+                    let existing_target = self.existing_install_target(&game, &preferred, job_id);
                     if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
                         self.pending_imports.pop_front();
                         self.commit_import(
@@ -669,7 +669,7 @@ impl HestiaApp {
                 } else {
                     self.preferred_browse_folder_name(title_name.as_deref(), text.imported_mod())
                 };
-                let existing_target = self.existing_install_target(&game, &preferred);
+                let existing_target = self.existing_install_target(&game, &preferred, job_id);
                 if existing_target.is_some() && update_folder_name.is_none() {
                     let existing_target = existing_target.expect("checked above");
                     self.pending_conflicts.push_back(PendingConflict {

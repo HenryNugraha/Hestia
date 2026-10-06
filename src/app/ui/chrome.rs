@@ -935,6 +935,8 @@ impl HestiaApp {
                         text.browse(),
                     );
                     if self.current_view != old_view {
+                        self.clear_library_folder_selection();
+                        self.library_folder_selection_context = None;
                         self.clear_mod_detail_rename();
                     }
                     let bottom_height = 348.0;

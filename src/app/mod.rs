@@ -110,6 +110,7 @@ impl eframe::App for HestiaApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         profiling::scope!("app::logic");
         set_current_language(self.state.static_prefs.language);
+        self.poll_folder_batch_job();
 
         // Batch worker event consumption - only poll channels when flagged
         if self.check_pending_worker_events() {
@@ -188,6 +189,12 @@ impl eframe::App for HestiaApp {
         // also fire on the same key press.
         let popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
         let profile_operation_locks_app = self.profile_operation_locks_app();
+        if self.folder_batch_job.is_some()
+            && ctx.input(|input| input.viewport().close_requested())
+        {
+            self.cancel_folder_batch();
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         if profile_operation_locks_app {
             if ctx.input(|input| input.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -308,7 +315,10 @@ impl eframe::App for HestiaApp {
             request_animation_repaint(&ctx);
         } else if queued_new_image_work {
             ctx.request_repaint();
-        } else if has_pending_browse_image_work || has_pending_gif_work {
+        } else if self.folder_batch_job.is_some()
+            || has_pending_browse_image_work
+            || has_pending_gif_work
+        {
             ctx.request_repaint_after(poll_delay);
         } else if has_pending_browse_request {
             ctx.request_repaint_after(poll_delay);
@@ -386,6 +396,8 @@ impl HestiaApp {
             let closed = self.close_frontmost_window(ctx);
             if !closed && escape_requested && !self.selected_mods.is_empty() {
                 self.selected_mods.clear();
+            } else if !closed && escape_requested && self.library_folder_selection_active() {
+                self.clear_library_folder_selection();
             }
         }
     }

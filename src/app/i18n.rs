@@ -467,6 +467,8 @@ pub(crate) enum TextKey {
     LibraryActionUnarchived,
     LibraryActionMessage,
     LibraryActionCountMessage,
+    // Retain this retired message's catalog slot so existing key indices stay stable.
+    #[allow(dead_code)]
     LibraryCategoryActionCountMessage,
     LibraryQueuedUpdates,
     LibraryModsLockedProbablyByGame,
@@ -923,10 +925,58 @@ pub(crate) enum TextKey {
     GameOverlayHideHotkeys,
     GameOverlayInstalledOnNotice,
     SettingsGeneralInstalledModsLayoutStatusList,
+
+    // Folder batch selection and actions
+    FolderContentsVisible,
+    FolderContentsAll,
+    FolderSelectionSummaryWithMods,
+    FolderSelectionSummaryFoldersOnly,
+    FolderBatchActionEnable,
+    FolderBatchActionDisable,
+    FolderBatchActionArchive,
+    FolderBatchActionRestore,
+    FolderBatchActionCheckUpdates,
+    FolderBatchActionUpdate,
+    FolderBatchActionMoveContents,
+    FolderBatchActionRemoveFolders,
+    FolderBatchActionDeleteContents,
+    FolderBatchActionDeleteFoldersAndContents,
+    FolderBatchTooltipEnable,
+    FolderBatchTooltipDisable,
+    FolderBatchTooltipArchive,
+    FolderBatchTooltipRestore,
+    FolderBatchTooltipCheckUpdates,
+    FolderBatchTooltipUpdate,
+    FolderBatchTooltipMoveContents,
+    FolderBatchTooltipRemoveFolders,
+    FolderBatchTooltipDeleteContents,
+    FolderBatchTooltipDeleteFoldersAndContents,
+    FolderBatchBusyTooltip,
+    FolderDeleteRequiresAllContents,
+    FolderBatchProgress,
+    FolderBatchWorking,
+    FolderBatchResultSummary,
+    FolderBatchResultSummaryCancelled,
+    FolderBatchResultSummaryHidden,
+    FolderBatchResultSummaryHiddenCancelled,
+    FolderSelectAllTooltip,
+    FolderClearSelectionTooltip,
+    FolderBatchScopeTooltip,
+    FolderBatchCompleted,
+    FolderBatchSkippedLocked,
+    FolderBatchUnsupported,
+    FolderBatchChangedMissing,
+    FolderBatchFailed,
+    FolderBatchHiddenMod,
+    FolderBatchScopeSummaryVisible,
+    FolderBatchScopeSummaryAll,
+    FolderBatchScopeChange,
+    FolderBatchScopeModCount,
+    FolderBatchReportDetails,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsGeneralInstalledModsLayoutStatusList as usize + 1;
+    const COUNT: usize = Self::FolderBatchReportDetails as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2789,13 +2839,6 @@ impl TextCatalog {
             .replace("{count}", &count.to_string())
     }
 
-    fn category_action_count_message(self, action: &str, category: &str, count: usize) -> String {
-        self.get(TextKey::LibraryCategoryActionCountMessage)
-            .replace("{action}", action)
-            .replace("{category}", category)
-            .replace("{count}", &count.to_string())
-    }
-
     fn queued_updates(self, count: usize) -> String {
         self.count_label(TextKey::LibraryQueuedUpdates, count)
     }
@@ -4189,6 +4232,154 @@ impl TextCatalog {
 
     fn settings_game_overlay_tooltip(self) -> &'static str {
         self.get(TextKey::SettingsGameOverlayTooltip)
+    }
+
+    fn folder_contents_scope(self, scope: FolderContentsScope) -> &'static str {
+        match scope {
+            FolderContentsScope::Visible => self.get(TextKey::FolderContentsVisible),
+            FolderContentsScope::All => self.get(TextKey::FolderContentsAll),
+        }
+    }
+
+    fn folder_batch_scope_summary(self, scope: FolderContentsScope) -> &'static str {
+        self.get(match scope {
+            FolderContentsScope::Visible => TextKey::FolderBatchScopeSummaryVisible,
+            FolderContentsScope::All => TextKey::FolderBatchScopeSummaryAll,
+        })
+    }
+
+    fn folder_batch_scope_change(self) -> &'static str {
+        self.get(TextKey::FolderBatchScopeChange)
+    }
+
+    fn folder_batch_scope_mod_count(self, count: usize) -> String {
+        self.get(TextKey::FolderBatchScopeModCount)
+            .replace("{mods}", &count.to_string())
+    }
+
+    fn folder_batch_report_details(self) -> &'static str {
+        self.get(TextKey::FolderBatchReportDetails)
+    }
+
+    fn folder_selection_summary(self, folders: usize, mods: Option<usize>) -> String {
+        let key = if mods.is_some() {
+            TextKey::FolderSelectionSummaryWithMods
+        } else {
+            TextKey::FolderSelectionSummaryFoldersOnly
+        };
+        self.get(key)
+            .replace("{folders}", &folders.to_string())
+            .replace("{mods}", &mods.unwrap_or_default().to_string())
+    }
+
+    fn folder_batch_action(self, action: FolderBatchAction) -> &'static str {
+        let key = match action {
+            FolderBatchAction::Enable => TextKey::FolderBatchActionEnable,
+            FolderBatchAction::Disable => TextKey::FolderBatchActionDisable,
+            FolderBatchAction::Archive => TextKey::FolderBatchActionArchive,
+            FolderBatchAction::Restore => TextKey::FolderBatchActionRestore,
+            FolderBatchAction::CheckUpdates => TextKey::FolderBatchActionCheckUpdates,
+            FolderBatchAction::Update => TextKey::FolderBatchActionUpdate,
+            FolderBatchAction::MoveContents => TextKey::FolderBatchActionMoveContents,
+            FolderBatchAction::RemoveFolders => TextKey::FolderBatchActionRemoveFolders,
+            FolderBatchAction::DeleteContents => TextKey::FolderBatchActionDeleteContents,
+            FolderBatchAction::DeleteFoldersAndContents => {
+                TextKey::FolderBatchActionDeleteFoldersAndContents
+            }
+        };
+        self.get(key)
+    }
+
+    fn folder_batch_action_tooltip(self, action: FolderBatchAction) -> &'static str {
+        let key = match action {
+            FolderBatchAction::Enable => TextKey::FolderBatchTooltipEnable,
+            FolderBatchAction::Disable => TextKey::FolderBatchTooltipDisable,
+            FolderBatchAction::Archive => TextKey::FolderBatchTooltipArchive,
+            FolderBatchAction::Restore => TextKey::FolderBatchTooltipRestore,
+            FolderBatchAction::CheckUpdates => TextKey::FolderBatchTooltipCheckUpdates,
+            FolderBatchAction::Update => TextKey::FolderBatchTooltipUpdate,
+            FolderBatchAction::MoveContents => TextKey::FolderBatchTooltipMoveContents,
+            FolderBatchAction::RemoveFolders => TextKey::FolderBatchTooltipRemoveFolders,
+            FolderBatchAction::DeleteContents => TextKey::FolderBatchTooltipDeleteContents,
+            FolderBatchAction::DeleteFoldersAndContents => {
+                TextKey::FolderBatchTooltipDeleteFoldersAndContents
+            }
+        };
+        self.get(key)
+    }
+
+    fn folder_batch_busy_tooltip(self) -> &'static str {
+        self.get(TextKey::FolderBatchBusyTooltip)
+    }
+
+    fn folder_delete_requires_all_contents(self) -> &'static str {
+        self.get(TextKey::FolderDeleteRequiresAllContents)
+    }
+
+    fn folder_batch_progress(self, done: usize, total: usize) -> String {
+        self.get(TextKey::FolderBatchProgress)
+            .replace("{done}", &done.to_string())
+            .replace("{total}", &total.to_string())
+    }
+
+    fn folder_batch_working(self) -> &'static str {
+        self.get(TextKey::FolderBatchWorking)
+    }
+
+    fn folder_batch_result_summary(
+        self,
+        completed: usize,
+        skipped: usize,
+        failed: usize,
+        cancelled: bool,
+        show_counts: bool,
+    ) -> String {
+        let key = match (show_counts, cancelled) {
+            (true, false) => TextKey::FolderBatchResultSummary,
+            (true, true) => TextKey::FolderBatchResultSummaryCancelled,
+            (false, false) => TextKey::FolderBatchResultSummaryHidden,
+            (false, true) => TextKey::FolderBatchResultSummaryHiddenCancelled,
+        };
+        self.get(key)
+            .replace("{completed}", &completed.to_string())
+            .replace("{skipped}", &skipped.to_string())
+            .replace("{failed}", &failed.to_string())
+    }
+
+    fn folder_select_all_tooltip(self) -> &'static str {
+        self.get(TextKey::FolderSelectAllTooltip)
+    }
+
+    fn folder_clear_selection_tooltip(self) -> &'static str {
+        self.get(TextKey::FolderClearSelectionTooltip)
+    }
+
+    fn folder_batch_scope_tooltip(self) -> &'static str {
+        self.get(TextKey::FolderBatchScopeTooltip)
+    }
+
+    fn folder_batch_completed(self) -> &'static str {
+        self.get(TextKey::FolderBatchCompleted)
+    }
+
+    fn folder_batch_skipped_locked(self) -> &'static str {
+        self.get(TextKey::FolderBatchSkippedLocked)
+    }
+
+    fn folder_batch_unsupported(self) -> &'static str {
+        self.get(TextKey::FolderBatchUnsupported)
+    }
+
+    fn folder_batch_changed_missing(self) -> &'static str {
+        self.get(TextKey::FolderBatchChangedMissing)
+    }
+
+    fn folder_batch_hidden_mod(self) -> &'static str {
+        self.get(TextKey::FolderBatchHiddenMod)
+    }
+
+    fn folder_batch_failed(self) -> &'static str {
+        self.get(TextKey::FolderBatchFailed)
     }
 }
 

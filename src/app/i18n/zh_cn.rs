@@ -934,4 +934,52 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "隐藏快捷键", // GameOverlayHideHotkeys
     "已安装 {name}。", // GameOverlayInstalledOnNotice
     "列表：按状态分组", // SettingsGeneralInstalledModsLayoutStatusList
+
+    // Folder batch selection and actions
+    "符合当前筛选条件的模组", // FolderContentsVisible
+    "所选文件夹中的所有模组", // FolderContentsAll
+    "已选择 {folders} 个文件夹 · {mods} 个模组", // FolderSelectionSummaryWithMods
+    "已选择 {folders} 个文件夹", // FolderSelectionSummaryFoldersOnly
+    "启用禁用的模组", // FolderBatchActionEnable
+    "禁用已启用的模组", // FolderBatchActionDisable
+    "归档内容", // FolderBatchActionArchive
+    "恢复并启用", // FolderBatchActionRestore
+    "检查更新", // FolderBatchActionCheckUpdates
+    "更新可用模组", // FolderBatchActionUpdate
+    "将内容移动到分类…", // FolderBatchActionMoveContents
+    "移除文件夹，保留模组", // FolderBatchActionRemoveFolders
+    "删除内容，保留文件夹", // FolderBatchActionDeleteContents
+    "删除文件夹和内容", // FolderBatchActionDeleteFoldersAndContents
+    "启用范围内所有已禁用的模组；不会自动禁用其他启用中的模组。", // FolderBatchTooltipEnable
+    "禁用范围内所有已启用的模组。", // FolderBatchTooltipDisable
+    "归档范围内所有模组。", // FolderBatchTooltipArchive
+    "将已归档模组恢复为“启用”并启用它们。", // FolderBatchTooltipRestore
+    "根据你配置的自动更新设置检查所选模组。", // FolderBatchTooltipCheckUpdates
+    "更新范围内可用的模组。", // FolderBatchTooltipUpdate
+    "将所选内容移动到分类。", // FolderBatchTooltipMoveContents
+    "将所选文件夹中的所有模组移到“未分类”；文件保留。", // FolderBatchTooltipRemoveFolders
+    "按你配置的删除方式删除内容；文件夹保留。", // FolderBatchTooltipDeleteContents
+    "按你配置的删除方式删除文件夹和内容。", // FolderBatchTooltipDeleteFoldersAndContents
+    "请等待当前操作完成。", // FolderBatchBusyTooltip
+    "删除文件夹及其内容前，请选择所选文件夹中的所有模组。", // FolderDeleteRequiresAllContents
+    "正在处理 {done}/{total}", // FolderBatchProgress
+    "处理中…", // FolderBatchWorking
+    "{completed} 个已完成 · {skipped} 个已跳过 · {failed} 个失败", // FolderBatchResultSummary
+    "{completed} 个已完成 · {skipped} 个已跳过 · {failed} 个失败 · 已取消", // FolderBatchResultSummaryCancelled
+    "批量操作已完成。", // FolderBatchResultSummaryHidden
+    "批量操作已取消。", // FolderBatchResultSummaryHiddenCancelled
+    "选择所有文件夹", // FolderSelectAllTooltip
+    "清除文件夹选择", // FolderClearSelectionTooltip
+    "选择内容操作影响的模组。移除文件夹始终会取消其所有模组的分类。", // FolderBatchScopeTooltip
+    "已完成", // FolderBatchCompleted
+    "已跳过：已锁定", // FolderBatchSkippedLocked
+    "不支持", // FolderBatchUnsupported
+    "已更改或缺失", // FolderBatchChangedMissing
+    "失败", // FolderBatchFailed
+    "已隐藏的模组", // FolderBatchHiddenMod
+    "内容操作：符合当前筛选条件的模组", // FolderBatchScopeSummaryVisible
+    "内容操作：所选文件夹中的所有模组", // FolderBatchScopeSummaryAll
+    "更改", // FolderBatchScopeChange
+    "影响 {mods} 个模组", // FolderBatchScopeModCount
+    "详情", // FolderBatchReportDetails
 ];

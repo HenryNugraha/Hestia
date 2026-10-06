@@ -2540,6 +2540,100 @@ mod tests {
     }
 
     #[test]
+    fn archived_xxmi_update_replace_and_merge_preserve_identity_and_category() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_root = temp.path().join("Mods_Archived");
+        let existing = archive_root.join("Archived Mod");
+        let source = temp.path().join("update");
+        fs::create_dir_all(existing.join(MOD_META_DIR)).unwrap();
+        fs::write(existing.join("old.ini"), "old").unwrap();
+        let old_state = crate::model::PortableModState {
+            id: "archived-identity".to_string(),
+            metadata: {
+                let mut metadata = crate::model::ModMetadata::default();
+                metadata.user.category_id = Some("category-id".to_string());
+                metadata.user.category = "Category".to_string();
+                metadata
+            },
+            source: None,
+            unsafe_content: false,
+            unsafe_content_auto: None,
+            unsafe_content_preference: Default::default(),
+            created_at: None,
+            updated_at: None,
+        };
+        fs::write(
+            existing.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+            serde_json::to_vec(&old_state).unwrap(),
+        )
+        .unwrap();
+        fs::create_dir_all(existing.join(DISABLED_CONTAINER)).unwrap();
+        fs::rename(existing.join("old.ini"), existing.join(DISABLED_CONTAINER).join("old.ini"))
+            .unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("new.ini"), "new").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let installed = install_candidate_with_state_cancelable(
+            &source,
+            "Archived Mod",
+            &archive_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(installed, existing);
+        assert!(installed.join("new.ini").is_file());
+        assert!(!installed.join(DISABLED_CONTAINER).exists());
+        let replaced_state = crate::persistence::load_portable_mod_state(&installed)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replaced_state.id, "archived-identity");
+        assert_eq!(
+            replaced_state.metadata.user.category_id.as_deref(),
+            Some("category-id")
+        );
+
+        fs::write(source.join("merged.ini"), "merged").unwrap();
+        fs::create_dir_all(existing.join(DISABLED_CONTAINER)).unwrap();
+        fs::rename(
+            existing.join("new.ini"),
+            existing.join(DISABLED_CONTAINER).join("new.ini"),
+        )
+        .unwrap();
+        let merged = install_candidate_with_state_cancelable(
+            &source,
+            "Archived Mod",
+            &archive_root,
+            None,
+            ConflictChoice::Merge,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(merged, existing);
+        assert!(merged.join("new.ini").is_file());
+        assert!(merged.join("merged.ini").is_file());
+        assert!(!merged.join(DISABLED_CONTAINER).exists());
+        let merged_state = crate::persistence::load_portable_mod_state(&merged)
+            .unwrap()
+            .unwrap();
+        assert_eq!(merged_state.id, "archived-identity");
+        assert_eq!(
+            merged_state.metadata.user.category_id.as_deref(),
+            Some("category-id")
+        );
+    }
+
+    #[test]
     fn disabled_unreal_publish_uses_disabled_root_and_keep_both_checks_peer_root() {
         let temp = tempfile::tempdir().unwrap();
         let active_root = temp.path().join("Paks");

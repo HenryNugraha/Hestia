@@ -934,4 +934,52 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Hide hotkeys", // GameOverlayHideHotkeys
     "Installed {name}.", // GameOverlayInstalledOnNotice
     "List: group by status", // SettingsGeneralInstalledModsLayoutStatusList
+
+    // Folder batch selection and actions
+    "Matching current filters", // FolderContentsVisible
+    "All mods in selected folders", // FolderContentsAll
+    "{folders} folders selected · {mods} mods", // FolderSelectionSummaryWithMods
+    "{folders} folders selected", // FolderSelectionSummaryFoldersOnly
+    "Enable disabled mods", // FolderBatchActionEnable
+    "Disable enabled mods", // FolderBatchActionDisable
+    "Archive contents", // FolderBatchActionArchive
+    "Restore and enable", // FolderBatchActionRestore
+    "Check for updates", // FolderBatchActionCheckUpdates
+    "Update available mods", // FolderBatchActionUpdate
+    "Move contents to category…", // FolderBatchActionMoveContents
+    "Remove folders, keep mods", // FolderBatchActionRemoveFolders
+    "Delete contents, keep folders", // FolderBatchActionDeleteContents
+    "Delete folders and contents", // FolderBatchActionDeleteFoldersAndContents
+    "Enables every disabled mod in scope; never disables active peers.", // FolderBatchTooltipEnable
+    "Disables every enabled mod in scope.", // FolderBatchTooltipDisable
+    "Archives every mod in scope.", // FolderBatchTooltipArchive
+    "Restores archived mods to Active and enables them.", // FolderBatchTooltipRestore
+    "Checks selected mods using your configured auto-update settings.", // FolderBatchTooltipCheckUpdates
+    "Updates available mods in scope.", // FolderBatchTooltipUpdate
+    "Moves selected contents to a category.", // FolderBatchTooltipMoveContents
+    "Unassigns all selected folders' mods to Uncategorized; files stay.", // FolderBatchTooltipRemoveFolders
+    "Deletes contents using your configured deletion behavior; folders stay.", // FolderBatchTooltipDeleteContents
+    "Deletes folders and contents using your configured deletion behavior.", // FolderBatchTooltipDeleteFoldersAndContents
+    "Wait for the current operation to finish.", // FolderBatchBusyTooltip
+    "Choose all mods in selected folders before deleting folders and their contents.", // FolderDeleteRequiresAllContents
+    "Processing {done}/{total}", // FolderBatchProgress
+    "Working…", // FolderBatchWorking
+    "{completed} completed · {skipped} skipped · {failed} failed", // FolderBatchResultSummary
+    "{completed} completed · {skipped} skipped · {failed} failed · Cancelled", // FolderBatchResultSummaryCancelled
+    "Batch operation finished.", // FolderBatchResultSummaryHidden
+    "Batch operation cancelled.", // FolderBatchResultSummaryHiddenCancelled
+    "Select all folders", // FolderSelectAllTooltip
+    "Clear folder selection", // FolderClearSelectionTooltip
+    "Choose which mods content actions affect. Folder removal always unassigns all members.", // FolderBatchScopeTooltip
+    "Completed", // FolderBatchCompleted
+    "Skipped: locked", // FolderBatchSkippedLocked
+    "Unsupported", // FolderBatchUnsupported
+    "Changed or missing", // FolderBatchChangedMissing
+    "Failed", // FolderBatchFailed
+    "Hidden mod", // FolderBatchHiddenMod
+    "Content actions: matching current filters", // FolderBatchScopeSummaryVisible
+    "Content actions: all mods in selected folders", // FolderBatchScopeSummaryAll
+    "Change", // FolderBatchScopeChange
+    "{mods} mods affected", // FolderBatchScopeModCount
+    "Details", // FolderBatchReportDetails
 ];

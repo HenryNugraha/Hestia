@@ -22,6 +22,27 @@ fn clamp_category_card_label(text: &str) -> String {
     clamped
 }
 
+fn library_selection_animation_duration(section: LibrarySelectionSection) -> f32 {
+    if section == LibrarySelectionSection::Folders {
+        0.0
+    } else {
+        0.2
+    }
+}
+
+fn animate_library_selection(
+    ctx: &egui::Context,
+    id: egui::Id,
+    has_selection: bool,
+    section: LibrarySelectionSection,
+) -> f32 {
+    ctx.animate_bool_with_time(
+        id,
+        has_selection,
+        library_selection_animation_duration(section),
+    )
+}
+
 fn mod_detail_snapshot_matches(left: &ModEntry, right: &ModEntry) -> bool {
     if left != right {
         return false;
@@ -212,10 +233,22 @@ struct CategoryFolderTile {
     representative_unsafe_content: bool,
 }
 
+/// Render the floating folder-selection checkbox while keeping its interaction geometry
+/// stable when it is visually hidden. A zero-sized response loses the release event if the
+/// child takes hover between the pointer-down and pointer-up frames.
+fn render_folder_selection_checkbox(ui: &mut Ui, checked: bool, visible: bool) -> egui::Response {
+    if visible {
+        larger_checkbox(ui, checked)
+    } else {
+        ui.allocate_exact_size(Vec2::new(24.0, 24.0), Sense::click())
+            .1
+    }
+}
+
 #[cfg(test)]
 mod category_tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn ids(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -247,6 +280,60 @@ mod category_tests {
         let moving = ids(&["B"]);
 
         assert_eq!(reorder_category_ids_for_drag(&ordered, &moving, 1), None);
+    }
+
+    #[test]
+    fn filtered_folder_drop_slot_maps_back_to_full_category_order() {
+        let full = ids(&["A", "hidden", "B", "C"]);
+        let visible = ids(&["A", "B", "C"]);
+
+        assert_eq!(translate_visible_category_drop_slot(&full, &visible, 1), 2);
+        assert_eq!(translate_visible_category_drop_slot(&full, &visible, 3), 4);
+    }
+
+    #[test]
+    fn folder_selection_header_snaps_while_mod_selection_animates() {
+        let ctx = egui::Context::default();
+        let animation_id = egui::Id::new("library_selection_transition_test");
+        let frame = |time: f64, has_selection: bool, section: LibrarySelectionSection| {
+            let value = std::cell::Cell::new(0.0);
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(480.0, 120.0),
+                )),
+                time: Some(time),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input.take(), |ui| {
+                value.set(animate_library_selection(
+                    ui.ctx(),
+                    animation_id,
+                    has_selection,
+                    section,
+                ));
+            });
+            value.get()
+        };
+
+        assert_eq!(frame(0.0, false, LibrarySelectionSection::Mods), 0.0);
+        assert_eq!(frame(0.1, true, LibrarySelectionSection::Folders), 1.0);
+        assert_eq!(frame(0.2, false, LibrarySelectionSection::Folders), 0.0);
+        assert_eq!(frame(0.3, true, LibrarySelectionSection::Folders), 1.0);
+
+        let mod_clear_intermediate = frame(0.4, false, LibrarySelectionSection::Mods);
+        assert!(
+            mod_clear_intermediate > 0.0 && mod_clear_intermediate < 1.0,
+            "mod selection should retain a finite outro animation: {mod_clear_intermediate}"
+        );
+        assert_eq!(frame(0.7, false, LibrarySelectionSection::Mods), 0.0);
+
+        let mod_select_intermediate = frame(0.8, true, LibrarySelectionSection::Mods);
+        assert!(
+            mod_select_intermediate > 0.0 && mod_select_intermediate < 1.0,
+            "mod selection should retain a finite intro animation: {mod_select_intermediate}"
+        );
+        assert_eq!(frame(1.1, true, LibrarySelectionSection::Mods), 1.0);
     }
 
     #[test]
@@ -290,6 +377,223 @@ mod category_tests {
         let descending_ids: Vec<_> = descending.into_iter().map(|category| category.id).collect();
         assert_eq!(descending_ids, ids(&["b", "a", "c"]));
     }
+
+    fn folder_checkbox_input(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(480.0, 120.0),
+            )),
+            events: vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// Drive the same parent tile and child checkbox interactions used by the live folder grid.
+    /// Returning both responses verifies that a checkbox click cannot also open or drag its tile.
+    fn run_folder_checkbox_frame(
+        ctx: &egui::Context,
+        folder_ids: &[String],
+        selected: &HashSet<String>,
+        input: egui::RawInput,
+    ) -> (Vec<String>, Vec<String>) {
+        const TILE_GAP: f32 = 8.0;
+        const TILE_WIDTH: f32 = 112.0;
+        let clicked_checkboxes = std::cell::RefCell::new(Vec::new());
+        let opened_tiles = std::cell::RefCell::new(Vec::new());
+        let _ = ctx.run_ui(input, |ui| {
+            ui.set_width(480.0);
+            ui.spacing_mut().item_spacing.x = TILE_GAP;
+            ui.horizontal(|ui| {
+                for (index, folder_id) in folder_ids.iter().enumerate() {
+                    let (tile_rect, tile_response) = ui.allocate_exact_size(
+                        egui::vec2(TILE_WIDTH, 72.0),
+                        Sense::click_and_drag(),
+                    );
+                    let checkbox_rect = egui::Rect::from_min_size(
+                        tile_rect.min + egui::vec2(7.0, 7.0),
+                        egui::vec2(26.0, 26.0),
+                    );
+                    let pointer_pos = ui.ctx().pointer_latest_pos();
+                    let pointer_over_tile =
+                        pointer_pos.is_some_and(|pointer_pos| tile_rect.contains(pointer_pos));
+                    let pointer_over_checkbox = pointer_pos
+                        .is_some_and(|pointer_pos| checkbox_rect.contains(pointer_pos));
+                    let checkbox_visible = !selected.is_empty()
+                        || tile_response.hovered()
+                        || pointer_over_tile
+                        || pointer_over_checkbox;
+                    let mut checkbox_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id(egui::Id::new(("library_folder_checkbox", folder_id)))
+                            .max_rect(checkbox_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+                    let checkbox_response = render_folder_selection_checkbox(
+                        &mut checkbox_ui,
+                        selected.contains(folder_id),
+                        checkbox_visible,
+                    );
+                    if checkbox_response.clicked() {
+                        clicked_checkboxes.borrow_mut().push(folder_id.clone());
+                    }
+                    if tile_response.clicked() && !pointer_over_checkbox {
+                        opened_tiles.borrow_mut().push(folder_id.clone());
+                    }
+
+                    // Keep distinct tile positions explicit: a regression that leaks one
+                    // checkbox response to a neighboring tile should fail this assertion.
+                    assert_eq!(tile_rect.left(), index as f32 * (TILE_WIDTH + TILE_GAP));
+                }
+            });
+        });
+        (
+            clicked_checkboxes.into_inner(),
+            opened_tiles.into_inner(),
+        )
+    }
+
+    fn click_folder_checkbox(
+        ctx: &egui::Context,
+        folder_ids: &[String],
+        selected: &HashSet<String>,
+        index: usize,
+        modifiers: egui::Modifiers,
+    ) -> (Vec<String>, Vec<String>) {
+        let pos = egui::pos2(index as f32 * 120.0 + 16.0, 16.0);
+        let press = run_folder_checkbox_frame(
+            ctx,
+            folder_ids,
+            selected,
+            folder_checkbox_input(pos, true, modifiers),
+        );
+        assert!(press.0.is_empty(), "press must not report a click yet");
+        assert!(press.1.is_empty(), "press must not open a folder");
+        run_folder_checkbox_frame(
+            ctx,
+            folder_ids,
+            selected,
+            folder_checkbox_input(pos, false, modifiers),
+        )
+    }
+
+    #[test]
+    fn floating_folder_checkbox_survives_first_press_release_and_repeated_selection() {
+        let ctx = egui::Context::default();
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert(
+            LUCIDE_FAMILY.to_string(),
+            FontData::from_static(LUCIDE_FONT_BYTES).into(),
+        );
+        fonts.families.insert(
+            FontFamily::Name(LUCIDE_FAMILY.into()),
+            vec![LUCIDE_FAMILY.to_string()],
+        );
+        ctx.set_fonts(fonts);
+        let folder_ids = ids(&["alpha", "beta", "gamma"]);
+        let mut selected = HashSet::new();
+
+        // Prime the widget IDs once while the pointer is elsewhere. The next frame combines
+        // the first hover and press, which is the fast path that previously had no stable
+        // checkbox response to carry into the release frame.
+        let _ = run_folder_checkbox_frame(
+            &ctx,
+            &folder_ids,
+            &selected,
+            folder_checkbox_input(egui::pos2(400.0, 100.0), false, egui::Modifiers::NONE),
+        );
+
+        // This starts with no selected folders and exercises the first hover+press frame. The
+        // release frame used to lose the zero-sized checkbox response and silently do nothing.
+        let (clicked, opened) = click_folder_checkbox(
+            &ctx,
+            &folder_ids,
+            &selected,
+            0,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(clicked, ids(&["alpha"]));
+        assert!(opened.is_empty());
+        assert!(select_visible_folder_range(
+            &mut selected,
+            None,
+            "alpha",
+            &folder_ids,
+            false,
+            false,
+        ));
+        assert_eq!(selected, HashSet::from(["alpha".to_owned()]));
+
+        // Clicking the only selected checkbox again must deselect it without opening the folder.
+        let (clicked, opened) = click_folder_checkbox(
+            &ctx,
+            &folder_ids,
+            &selected,
+            0,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(clicked, ids(&["alpha"]));
+        assert!(opened.is_empty());
+        assert!(select_visible_folder_range(
+            &mut selected,
+            Some("alpha"),
+            "alpha",
+            &folder_ids,
+            false,
+            false,
+        ));
+        assert!(selected.is_empty());
+
+        // A second and third folder must keep their own hit targets. Ctrl-click preserves the
+        // existing folder selection while still using the same floating checkbox helper.
+        let (clicked, opened) = click_folder_checkbox(
+            &ctx,
+            &folder_ids,
+            &selected,
+            1,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(clicked, ids(&["beta"]));
+        assert!(opened.is_empty());
+        assert!(select_visible_folder_range(
+            &mut selected,
+            None,
+            "beta",
+            &folder_ids,
+            false,
+            false,
+        ));
+
+        let (clicked, opened) = click_folder_checkbox(
+            &ctx,
+            &folder_ids,
+            &selected,
+            2,
+            egui::Modifiers::CTRL,
+        );
+        assert_eq!(clicked, ids(&["gamma"]));
+        assert!(opened.is_empty());
+        assert!(select_visible_folder_range(
+            &mut selected,
+            Some("beta"),
+            "gamma",
+            &folder_ids,
+            false,
+            true,
+        ));
+        assert_eq!(
+            selected,
+            HashSet::from(["beta".to_owned(), "gamma".to_owned()])
+        );
+    }
 }
 
 fn reorder_category_ids_for_drag(
@@ -330,6 +634,17 @@ fn reorder_category_ids_for_drag(
     } else {
         Some(reordered)
     }
+}
+
+fn translate_visible_category_drop_slot(
+    full_ids: &[String],
+    visible_ids: &[String],
+    visible_slot: usize,
+) -> usize {
+    visible_ids
+        .get(visible_slot)
+        .and_then(|anchor| full_ids.iter().position(|id| id == anchor))
+        .unwrap_or(full_ids.len())
 }
 
 pub(crate) fn sort_categories_with_counts<F>(
@@ -1120,6 +1435,96 @@ fn render_selected_mod_summary(ui: &mut Ui, text: TextCatalog, titles: &[String]
         } else {
             let display_row = if row.chars().count() > MAX_MOD_NAME_CHARS {
                 let mut clamped = row.chars().take(CLAMPED_MOD_NAME_CHARS).collect::<String>();
+                clamped.truncate(clamped.trim_end().len());
+                format!("{clamped}...")
+            } else {
+                row.clone()
+            };
+            format!("‣ {display_row}")
+        };
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 17.0), Sense::hover());
+        ui.painter().with_clip_rect(rect).text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            Color32::from_rgb(205, 210, 217),
+        );
+        response
+            .on_hover_text(row)
+            .on_hover_cursor(egui::CursorIcon::Default);
+        ui.add_space(-10.0);
+    }
+    ui.add_space(6.0);
+}
+
+fn paint_selected_folder_count_badge(ui: &mut Ui, text: TextCatalog, count: usize) {
+    let label = text.folder_selection_summary(count, None);
+    let badge_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.clone(),
+            egui::FontId::proportional(9.0),
+            Color32::from_rgb(205, 210, 217),
+        )
+        .size()
+        .x
+        + 14.0;
+    let badge_size = Vec2::new(badge_width.max(66.0), 16.0);
+    let content_rect = ui.max_rect();
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            content_rect.right() + 16.0 - badge_size.x,
+            content_rect.top() - 18.0,
+        ),
+        badge_size,
+    );
+    let painter = ui.ctx().layer_painter(ui.layer_id());
+    painter.rect(
+        badge_rect,
+        egui::CornerRadius::same(4),
+        Color32::from_rgba_premultiplied(64, 64, 64, 215),
+        egui::Stroke::new(1.0, Color32::from_rgb(86, 86, 86)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(9.0),
+        Color32::from_rgb(205, 210, 217),
+    );
+}
+
+fn render_selected_folder_summary(
+    ui: &mut Ui,
+    text: TextCatalog,
+    names: &[String],
+    count: usize,
+) {
+    const MAX_FOLDER_NAME_CHARS: usize = 23;
+    const CLAMPED_FOLDER_NAME_CHARS: usize = 20;
+
+    if count == 0 {
+        return;
+    }
+    paint_selected_folder_count_badge(ui, text, count);
+    let mut rows: Vec<String> = names.iter().take(count.min(3)).cloned().collect();
+    if count > 3 {
+        rows.truncate(2);
+        rows.push(text.and_more(count.saturating_sub(rows.len())));
+    }
+
+    for row in rows {
+        let label = if row.starts_with('…') {
+            format!(" {row}")
+        } else {
+            let display_row = if row.chars().count() > MAX_FOLDER_NAME_CHARS {
+                let mut clamped = row
+                    .chars()
+                    .take(CLAMPED_FOLDER_NAME_CHARS)
+                    .collect::<String>();
                 clamped.truncate(clamped.trim_end().len());
                 format!("{clamped}...")
             } else {
@@ -2181,7 +2586,7 @@ impl HestiaApp {
         moving_ids: &[String],
         slot_index: usize,
     ) -> bool {
-        if moving_ids.is_empty() {
+        if moving_ids.is_empty() || self.folder_batch_game_busy(game_id) {
             return false;
         }
         let ordered_ids: Vec<String> = self
@@ -2227,16 +2632,36 @@ impl HestiaApp {
             self.dragging_category_id.clone(),
             self.dragging_category_target_index,
         ) {
-            self.move_category_order_to_slot(&dragging_id, target_index)
+            if self.dragging_library_folder_ids.is_empty() {
+                self.move_category_order_to_slot(&dragging_id, target_index)
+            } else {
+                let game_id = self
+                    .state
+                    .categories
+                    .iter()
+                    .find(|category| category.id == dragging_id)
+                    .map(|category| category.game_id.clone());
+                game_id.is_some_and(|game_id| {
+                    self.move_category_ids_to_slot(
+                        &game_id,
+                        &self.dragging_library_folder_ids.clone(),
+                        target_index,
+                    )
+                })
+            }
         } else {
             false
         };
         self.dragging_category_id = None;
         self.dragging_category_target_index = None;
+        self.dragging_library_folder_ids.clear();
         moved
     }
 
     fn assign_mod_category(&mut self, mod_id: &str, category_id: Option<String>) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         let category_name = category_id.as_ref().and_then(|id| {
             self.state
                 .categories
@@ -2304,6 +2729,12 @@ impl HestiaApp {
         if selected_ids.is_empty() {
             return;
         }
+        if selected_ids
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            return;
+        }
         let category_name = category_id.as_ref().and_then(|id| {
             self.state
                 .categories
@@ -2369,6 +2800,9 @@ impl HestiaApp {
         game_id: &str,
         rename_surface: CategoryRenameSurface,
     ) -> String {
+        if self.folder_batch_game_busy(game_id) {
+            return String::new();
+        }
         let mut index = 1;
         let name = loop {
             let candidate = if index == 1 {
@@ -2418,6 +2852,15 @@ impl HestiaApp {
         name: String,
         surface: CategoryRenameSurface,
     ) {
+        let busy = self
+            .state
+            .categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .is_some_and(|category| self.folder_batch_game_busy(&category.game_id));
+        if busy {
+            return;
+        }
         self.category_rename_focus_target_id = Some(category_id.clone());
         self.category_rename_target_id = Some(category_id);
         self.category_rename_surface = Some(surface);
@@ -2489,6 +2932,18 @@ impl HestiaApp {
         if trimmed.is_empty() {
             return;
         }
+        let Some(game_id) = self
+            .state
+            .categories
+            .iter()
+            .find(|category| category.id == category_id)
+            .map(|category| category.game_id.clone())
+        else {
+            return;
+        };
+        if self.folder_batch_game_busy(&game_id) {
+            return;
+        }
         let Some(category) = self
             .state
             .categories
@@ -2511,145 +2966,34 @@ impl HestiaApp {
     }
 
     fn delete_category(&mut self, category_id: &str) {
-        self.delete_categories(&[category_id.to_string()]);
+        let category_ids = [category_id.to_string()];
+        self.start_folder_categories_batch(&category_ids, FolderBatchAction::RemoveFolders);
     }
 
     fn delete_category_and_mods(&mut self, category_id: &str) {
-        let category_name = self
-            .state
-            .categories
-            .iter()
-            .find(|category| category.id == category_id)
-            .map(|category| category.name.clone())
-            .unwrap_or_else(|| self.text().categories_heading().to_string());
-        let mods_to_delete: Vec<ModEntry> = self
-            .state
-            .mods
-            .iter()
-            .filter(|mod_entry| mod_entry.metadata.user.category_id.as_deref() == Some(category_id))
-            .cloned()
-            .collect();
-        let mut deleted_count = 0;
-        let mut last_err: Option<anyhow::Error> = None;
-        for mod_entry in mods_to_delete {
-            match self.delete_mod_entry(&mod_entry) {
-                Ok(_) => {
-                    deleted_count += 1;
-                    self.selected_mods.remove(&mod_entry.id);
-                    if self.selected_mod_id.as_deref() == Some(mod_entry.id.as_str()) {
-                        self.set_selected_mod_id(None);
-                    }
-                }
-                Err(err) => last_err = Some(err),
-            }
-        }
-        if let Some(err) = last_err {
-            if deleted_count > 0 {
-                let text = self.text();
-                let action = text.delete_action(self.state.static_prefs.delete_behavior);
-                self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
-                self.set_message_ok(text.action_count_message(action, deleted_count));
-                self.save_state();
-            }
-            self.refresh();
-            self.report_error(err, Some(self.text().delete_failed()));
-            return;
-        }
-
-        self.delete_category(category_id);
-        let text = self.text();
-        let action = text.delete_action(self.state.static_prefs.delete_behavior);
-        self.log_action(
-            action,
-            &format!("{category_name} folder and {deleted_count} mod(s)"),
+        let category_ids = [category_id.to_string()];
+        self.start_folder_categories_batch(
+            &category_ids,
+            FolderBatchAction::DeleteFoldersAndContents,
         );
-        self.set_message_ok(text.category_action_count_message(
-            action,
-            &category_name,
-            deleted_count,
-        ));
-        self.refresh();
     }
 
     fn delete_category_mods_keep_folder(&mut self, category_id: &str, mod_ids: &[String]) {
         if mod_ids.is_empty() {
             return;
         }
-        let category_name = self
-            .state
-            .categories
-            .iter()
-            .find(|category| category.id == category_id)
-            .map(|category| category.name.clone())
-            .unwrap_or_else(|| self.text().categories_heading().to_string());
-        let deleting: HashSet<&str> = mod_ids.iter().map(String::as_str).collect();
-        let mods_to_delete: Vec<ModEntry> = self
-            .state
-            .mods
-            .iter()
-            .filter(|mod_entry| {
-                deleting.contains(mod_entry.id.as_str())
-                    && mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
-            })
-            .cloned()
-            .collect();
-        let mut deleted_count = 0;
-        let mut last_err: Option<anyhow::Error> = None;
-        for mod_entry in mods_to_delete {
-            match self.delete_mod_entry(&mod_entry) {
-                Ok(_) => {
-                    deleted_count += 1;
-                    self.selected_mods.remove(&mod_entry.id);
-                    if self.selected_mod_id.as_deref() == Some(mod_entry.id.as_str()) {
-                        self.set_selected_mod_id(None);
-                    }
-                }
-                Err(err) => last_err = Some(err),
-            }
-        }
-        if deleted_count > 0 {
-            let text = self.text();
-            let action = text.delete_action(self.state.static_prefs.delete_behavior);
-            self.log_action(action, &format!("{deleted_count} mods in {category_name}"));
-            self.set_message_ok(text.action_count_message(action, deleted_count));
-            self.save_state();
-        }
-        self.refresh();
-        if let Some(err) = last_err {
-            self.report_error(err, Some(self.text().delete_failed()));
-        }
+        self.start_folder_category_contents_batch(
+            category_id,
+            mod_ids,
+            FolderBatchAction::DeleteContents,
+        );
     }
 
     fn delete_categories(&mut self, category_ids: &[String]) {
         if category_ids.is_empty() {
             return;
         }
-        let deleting: HashSet<&str> = category_ids.iter().map(String::as_str).collect();
-        self.state
-            .categories
-            .retain(|category| !deleting.contains(category.id.as_str()));
-        for mod_entry in self.state.mods.iter_mut().filter(|mod_entry| {
-            mod_entry
-                .metadata
-                .user
-                .category_id
-                .as_deref()
-                .is_some_and(|category_id| deleting.contains(category_id))
-        }) {
-            mod_entry.metadata.user.category_id = None;
-            mod_entry.metadata.user.category.clear();
-            let _ = xxmi::save_mod_metadata(mod_entry);
-        }
-        if self
-            .category_rename_target_id
-            .as_deref()
-            .is_some_and(|category_id| deleting.contains(category_id))
-        {
-            self.clear_category_rename();
-        }
-        self.selected_category_ids
-            .retain(|category_id| !deleting.contains(category_id.as_str()));
-        self.save_state();
+        self.start_folder_categories_batch(category_ids, FolderBatchAction::RemoveFolders);
     }
 
     fn render_category_picker_popup(
@@ -2914,7 +3258,12 @@ impl HestiaApp {
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                 .clicked()
                                             {
-                                                self.delete_category(&category.id);
+                                                self.start_folder_category_batch(
+                                                    &category.id,
+                                                    &[],
+                                                    FolderContentsScope::All,
+                                                    FolderBatchAction::RemoveFolders,
+                                                );
                                                 ui.close();
                                             }
                                         })
@@ -3128,6 +3477,9 @@ impl HestiaApp {
         current_category_id: Option<&str>,
         category_label: &str,
     ) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         let text = self.text();
         let categories = self.categories_for_game(game_id);
         if categories.is_empty() {
@@ -3367,6 +3719,13 @@ impl HestiaApp {
     }
 
     fn render_selected_mods_category_submenu(&mut self, ui: &mut Ui, game_id: &str) {
+        if self
+            .selected_mods
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
+            return;
+        }
         let text = self.text();
         let selected_category_ids: Vec<Option<String>> = self
             .state
@@ -3479,6 +3838,9 @@ impl HestiaApp {
     }
 
     fn render_update_preference_checkboxes(&mut self, ui: &mut Ui, mod_id: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         let text = self.text();
         let Some(index) = self
             .state
@@ -3714,6 +4076,9 @@ impl HestiaApp {
         mod_id: &str,
         preference: UnsafeContentPreference,
     ) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         let backend = self
             .state
             .mods
@@ -3775,6 +4140,9 @@ impl HestiaApp {
         let mut touched = false;
 
         for mod_id in mod_ids {
+            if self.folder_batch_blocks_mod(mod_id) {
+                continue;
+            }
             let current_signature = if ignore_current_update && !ignore_update_always {
                 self.state
                     .mods
@@ -3850,6 +4218,12 @@ impl HestiaApp {
         mod_ids: Vec<String>,
     ) -> bool {
         if mod_ids.is_empty() {
+            return false;
+        }
+        if mod_ids
+            .iter()
+            .any(|mod_id| self.folder_batch_blocks_mod(mod_id))
+        {
             return false;
         }
 
@@ -3959,6 +4333,9 @@ impl HestiaApp {
     fn apply_selected_ignore_local_changes(&mut self, mod_ids: &[String], ignore: bool) {
         let mut touched = false;
         for mod_id in mod_ids {
+            if self.folder_batch_blocks_mod(mod_id) {
+                continue;
+            }
             let Some(mod_entry) = self
                 .state
                 .mods
@@ -4141,6 +4518,9 @@ impl HestiaApp {
     }
 
     fn select_extracted_metadata_source(&mut self, mod_id: &str, source_path: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         self.metadata_hotkeys_view = None;
         let Some(mod_entry) = self
             .state
@@ -4181,6 +4561,9 @@ impl HestiaApp {
     /// translation flows through the primary `markdown` path, and `readme_path` may
     /// still point at an unrelated text source.
     fn select_description_source(&mut self, mod_id: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         self.metadata_hotkeys_view = None;
         if self.personal_note_edit_target_id.as_deref() == Some(mod_id) {
             self.personal_note_edit_target_id = None;
@@ -4197,6 +4580,9 @@ impl HestiaApp {
     /// Show the mod's parsed keybind `.ini`s inline. Persists the pick and populates
     /// the transient parsed-ini cache. Does NOT trigger readme translation.
     fn select_hotkeys_source(&mut self, selected: &ModEntry) {
+        if self.folder_batch_blocks_mod(&selected.id) {
+            return;
+        }
         self.metadata_hotkeys_view =
             Some((selected.id.clone(), parse_mod_config_inis(&selected.root_path)));
         self.refresh_hotkey_values_cache_for_entry(selected);
@@ -4210,6 +4596,9 @@ impl HestiaApp {
     }
 
     fn start_personal_note_edit(&mut self, mod_id: &str, initial_text: String) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         self.metadata_hotkeys_view = None;
         self.personal_note_edit_target_id = Some(mod_id.to_string());
         self.personal_note_edit_text = initial_text;
@@ -4357,6 +4746,9 @@ impl HestiaApp {
     }
 
     fn save_personal_note_edit(&mut self, mod_id: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            return;
+        }
         let text = self.text();
         let raw = self.personal_note_edit_text.clone();
         let personal_note_path = xxmi::personal_note_relative_path();
@@ -4993,6 +5385,7 @@ impl HestiaApp {
     }
 
     fn render_mod_grid(&mut self, ui: &mut Ui) {
+        self.sync_library_folder_selection_context();
         let text = self.text();
         let age_now = Local::now();
         let cards = if Self::pointer_motion_image_throttle_active(ui.ctx())
@@ -5067,14 +5460,22 @@ impl HestiaApp {
                     let expanded = self.mods_search_expanded;
                     let how_expanded = ui.ctx().animate_bool_with_time(ui.id().with("mods_search_anim"), expanded, 0.2);
                     
-                    let has_selection = !self.selected_mods.is_empty();
+                    let has_selection = !self.selected_mods.is_empty()
+                        || self.library_folder_selection_active();
                     let now = ui.input(|i| i.time);
                     if has_selection {
                         // Continuously update the "last active" timestamp while selection is active
                         self.selection_empty_at = Some(now);
                     }
 
-                    let selection_anim = ui.ctx().animate_bool_with_time(ui.id().with("batch_anim"), has_selection, 0.2);
+                    // Folder actions can wrap at narrow widths, so snapping their header avoids
+                    // a transient mixed sort/bulk layout while the selection state changes.
+                    let selection_anim = animate_library_selection(
+                        ui.ctx(),
+                        ui.id().with("batch_anim"),
+                        has_selection,
+                        self.library_selection_section,
+                    );
 
                     let mods_status_filter_popup_id = ui.id().with("mods_status_filter_popup");
                     let mods_status_filter_popup_pos_id =
@@ -5520,6 +5921,7 @@ impl HestiaApp {
                     }
 
                     if selection_anim > 0.01 {
+                        let folder_selection_header = self.library_folder_selection_active();
                         // Dynamically reduce the gap by 10px when the search bar is collapsed
                         ui.add_space(10.0 * selection_anim * how_expanded);
                         // Intro/outro slide, mirroring the sort dropdown in reverse: enter from the left while
@@ -5540,6 +5942,9 @@ impl HestiaApp {
                         group_ui.set_opacity(selection_anim);
                         group_ui.spacing_mut().item_spacing.y = 2.0; // Total control over vertical gaps
                         group_ui.vertical(|ui| {
+                            if folder_selection_header {
+                                self.render_folder_selection_toolbar(ui, how_expanded);
+                            } else {
                                 ui.add_space(-5.0); // Stack top margin
                                 ui.spacing_mut().button_padding = egui::vec2(7.0, 5.0);
                                 let radius = egui::CornerRadius::same(5);
@@ -5740,10 +6145,16 @@ impl HestiaApp {
                                 ui.add_space(3.0);
                                     static_label(ui, RichText::new(text.selected_count(self.selected_mods.len())).size(12.0).color(Color32::from_gray(160)));
                                 });
+                            }
                             });
                         // Reserve the group's footprint so the right-aligned stats never overlap it.
                         let bulk_used_width = group_ui.min_rect().width();
-                        ui.allocate_space(Vec2::new((bulk_used_width + bulk_slide).max(0.0), 41.0));
+                        let bulk_used_height = if folder_selection_header {
+                            (group_ui.min_rect().bottom() - bulk_group_rect.top()).max(41.0)
+                        } else {
+                            41.0
+                        };
+                        ui.allocate_space(Vec2::new((bulk_used_width + bulk_slide).max(0.0), bulk_used_height));
                     }
 
                     // Explicit (not salted) id: keeps the interactive count Label's id fixed so it
@@ -5778,8 +6189,16 @@ impl HestiaApp {
                                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                                         .on_hover_text(text.select_all_visible_mods());
                                     if count_response.clicked() {
-                                        for card in cards.iter() {
-                                            self.selected_mods.insert(card.0.clone());
+                                        if self.library_selection_section
+                                            == LibrarySelectionSection::Folders
+                                            && !self.library_visible_folder_ids.is_empty()
+                                        {
+                                            self.select_all_library_folders();
+                                        } else {
+                                            self.begin_library_mod_selection();
+                                            for id in &self.library_visible_mod_ids {
+                                                self.selected_mods.insert(id.clone());
+                                            }
                                         }
                                     }
                                     
@@ -5807,6 +6226,8 @@ impl HestiaApp {
                     suppress_mod_card_context_menu = true;
                 }
                 mod_card_context_block_rects.push(header_response.response.rect);
+                self.render_folder_selection_scope_line(ui);
+                self.render_folder_batch_status(ui);
             });
         if ui.ctx().input(|i| {
             i.pointer.secondary_clicked()
@@ -5833,6 +6254,7 @@ impl HestiaApp {
             .selected_game()
             .map(|game| game.definition.id.clone())
             .unwrap_or_default();
+        let folder_batch_busy = self.folder_batch_game_busy(&selected_game_id);
         let category_sections = self.categories_for_game(&selected_game_id);
         let category_sort_mode = self.category_sort_mode_for_game(&selected_game_id);
         let category_display_mode =
@@ -5895,7 +6317,9 @@ impl HestiaApp {
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if back_response.clicked() {
                         self.selected_category_folder_id = None;
+                        self.clear_library_folder_selection();
                         self.selected_mods.clear();
+                        egui::Popup::close_all(ui.ctx());
                         selected_category_folder_id = None;
                     }
                     ui.add_space(2.0);
@@ -6078,17 +6502,6 @@ impl HestiaApp {
                             self.category_rename_name.clone();
                         let scroll_to_category_id = self.library_scroll_to_category_id.clone();
                         let search_filter_active = !self.mods_search_query.trim().is_empty();
-                        let library_filter_active = search_filter_active
-                            || !self.show_enabled_mods
-                            || self.state.static_prefs.hide_disabled
-                            || self.state.static_prefs.hide_archived
-                            || !self.show_unlinked_mods
-                            || !self.show_up_to_date_mods
-                            || !self.show_update_available_mods
-                            || !self.show_check_skipped_mods
-                            || !self.show_missing_source_mods
-                            || !self.show_modified_locally_mods
-                            || !self.show_ignoring_update_mods;
                         let folder_tiles: Vec<CategoryFolderTile> = if matches!(
                             category_display_mode,
                             LibraryCategoryDisplayMode::Folders
@@ -6107,8 +6520,11 @@ impl HestiaApp {
                                         .mods
                                         .iter()
                                         .filter(|mod_entry| {
-                                            mod_entry.metadata.user.category_id.as_deref()
-                                                == Some(category.id.as_str())
+                                            mod_entry.game_id == selected_game_id
+                                                && self
+                                                    .effective_mod_category_id(mod_entry)
+                                                    .as_deref()
+                                                    == Some(category.id.as_str())
                                         })
                                         .count();
                                     if section_cards.is_empty()
@@ -6207,6 +6623,11 @@ impl HestiaApp {
                                 .collect()
                         } else {
                             Vec::new()
+                        };
+                        let folder_reorder_blocked = {
+                            let displayed: HashSet<&str> =
+                                folder_tiles.iter().map(|tile| tile.id.as_str()).collect();
+                            displayed.len() != category_sections.len()
                         };
                         let folder_tile_textures: HashMap<String, Option<egui::TextureHandle>> =
                             folder_tiles
@@ -6337,6 +6758,14 @@ impl HestiaApp {
                                 }
                             }
                         };
+                        let visible_folder_ids: Vec<String> = folder_tiles
+                            .iter()
+                            .map(|tile| tile.id.clone())
+                            .collect();
+                        self.update_library_selection_surface(
+                            &visible_folder_ids,
+                            &visible_card_ids,
+                        );
 
                         let titlebar_context_block_rect = self.last_titlebar_rect;
                         let mut pointer_over_grid_card = false;
@@ -6345,6 +6774,29 @@ impl HestiaApp {
                         let row_height = CARD_HEIGHT + card_spacing;
                         let should_censor_unsafe = self.should_censor_unsafe();
                         
+                        let selected_library_folder_ids_snapshot =
+                            self.selected_library_folder_ids.clone();
+                        let folder_batch_targets_snapshot = self.folder_batch_targets();
+                        let folder_batch_delete_actions = [
+                            FolderBatchAction::RemoveFolders,
+                            FolderBatchAction::DeleteContents,
+                            FolderBatchAction::DeleteFoldersAndContents,
+                        ];
+                        let folder_batch_delete_allowed = folder_batch_targets_snapshot
+                            .as_ref()
+                            .map(|targets| {
+                                folder_batch_delete_actions.map(|action| {
+                                    self.folder_batch_action_allowed(targets, action)
+                                })
+                            });
+                        let folder_batch_hide_hidden_counts = self.state.static_prefs.unsafe_content_mode
+                            == UnsafeContentMode::HideNoCounter;
+                        let folder_selection_active_snapshot =
+                            self.library_folder_selection_active();
+                        let pending_folder_selection =
+                            std::cell::RefCell::new(Vec::<(String, bool, bool)>::new());
+                        let pending_clear_folder_selection = std::cell::Cell::new(false);
+                        let mut pending_begin_mod_selection = false;
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<&LibraryCardRow>| {
                             // Get viewport for culling
@@ -6430,10 +6882,12 @@ impl HestiaApp {
                                                     );
 
                                                     if response.gained_focus() && !response.clicked() {
+                                                        pending_begin_mod_selection = true;
                                                         self.set_selected_mod_id(Some(mod_id.clone()));
                                                     }
 
                                                     if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space)) {
+                                                        pending_begin_mod_selection = true;
                                                         self.toggle_mod_selection(mod_id, !checked);
                                                         response.request_focus();
                                                     }
@@ -6581,6 +7035,7 @@ impl HestiaApp {
                                                     );
                                                     let cb_response = larger_checkbox(&mut checkbox_ui, checked);
                                                     if cb_response.clicked() {
+                                                        pending_begin_mod_selection = true;
                                                         let modifiers = ui.input(|i| i.modifiers);
                                                         if modifiers.shift {
                                                             if !select_mod_card_visible_range(
@@ -6612,6 +7067,7 @@ impl HestiaApp {
                                                         response.request_focus();
                                                     }
                                                     if response.clicked() {
+                                                        pending_begin_mod_selection = true;
                                                         response.request_focus();
                                                         // Space bar is used for selection toggle, so ignore it here to keep mod detail open
                                                         let is_space = ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_down(egui::Key::Space));
@@ -6674,6 +7130,7 @@ impl HestiaApp {
                                                                     .sense(egui::Sense::click()),
                                                                 ).on_hover_cursor(egui::CursorIcon::Default);
                                                                 if title_response.clicked() {
+                                                                    pending_begin_mod_selection = true;
                                                                     response.request_focus();
                                                                     let modifiers = ui.input(|i| i.modifiers);
                                                                     if modifiers.command || modifiers.ctrl {
@@ -7306,7 +7763,8 @@ impl HestiaApp {
                                     Sense::click_and_drag(),
                                 );
                                 let selected =
-                                    selected_category_folder_id.as_deref() == Some(tile.id.as_str());
+                                    selected_library_folder_ids_snapshot.contains(&tile.id);
+                                let folder_selection_active = folder_selection_active_snapshot;
                                 let dragging_self =
                                     dragging_category_id.as_deref() == Some(tile.id.as_str());
                                 let pointer_over_tile = ui
@@ -7585,6 +8043,40 @@ impl HestiaApp {
                                     );
                                 }
 
+                                let checkbox_rect = egui::Rect::from_min_size(
+                                    rect.min + egui::vec2(7.0, 7.0),
+                                    egui::vec2(26.0, 26.0),
+                                );
+                                let mut checkbox_ui = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .id(egui::Id::new(("library_folder_checkbox", &tile.id)))
+                                        .max_rect(checkbox_rect)
+                                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                                );
+                                // Keep the hit target allocated for the whole tile lifetime. The
+                                // old zero-sized response was gated by `response.hovered()`, which
+                                // can be false on the release frame after the child checkbox has
+                                // taken the pointer. That made a plain first click disappear.
+                                // Painting still follows the normal floating-checkbox affordance,
+                                // while pointer geometry keeps it visible during press/release.
+                                let checkbox_pointer_pos = ui.ctx().pointer_latest_pos();
+                                let pointer_over_checkbox = checkbox_pointer_pos
+                                    .is_some_and(|pointer_pos| checkbox_rect.contains(pointer_pos));
+                                let checkbox_visible = folder_selection_active
+                                    || response.hovered()
+                                    || pointer_over_tile
+                                    || pointer_over_checkbox;
+                                let checkbox_response =
+                                    render_folder_selection_checkbox(&mut checkbox_ui, selected, checkbox_visible);
+                                if checkbox_response.clicked() {
+                                    let modifiers = ui.input(|input| input.modifiers);
+                                    pending_folder_selection.borrow_mut().push((
+                                        tile.id.clone(),
+                                        modifiers.shift,
+                                        modifiers.ctrl || modifiers.command,
+                                    ));
+                                }
+
                                 response
                                     .on_hover_text(text.open_item(&tile.name))
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -7779,6 +8271,8 @@ impl HestiaApp {
                         let mut pending_folder_delete_visible_mods: Option<(String, Vec<String>)> =
                             None;
                         let mut pending_folder_delete_with_mods: Option<String> = None;
+                        let mut pending_folder_batch_delete_action: Option<FolderBatchAction> =
+                            None;
                         let mut pending_finish_folder_drag = false;
                         let mut pending_clear_scroll_to_category = false;
                         let mut pointer_over_grid_widget = false;
@@ -7892,6 +8386,17 @@ impl HestiaApp {
                                                     let tile_index = row_index * columns + column_index;
                                                     let response = render_category_folder_tile(ui, tile);
                                                     folder_tile_rects.push(response.rect);
+                                                    let pointer_over_folder_checkbox = ui
+                                                        .ctx()
+                                                        .pointer_latest_pos()
+                                                        .is_some_and(|pos| {
+                                                            egui::Rect::from_min_size(
+                                                                response.rect.min
+                                                                    + egui::vec2(7.0, 7.0),
+                                                                egui::vec2(26.0, 26.0),
+                                                            )
+                                                            .contains(pos)
+                                                        });
                                                     if scroll_to_category_id.as_deref()
                                                         == Some(tile.id.as_str())
                                                     {
@@ -7962,7 +8467,7 @@ impl HestiaApp {
                                                                 egui::Key::Escape,
                                                             )
                                                         });
-                                                        if save_rename {
+                                                        if save_rename && !folder_batch_busy {
                                                             pending_folder_rename_save = Some((
                                                                 tile.id.clone(),
                                                                 category_rename_name_draft.clone(),
@@ -8002,6 +8507,24 @@ impl HestiaApp {
                                                                     },
                                                                 )
                                                         });
+                                                    let multi_folder_context =
+                                                        selected_library_folder_ids_snapshot.len()
+                                                            >= 2
+                                                            && selected_library_folder_ids_snapshot
+                                                                .contains(&tile.id);
+                                                    let selected_folder_names: Vec<String> =
+                                                        if multi_folder_context {
+                                                            folder_tiles
+                                                                .iter()
+                                                                .filter(|folder| {
+                                                                    selected_library_folder_ids_snapshot
+                                                                        .contains(&folder.id)
+                                                                })
+                                                                .map(|folder| folder.name.clone())
+                                                                .collect()
+                                                        } else {
+                                                            Vec::new()
+                                                        };
                                                     egui::Popup::new(
                                                         folder_popup_id,
                                                         ui.ctx().clone(),
@@ -8059,61 +8582,146 @@ impl HestiaApp {
                                                             .widgets
                                                             .open
                                                             .corner_radius = radius;
-                                                        ui.add_sized(
-                                                            [ui.available_width(), 0.0],
-                                                            egui::Label::new(
-                                                                RichText::new(&tile.name)
-                                                                    .size(12.5)
-                                                                    .strong()
-                                                                    .color(Color32::from_rgb(
-                                                                        228, 231, 235,
-                                                                    )),
+                                                        if multi_folder_context {
+                                                            render_selected_folder_summary(
+                                                                ui,
+                                                                text,
+                                                                &selected_folder_names,
+                                                                selected_folder_names.len(),
+                                                            );
+                                                        } else {
+                                                            ui.add_sized(
+                                                                [ui.available_width(), 0.0],
+                                                                egui::Label::new(
+                                                                    RichText::new(&tile.name)
+                                                                        .size(12.5)
+                                                                        .strong()
+                                                                        .color(Color32::from_rgb(
+                                                                            228, 231, 235,
+                                                                        )),
+                                                                )
+                                                                .halign(egui::Align::Min)
+                                                                .wrap()
+                                                                .selectable(false),
                                                             )
-                                                            .halign(egui::Align::Min)
-                                                            .wrap()
-                                                            .selectable(false),
-                                                        )
-                                                        .on_hover_cursor(
-                                                            egui::CursorIcon::Default,
-                                                        );
+                                                            .on_hover_cursor(
+                                                                egui::CursorIcon::Default,
+                                                            );
+                                                        }
                                                         ui.add_space(-2.0);
                                                         ui.separator();
                                                         ui.add_space(-2.0);
-                                                        if ui
-                                                            .button(icon_text_sized(
+                                                        let open_response = ui.add_enabled(
+                                                            !multi_folder_context,
+                                                            egui::Button::new(icon_text_sized(
                                                                 Icon::FolderOpen,
                                                                 text.open(),
                                                                 12.0,
                                                                 12.0,
-                                                            ))
-                                                            .on_hover_cursor(
-                                                                egui::CursorIcon::PointingHand,
-                                                            )
-                                                            .clicked()
-                                                        {
+                                                            )),
+                                                        );
+                                                        let open_response =
+                                                            if multi_folder_context {
+                                                                open_response
+                                                            } else {
+                                                                open_response.on_hover_cursor(
+                                                                    egui::CursorIcon::PointingHand,
+                                                                )
+                                                            };
+                                                        if open_response.clicked() {
                                                             pending_category_folder_id =
                                                                 Some(Some(tile.id.clone()));
                                                             ui.close();
                                                         }
-                                                        if ui
-                                                            .button(icon_text_sized(
+                                                        let rename_response = ui.add_enabled(
+                                                            !multi_folder_context && !folder_batch_busy,
+                                                            egui::Button::new(icon_text_sized(
                                                                 Icon::Pencil,
                                                                 text.rename(),
                                                                 12.0,
                                                                 12.0,
-                                                            ))
-                                                            .on_hover_cursor(
-                                                                egui::CursorIcon::PointingHand,
-                                                            )
-                                                            .clicked()
-                                                        {
+                                                            )),
+                                                        );
+                                                        let rename_response =
+                                                            if multi_folder_context || folder_batch_busy {
+                                                                rename_response
+                                                            } else {
+                                                                rename_response.on_hover_cursor(
+                                                                    egui::CursorIcon::PointingHand,
+                                                                )
+                                                            };
+                                                        if rename_response.clicked() {
                                                             pending_folder_rename = Some((
                                                                 tile.id.clone(),
                                                                 tile.name.clone(),
                                                             ));
                                                             ui.close();
                                                         }
-                                                        if tile.total_count == 0
+                                                        if multi_folder_context {
+                                                            let delete_enabled =
+                                                                !folder_batch_busy
+                                                                    && folder_batch_delete_allowed
+                                                                        .is_some_and(|allowed| {
+                                                                            allowed.into_iter().any(|allowed| allowed)
+                                                                        });
+                                                            if delete_enabled {
+                                                                ui.menu_button(
+                                                                    icon_text_sized(
+                                                                        Icon::Trash2,
+                                                                        text.delete(),
+                                                                        12.0,
+                                                                        12.0,
+                                                                    ),
+                                                                    |ui| {
+                                                                        ui.set_max_width(180.0);
+                                                                        ui.style_mut().wrap_mode =
+                                                                            Some(egui::TextWrapMode::Extend);
+                                                                        for (index, action) in
+                                                                            folder_batch_delete_actions
+                                                                                .into_iter()
+                                                                                .enumerate()
+                                                                        {
+                                                                            let Some(targets) =
+                                                                                folder_batch_targets_snapshot
+                                                                                    .as_ref()
+                                                                            else {
+                                                                                continue;
+                                                                            };
+                                                                            let allowed = folder_batch_delete_allowed
+                                                                                .is_some_and(|allowed| allowed[index]);
+                                                                            if HestiaApp::render_folder_batch_delete_choice_button(
+                                                                                ui,
+                                                                                text,
+                                                                                targets,
+                                                                                action,
+                                                                                allowed && !folder_batch_busy,
+                                                                                folder_batch_busy,
+                                                                                folder_batch_hide_hidden_counts,
+                                                                            ) {
+                                                                                pending_folder_batch_delete_action =
+                                                                                    Some(action);
+                                                                                ui.close();
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                )
+                                                                .response
+                                                                .on_hover_cursor(
+                                                                    egui::CursorIcon::PointingHand,
+                                                                );
+                                                            } else {
+                                                                ui.add_enabled(
+                                                                    false,
+                                                                    egui::Button::new(icon_text_sized(
+                                                                        Icon::Trash2,
+                                                                        text.delete(),
+                                                                        12.0,
+                                                                        12.0,
+                                                                    )),
+                                                                );
+                                                            }
+                                                        } else if tile.total_count == 0
                                                             && tile.hidden_mod_count == 0
                                                         {
                                                             if ui
@@ -8145,7 +8753,7 @@ impl HestiaApp {
                                                                 |ui| {
                                                                     if ui
                                                                         .button(icon_text_sized(
-                                                                            Icon::FolderOpen,
+                                                                            Icon::Trash2,
                                                                             text.folder_only_move_mods_outside(),
                                                                             12.0,
                                                                             12.0,
@@ -8236,14 +8844,34 @@ impl HestiaApp {
                                                             );
                                                         }
                                                     });
-                                                    if response.clicked() {
-                                                        pending_category_folder_id =
-                                                            Some(Some(tile.id.clone()));
+                                                    if response.clicked() && !pointer_over_folder_checkbox {
+                                                        let modifiers = ui.input(|input| input.modifiers);
+                                                        let modifier_selection =
+                                                            modifiers.shift
+                                                                || modifiers.ctrl
+                                                                || modifiers.command;
+                                                        if modifier_selection {
+                                                            pending_folder_selection.borrow_mut().push((
+                                                                tile.id.clone(),
+                                                                modifiers.shift,
+                                                                modifiers.ctrl || modifiers.command,
+                                                            ));
+                                                        } else {
+                                                            pending_category_folder_id =
+                                                                Some(Some(tile.id.clone()));
+                                                            pending_clear_folder_selection.set(true);
+                                                        }
                                                     }
-                                                    if !library_filter_active {
-                                                        if response.drag_started() {
-                                                            pending_folder_drag_start =
-                                                                Some((tile.id.clone(), tile_index));
+                                                    if !folder_reorder_blocked && !folder_batch_busy {
+                                                        if response.drag_started() && !pointer_over_folder_checkbox {
+                                                            let modifiers = ui.input(|input| input.modifiers);
+                                                            if !modifiers.shift
+                                                                && !modifiers.ctrl
+                                                                && !modifiers.command
+                                                            {
+                                                                pending_folder_drag_start =
+                                                                    Some((tile.id.clone(), tile_index));
+                                                            }
                                                         }
                                                         if response.drag_stopped()
                                                             && dragging_category_id
@@ -8279,7 +8907,7 @@ impl HestiaApp {
                                         }
                                         let folder_drag_active = dragging_category_id.is_some()
                                             || pending_folder_drag_start.is_some();
-                                        if folder_drag_active && !library_filter_active {
+                                        if folder_drag_active && !folder_reorder_blocked && !folder_batch_busy {
                                             let pointer_pos = ui.ctx().pointer_latest_pos();
                                             let pointer_active = ui.input(|input| {
                                                 input.pointer.primary_down()
@@ -8489,7 +9117,22 @@ impl HestiaApp {
                                 }
                             }
                         }
+                        if let (Some(targets), Some(action)) =
+                            (folder_batch_targets_snapshot, pending_folder_batch_delete_action)
+                        {
+                            self.start_folder_batch_targets(targets, action, None);
+                        }
+                        if pending_clear_folder_selection.get() {
+                            self.clear_library_folder_selection();
+                        }
+                        for (id, range, additive) in pending_folder_selection.into_inner() {
+                            self.select_library_folder(&id, range, additive);
+                        }
+                        if pending_begin_mod_selection {
+                            self.begin_library_mod_selection();
+                        }
                         if !section_select_changes.is_empty() {
+                            self.begin_library_mod_selection();
                             for (ids, should_select) in section_select_changes {
                                 for id in ids {
                                     if should_select {
@@ -8536,11 +9179,53 @@ impl HestiaApp {
                             paint_library_drag_ghost(ui);
                         }
                         if let Some((category_id, target_index)) = pending_folder_drag_start {
+                            if !self.selected_library_folder_ids.contains(&category_id) {
+                                self.clear_library_folder_selection();
+                                self.select_library_folder(&category_id, false, false);
+                            } else {
+                                self.begin_library_folder_selection();
+                            }
+                            let full_category_ids: Vec<String> = category_sections
+                                .iter()
+                                .map(|category| category.id.clone())
+                                .collect();
+                            let visible_category_ids: Vec<String> = folder_tiles
+                                .iter()
+                                .map(|tile| tile.id.clone())
+                                .collect();
+                            self.dragging_library_folder_ids = folder_tiles
+                                .iter()
+                                .filter(|tile| self.selected_library_folder_ids.contains(&tile.id))
+                                .map(|tile| tile.id.clone())
+                                .collect();
+                            if self.dragging_library_folder_ids.is_empty() {
+                                self.dragging_library_folder_ids.push(category_id.clone());
+                            }
                             self.dragging_category_id = Some(category_id);
-                            self.dragging_category_target_index = Some(target_index);
+                            self.dragging_category_target_index = Some(
+                                translate_visible_category_drop_slot(
+                                    &full_category_ids,
+                                    &visible_category_ids,
+                                    target_index,
+                                ),
+                            );
                         }
                         if let Some(target_index) = pending_folder_drag_target_index {
-                            self.dragging_category_target_index = Some(target_index);
+                            let full_category_ids: Vec<String> = category_sections
+                                .iter()
+                                .map(|category| category.id.clone())
+                                .collect();
+                            let visible_category_ids: Vec<String> = folder_tiles
+                                .iter()
+                                .map(|tile| tile.id.clone())
+                                .collect();
+                            self.dragging_category_target_index = Some(
+                                translate_visible_category_drop_slot(
+                                    &full_category_ids,
+                                    &visible_category_ids,
+                                    target_index,
+                                ),
+                            );
                         }
                         if pending_finish_folder_drag
                             || (self.dragging_category_id.is_some()
@@ -8566,7 +9251,9 @@ impl HestiaApp {
                         }
                         if let Some(category_folder_id) = pending_category_folder_id {
                             self.selected_category_folder_id = category_folder_id;
+                            self.clear_library_folder_selection();
                             self.selected_mods.clear();
+                            egui::Popup::close_all(ui.ctx());
                         }
                         if !self.dragging_mod_ids.is_empty()
                             || self.dragging_category_id.is_some()
@@ -8649,7 +9336,7 @@ impl HestiaApp {
         selected_game_id: &str,
         drilled_category: Option<(String, String)>,
         visible_card_ids: &[String],
-        cards: &[LibraryCardRow],
+        _cards: &[LibraryCardRow],
     ) {
         let text = self.text();
         let popup_id = ui.id().with("library_background_context_menu_popup");
@@ -8704,8 +9391,14 @@ impl HestiaApp {
                 ui.add_space(-2.0);
                 ui.separator();
                 ui.add_space(-2.0);
+                let folder_batch_busy = self
+                    .selected_game()
+                    .is_some_and(|game| self.folder_batch_game_busy(&game.definition.id));
                 if ui
-                    .button(icon_text_sized(Icon::Pencil, text.rename(), 12.0, 12.0))
+                    .add_enabled(
+                        !folder_batch_busy,
+                        egui::Button::new(icon_text_sized(Icon::Pencil, text.rename(), 12.0, 12.0)),
+                    )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
@@ -8717,24 +9410,29 @@ impl HestiaApp {
                     ui.close();
                 }
                 let visible_count = visible_card_ids.len();
-                let hidden_mod_count = self
-                    .state
-                    .mods
-                    .iter()
-                    .filter(|mod_entry| {
-                        mod_entry.metadata.user.category_id.as_deref()
-                            == Some(category_id.as_str())
-                    })
-                    .count()
-                    .saturating_sub(visible_count);
+                let category_ids = HashSet::from([category_id.clone()]);
+                let all_mod_count = folder_member_ids(
+                    &self.categories_for_game(selected_game_id),
+                    &self.state.mods,
+                    selected_game_id,
+                    &category_ids,
+                )
+                .len();
+                let hidden_mod_count = all_mod_count.saturating_sub(visible_count);
+                let hide_hidden_counts = self.state.static_prefs.unsafe_content_mode
+                    == UnsafeContentMode::HideNoCounter;
                 if visible_count == 0 && hidden_mod_count == 0 {
                     if ui
                         .button(icon_text_sized(Icon::Trash2, text.delete(), 12.0, 12.0))
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
-                        self.delete_category(category_id);
-                        self.set_message_ok(text.deleted_folder(category_name));
+                        self.start_folder_category_batch(
+                            category_id,
+                            visible_card_ids,
+                            FolderContentsScope::All,
+                            FolderBatchAction::RemoveFolders,
+                        );
                         ui.close();
                     }
                 } else {
@@ -8743,7 +9441,7 @@ impl HestiaApp {
                         |ui| {
                             if ui
                                 .button(icon_text_sized(
-                                    Icon::FolderOpen,
+                                    Icon::Trash2,
                                     text.folder_only_move_mods_outside(),
                                     12.0,
                                     12.0,
@@ -8751,8 +9449,12 @@ impl HestiaApp {
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             {
-                                self.delete_category(category_id);
-                                self.set_message_ok(text.deleted_folder(category_name));
+                                self.start_folder_category_batch(
+                                    category_id,
+                                    visible_card_ids,
+                                    FolderContentsScope::All,
+                                    FolderBatchAction::RemoveFolders,
+                                );
                                 ui.close();
                             }
                             let delete_visible_response = ui
@@ -8764,20 +9466,27 @@ impl HestiaApp {
                                 ))
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
                             let delete_visible_clicked = if hidden_mod_count > 0 {
-                                delete_visible_response
-                                    .on_hover_text(
+                                let response = if hide_hidden_counts {
+                                    delete_visible_response.on_hover_text(
+                                        text.folder_delete_requires_all_contents(),
+                                    )
+                                } else {
+                                    delete_visible_response.on_hover_text(
                                         text.folder_mods_inside_keep_folder_hidden_tooltip(
                                             hidden_mod_count,
                                         ),
                                     )
-                                    .clicked()
+                                };
+                                response.clicked()
                             } else {
                                 delete_visible_response.clicked()
                             };
                             if delete_visible_clicked {
-                                self.delete_category_mods_keep_folder(
+                                self.start_folder_category_batch(
                                     category_id,
                                     visible_card_ids,
+                                    FolderContentsScope::Visible,
+                                    FolderBatchAction::DeleteContents,
                                 );
                                 ui.close();
                             }
@@ -8798,18 +9507,28 @@ impl HestiaApp {
                                     egui::CursorIcon::PointingHand
                                 });
                             let delete_all_clicked = if delete_all_hidden {
-                                delete_all_response
-                                    .on_disabled_hover_text(
+                                let response = if hide_hidden_counts {
+                                    delete_all_response.on_disabled_hover_text(
+                                        text.folder_delete_requires_all_contents(),
+                                    )
+                                } else {
+                                    delete_all_response.on_disabled_hover_text(
                                         text.folder_and_mods_inside_hidden_tooltip(
                                             hidden_mod_count,
                                         ),
                                     )
-                                    .clicked()
+                                };
+                                response.clicked()
                             } else {
                                 delete_all_response.clicked()
                             };
                             if delete_all_clicked {
-                                self.delete_category_and_mods(category_id);
+                                self.start_folder_category_batch(
+                                    category_id,
+                                    visible_card_ids,
+                                    FolderContentsScope::All,
+                                    FolderBatchAction::DeleteFoldersAndContents,
+                                );
                                 ui.close();
                             }
                         },
@@ -8824,11 +9543,18 @@ impl HestiaApp {
                 }
                 self.render_library_context_select_rows(ui, visible_card_ids);
             } else {
-                let root_ids: Vec<String> =
-                    cards.iter().map(|card| card.0.clone()).collect();
-                let has_select_rows =
-                    !root_ids.is_empty() || !self.selected_mods.is_empty();
-                self.render_library_context_select_rows(ui, &root_ids);
+                let root_ids = self.library_visible_mod_ids.clone();
+                let has_select_rows = if self.library_selection_section == LibrarySelectionSection::Folders {
+                    !self.library_visible_folder_ids.is_empty() || !self.selected_library_folder_ids.is_empty()
+                } else {
+                    !root_ids.is_empty() || !self.selected_mods.is_empty()
+                };
+                if self.library_selection_section == LibrarySelectionSection::Folders {
+                    self.render_folder_context_select_rows(ui);
+                }
+                if self.library_selection_section == LibrarySelectionSection::Mods {
+                    self.render_library_context_select_rows(ui, &root_ids);
+                }
                 if !selected_game_id.is_empty() {
                     if has_select_rows {
                         ui.add_space(-2.0);
@@ -9063,6 +9789,7 @@ impl HestiaApp {
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if select_all_response.clicked() {
+                self.begin_library_mod_selection();
                 for id in all_ids {
                     self.selected_mods.insert(id.clone());
                 }
@@ -9080,6 +9807,7 @@ impl HestiaApp {
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
         {
+            self.begin_library_mod_selection();
             self.selected_mods.clear();
             ui.close();
         }
@@ -9622,6 +10350,7 @@ impl HestiaApp {
             );
             egui::Rect::from_min_size(pos, size)
         };
+        let mod_detail_busy = self.folder_batch_blocks_mod(&selected.id);
         let mut mod_detail_open = self.mod_detail_open;
         let mod_detail_response = egui::Window::new(icon_text_sized(
             Icon::PackageSearch,
@@ -9659,6 +10388,9 @@ impl HestiaApp {
                     }),
             )
             .show(ui.ctx(), |ui| {
+                if mod_detail_busy {
+                    ui.disable();
+                }
                 let title = selected
                     .metadata
                     .user

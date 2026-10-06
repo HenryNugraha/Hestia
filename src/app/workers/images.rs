@@ -827,12 +827,12 @@ fn spawn_local_mod_image_worker(
                                         .insert(thumb_ram_key.clone(), encoded.clone());
                                     let thumb_path_for_write = thumb_path.clone();
                                     let encoded_for_write = encoded.clone();
-                                    std::mem::drop(handle.spawn_blocking(move || {
+                                    let _ = handle.spawn_blocking(move || {
                                         let _ = persistence::write_atomic_bytes(
                                             &thumb_path_for_write,
                                             &encoded_for_write,
                                         );
-                                    }));
+                                    }).await;
                                     thumb_bytes = Some(encoded);
                                     generated = true;
                                 } else if let Some(cache_key) = source_cache_key {

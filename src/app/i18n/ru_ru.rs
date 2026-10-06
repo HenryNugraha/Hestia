@@ -933,4 +933,52 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Скрыть горячие клавиши", // GameOverlayHideHotkeys
     "{name} установлен.", // GameOverlayInstalledOnNotice
     "Список: группировать по статусу", // SettingsGeneralInstalledModsLayoutStatusList
+
+    // Folder batch selection and actions
+    "По текущим фильтрам", // FolderContentsVisible
+    "Все моды в выбранных папках", // FolderContentsAll
+    "Выбрано папок: {folders} · модов: {mods}", // FolderSelectionSummaryWithMods
+    "Выбрано папок: {folders}", // FolderSelectionSummaryFoldersOnly
+    "Включить отключённые моды", // FolderBatchActionEnable
+    "Отключить включённые моды", // FolderBatchActionDisable
+    "Архивировать содержимое", // FolderBatchActionArchive
+    "Восстановить и включить", // FolderBatchActionRestore
+    "Проверить обновления", // FolderBatchActionCheckUpdates
+    "Обновить доступные моды", // FolderBatchActionUpdate
+    "Переместить содержимое в категорию…", // FolderBatchActionMoveContents
+    "Удалить папки, оставить моды", // FolderBatchActionRemoveFolders
+    "Удалить содержимое, оставить папки", // FolderBatchActionDeleteContents
+    "Удалить папки и содержимое", // FolderBatchActionDeleteFoldersAndContents
+    "Включает все отключённые моды в области; активные соседние моды не отключаются.", // FolderBatchTooltipEnable
+    "Отключает все включённые моды в области.", // FolderBatchTooltipDisable
+    "Архивирует все моды в области.", // FolderBatchTooltipArchive
+    "Возвращает архивные моды в состояние «активен» и включает их.", // FolderBatchTooltipRestore
+    "Проверяет выбранные моды по заданным настройкам автообновления.", // FolderBatchTooltipCheckUpdates
+    "Обновляет доступные моды в области.", // FolderBatchTooltipUpdate
+    "Перемещает выбранное содержимое в категорию.", // FolderBatchTooltipMoveContents
+    "Снимает категории со всех модов выбранных папок, назначая «Без категории»; файлы остаются.", // FolderBatchTooltipRemoveFolders
+    "Удаляет содержимое согласно заданному способу удаления; папки остаются.", // FolderBatchTooltipDeleteContents
+    "Удаляет папки и содержимое согласно заданному способу удаления.", // FolderBatchTooltipDeleteFoldersAndContents
+    "Дождитесь завершения текущей операции.", // FolderBatchBusyTooltip
+    "Перед удалением папок и их содержимого выберите все моды в выбранных папках.", // FolderDeleteRequiresAllContents
+    "Обработка {done}/{total}", // FolderBatchProgress
+    "Выполняется…", // FolderBatchWorking
+    "{completed} выполнено · {skipped} пропущено · {failed} с ошибкой", // FolderBatchResultSummary
+    "{completed} выполнено · {skipped} пропущено · {failed} с ошибкой · Отменено", // FolderBatchResultSummaryCancelled
+    "Пакетная операция завершена.", // FolderBatchResultSummaryHidden
+    "Пакетная операция отменена.", // FolderBatchResultSummaryHiddenCancelled
+    "Выбрать все папки", // FolderSelectAllTooltip
+    "Очистить выбор папок", // FolderClearSelectionTooltip
+    "Выберите моды для действий с содержимым. Удаление папок всегда снимает категории со всех их модов.", // FolderBatchScopeTooltip
+    "Выполнено", // FolderBatchCompleted
+    "Пропущено: заблокировано", // FolderBatchSkippedLocked
+    "Не поддерживается", // FolderBatchUnsupported
+    "Изменено или отсутствует", // FolderBatchChangedMissing
+    "Ошибка", // FolderBatchFailed
+    "Скрытый мод", // FolderBatchHiddenMod
+    "Содержимое: по текущим фильтрам", // FolderBatchScopeSummaryVisible
+    "Содержимое: все моды в выбранных папках", // FolderBatchScopeSummaryAll
+    "Изменить", // FolderBatchScopeChange
+    "Затронуто модов: {mods}", // FolderBatchScopeModCount
+    "Подробности", // FolderBatchReportDetails
 ];

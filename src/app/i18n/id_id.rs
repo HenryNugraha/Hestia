@@ -934,4 +934,52 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Sembunyikan tombol", // GameOverlayHideHotkeys
     "{name} terpasang.", // GameOverlayInstalledOnNotice
     "Daftar: kelompokkan berdasarkan status", // SettingsGeneralInstalledModsLayoutStatusList
+
+    // Folder batch selection and actions
+    "Sesuai filter saat ini", // FolderContentsVisible
+    "Semua mod dalam folder terpilih", // FolderContentsAll
+    "{folders} folder dipilih · {mods} mod", // FolderSelectionSummaryWithMods
+    "{folders} folder dipilih", // FolderSelectionSummaryFoldersOnly
+    "Aktifkan mod nonaktif", // FolderBatchActionEnable
+    "Nonaktifkan mod aktif", // FolderBatchActionDisable
+    "Arsipkan isi", // FolderBatchActionArchive
+    "Pulihkan dan aktifkan", // FolderBatchActionRestore
+    "Periksa pembaruan", // FolderBatchActionCheckUpdates
+    "Perbarui mod yang tersedia", // FolderBatchActionUpdate
+    "Pindahkan isi ke kategori…", // FolderBatchActionMoveContents
+    "Hapus folder, pertahankan mod", // FolderBatchActionRemoveFolders
+    "Hapus isi, pertahankan folder", // FolderBatchActionDeleteContents
+    "Hapus folder dan isi", // FolderBatchActionDeleteFoldersAndContents
+    "Aktifkan semua mod nonaktif dalam cakupan; mod aktif lain tidak pernah dinonaktifkan.", // FolderBatchTooltipEnable
+    "Nonaktifkan semua mod aktif dalam cakupan.", // FolderBatchTooltipDisable
+    "Arsipkan semua mod dalam cakupan.", // FolderBatchTooltipArchive
+    "Pulihkan mod arsip ke Aktif dan aktifkan.", // FolderBatchTooltipRestore
+    "Periksa mod terpilih sesuai pengaturan pembaruan otomatis Anda.", // FolderBatchTooltipCheckUpdates
+    "Perbarui mod yang tersedia dalam cakupan.", // FolderBatchTooltipUpdate
+    "Pindahkan isi terpilih ke kategori.", // FolderBatchTooltipMoveContents
+    "Hapus penetapan semua mod dari folder terpilih ke Tanpa kategori; file tetap ada.", // FolderBatchTooltipRemoveFolders
+    "Hapus isi sesuai perilaku penghapusan yang dikonfigurasi; folder tetap ada.", // FolderBatchTooltipDeleteContents
+    "Hapus folder dan isi sesuai perilaku penghapusan yang dikonfigurasi.", // FolderBatchTooltipDeleteFoldersAndContents
+    "Tunggu operasi saat ini selesai.", // FolderBatchBusyTooltip
+    "Pilih semua mod dalam folder terpilih sebelum menghapus folder dan isinya.", // FolderDeleteRequiresAllContents
+    "Memproses {done}/{total}", // FolderBatchProgress
+    "Sedang bekerja…", // FolderBatchWorking
+    "{completed} selesai · {skipped} dilewati · {failed} gagal", // FolderBatchResultSummary
+    "{completed} selesai · {skipped} dilewati · {failed} gagal · Dibatalkan", // FolderBatchResultSummaryCancelled
+    "Operasi batch selesai.", // FolderBatchResultSummaryHidden
+    "Operasi batch dibatalkan.", // FolderBatchResultSummaryHiddenCancelled
+    "Pilih semua folder", // FolderSelectAllTooltip
+    "Hapus pilihan folder", // FolderClearSelectionTooltip
+    "Pilih mod yang terkena operasi isi. Penghapusan folder selalu melepas kategori semua anggotanya.", // FolderBatchScopeTooltip
+    "Selesai", // FolderBatchCompleted
+    "Dilewati: terkunci", // FolderBatchSkippedLocked
+    "Tidak didukung", // FolderBatchUnsupported
+    "Berubah atau hilang", // FolderBatchChangedMissing
+    "Gagal", // FolderBatchFailed
+    "Mod tersembunyi", // FolderBatchHiddenMod
+    "Operasi isi: sesuai filter saat ini", // FolderBatchScopeSummaryVisible
+    "Operasi isi: semua mod dalam folder terpilih", // FolderBatchScopeSummaryAll
+    "Ubah", // FolderBatchScopeChange
+    "{mods} mod terdampak", // FolderBatchScopeModCount
+    "Rincian", // FolderBatchReportDetails
 ];

@@ -201,6 +201,9 @@ impl HestiaApp {
         if !Self::is_unlinked_mod_entry(mod_entry) {
             return;
         }
+        if self.folder_batch_game_busy(&mod_entry.game_id) {
+            return;
+        }
         let root_path = mod_entry.root_path.clone();
         let folder_name = mod_entry.folder_name.clone();
         let existing_screenshots = mod_entry.metadata.user.screenshots.clone();
@@ -247,6 +250,9 @@ impl HestiaApp {
                 .ok_or_else(|| anyhow!("mod not found"))?;
             if !Self::is_unlinked_mod_entry(mod_entry) {
                 bail!("manual images are only supported for unlinked mods");
+            }
+            if self.folder_batch_game_busy(&mod_entry.game_id) {
+                bail!("{}", self.text().folder_batch_busy_tooltip());
             }
             (mod_entry.root_path.clone(), mod_entry.folder_name.clone())
         };
@@ -296,6 +302,9 @@ impl HestiaApp {
                 .iter()
                 .find(|item| item.id == mod_id)
                 .ok_or_else(|| anyhow!("mod not found"))?;
+            if self.folder_batch_game_busy(&mod_entry.game_id) {
+                bail!("{}", self.text().folder_batch_busy_tooltip());
+            }
             (mod_entry.root_path.clone(), mod_entry.folder_name.clone())
         };
         let tx = self.manual_image_event_tx.clone();
@@ -555,6 +564,9 @@ impl HestiaApp {
     }
 
     fn delete_unlinked_mod_image(&mut self, mod_id: &str, rel_path: &str) -> Result<()> {
+        if self.folder_batch_blocks_mod(mod_id) {
+            bail!("{}", self.text().folder_batch_busy_tooltip());
+        }
         let (abs_path, cover_changed) = {
             let mod_entry = self
                 .state
@@ -868,6 +880,9 @@ impl HestiaApp {
         let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_id) else {
             return CardThumbQueueOutcome::NotNeeded;
         };
+        if self.folder_batch_game_busy(&mod_entry.game_id) {
+            return CardThumbQueueOutcome::NotNeeded;
+        }
         let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(mod_entry);
         // A mod with no usable cover source would otherwise be re-requested on
         // every frame that renders its card, and each empty result schedules the
@@ -1298,6 +1313,12 @@ impl HestiaApp {
         let mut deferred_for_pointer_motion = false;
         while i < self.pending_mod_image_queue.len() && eligible.len() < dispatch_limit {
             let req = &self.pending_mod_image_queue[i];
+            if matches!(&req.payload, LocalModImagePayload::CardThumb { .. })
+                && self.folder_batch_blocks_mod(&req.texture_key)
+            {
+                i += 1;
+                continue;
+            }
             let is_mod_task = req.texture_key == allowed_mod_id
                 || req
                     .texture_key
@@ -1335,10 +1356,12 @@ impl HestiaApp {
 
         let mut dispatch = eligible.into_iter();
         while let Some(req) = dispatch.next() {
+            let request_key = req.texture_key.clone();
             let full_key =
                 (req.mode == LocalModImageMode::FullOnly).then(|| req.texture_key.clone());
             match self.mod_image_request_tx.send(req) {
                 Ok(()) => {
+                    *self.local_mod_image_inflight.entry(request_key).or_default() += 1;
                     if let Some(key) = full_key {
                         self.inflight_full_image_requests.insert(key);
                     }
@@ -1357,6 +1380,12 @@ impl HestiaApp {
     fn consume_mod_image_results(&mut self) {
         while let Ok(result) = self.mod_image_result_rx.try_recv() {
             if result.done {
+                if let Some(count) = self.local_mod_image_inflight.get_mut(&result.texture_key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.local_mod_image_inflight.remove(&result.texture_key);
+                    }
+                }
                 self.pending_mod_image_requests.remove(&result.texture_key);
                 self.pending_image_loads.remove(&result.texture_key);
                 self.inflight_full_image_requests.remove(&result.texture_key);
@@ -1407,6 +1436,15 @@ impl HestiaApp {
                     });
             }
         }
+    }
+
+    fn folder_batch_has_local_image_work(&self, game_id: &str) -> bool {
+        self.state.mods.iter().filter(|entry| entry.game_id == game_id).any(|entry| {
+            let screenshot_prefix = format!("my-mod-shot-{}-", entry.id);
+            self.local_mod_image_inflight.keys().any(|key| {
+                key == &entry.id || key.starts_with(&screenshot_prefix)
+            })
+        })
     }
 
     fn consume_gif_animation_events(&mut self, ctx: &egui::Context) {

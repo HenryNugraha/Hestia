@@ -97,6 +97,9 @@ impl HestiaApp {
         &self,
         kind: ProfileOperationKind,
     ) -> Option<&'static str> {
+        if self.folder_batch_job.is_some() {
+            return Some(self.text().folder_batch_busy_tooltip());
+        }
         if self.profile_operation_inflight.is_some() {
             return Some("another profile operation is already running");
         }
@@ -910,6 +913,8 @@ impl HestiaApp {
             progress: spec.progress,
             stage: spec.stage,
         });
+        self.clear_library_folder_selection();
+        self.library_folder_selection_context = None;
         Ok(())
     }
 
@@ -1661,6 +1666,9 @@ impl HestiaApp {
     }
 
     fn queue_profile_reconcile_for_game(&mut self, game_id: &str) {
+        if self.folder_batch_game_busy(game_id) {
+            return;
+        }
         if self.profile_operation_inflight.is_some()
             || self
                 .profile_recovery_queue
@@ -1702,6 +1710,11 @@ impl HestiaApp {
 
     fn dispatch_next_profile_recovery(&mut self) {
         if self.profile_operation_inflight.is_some() {
+            return;
+        }
+        if self.profile_recovery_queue.front()
+            .is_some_and(|game| self.folder_batch_game_busy(&game.definition.id))
+        {
             return;
         }
         let Some(game) = self.profile_recovery_queue.pop_front() else {
@@ -2475,6 +2488,8 @@ impl HestiaApp {
                             .is_some_and(|game| game.definition.id == game_id)
                         {
                             self.selected_category_folder_id = None;
+                            self.clear_library_folder_selection();
+                            self.library_folder_selection_context = None;
                             self.selected_category_ids.clear();
                             self.category_rename_target_id = None;
                             self.category_rename_focus_target_id = None;

@@ -354,16 +354,22 @@ pub fn enable_mod(mod_entry: &mut ModEntry) -> Result<()> {
     if !disabled_root.exists() {
         bail!("missing DISABLED_BY_HESTIA container");
     }
-    for entry in fs::read_dir(&disabled_root)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        fs::rename(&path, mod_entry.root_path.join(name))?;
-    }
-    fs::remove_dir_all(&disabled_root)?;
+    move_disabled_contents_to_active(&mod_entry.root_path)?;
+    let old_updated_at = mod_entry.updated_at;
     mod_entry.status = ModStatus::Active;
     mod_entry.updated_at = Utc::now();
-    write_portable_metadata(mod_entry)?;
+    if let Err(err) = write_portable_metadata(mod_entry) {
+        let rollback = move_active_contents_to_disabled(&mod_entry.root_path);
+        mod_entry.status = ModStatus::Disabled;
+        mod_entry.updated_at = old_updated_at;
+        if let Err(rollback_err) = rollback {
+            tracing::error!(
+                "could not roll back enabled mod {} after metadata failure: {rollback_err}",
+                mod_entry.root_path.display()
+            );
+        }
+        return Err(err);
+    }
     Ok(())
 }
 
@@ -384,13 +390,27 @@ pub fn archive_mod(
             destination.display()
         );
     }
-    // Store the original path before archiving
-    mod_entry.archive_original_path = Some(mod_entry.root_path.clone());
-    fs::rename(&mod_entry.root_path, &destination)?;
+    let original_path = mod_entry.root_path.clone();
+    let original_status = mod_entry.status.clone();
+    let original_updated_at = mod_entry.updated_at;
+    fs::rename(&original_path, &destination)?;
     mod_entry.root_path = destination.clone();
+    mod_entry.archive_original_path = Some(original_path.clone());
     mod_entry.status = ModStatus::Archived;
     mod_entry.updated_at = Utc::now();
-    write_portable_metadata(mod_entry)?;
+    if let Err(err) = write_portable_metadata(mod_entry) {
+        mod_entry.root_path = original_path.clone();
+        mod_entry.archive_original_path = None;
+        mod_entry.status = original_status;
+        mod_entry.updated_at = original_updated_at;
+        if let Err(rollback_err) = fs::rename(&destination, &original_path) {
+            tracing::error!(
+                "could not roll back archived mod {} after metadata failure: {rollback_err}",
+                destination.display()
+            );
+        }
+        return Err(err);
+    }
     Ok(destination)
 }
 
@@ -406,17 +426,169 @@ pub fn restore_mod(
         .mods_path(use_default_path)
         .ok_or_else(|| anyhow!("game has no live mods path"))?;
     fs::create_dir_all(&live_root)?;
-    let destination = live_root.join(&mod_entry.folder_name);
+    let configured_destination = live_root.join(&mod_entry.folder_name);
+    let destination = mod_entry
+        .archive_original_path
+        .as_deref()
+        .filter(|path| path_is_within(&live_root, path))
+        .map(Path::to_path_buf)
+        .unwrap_or(configured_destination);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if destination.exists() {
         bail!("live mod folder already exists: {}", destination.display());
     }
-    fs::rename(&mod_entry.root_path, &destination)?;
+
+    let archived_path = mod_entry.root_path.clone();
+    let archived_was_disabled = archived_path.join(DISABLED_CONTAINER).is_dir();
+    fs::rename(&archived_path, &destination)?;
+    if let Err(err) = move_disabled_contents_to_active(&destination) {
+        if let Err(rollback_err) = fs::rename(&destination, &archived_path) {
+            tracing::error!(
+                "could not roll back restore of {} after normalization failure: {rollback_err}",
+                archived_path.display()
+            );
+        }
+        return Err(err);
+    }
+
+    let old_updated_at = mod_entry.updated_at;
+    let old_archive_original_path = mod_entry.archive_original_path.clone();
     mod_entry.root_path = destination.clone();
     mod_entry.archive_original_path = None;
     mod_entry.status = ModStatus::Active;
     mod_entry.updated_at = Utc::now();
-    write_portable_metadata(mod_entry)?;
+    if let Err(err) = write_portable_metadata(mod_entry) {
+        let rollback_layout = if archived_was_disabled {
+            Some(move_active_contents_to_disabled(&destination))
+        } else {
+            None
+        };
+        let rollback_move = fs::rename(&destination, &archived_path);
+        mod_entry.root_path = archived_path;
+        mod_entry.archive_original_path = old_archive_original_path;
+        mod_entry.status = ModStatus::Archived;
+        mod_entry.updated_at = old_updated_at;
+        if let Some(Err(rollback_err)) = rollback_layout {
+            tracing::error!(
+                "could not roll back restored mod layout after metadata failure: {rollback_err}"
+            );
+        }
+        if let Err(rollback_err) = rollback_move {
+            tracing::error!("could not roll back restored mod move after metadata failure: {rollback_err}");
+        }
+        return Err(err);
+    }
     Ok(destination)
+}
+
+/// Move an XXMI mod's disabled payload into its live root.  Every destination is checked before
+/// the first move, and a failed move is rolled back so callers never observe a half-enabled tree.
+fn move_disabled_contents_to_active(root: &Path) -> Result<()> {
+    let disabled_root = root.join(DISABLED_CONTAINER);
+    if !disabled_root.is_dir() {
+        return Ok(());
+    }
+    if !substantive_entries(root)?.is_empty() {
+        bail!("cannot enable mod with content already in its live root");
+    }
+
+    let entries = fs::read_dir(&disabled_root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    for entry in &entries {
+        let destination = root.join(entry.file_name());
+        if destination.exists() || entry.file_name() == OsStr::new(MOD_META_DIR) {
+            bail!("cannot enable mod because destination already exists: {}", destination.display());
+        }
+    }
+
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let source = entry.path();
+        let destination = root.join(entry.file_name());
+        if let Err(err) = fs::rename(&source, &destination) {
+            for (source, destination) in moved.into_iter().rev() {
+                if let Err(rollback_err) = fs::rename(destination, &source) {
+                    tracing::error!(
+                        "could not roll back XXMI enable move {}: {rollback_err}",
+                        source.display()
+                    );
+                }
+            }
+            return Err(err.into());
+        }
+        moved.push((source, destination));
+    }
+    if let Err(err) = fs::remove_dir_all(&disabled_root) {
+        for (source, destination) in moved.into_iter().rev() {
+            if let Err(rollback_err) = fs::rename(destination, &source) {
+                tracing::error!(
+                    "could not roll back XXMI enable move {}: {rollback_err}",
+                    source.display()
+                );
+            }
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+fn path_is_within(root: &Path, candidate: &Path) -> bool {
+    if candidate.starts_with(root) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        let root_components = root
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let candidate_components = candidate
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        return candidate_components.len() >= root_components.len()
+            && root_components
+                .iter()
+                .zip(candidate_components.iter())
+                .all(|(root, candidate)| root == candidate);
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Recreate an XXMI disabled container from a live root.  This is used only to roll back a
+/// successful filesystem move when writing portable metadata fails.
+fn move_active_contents_to_disabled(root: &Path) -> Result<()> {
+    let disabled_root = root.join(DISABLED_CONTAINER);
+    fs::create_dir_all(&disabled_root)?;
+    let entries = substantive_entries(root)?;
+    for source in &entries {
+        let name = source
+            .file_name()
+            .ok_or_else(|| anyhow!("mod entry missing file name"))?;
+        let destination = disabled_root.join(name);
+        if destination.exists() {
+            bail!("cannot roll back enabled mod because destination already exists: {}", destination.display());
+        }
+    }
+    let mut moved = Vec::with_capacity(entries.len());
+    for source in entries {
+        let name = source
+            .file_name()
+            .ok_or_else(|| anyhow!("mod entry missing file name"))?;
+        let destination = disabled_root.join(name);
+        if let Err(err) = fs::rename(&source, &destination) {
+            for (source, destination) in moved.into_iter().rev() {
+                let _ = fs::rename(destination, source);
+            }
+            return Err(err.into());
+        }
+        moved.push((source, destination));
+    }
+    Ok(())
 }
 
 pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
@@ -1006,6 +1178,7 @@ fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
         discovered.metadata.user = existing.metadata.user.clone();
         discovered.metadata.prompt_for_missing_metadata =
             existing.metadata.prompt_for_missing_metadata;
+        discovered.archive_original_path = existing.archive_original_path.clone();
         discovered.unsafe_content_auto = existing.unsafe_content_auto;
         discovered.unsafe_content_preference = existing.unsafe_content_preference;
         discovered.unsafe_content = existing.unsafe_content;
@@ -1414,6 +1587,7 @@ fn text_mentions_rabbitfx_requirement(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::GameDefinition;
 
     #[test]
     fn personal_note_sanitizer_trims_controls_and_empty_notes() {
@@ -1575,5 +1749,138 @@ mod tests {
 
         assert!(mod_dirs.is_empty());
         assert!(empty.exists());
+    }
+
+    fn archive_test_game(mods_path: &Path) -> GameInstall {
+        GameInstall {
+            definition: GameDefinition {
+                id: "archive-test".to_string(),
+                name: "Archive Test".to_string(),
+                backend: GameBackend::Xxmi,
+                xxmi_code: "archive-test".to_string(),
+            },
+            mods_path_override: Some(mods_path.to_path_buf()),
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: false,
+            enabled: true,
+        }
+    }
+
+    fn archive_test_entry(root: &Path, status: ModStatus) -> ModEntry {
+        ModEntry {
+            id: "archive-test-mod".to_string(),
+            game_id: "archive-test".to_string(),
+            folder_name: "Test Mod".to_string(),
+            root_path: root.to_path_buf(),
+            status,
+            metadata: ModMetadata::default(),
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: Default::default(),
+            source: None,
+            update_state: crate::model::ModUpdateState::Unlinked,
+        }
+    }
+
+    #[test]
+    fn restore_archived_disabled_xxmi_payload_as_active_layout() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let root = mods.join("Test Mod");
+        let disabled = root.join(DISABLED_CONTAINER);
+        fs::create_dir_all(&disabled).unwrap();
+        fs::write(disabled.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let game = archive_test_game(&mods);
+        let mut entry = archive_test_entry(&root, ModStatus::Disabled);
+
+        archive_mod(&mut entry, &game, false).unwrap();
+        let original_path = entry.archive_original_path.clone().unwrap();
+        restore_mod(&mut entry, &game, false).unwrap();
+
+        assert_eq!(entry.status, ModStatus::Active);
+        assert_eq!(entry.root_path, original_path);
+        assert!(entry.archive_original_path.is_none());
+        assert!(entry.root_path.join("mod.ini").is_file());
+        assert!(!entry.root_path.join(DISABLED_CONTAINER).exists());
+        assert!(entry.root_path.join(MOD_META_DIR).is_dir());
+    }
+
+    #[test]
+    fn restore_archived_active_xxmi_payload_stays_active() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let root = mods.join("Test Mod");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let game = archive_test_game(&mods);
+        let mut entry = archive_test_entry(&root, ModStatus::Active);
+
+        archive_mod(&mut entry, &game, false).unwrap();
+        restore_mod(&mut entry, &game, false).unwrap();
+
+        assert_eq!(entry.status, ModStatus::Active);
+        assert!(entry.root_path.join("mod.ini").is_file());
+        assert!(!entry.root_path.join(DISABLED_CONTAINER).exists());
+        assert!(entry.archive_original_path.is_none());
+    }
+
+    #[test]
+    fn restore_uses_current_live_root_when_archive_original_path_is_stale() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_mods = temp.path().join("OldGame").join("Mods");
+        let new_mods = temp.path().join("NewGame").join("Mods");
+        let root = old_mods.join("Test Mod");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let old_game = archive_test_game(&old_mods);
+        let mut entry = archive_test_entry(&root, ModStatus::Active);
+        archive_mod(&mut entry, &old_game, false).unwrap();
+
+        let new_game = archive_test_game(&new_mods);
+        let restored = restore_mod(&mut entry, &new_game, false).unwrap();
+
+        assert_eq!(restored, new_mods.join("Test Mod"));
+        assert!(restored.join("mod.ini").is_file());
+        assert!(!old_mods.join("Test Mod").exists());
+        assert!(entry.archive_original_path.is_none());
+    }
+
+    #[test]
+    fn restore_collision_and_layout_failure_preserve_archive_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let root = mods.join("Test Mod");
+        let disabled = root.join(DISABLED_CONTAINER);
+        fs::create_dir_all(&disabled).unwrap();
+        fs::write(disabled.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let game = archive_test_game(&mods);
+        let mut entry = archive_test_entry(&root, ModStatus::Disabled);
+        archive_mod(&mut entry, &game, false).unwrap();
+        let archived_path = entry.root_path.clone();
+        let original_path = entry.archive_original_path.clone();
+
+        fs::create_dir_all(&root).unwrap();
+        assert!(restore_mod(&mut entry, &game, false).is_err());
+        assert_eq!(entry.status, ModStatus::Archived);
+        assert_eq!(entry.root_path, archived_path);
+        assert_eq!(entry.archive_original_path, original_path);
+        fs::remove_dir_all(&root).unwrap();
+
+        // A conflicting live payload inside the archived tree must not be partially normalized.
+        fs::write(archived_path.join("mod.ini"), "conflict").unwrap();
+        assert!(restore_mod(&mut entry, &game, false).is_err());
+        assert_eq!(entry.status, ModStatus::Archived);
+        assert_eq!(entry.root_path, archived_path);
+        assert_eq!(entry.archive_original_path, original_path);
+        assert!(archived_path.join(DISABLED_CONTAINER).join("mod.ini").is_file());
+        assert!(archived_path.join("mod.ini").is_file());
     }
 }

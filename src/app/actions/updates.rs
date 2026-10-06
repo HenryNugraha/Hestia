@@ -1087,6 +1087,16 @@ impl HestiaApp {
     }
 
     fn queue_update_check_for_mod(&mut self, mod_entry_id: &str) {
+        if self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_entry_id)
+            .is_some_and(|mod_entry| self.folder_batch_game_busy(&mod_entry.game_id))
+        {
+            self.pending_update_check_mods.insert(mod_entry_id.to_string());
+            return;
+        }
         if self.update_check_inflight {
             self.pending_update_check_mods
                 .insert(mod_entry_id.to_string());
@@ -1113,6 +1123,12 @@ impl HestiaApp {
         target_game_id: Option<&str>,
         force: bool,
     ) {
+        if self.folder_batch_job.is_some()
+            || target_game_id.is_some_and(|game_id| self.folder_batch_game_busy(game_id))
+        {
+            self.pending_update_check_game = target_game_id.map(str::to_string);
+            return;
+        }
         if self.update_check_inflight {
             self.pending_update_check_game = target_game_id.map(|id| id.to_string());
             return;
@@ -1264,6 +1280,9 @@ impl HestiaApp {
     }
 
     fn consume_update_check_results(&mut self) {
+        if self.folder_batch_job.is_some() {
+            return;
+        }
         while let Ok(result) = self.update_check_rx.try_recv() {
             if result.generation != self.update_check_generation {
                 continue;
@@ -1402,20 +1421,23 @@ impl HestiaApp {
                 }
                 if mod_updated && should_sync_images {
                     if let Some(p) = sync_profile {
-                        if let Some(mod_root_path) = self
+                        if let Some((mod_root_path, game_id)) = self
                             .state
                             .mods
                             .iter()
                             .find(|m| m.id == mod_id)
-                            .map(|m| m.root_path.clone())
+                            .map(|m| (m.root_path.clone(), m.game_id.clone()))
+                            .filter(|(_, game_id)| !self.folder_batch_game_busy(game_id))
                         {
                             let job_id = self.next_background_job_id();
-                            let _ = self.install_request_tx.send(InstallRequest::SyncImages {
+                            if self.install_request_tx.send(InstallRequest::SyncImages {
                                 job_id,
                                 mod_entry_id: mod_id.clone(),
                                 mod_root_path,
                                 profile: p,
-                            });
+                            }).is_ok() {
+                                self.mod_image_sync_inflight.insert(job_id, game_id);
+                            }
                         }
                     } else {
                         self.enqueue_mod_image_sync(&mod_id);
@@ -1910,6 +1932,10 @@ impl HestiaApp {
     }
 
     fn queue_game_refresh(&mut self, game_id: String) {
+        if self.folder_batch_game_busy(&game_id) {
+            self.refresh_pending_selected_game = Some(game_id);
+            return;
+        }
         if self.refresh_inflight {
             self.refresh_pending_selected_game = Some(game_id);
             return;
@@ -1947,6 +1973,10 @@ impl HestiaApp {
             self.refresh_inflight = false;
             match event {
                 RefreshEvent::Ready { game_id, mods } => {
+                    if self.folder_batch_game_busy(&game_id) {
+                        self.refresh_pending_selected_game = Some(game_id);
+                        continue;
+                    }
                     let reload_before = self
                         .pending_reload_summary
                         .as_ref()
@@ -2025,7 +2055,7 @@ impl HestiaApp {
                 }
             }
             if let Some(next_game_id) = self.refresh_pending_selected_game.take() {
-                self.dispatch_selected_game_refresh(next_game_id);
+                self.queue_game_refresh(next_game_id);
             }
         }
     }
@@ -2329,19 +2359,29 @@ impl HestiaApp {
                 });
             if let Some(mod_entry_id) = mod_id {
                 let image_job_id = self.next_background_job_id();
-                let mod_root_path = self
+                let mod_root_and_game = self
                     .state
                     .mods
                     .iter()
                     .find(|m| m.id == mod_entry_id)
-                    .map(|m| m.root_path.clone())
-                    .unwrap_or_else(|| first_path.clone());
-                let _ = self.install_request_tx.send(InstallRequest::SyncImages {
-                    job_id: image_job_id,
-                    mod_entry_id,
-                    mod_root_path,
-                    profile,
-                });
+                    .map(|m| (m.root_path.clone(), m.game_id.clone()))
+                    .or_else(|| {
+                        self.install_inflight
+                            .get(&job_id)
+                            .map(|job| (first_path.clone(), job.game_id.clone()))
+                    });
+                if let Some((mod_root_path, game_id)) = mod_root_and_game
+                    .filter(|(_, game_id)| !self.folder_batch_game_busy(game_id))
+                {
+                    if self.install_request_tx.send(InstallRequest::SyncImages {
+                        job_id: image_job_id,
+                        mod_entry_id,
+                        mod_root_path,
+                        profile,
+                    }).is_ok() {
+                        self.mod_image_sync_inflight.insert(image_job_id, game_id);
+                    }
+                }
             }
         }
 
@@ -2349,6 +2389,7 @@ impl HestiaApp {
             match self.state.static_prefs.after_install_behavior {
                 AfterInstallBehavior::DoNothing => {}
                 AfterInstallBehavior::AddToSelection => {
+                    self.begin_library_mod_selection();
                     self.selected_mods.insert(id.clone());
                 }
                 AfterInstallBehavior::OpenModDetail => {

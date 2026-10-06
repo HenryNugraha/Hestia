@@ -2,7 +2,14 @@ fn initial_candidate_install_status(
     requested: ModInstallState,
     preserved: Option<ModStatus>,
 ) -> ModStatus {
-    preserved.unwrap_or_else(|| requested.staged_status())
+    match preserved {
+        // Archived XXMI updates are staged in the archive root, where the scan supplies the
+        // final Archived status.  The worker still needs an active physical layout so a stale
+        // DISABLED_BY_HESTIA container is not carried forward.
+        Some(ModStatus::Archived) => ModStatus::Active,
+        Some(status) => status,
+        None => requested.staged_status(),
+    }
 }
 
 impl HestiaApp {
@@ -125,6 +132,7 @@ impl HestiaApp {
                     preferred_name,
                     error,
                 } => {
+                    self.mod_image_sync_inflight.remove(&job_id);
                     self.pending_browse_install_meta.remove(&job_id);
                     if let Some(current) = self.install_inflight.remove(&job_id) {
                         Self::cleanup_runtime_temp_for_source(&current.source);
@@ -141,11 +149,12 @@ impl HestiaApp {
                     self.update_task_status(job_id, TaskStatus::Failed);
                 }
                 InstallEvent::SyncImagesDone {
-                    _job_id: _,
+                    _job_id: job_id,
                     mod_entry_id,
                     profile,
                     rel_paths,
                 } => {
+                    self.mod_image_sync_inflight.remove(&job_id);
                     self.apply_mod_sync_result(&mod_entry_id, *profile, rel_paths);
                 }
                 InstallEvent::SyncImagesCover {
@@ -193,10 +202,14 @@ impl HestiaApp {
         job_id: u64,
         candidate_indices: Vec<usize>,
         choice: ConflictChoice,
-        target_root: PathBuf,
+        mut target_root: PathBuf,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
         preferred_names: Vec<String>,
     ) {
+        let Some(job) = self.install_inflight.get(&job_id).cloned() else {
+            return;
+        };
+        target_root = self.update_target_root_for_job(job_id, target_root);
         if self.install_commit_touches_locked_active_mod(
             job_id,
             choice,
@@ -206,9 +219,6 @@ impl HestiaApp {
             self.cancel_install_job_as_locked(job_id);
             return;
         }
-        let Some(job) = self.install_inflight.get(&job_id).cloned() else {
-            return;
-        };
         let preserved_states = if job.preserve_existing_state
             && matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge)
         {
@@ -430,16 +440,59 @@ impl HestiaApp {
         &self,
         game: &GameInstall,
         preferred_name: &str,
+        job_id: u64,
     ) -> Option<PathBuf> {
+        // An update target is an identity, not a basename. Resolve the exact entry first so a
+        // same-name peer in another storage root cannot steal the conflict prompt or commit path.
+        if let Some(meta) = self.pending_browse_install_meta.get(&job_id)
+            && meta.game_id == game.definition.id
+            && let Some(target_id) = meta.update_target_mod_id.as_deref()
+            && let Some(target) = self.state.mods.iter().find(|mod_entry| {
+                mod_entry.id == target_id && mod_entry.game_id == game.definition.id
+            })
+        {
+            if target.status == ModStatus::Archived || target.root_path.exists() {
+                return Some(target.root_path.clone());
+            }
+        }
+
         let active_target = game
             .mods_path(self.state.static_prefs.use_default_mods_path)?
             .join(preferred_name);
         if active_target.exists() {
             return Some(active_target);
         }
-        game.disabled_mods_path(self.state.static_prefs.use_default_mods_path)
+        if let Some(disabled_target) = game
+            .disabled_mods_path(self.state.static_prefs.use_default_mods_path)
             .map(|root| root.join(preferred_name))
             .filter(|path| path.exists())
+        {
+            return Some(disabled_target);
+        }
+
+        None
+    }
+
+    fn update_target_root_for_job(&self, job_id: u64, target_root: PathBuf) -> PathBuf {
+        let Some(meta) = self.pending_browse_install_meta.get(&job_id) else {
+            return target_root;
+        };
+        let Some(target_id) = meta.update_target_mod_id.as_deref() else {
+            return target_root;
+        };
+        let Some(target) = self.state.mods.iter().find(|mod_entry| {
+            mod_entry.id == target_id && mod_entry.game_id == meta.game_id
+        }) else {
+            return target_root;
+        };
+        if target.status != ModStatus::Archived {
+            return target_root;
+        }
+        target
+            .root_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(target_root)
     }
 
     fn cancel_install_job_as_locked(&mut self, job_id: u64) {
@@ -483,6 +536,14 @@ impl HestiaApp {
         if sources.is_empty() {
             return;
         }
+        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+            self.report_warn(self.text().select_game_first(), None);
+            return;
+        };
+        if self.folder_batch_game_busy(&game_id) {
+            self.report_warn(self.text().folder_batch_busy_tooltip(), None);
+            return;
+        }
         if !self.install_batch_active {
             self.install_batch_stats = InstallBatchStats::default();
             self.install_batch_active = true;
@@ -514,10 +575,6 @@ impl HestiaApp {
                 }
                 other => other,
             };
-            let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
-                self.report_warn(self.text().select_game_first(), None);
-                return;
-            };
             if !self.selected_game_can_install_mods() {
                 self.report_warn(
                     self.selected_game_mod_setup_message(),
@@ -540,7 +597,7 @@ impl HestiaApp {
             }
             let job = InstallJob {
                 id: self.install_next_job_id,
-                game_id,
+                game_id: game_id.clone(),
                 source,
                 title: None,
                 reuse_existing_task: false,
@@ -611,6 +668,12 @@ impl HestiaApp {
         let max_parallel = self.max_parallel_installs();
         while self.install_inflight.len() < max_parallel {
             let Some(job) = self.install_queue.pop_front() else { break; };
+            if self.folder_batch_game_busy(&job.game_id) {
+                // Keep completed downloads queued until the folder batch releases the game;
+                // dropping them here would force an unnecessary re-download.
+                self.install_queue.push_front(job);
+                break;
+            }
             let path_label = Self::import_source_path(&job.source).display().to_string();
             self.install_inflight.insert(job.id, job.clone());
             self.update_task_status(job.id, TaskStatus::Installing);
@@ -659,6 +722,10 @@ mod install_candidate_state_tests {
             assert_eq!(
                 initial_candidate_install_status(requested, Some(ModStatus::Disabled)),
                 ModStatus::Disabled
+            );
+            assert_eq!(
+                initial_candidate_install_status(requested, Some(ModStatus::Archived)),
+                ModStatus::Active
             );
         }
     }

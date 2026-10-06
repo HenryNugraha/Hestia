@@ -1,4 +1,20 @@
 impl HestiaApp {
+    fn dispatch_hotkey_customization(&mut self, request: HotkeyCustomizationRequest) -> bool {
+        let game_id = match &request {
+            HotkeyCustomizationRequest::LoadValues { game, .. }
+            | HotkeyCustomizationRequest::SetValue { game, .. }
+            | HotkeyCustomizationRequest::Clear { game, .. }
+            | HotkeyCustomizationRequest::RunCommand { game, .. } => game.definition.id.clone(),
+        };
+        if self.hotkey_customization_tx.send(request).is_err() {
+            return false;
+        }
+        // The customization worker processes requests sequentially and sends exactly one
+        // completion per request, including failed reads and worker panics.
+        self.hotkey_requests_inflight.push_back(game_id);
+        true
+    }
+
     fn other_running_xxmi_game(&self, game: &GameInstall) -> Option<String> {
         self.state
             .games
@@ -10,6 +26,9 @@ impl HestiaApp {
     }
 
     fn refresh_hotkey_values_cache_for_entry(&mut self, entry: &ModEntry) {
+        if self.folder_batch_game_busy(&entry.game_id) {
+            return;
+        }
         if !self.mod_hotkey_values_loading.insert(entry.id.clone()) {
             return;
         }
@@ -37,7 +56,7 @@ impl HestiaApp {
             entry: entry.clone(),
             mirrors,
         };
-        if self.hotkey_customization_tx.send(request).is_err() {
+        if !self.dispatch_hotkey_customization(request) {
             self.mod_hotkey_values_loading.remove(&entry.id);
             self.push_log("hotkey values could not be read: worker is unavailable".to_string());
         }
@@ -67,6 +86,9 @@ impl HestiaApp {
     /// for ~1s (keyed by game id) to keep it out of the per-frame render cost; a repaint
     /// is scheduled so a game exit or launch flips the state within one interval.
     fn hotkeys_write_blocked(&mut self, entry: &ModEntry, ctx: &egui::Context) -> bool {
+        if self.folder_batch_game_busy(&entry.game_id) {
+            return true;
+        }
         const TTL: Duration = Duration::from_secs(1);
         let Some(game) = self.game_for_mod(entry) else {
             self.hotkeys_write_block_cache = None;
@@ -123,6 +145,7 @@ impl HestiaApp {
 
     fn consume_hotkey_customization_events(&mut self) {
         while let Ok(event) = self.hotkey_customization_rx.try_recv() {
+            self.hotkey_requests_inflight.pop_front();
             match event {
                 HotkeyCustomizationEvent::ValuesLoaded {
                     mod_id,
@@ -262,7 +285,7 @@ impl HestiaApp {
     /// removes that mod's helper so no stale mirroring survives. Cheap when nothing changed
     /// (hash-compare).
     fn refresh_live_state_helper_for_game(&mut self, game: &GameInstall) {
-        if !game.is_xxmi() {
+        if !game.is_xxmi() || self.folder_batch_game_busy(&game.definition.id) {
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
@@ -536,6 +559,10 @@ impl HestiaApp {
         key_spec: &str,
         cycle_values: &[String],
     ) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let Some(entry) = self
             .state
             .mods
@@ -608,7 +635,7 @@ impl HestiaApp {
                     steps: Some(steps),
                     reload_after_write: false,
                 };
-                if self.hotkey_customization_tx.send(request).is_err() {
+                if !self.dispatch_hotkey_customization(request) {
                     self.push_log("XXMI mod customization: live change failed because the worker is unavailable".to_string());
                 }
                 return;
@@ -631,12 +658,18 @@ impl HestiaApp {
             steps: None,
             reload_after_write: false,
         };
-        if self.hotkey_customization_tx.send(request).is_err() {
+        if !self.dispatch_hotkey_customization(request) {
             self.push_log("XXMI mod customization: value change failed because the worker is unavailable".to_string());
         }
     }
 
     fn clear_hotkey_customization(&mut self, mod_id: &str) {
+        if self.state.mods.iter().find(|entry| entry.id == mod_id)
+            .is_some_and(|entry| self.folder_batch_game_busy(&entry.game_id))
+        {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let Some(entry) = self
             .state
             .mods
@@ -710,7 +743,7 @@ impl HestiaApp {
                 live: true,
                 reload_after_clear: false,
             };
-            if self.hotkey_customization_tx.send(request).is_err() {
+            if !self.dispatch_hotkey_customization(request) {
                 self.hotkey_clear_inflight.remove(mod_id);
                 self.push_log("XXMI mod customization: live clear failed because the worker is unavailable".to_string());
             }
@@ -726,12 +759,16 @@ impl HestiaApp {
             live: false,
             reload_after_clear: false,
         };
-        if self.hotkey_customization_tx.send(request).is_err() {
+        if !self.dispatch_hotkey_customization(request) {
             self.push_log("XXMI mod customization: clear failed because the worker is unavailable".to_string());
         }
     }
 
     fn run_hotkey_command(&mut self, mod_id: &str, key_spec: &str, label: &str) {
+        if self.folder_batch_blocks_mod(mod_id) {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let Some(entry) = self
             .state
             .mods
@@ -783,7 +820,7 @@ impl HestiaApp {
             key_spec: key_spec.to_string(),
             label: label.to_string(),
         };
-        if self.hotkey_customization_tx.send(request).is_err() {
+        if !self.dispatch_hotkey_customization(request) {
             self.push_log("XXMI mod hotkey: trigger failed because the worker is unavailable".to_string());
         }
     }

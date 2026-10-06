@@ -1,5 +1,7 @@
 include!("lifecycle.rs");
 include!("library.rs");
+include!("folder_selection.rs");
+include!("folder_batch.rs");
 include!("hotkeys.rs");
 include!("browse.rs");
 include!("install.rs");

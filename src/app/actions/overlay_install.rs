@@ -316,7 +316,7 @@ impl HestiaApp {
             [candidate] => {
                 let preferred =
                     self.preferred_browse_folder_name(mod_name.as_deref(), &candidate.label);
-                if let Some(existing_target) = self.existing_install_target(&game, &preferred) {
+                if let Some(existing_target) = self.existing_install_target(&game, &preferred, job_id) {
                     if let Some(install) = self
                         .game_overlay
                         .installs

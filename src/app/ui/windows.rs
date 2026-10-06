@@ -3793,6 +3793,10 @@ impl HestiaApp {
                         self.render_categories_settings_tab(ui, &mut should_save);
                     }
                     SettingsTab::Games => {
+                    if self.folder_batch_job.is_some() {
+                        ui.label(self.text().folder_batch_busy_tooltip());
+                    }
+                    ui.add_enabled_ui(self.folder_batch_job.is_none(), |ui| {
                         let accent = Color32::from_rgb(203, 104, 59);
                         let width = (ui.available_width() * 0.86).min(520.0);
                         let height = 116.0;
@@ -4552,6 +4556,7 @@ impl HestiaApp {
                     if let Some((game_id, dir)) = grant_access_request {
                         self.start_grant_game_dir_access(&game_id, dir);
                     }
+                    });
                     }
                     SettingsTab::Advanced => {
                         let radius = egui::CornerRadius::same(3);

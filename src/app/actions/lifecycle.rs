@@ -413,6 +413,19 @@ impl HestiaApp {
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
             selected_category_folder_id: None,
+            selected_library_folder_ids: HashSet::new(),
+            library_folder_selection_anchor: None,
+            library_folder_contents_scope: FolderContentsScope::Visible,
+            library_selection_section: LibrarySelectionSection::Folders,
+            library_visible_folder_ids: Vec::new(),
+            library_visible_mod_ids: Vec::new(),
+            library_folder_selection_context: None,
+            dragging_library_folder_ids: Vec::new(),
+            folder_delete_menu_requested: false,
+            folder_batch_job: None,
+            folder_batch_report: None,
+            mod_image_sync_inflight: HashMap::new(),
+            local_mod_image_inflight: HashMap::new(),
             library_scroll_to_category_id: None,
             library_card_cache: LibraryCardCache::default(),
             dragging_mod_ids: Vec::new(),
@@ -463,6 +476,7 @@ impl HestiaApp {
             profile_storage_status_cache: HashMap::new(),
             hotkeys_write_block_cache: None,
             hotkey_customization_tx,
+            hotkey_requests_inflight: VecDeque::new(),
             hotkey_customization_rx,
             hotkey_clear_inflight: HashSet::new(),
             hotkey_clear_confirm_target_id: None,
@@ -2732,6 +2746,8 @@ impl HestiaApp {
     /// views there and this picks them up automatically.
     fn cycle_primary_view(&mut self, forward: bool) {
         Self::cycle_ordered_value(&mut self.current_view, ViewMode::TAB_ORDER, forward);
+        self.clear_library_folder_selection();
+        self.library_folder_selection_context = None;
         self.clear_mod_detail_rename();
     }
 
@@ -2749,6 +2765,13 @@ impl HestiaApp {
             return false;
         }
         self.state.static_prefs.library_category_display_mode = mode;
+        self.clear_library_folder_selection();
+        self.library_folder_selection_context = None;
+        self.library_selection_section = if mode == LibraryCategoryDisplayMode::Folders {
+            LibrarySelectionSection::Folders
+        } else {
+            LibrarySelectionSection::Mods
+        };
         self.selected_category_folder_id = None;
         self.library_scroll_to_category_id = None;
         self.dragging_category_id = None;
@@ -2771,11 +2794,15 @@ impl HestiaApp {
     }
 
     fn leave_category_folder_view(&mut self) -> bool {
+        self.clear_library_folder_selection();
         if self.selected_category_folder_id.is_none() {
             return false;
         }
         self.selected_category_folder_id = None;
         self.selected_mods.clear();
+        self.set_selected_mod_id(None);
+        self.library_selection_section = LibrarySelectionSection::Folders;
+        self.library_folder_selection_context = None;
         true
     }
 
@@ -2794,6 +2821,10 @@ impl HestiaApp {
     }
 
     fn start_selected_mod_rename(&mut self) {
+        if self.selected_mod().is_some_and(|entry| self.folder_batch_game_busy(&entry.game_id)) {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         let Some((mod_id, title)) = self.selected_mod().map(|selected| {
             (
                 selected.id.clone(),
@@ -3041,11 +3072,65 @@ impl HestiaApp {
         }
 
         if self.current_view == ViewMode::Library {
+            let library_key_context = app_window_focused
+                && !text_input_active
+                && !self.right_pane_bound_window_open()
+                && !egui::Popup::is_any_open(ctx);
+            if library_key_context
+                && ctx.input(|input| !input.modifiers.shift && !input.modifiers.alt)
+                && ctx.input_mut(|input| {
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::A))
+                })
+            {
+                if self.state.static_prefs.effective_library_category_display_mode()
+                    == LibraryCategoryDisplayMode::Folders
+                    && self.selected_category_folder_id.is_none()
+                    && self.library_selection_section == LibrarySelectionSection::Folders
+                {
+                    self.select_all_library_folders();
+                } else {
+                    self.begin_library_mod_selection();
+                    self.selected_mods = self.library_visible_mod_ids.iter().cloned().collect();
+                }
+            }
+            let folder_selection_active = self.library_folder_selection_active();
+            if library_key_context && folder_selection_active {
+                if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
+                    self.folder_delete_menu_requested = true;
+                }
+                for (key, action) in [
+                    (egui::Key::E, FolderBatchAction::Enable),
+                    (egui::Key::D, FolderBatchAction::Disable),
+                    (egui::Key::A, FolderBatchAction::Archive),
+                    (egui::Key::R, FolderBatchAction::Restore),
+                ] {
+                    if ctx.input_mut(|input| {
+                        input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, key))
+                    }) {
+                        self.start_folder_batch(action, None);
+                    }
+                }
+                if self.selected_library_folder_ids.len() == 1 {
+                    let folder_id = self.selected_library_folder_ids.iter().next().cloned().unwrap();
+                    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+                        self.clear_library_folder_selection();
+                        self.selected_category_folder_id = Some(folder_id.clone());
+                        self.library_folder_selection_context = None;
+                        self.library_selection_section = LibrarySelectionSection::Mods;
+                    }
+                    if !self.selected_game().is_some_and(|game| self.folder_batch_game_busy(&game.definition.id))
+                        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
+                        if let Some(category) = self.state.categories.iter().find(|category| category.id == folder_id).cloned() {
+                            self.start_category_rename(category.id, category.name, CategoryRenameSurface::LibraryFolder);
+                        }
+                    }
+                }
+            }
             let alt = egui::Modifiers {
                 alt: true,
                 ..Default::default()
             };
-            let folder_back_requested = !text_input_active
+            let folder_back_requested = library_key_context
                 && self.selected_category_folder_id.is_some()
                 && (ctx.input_mut(|input| {
                     input.consume_shortcut(&egui::KeyboardShortcut::new(alt, egui::Key::ArrowLeft))
@@ -3057,34 +3142,36 @@ impl HestiaApp {
             if folder_back_requested {
                 self.leave_category_folder_view();
             }
-            if !text_input_active
+            if library_key_context
+                && !folder_selection_active
                 && self.delete_shortcut_has_mod_context()
                 && ctx
                     .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
             {
                 self.delete_selected_context();
             }
-            if ctx.input_mut(|input| {
+            if library_key_context && !folder_selection_active && ctx.input_mut(|input| {
                 input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::E))
             }) {
                 self.enable_or_restore_selected_context();
             }
-            if ctx.input_mut(|input| {
+            if library_key_context && !folder_selection_active && ctx.input_mut(|input| {
                 input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::D))
             }) {
                 self.disable_selected_context();
             }
-            if ctx.input_mut(|input| {
+            if library_key_context && !folder_selection_active && ctx.input_mut(|input| {
                 input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::A))
             }) {
                 self.archive_selected_context();
             }
-            if ctx.input_mut(|input| {
+            if library_key_context && !folder_selection_active && ctx.input_mut(|input| {
                 input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl_shift, egui::Key::R))
             }) {
                 self.enable_or_restore_selected_context();
             }
-            if !text_input_active
+            if library_key_context
+                && !folder_selection_active
                 && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F2))
                 && self.mod_detail_open
                 && !self.mod_detail_editing
@@ -3092,7 +3179,8 @@ impl HestiaApp {
             {
                 self.start_selected_mod_rename();
             }
-            if !text_input_active
+            if library_key_context
+                && !folder_selection_active
                 && self.selected_unlinked_mod_context().is_some()
                 && (ctx.input_mut(|input| {
                     input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::V))
@@ -3201,6 +3289,9 @@ impl HestiaApp {
     }
 
     fn set_selected_mod_id(&mut self, mod_id: Option<String>) {
+        if mod_id.is_some() {
+            self.begin_library_mod_selection();
+        }
         if self.selected_mod_id == mod_id {
             return;
         }
@@ -3382,6 +3473,12 @@ impl HestiaApp {
     }
 
     fn refresh(&mut self) {
+        if self.folder_batch_job.is_some() {
+            if let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) {
+                self.refresh_pending_selected_game = Some(game_id);
+            }
+            return;
+        }
         self.mark_usage_counters_dirty();
         let old_ts: HashMap<String, DateTime<Utc>> = self
             .state
@@ -3422,6 +3519,11 @@ impl HestiaApp {
     }
 
     fn enqueue_mod_image_sync(&mut self, mod_id: &str) {
+        if self.state.mods.iter().find(|entry| entry.id == mod_id)
+            .is_some_and(|entry| self.folder_batch_game_busy(&entry.game_id))
+        {
+            return;
+        }
         let job_data = self
             .state
             .mods
@@ -3437,12 +3539,19 @@ impl HestiaApp {
 
         if let Some((root_path, snapshot)) = job_data {
             let job_id = self.next_background_job_id();
-            let _ = self.install_request_tx.send(InstallRequest::SyncImages {
+            if let Some(game_id) = self.state.mods.iter().find(|entry| entry.id == mod_id)
+                .map(|entry| entry.game_id.clone())
+            {
+                self.mod_image_sync_inflight.insert(job_id, game_id);
+            }
+            if self.install_request_tx.send(InstallRequest::SyncImages {
                 job_id,
                 mod_entry_id: mod_id.to_string(),
                 mod_root_path: root_path,
                 profile: Box::new(profile_to_response(Some(&snapshot))),
-            });
+            }).is_err() {
+                self.mod_image_sync_inflight.remove(&job_id);
+            }
         }
     }
 
@@ -3477,6 +3586,10 @@ impl HestiaApp {
     }
 
     fn refresh_with_toast(&mut self) {
+        if self.folder_batch_job.is_some() {
+            self.set_message_ok(self.text().folder_batch_busy_tooltip());
+            return;
+        }
         if self.startup_scan_loading || self.refresh_inflight {
             return;
         }
@@ -3634,6 +3747,12 @@ impl HestiaApp {
     }
 
     fn sync_selection_after_refresh(&mut self) {
+        let category_ids: HashSet<_> = self.state.categories.iter().map(|category| category.id.as_str()).collect();
+        self.selected_category_ids.retain(|id| category_ids.contains(id.as_str()));
+        if self.selected_category_folder_id.as_ref().is_some_and(|id| !category_ids.contains(id.as_str())) {
+            self.selected_category_folder_id = None;
+            self.library_folder_selection_context = None;
+        }
         let live_ids: HashSet<_> = self.state.mods.iter().map(|item| item.id.clone()).collect();
         self.selected_mods.retain(|id| live_ids.contains(id));
         if self
@@ -3643,6 +3762,7 @@ impl HestiaApp {
         {
             self.set_selected_mod_id(None);
         }
+        self.sync_library_folder_selection_context();
     }
 
     fn set_selected_game(&mut self, index: usize, ctx: &egui::Context) {
@@ -3679,6 +3799,18 @@ impl HestiaApp {
         self.enqueue_cover_preload();
 
         if previous_game_id.as_deref() != Some(game_id.as_str()) {
+            self.clear_library_folder_selection();
+            self.library_folder_selection_context = None;
+            self.selected_category_folder_id = None;
+            self.library_visible_folder_ids.clear();
+            self.library_visible_mod_ids.clear();
+            self.library_selection_section = if self.state.static_prefs.effective_library_category_display_mode()
+                == LibraryCategoryDisplayMode::Folders
+            {
+                LibrarySelectionSection::Folders
+            } else {
+                LibrarySelectionSection::Mods
+            };
             self.image_generation.fetch_add(1, Ordering::Relaxed);
             self.pending_mod_image_queue.clear();
             self.pending_mod_image_requests.clear();
