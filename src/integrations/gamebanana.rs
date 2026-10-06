@@ -12,6 +12,7 @@ use xxhash_rust::xxh3::xxh3_64;
 pub const BROWSE_PAGE_SIZE: usize = 30;
 pub const SEARCH_PAGE_SIZE: usize = 30;
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+pub const GAMEBANANA_API_BASE: &str = "https://gamebanana.com/apiv13";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApiEnvelope<T> {
@@ -80,12 +81,14 @@ pub struct PreviewImage {
 }
 
 /// The current preview property (`_aPreviewContent`, apiv13+): a single
-/// screenshot per record. `_aPreviewMedia` with its image list is the legacy
-/// property that older API versions still serve.
+/// screenshot for index records and a screenshot list for profile records.
+/// `_aPreviewMedia` with its image list is the legacy property.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PreviewContent {
     #[serde(default)]
     pub screenshot: Option<PreviewImage>,
+    #[serde(default)]
+    pub screenshots: Vec<PreviewImage>,
 }
 
 /// GameBanana renders empty PHP maps as `[]`, and preview shapes vary between
@@ -97,6 +100,35 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(serde_json::from_value(value).ok())
+}
+
+fn deserialize_profile_preview_media<'de, D>(
+    deserializer: D,
+) -> Result<Option<PreviewMedia>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() || !value.is_object() {
+        return Ok(None);
+    }
+
+    if value.get("screenshots").is_some() || value.get("screenshot").is_some() {
+        let content: PreviewContent =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let mut images = content.screenshots;
+        if let Some(screenshot) = content.screenshot {
+            images.insert(0, screenshot);
+        }
+        return Ok(Some(PreviewMedia { images }));
+    }
+
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,10 +169,134 @@ pub struct BrowseRecord {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreditEntry {
-    #[serde(rename = "_aUser")]
+    #[serde(rename = "_aUser", default)]
     pub user: Option<SubmissionAuthor>,
-    #[serde(rename = "_sRole")]
+    /// API v13 can return an unlinked credited author as `_sName` instead of
+    /// `_aUser`; keep that name without manufacturing a SubmissionAuthor.
+    #[serde(rename = "_sName", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "_sRole", default)]
     pub role: Option<String>,
+}
+
+fn non_empty_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn submission_author_from_value(value: &serde_json::Value) -> Option<SubmissionAuthor> {
+    let author: SubmissionAuthor = serde_json::from_value(value.clone()).ok()?;
+    (!author.name.trim().is_empty()).then_some(author)
+}
+
+fn credit_entry_from_value(value: &serde_json::Value) -> Option<CreditEntry> {
+    let object = value.as_object()?;
+
+    // Cached profiles use the original flat `_aUser` shape. Parse it first so
+    // those entries remain readable alongside the grouped v13 shape.
+    if object.contains_key("_aUser") {
+        let mut entry: CreditEntry = serde_json::from_value(value.clone()).ok()?;
+        if entry.user.is_none() {
+            entry.name = non_empty_string(object.get("_sName"));
+        }
+        entry.role = entry
+            .role
+            .and_then(|role| (!role.trim().is_empty()).then_some(role));
+        if entry.user.is_none() {
+            entry.name = entry
+                .name
+                .take()
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty());
+        } else {
+            entry.name = None;
+        }
+        return (entry.user.is_some() || entry.name.is_some() || entry.role.is_some())
+            .then_some(entry);
+    }
+
+    // Grouped v13 authors use the SubmissionAuthor fields directly. A
+    // name-only author cannot be represented by SubmissionAuthor, so retain
+    // its name in CreditEntry instead.
+    let user = submission_author_from_value(value);
+    let name = if user.is_none() {
+        non_empty_string(object.get("_sName"))
+    } else {
+        None
+    };
+    let role = non_empty_string(object.get("_sRole"));
+
+    (user.is_some() || name.is_some() || role.is_some()).then_some(CreditEntry {
+        user,
+        name,
+        role,
+    })
+}
+
+fn append_credit_authors(value: &serde_json::Value, credits: &mut Vec<CreditEntry>) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                if let Some(entry) = credit_entry_from_value(value) {
+                    credits.push(entry);
+                }
+            }
+        }
+        serde_json::Value::Object(object) => {
+            // A single author is occasionally emitted as an object rather
+            // than a one-element array. Also accept keyed author maps, while
+            // treating the group object itself as a group rather than author.
+            if object.keys().any(|key| {
+                matches!(
+                    key.as_str(),
+                    "_aUser" | "_idRow" | "_sName" | "_sProfileUrl" | "_sRole"
+                )
+            }) {
+                if let Some(entry) = credit_entry_from_value(value) {
+                    credits.push(entry);
+                }
+            } else {
+                for value in object.values() {
+                    append_credit_authors(value, credits);
+                }
+            }
+        }
+        serde_json::Value::Null => {}
+        _ => {}
+    }
+}
+
+fn append_credit_value(value: &serde_json::Value, credits: &mut Vec<CreditEntry>) {
+    let Some(object) = value.as_object() else {
+        return;
+    };
+    if let Some(authors) = object.get("_aAuthors") {
+        append_credit_authors(authors, credits);
+    } else if let Some(entry) = credit_entry_from_value(value) {
+        credits.push(entry);
+    }
+}
+
+fn deserialize_credits<'de, D>(deserializer: D) -> Result<Vec<CreditEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let mut credits = Vec::new();
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                append_credit_value(&value, &mut credits);
+            }
+        }
+        serde_json::Value::Object(_) => append_credit_value(&value, &mut credits),
+        serde_json::Value::Null => {}
+        _ => {}
+    }
+    Ok(credits)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -271,11 +427,19 @@ pub struct ProfileResponse {
     pub date_updated: Option<i64>,
     #[serde(rename = "_sDownloadUrl")]
     pub mod_download_url: Option<String>,
-    #[serde(rename = "_aPreviewMedia")]
+    // API v13 moved profile screenshots to `_aPreviewContent.screenshots`.
+    // Keep the public field and serialized key stable for existing consumers
+    // and cached profiles while accepting both response shapes on input.
+    #[serde(
+        rename = "_aPreviewMedia",
+        alias = "_aPreviewContent",
+        default,
+        deserialize_with = "deserialize_profile_preview_media"
+    )]
     pub preview_media: Option<PreviewMedia>,
     #[serde(rename = "_aSubmitter")]
     pub submitter: Option<SubmissionAuthor>,
-    #[serde(rename = "_aCredits", default)]
+    #[serde(rename = "_aCredits", default, deserialize_with = "deserialize_credits")]
     pub credits: Vec<CreditEntry>,
     #[serde(rename = "_aFiles", default)]
     pub files: Vec<ModFile>,
@@ -389,6 +553,200 @@ mod tests {
     }
 
     #[test]
+    fn profile_v13_screenshots_and_download_fields_survive_deserialization() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aPreviewContent": {
+                    "screenshots": [
+                        {
+                            "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+                            "_sFile": "first.jpg",
+                            "_sFile220": "first_220.webp"
+                        },
+                        {
+                            "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+                            "_sFile": "second.jpg"
+                        }
+                    ]
+                },
+                "_aFiles": [
+                    {
+                        "_idRow": 10,
+                        "_sFile": "mod.zip",
+                        "_nFilesize": 42,
+                        "_tsDateAdded": 1,
+                        "_sDownloadUrl": "https://gamebanana.com/dl/10"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let preview = profile.preview_media.expect("v13 profile preview");
+        assert_eq!(preview.images.len(), 2);
+        assert_eq!(preview.images[1].file, "second.jpg");
+        assert_eq!(
+            profile.files[0].download_url.as_deref(),
+            Some("https://gamebanana.com/dl/10")
+        );
+    }
+
+    #[test]
+    fn legacy_profile_preview_cache_shape_round_trips() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aPreviewMedia": {
+                    "_aImages": [{
+                        "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+                        "_sFile": "legacy.jpg"
+                    }]
+                }
+            }"#,
+        )
+        .unwrap();
+        let cached = serde_json::to_value(&profile).unwrap();
+        assert!(cached.get("_aPreviewMedia").is_some());
+        assert!(cached.get("_aPreviewContent").is_none());
+
+        let restored: ProfileResponse = serde_json::from_value(cached).unwrap();
+        assert_eq!(restored.preview_media.unwrap().images[0].file, "legacy.jpg");
+    }
+
+    #[test]
+    fn profile_v13_grouped_credits_preserve_name_only_and_linked_authors() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aSubmitter": {
+                    "_idRow": 1,
+                    "_sName": "Submitter",
+                    "_sProfileUrl": "https://gamebanana.com/members/1"
+                },
+                "_aCredits": [
+                    {
+                        "_sGroupName": "Key Authors",
+                        "_aAuthors": [
+                            { "_sRole": "Recolor", "_sName": "YouWhenMe" },
+                            {
+                                "_sRole": "Developer",
+                                "_idRow": 2,
+                                "_sName": "Dimit",
+                                "_sProfileUrl": "https://gamebanana.com/members/2",
+                                "_sAvatarUrl": "https://images.gamebanana.com/img/av/2.jpg"
+                            }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(profile.credits.len(), 2);
+        assert_eq!(profile.credits[0].name.as_deref(), Some("YouWhenMe"));
+        assert!(profile.credits[0].user.is_none());
+        assert_eq!(profile.credits[0].role.as_deref(), Some("Recolor"));
+        assert_eq!(profile.credits[1].user.as_ref().unwrap().name, "Dimit");
+        assert_eq!(
+            profile.credits[1]
+                .user
+                .as_ref()
+                .unwrap()
+                .profile_url,
+            "https://gamebanana.com/members/2"
+        );
+        assert_eq!(profile.credits[1].role.as_deref(), Some("Developer"));
+        assert_eq!(
+            all_authors(&profile),
+            vec!["Submitter".to_owned(), "YouWhenMe".to_owned(), "Dimit".to_owned()]
+        );
+
+        let cached = serde_json::to_value(&profile).unwrap();
+        let restored: ProfileResponse = serde_json::from_value(cached).unwrap();
+        assert_eq!(restored.credits.len(), 2);
+        assert_eq!(restored.credits[0].name.as_deref(), Some("YouWhenMe"));
+        assert_eq!(restored.credits[1].user.as_ref().unwrap().name, "Dimit");
+    }
+
+    #[test]
+    fn legacy_flat_credits_and_empty_credit_shapes_remain_readable() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aCredits": [
+                    {
+                        "_aUser": {
+                            "_idRow": 2,
+                            "_sName": "Dimit",
+                            "_sProfileUrl": "https://gamebanana.com/members/2"
+                        },
+                        "_sRole": "Developer"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(profile.credits.len(), 1);
+        assert_eq!(profile.credits[0].user.as_ref().unwrap().name, "Dimit");
+        assert_eq!(profile.credits[0].role.as_deref(), Some("Developer"));
+
+        let cached = serde_json::to_value(&profile).unwrap();
+        let restored: ProfileResponse = serde_json::from_value(cached).unwrap();
+        assert_eq!(restored.credits.len(), 1);
+        assert_eq!(restored.credits[0].user.as_ref().unwrap().name, "Dimit");
+
+        for value in [
+            r#"{ "_aCredits": null }"#,
+            r#"{ "_aCredits": [] }"#,
+            r#"{ "_aCredits": { "_sGroupName": "Empty", "_aAuthors": [] } }"#,
+        ] {
+            let profile: ProfileResponse = serde_json::from_str(value).unwrap();
+            assert!(profile.credits.is_empty());
+        }
+
+        let singleton_group: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aCredits": {
+                    "_sGroupName": "Original Author",
+                    "_aAuthors": {
+                        "_sRole": "Developer",
+                        "_sName": "Dimit",
+                        "_idRow": 2,
+                        "_sProfileUrl": "https://gamebanana.com/members/2"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(singleton_group.credits.len(), 1);
+        assert_eq!(singleton_group.credits[0].user.as_ref().unwrap().name, "Dimit");
+    }
+
+    #[test]
+    fn all_authors_deduplicates_case_insensitively_and_ignores_empty_names() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_aSubmitter": {
+                    "_idRow": 1,
+                    "_sName": "  Dimit  ",
+                    "_sProfileUrl": "https://gamebanana.com/members/1"
+                },
+                "_aCredits": [
+                    { "_sGroupName": "Group label", "_aAuthors": [
+                        { "_sName": "dImIt", "_sRole": "Artist" },
+                        { "_sName": "  ", "_sRole": "Empty" },
+                        { "_sRole": "No name" },
+                        { "_sName": "Artist" }
+                    ] }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            all_authors(&profile),
+            vec!["Dimit".to_owned(), "Artist".to_owned()]
+        );
+    }
+
+    #[test]
     fn profile_category_name_joins_super_and_leaf_categories() {
         let profile: ProfileResponse = serde_json::from_str(
             r#"{
@@ -423,6 +781,124 @@ mod tests {
         .unwrap();
 
         assert_eq!(profile_category_name(&profile), None);
+    }
+
+    #[test]
+    fn moderator_trashed_profile_is_unavailable_without_optional_metadata() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 418715,
+                "_bIsPrivate": false,
+                "_bIsDeleted": false,
+                "_bIsTrashed": true,
+                "_bIsWithheld": false,
+                "_aTrashInfo": { "_bIsTrashedByOwner": false },
+                "_aFiles": []
+            }"#,
+        )
+        .unwrap();
+
+        assert!(is_unavailable(&profile));
+        assert_eq!(
+            install_block_reason(&profile).as_deref(),
+            Some("This mod has been deleted and cannot be installed automatically.")
+        );
+        assert_eq!(unavailable_reason(&profile).as_deref(), Some("Mod was deleted"));
+    }
+
+    #[test]
+    fn owner_trash_and_withheld_attribution_preserve_specific_reasons() {
+        let owner_trashed: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 1,
+                "_bIsTrashed": true,
+                "_aTrashInfo": {
+                    "_bIsTrashedByOwner": true,
+                    "_aTrasher": {
+                        "_idRow": 2,
+                        "_sName": "Owner",
+                        "_sProfileUrl": "https://gamebanana.com/members/2"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert!(is_unavailable(&owner_trashed));
+        assert_eq!(
+            install_block_reason(&owner_trashed).as_deref(),
+            Some("This mod has been deleted by Owner.")
+        );
+        assert_eq!(
+            unavailable_reason(&owner_trashed).as_deref(),
+            Some("Mod was deleted by Owner")
+        );
+
+        let withheld: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 3,
+                "_bIsWithheld": true,
+                "_aWithholdNotice": {
+                    "_aWithholder": {
+                        "_idRow": 4,
+                        "_sName": "Moderator",
+                        "_sProfileUrl": "https://gamebanana.com/members/4"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert!(is_unavailable(&withheld));
+        assert_eq!(
+            install_block_reason(&withheld).as_deref(),
+            Some("This mod has been withheld and cannot be installed automatically.")
+        );
+        assert_eq!(
+            unavailable_reason(&withheld).as_deref(),
+            Some("Mod was withheld by Moderator")
+        );
+    }
+
+    #[test]
+    fn withheld_profile_is_unavailable_without_notice_metadata() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 5,
+                "_bIsPrivate": false,
+                "_bIsDeleted": false,
+                "_bIsTrashed": false,
+                "_bIsWithheld": true,
+                "_aFiles": []
+            }"#,
+        )
+        .unwrap();
+
+        assert!(is_unavailable(&profile));
+        assert_eq!(
+            install_block_reason(&profile).as_deref(),
+            Some("This mod has been withheld and cannot be installed automatically.")
+        );
+        assert_eq!(unavailable_reason(&profile).as_deref(), Some("Mod is now withheld"));
+    }
+
+    #[test]
+    fn available_profile_is_not_blocked_by_optional_moderation_metadata() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 703505,
+                "_bIsPrivate": false,
+                "_bIsDeleted": false,
+                "_bIsTrashed": false,
+                "_bIsWithheld": false,
+                "_aTrashInfo": { "_bIsTrashedByOwner": false },
+                "_aWithholdNotice": null,
+                "_aFiles": []
+            }"#,
+        )
+        .unwrap();
+
+        assert!(!is_unavailable(&profile));
+        assert_eq!(install_block_reason(&profile), None);
+        assert_eq!(unavailable_reason(&profile), None);
     }
 
     #[test]
@@ -465,16 +941,20 @@ pub fn is_unavailable(profile: &ProfileResponse) -> bool {
     profile.is_private
         || profile.is_deleted
         || profile.id == 0
-        || trashed_by_owner(profile).is_some()
-        || withheld_notice(profile).is_some()
+        || profile.is_trashed
+        || profile.is_withheld
 }
 
 pub fn install_block_reason(profile: &ProfileResponse) -> Option<String> {
     if profile.is_private {
         Some("This mod is private and cannot be installed automatically.".to_string())
-    } else if let Some(trasher) = trashed_by_owner(profile) {
-        Some(format!("This mod has been deleted by {}.", trasher.name))
-    } else if withheld_notice(profile).is_some() {
+    } else if profile.is_trashed {
+        Some(if let Some(trasher) = trashed_by_owner(profile) {
+            format!("This mod has been deleted by {}.", trasher.name)
+        } else {
+            "This mod has been deleted and cannot be installed automatically.".to_string()
+        })
+    } else if profile.is_withheld {
         Some("This mod has been withheld and cannot be installed automatically.".to_string())
     } else if profile.is_deleted || profile.id == 0 {
         Some("This mod no longer exists and cannot be installed automatically.".to_string())
@@ -486,11 +966,19 @@ pub fn install_block_reason(profile: &ProfileResponse) -> Option<String> {
 pub fn unavailable_reason(profile: &ProfileResponse) -> Option<String> {
     if profile.is_private {
         Some("Mod is now private".to_string())
-    } else if let Some(trasher) = trashed_by_owner(profile) {
-        Some(format!("Mod was deleted by {}", trasher.name))
-    } else if let Some(notice) = withheld_notice(profile) {
-        if let Some(withholder) = notice.withholder.as_ref() {
-            Some(format!("Mod was withheld by {}", withholder.name))
+    } else if profile.is_trashed {
+        if let Some(trasher) = trashed_by_owner(profile) {
+            Some(format!("Mod was deleted by {}", trasher.name))
+        } else {
+            Some("Mod was deleted".to_string())
+        }
+    } else if profile.is_withheld {
+        if let Some(notice) = withheld_notice(profile) {
+            if let Some(withholder) = notice.withholder.as_ref() {
+                Some(format!("Mod was withheld by {}", withholder.name))
+            } else {
+                Some("Mod is now withheld".to_string())
+            }
         } else {
             Some("Mod is now withheld".to_string())
         }
@@ -533,7 +1021,7 @@ pub fn fetch_browse_page(
     page: usize,
     sort: crate::model::BrowseSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/Index"))?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("_nPerpage", &BROWSE_PAGE_SIZE.to_string());
@@ -560,7 +1048,7 @@ pub async fn fetch_browse_page_async(
     sort: crate::model::BrowseSort,
     nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv11/Mod/Index")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/Index"))?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("_nPerpage", &BROWSE_PAGE_SIZE.to_string());
@@ -591,7 +1079,7 @@ pub async fn fetch_character_categories_async(
     super_category_id: u64,
     nocache: bool,
 ) -> Result<Vec<CharacterCategory>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv12/Mod/Categories")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/Categories"))?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("_idCategoryRow", &super_category_id.to_string());
@@ -622,10 +1110,7 @@ pub async fn fetch_character_browse_page_async(
     sort: crate::model::BrowseSort,
     nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    // apiv13 per GameBanana's guidance: `_aPreviewContent` is the current
-    // preview property; `_aPreviewMedia` only exists on legacy API versions.
-    // Record parsing accepts both shapes (content first, media as fallback).
-    let mut url = Url::parse("https://gamebanana.com/apiv13/Mod/Index")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/Index"))?;
     let sort = match sort {
         crate::model::BrowseSort::Popular => "Generic_MostDownloaded",
         crate::model::BrowseSort::RecentUpdated => "Generic_NewAndUpdated",
@@ -663,7 +1148,7 @@ pub fn fetch_search_page(
     page: usize,
     sort: crate::model::SearchSort,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Util/Search/Results"))?;
     let order = match sort {
         crate::model::SearchSort::BestMatch => "best_match",
         crate::model::SearchSort::RecentUpdated => "udate",
@@ -699,7 +1184,7 @@ pub async fn fetch_search_page_async(
     sort: crate::model::SearchSort,
     nocache: bool,
 ) -> Result<ApiEnvelope<BrowseRecord>> {
-    let mut url = Url::parse("https://gamebanana.com/apiv11/Util/Search/Results")?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Util/Search/Results"))?;
     let order = match sort {
         crate::model::SearchSort::BestMatch => "best_match",
         crate::model::SearchSort::RecentUpdated => "udate",
@@ -750,7 +1235,7 @@ pub fn fetch_profile(client: &Client, mod_id: u64) -> Result<ProfileResponse> {
 
 pub fn fetch_profile_typed(client: &Client, mod_id: u64, is_tool: bool) -> Result<ProfileResponse> {
     let kind = item_api_kind(is_tool);
-    let url = format!("https://gamebanana.com/apiv11/{kind}/{mod_id}/ProfilePage");
+    let url = format!("{GAMEBANANA_API_BASE}/{kind}/{mod_id}/ProfilePage");
     client
         .get(url)
         .send()
@@ -774,7 +1259,7 @@ pub async fn fetch_profile_async_typed(
     is_tool: bool,
 ) -> Result<ProfileResponse> {
     let kind = item_api_kind(is_tool);
-    let url = format!("https://gamebanana.com/apiv11/{kind}/{mod_id}/ProfilePage");
+    let url = format!("{GAMEBANANA_API_BASE}/{kind}/{mod_id}/ProfilePage");
     let response = client
         .get(url)
         .send()
@@ -792,9 +1277,7 @@ pub async fn fetch_updates_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
 ) -> Result<ApiEnvelope<UpdateRecord>> {
-    let mut url = Url::parse(&format!(
-        "https://gamebanana.com/apiv11/Mod/{mod_id}/Updates"
-    ))?;
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/{mod_id}/Updates"))?;
     {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs.append_pair("_nPage", "1");
@@ -814,8 +1297,7 @@ pub async fn fetch_updates_async(
 }
 
 /// Per GameBanana's dev guidance, `_aPreviewContent` is the current preview
-/// property (apiv13+) and `_aPreviewMedia` is the legacy one still served by
-/// the older endpoints Hestia uses for browse/search; a card thumbnail must
+/// property and `_aPreviewMedia` is the legacy one; a card thumbnail must
 /// consider both, preferring the current shape.
 pub fn record_thumbnail_image(record: &BrowseRecord) -> Option<&PreviewImage> {
     record
@@ -856,17 +1338,26 @@ pub fn browser_url_typed(mod_id: u64, is_tool: bool) -> String {
 
 pub fn all_authors(profile: &ProfileResponse) -> Vec<String> {
     let mut authors = Vec::new();
+
+    let mut add_author = |name: &str| {
+        let name = name.trim();
+        if !name.is_empty()
+            && !authors
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(name))
+        {
+            authors.push(name.to_owned());
+        }
+    };
+
     if let Some(submitter) = &profile.submitter {
-        authors.push(submitter.name.clone());
+        add_author(&submitter.name);
     }
     for credit in &profile.credits {
         if let Some(user) = &credit.user {
-            if !authors
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(&user.name))
-            {
-                authors.push(user.name.clone());
-            }
+            add_author(&user.name);
+        } else if let Some(name) = &credit.name {
+            add_author(name);
         }
     }
     authors

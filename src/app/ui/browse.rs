@@ -1672,9 +1672,9 @@ impl HestiaApp {
                         });
                     let trashed_by_owner = gamebanana::trashed_by_owner(profile).cloned();
                     let withhold_notice = gamebanana::withheld_notice(profile).cloned();
-                    let is_trashed_by_owner = trashed_by_owner.is_some();
+                    let is_trashed = profile.is_trashed;
                     let is_private = profile.is_private;
-                    let is_withheld = withhold_notice.is_some();
+                    let is_withheld = profile.is_withheld;
                     let is_deleted = profile.is_deleted || profile.id == 0;
                     let is_installed = card
                         .as_ref()
@@ -2172,7 +2172,7 @@ impl HestiaApp {
                             _ => {}
                         }
 
-                        if is_private || is_trashed_by_owner || is_withheld || is_deleted {
+                        if is_private || is_trashed || is_withheld || is_deleted {
                             ui.add_space(12.0);
                             ui.group(|ui| {
                                 ui.set_max_width(ui.available_width());
