@@ -1618,6 +1618,9 @@ fn prepare_candidate_stage(
     fs::rename(source, destination)?;
     if backend == GameBackend::Xxmi {
         normalize_existing_xxmi_stage(destination, status, cancel)?;
+        crate::integrations::xxmi::mark_mod_root(destination)?;
+    } else {
+        crate::integrations::unrealengine::mark_mod_root(destination)?;
     }
     check_cancel(cancel)?;
     Ok(())
@@ -1741,6 +1744,11 @@ fn merge_candidate_stage(
         copy_candidate_into_xxmi_active_root(source, destination, cancel)?;
     } else {
         copy_dir_cancelable(source, destination, false, cancel)?;
+    }
+    if backend == GameBackend::Xxmi {
+        crate::integrations::xxmi::mark_mod_root(destination)?;
+    } else {
+        crate::integrations::unrealengine::mark_mod_root(destination)?;
     }
     Ok(())
 }
@@ -2540,6 +2548,152 @@ mod tests {
     }
 
     #[test]
+    fn xxmi_publish_scans_nested_wrapper_for_replace_merge_and_keep_both() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("nested-wrapper");
+        fs::create_dir_all(source.join("Part A")).unwrap();
+        fs::create_dir_all(source.join("Part B")).unwrap();
+        fs::write(source.join("Part A").join("part-a.ini"), "a").unwrap();
+        fs::write(source.join("Part B").join("part-b.ini"), "b").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let marker = |root: &Path| root.join(MOD_META_DIR).join("mod-root");
+        let test_game = |mods_path: &Path| crate::model::GameInstall {
+            definition: crate::model::GameDefinition {
+                id: "nested-wrapper-test".to_string(),
+                name: "Nested Wrapper Test".to_string(),
+                backend: GameBackend::Xxmi,
+                xxmi_code: "nested-wrapper-test".to_string(),
+            },
+            mods_path_override: Some(mods_path.to_path_buf()),
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: false,
+            enabled: true,
+        };
+        let scan = |mods_path: &Path| {
+            crate::integrations::xxmi::scan_live_mods(&test_game(mods_path), false, false)
+                .unwrap()
+        };
+        let assert_single_wrapper = |mods_path: &Path, expected_root: &Path| {
+            let scanned = scan(mods_path);
+            assert_eq!(scanned.len(), 1);
+            assert_eq!(scanned[0].root_path.as_path(), expected_root);
+            assert_eq!(scanned[0].folder_name, "Nested Wrapper");
+            assert!(scanned[0].root_path.join("Part A").is_dir()
+                || scanned[0]
+                    .root_path
+                    .join(DISABLED_CONTAINER)
+                    .join("Part A")
+                    .is_dir());
+            assert!(scanned[0].root_path.join("Part B").is_dir()
+                || scanned[0]
+                    .root_path
+                    .join(DISABLED_CONTAINER)
+                    .join("Part B")
+                    .is_dir());
+            scanned
+        };
+
+        let replace_root = temp.path().join("replace-mods");
+        let replaced = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &replace_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(marker(&replaced).exists());
+        let mut initial_scan = assert_single_wrapper(&replace_root, &replaced);
+        let mut entry = initial_scan.remove(0);
+        let initial_id = entry.id.clone();
+        crate::integrations::xxmi::disable_mod(&mut entry).unwrap();
+        let disabled_scan = assert_single_wrapper(&replace_root, &replaced);
+        assert_eq!(disabled_scan[0].id, initial_id);
+        assert_eq!(disabled_scan[0].status, ModStatus::Disabled);
+        crate::integrations::xxmi::enable_mod(&mut entry).unwrap();
+        let enabled_scan = assert_single_wrapper(&replace_root, &replaced);
+        assert_eq!(enabled_scan[0].id, initial_id);
+        assert_eq!(enabled_scan[0].status, ModStatus::Active);
+
+        let merge_root = temp.path().join("merge-mods");
+        let merge_existing = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &merge_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        fs::remove_file(marker(&merge_existing)).unwrap();
+        let merged = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &merge_root,
+            None,
+            ConflictChoice::Merge,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(marker(&merged).exists());
+        assert_single_wrapper(&merge_root, &merged);
+
+        let keep_both_root = temp.path().join("keep-both-mods");
+        let keep_both_existing = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &keep_both_root,
+            None,
+            ConflictChoice::Replace,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        let kept_both = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &keep_both_root,
+            None,
+            ConflictChoice::KeepBoth,
+            false,
+            GameBackend::Xxmi,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(marker(&kept_both).exists());
+        let kept_both_scan = scan(&keep_both_root);
+        assert_eq!(kept_both_scan.len(), 2);
+        assert!(kept_both_scan.iter().all(|entry| {
+            entry.root_path == keep_both_existing || entry.root_path == kept_both
+        }));
+        assert!(kept_both_scan
+            .iter()
+            .all(|entry| entry.root_path.join("Part A").is_dir()));
+        assert!(kept_both_scan
+            .iter()
+            .all(|entry| entry.root_path.join("Part B").is_dir()));
+    }
+
+    #[test]
     fn archived_xxmi_update_replace_and_merge_preserve_identity_and_category() {
         let temp = tempfile::tempdir().unwrap();
         let archive_root = temp.path().join("Mods_Archived");
@@ -2678,6 +2832,7 @@ mod tests {
         assert_eq!(installed, disabled_root.join("My Mod (2)"));
         assert!(!active_root.join("My Mod (2)").exists());
         assert!(installed.join("mod.pak").exists());
+        assert!(installed.join(MOD_META_DIR).join("mod-root").exists());
         let cloned_state = crate::persistence::load_portable_mod_state(&installed)
             .unwrap()
             .unwrap();
@@ -2685,6 +2840,202 @@ mod tests {
         assert_eq!(
             cloned_state.metadata.user.title.as_deref(),
             Some("Imported title")
+        );
+    }
+
+    #[test]
+    fn unreal_publish_scans_nested_active_and_disabled_category_wrappers() {
+        let temp = tempfile::tempdir().unwrap();
+        let active_root = temp.path().join("Paks").join("~mods");
+        let category = "Ardelia";
+        let active_category = active_root.join(category);
+        let source = temp.path().join("nested-wrapper");
+        fs::create_dir_all(source.join("Packages").join("Main")).unwrap();
+        fs::create_dir_all(source.join("Packages").join("Companion")).unwrap();
+        fs::write(
+            source.join("Packages").join("Main").join("main.pak"),
+            "main",
+        )
+        .unwrap();
+        fs::write(
+            source
+                .join("Packages")
+                .join("Companion")
+                .join("companion.ucas"),
+            "companion",
+        )
+        .unwrap();
+        let game = crate::model::GameInstall {
+            definition: crate::model::GameDefinition {
+                id: "nte".to_string(),
+                name: "Neverness To Everness".to_string(),
+                backend: GameBackend::UnrealEngine,
+                xxmi_code: String::new(),
+            },
+            mods_path_override: Some(active_root.clone()),
+            modded_exe_path_override: None,
+            vanilla_exe_path_override: None,
+            apply_mod_changes_in_game: false,
+            enabled: true,
+        };
+        let disabled_root = game.disabled_mods_path(false).unwrap();
+        let disabled_category = disabled_root.join(category);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let write_state = |root: &Path, id: &str| {
+            let mut state = crate::model::PortableModState {
+                id: id.to_string(),
+                metadata: Default::default(),
+                source: None,
+                unsafe_content: false,
+                unsafe_content_auto: None,
+                unsafe_content_preference: Default::default(),
+                created_at: None,
+                updated_at: None,
+            };
+            state.metadata.user.category_id = Some("ardelia-id".to_string());
+            state.metadata.user.category = category.to_string();
+            fs::create_dir_all(root.join(MOD_META_DIR)).unwrap();
+            fs::write(
+                root.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+                serde_json::to_vec(&state).unwrap(),
+            )
+            .unwrap();
+        };
+        let assert_entry =
+            |entries: &[crate::model::ModEntry], root: &Path, id: &str, status: ModStatus| {
+                let entry = entries
+                    .iter()
+                    .find(|entry| entry.root_path == root)
+                    .expect("expected nested Unreal wrapper in scan");
+                assert_eq!(entry.id, id);
+                assert_eq!(entry.status, status);
+                assert_eq!(
+                    entry.metadata.user.category_id.as_deref(),
+                    Some("ardelia-id")
+                );
+                assert_eq!(entry.metadata.user.category, category);
+                assert!(entry
+                    .root_path
+                    .join("Packages")
+                    .join("Main")
+                    .join("main.pak")
+                    .is_file());
+                assert!(entry
+                    .root_path
+                    .join("Packages")
+                    .join("Companion")
+                    .join("companion.ucas")
+                    .is_file());
+            };
+
+        let active_existing = active_category.join("Nested Wrapper");
+        fs::create_dir_all(&active_existing).unwrap();
+        write_state(&active_existing, "active-id");
+        fs::write(active_existing.join("old.pak"), "old").unwrap();
+        let active_installed = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &active_category,
+            Some(&disabled_category),
+            ConflictChoice::Replace,
+            false,
+            GameBackend::UnrealEngine,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(active_installed, active_existing);
+        assert!(active_installed.join(MOD_META_DIR).join("mod-root").is_file());
+        let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
+        assert_eq!(scanned.len(), 1);
+        assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
+
+        fs::write(
+            source
+                .join("Packages")
+                .join("Companion")
+                .join("companion.utoc"),
+            "companion index",
+        )
+        .unwrap();
+        let active_merged = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &active_category,
+            Some(&disabled_category),
+            ConflictChoice::Merge,
+            false,
+            GameBackend::UnrealEngine,
+            ModStatus::Active,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(active_merged, active_existing);
+        let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
+        assert_eq!(scanned.len(), 1);
+        assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
+        assert!(active_existing
+            .join("Packages")
+            .join("Companion")
+            .join("companion.utoc")
+            .is_file());
+
+        let disabled_existing = disabled_category.join("Nested Wrapper");
+        fs::create_dir_all(&disabled_existing).unwrap();
+        write_state(&disabled_existing, "disabled-id");
+        fs::write(disabled_existing.join("old.pak"), "old").unwrap();
+        let disabled_installed = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &active_category,
+            Some(&disabled_category),
+            ConflictChoice::Replace,
+            false,
+            GameBackend::UnrealEngine,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(disabled_installed, disabled_existing);
+        assert!(disabled_installed
+            .join(MOD_META_DIR)
+            .join("mod-root")
+            .is_file());
+        let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
+        assert_eq!(scanned.len(), 2);
+        assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
+        assert_entry(
+            &scanned,
+            &disabled_existing,
+            "disabled-id",
+            ModStatus::Disabled,
+        );
+
+        let disabled_merged = install_candidate_with_state_cancelable(
+            &source,
+            "Nested Wrapper",
+            &active_category,
+            Some(&disabled_category),
+            ConflictChoice::Merge,
+            false,
+            GameBackend::UnrealEngine,
+            ModStatus::Disabled,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(disabled_merged, disabled_existing);
+        let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
+        assert_eq!(scanned.len(), 2);
+        assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
+        assert_entry(
+            &scanned,
+            &disabled_existing,
+            "disabled-id",
+            ModStatus::Disabled,
         );
     }
 

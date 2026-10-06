@@ -1109,7 +1109,7 @@ fn folder_batch_physical_item_matches(
             ModStatus::Archived => None,
         };
         if let Some(expected_root) = expected_root
-            && entry.root_path.parent() != Some(expected_root.as_path())
+            && !strict_path_descendant(&entry.root_path, &expected_root)
         {
             return false;
         }
@@ -1138,10 +1138,11 @@ fn folder_batch_physical_item_matches(
                 let Ok(archive_root) = xxmi::archived_mods_root(game, use_default_path) else {
                     return false;
                 };
-                // Archive writes land directly below Mods_Archived. Older archives may not have
-                // a recorded destination, and a stale recorded path is harmless because restore
-                // confines its fallback to the current live root.
-                if entry.root_path.parent() != Some(archive_root.as_path()) {
+                // Archive writes may preserve the nested physical organization below
+                // Mods_Archived. Older archives may not have a recorded destination, and a
+                // stale recorded path is harmless because restore confines its fallback to the
+                // current live root.
+                if !strict_path_descendant(&entry.root_path, &archive_root) {
                     return false;
                 }
                 if entry.archive_original_path.as_ref() == Some(&entry.root_path) {
@@ -1151,6 +1152,26 @@ fn folder_batch_physical_item_matches(
         }
     }
     true
+}
+
+/// Return whether `path` is a strict lexical descendant of `root`.
+///
+/// The archive root itself is not a mod, and rejecting `ParentDir` components keeps a
+/// syntactically prefixed path from escaping the archive tree without requiring the target to
+/// exist on disk.
+fn strict_path_descendant(path: &Path, root: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut has_normal_component = false;
+    for component in relative.components() {
+        match component {
+            std::path::Component::ParentDir => return false,
+            std::path::Component::Normal(_) => has_normal_component = true,
+            _ => {}
+        }
+    }
+    has_normal_component
 }
 
 enum FolderBatchExecutionError {
@@ -1510,6 +1531,70 @@ mod folder_batch_tests {
     }
 
     #[test]
+    fn unreal_physical_match_accepts_nested_active_and_disabled_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let active_root = temp.path().join("Mods");
+        let mut game = game();
+        game.mods_path_override = Some(active_root.clone());
+        let disabled_root = game.disabled_mods_path(false).unwrap();
+        let targets = FolderBatchTargets {
+            game_id: "game".into(),
+            category_ids: Vec::new(),
+            mod_ids: vec!["mod".into()],
+            all_mod_ids: vec!["mod".into()],
+            scope: FolderContentsScope::All,
+        };
+
+        assert!(folder_batch_physical_item_matches(
+            &entry(
+                "mod",
+                active_root.join("Ardelia").join("Outfit A"),
+                ModStatus::Active,
+            ),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(folder_batch_physical_item_matches(
+            &entry(
+                "mod",
+                disabled_root.join("Ardelia").join("Outfit B"),
+                ModStatus::Disabled,
+            ),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry("mod", active_root.clone(), ModStatus::Active),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry("mod", disabled_root.clone(), ModStatus::Disabled),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry(
+                "mod",
+                temp.path().join("Other").join("Outfit C"),
+                ModStatus::Active,
+            ),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+    }
+
+    #[test]
     fn archived_physical_match_allows_missing_or_stale_original_destination() {
         let temp = tempfile::tempdir().unwrap();
         let mods_root = temp.path().join("Mods");
@@ -1537,6 +1622,60 @@ mod folder_batch_tests {
             Some(temp.path().join("old-game-root").join("mod"));
         assert!(folder_batch_physical_item_matches(
             &missing_original,
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+    }
+
+    #[test]
+    fn archived_physical_match_accepts_nested_mods_but_rejects_root_and_escape_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods_root = temp.path().join("Mods");
+        let archive_root = temp.path().join("Mods_Archived");
+        let nested_root = archive_root.join("Ardelia").join("Outfit A");
+        let mut game = xxmi_game();
+        game.mods_path_override = Some(mods_root);
+        let targets = FolderBatchTargets {
+            game_id: "game".into(),
+            category_ids: Vec::new(),
+            mod_ids: vec!["mod".into()],
+            all_mod_ids: vec!["mod".into()],
+            scope: FolderContentsScope::All,
+        };
+
+        assert!(folder_batch_physical_item_matches(
+            &entry("mod", nested_root, ModStatus::Archived),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry("mod", archive_root.clone(), ModStatus::Archived),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry(
+                "mod",
+                temp.path().join("Other").join("mod"),
+                ModStatus::Archived,
+            ),
+            &game,
+            false,
+            &[],
+            &targets,
+        ));
+        assert!(!folder_batch_physical_item_matches(
+            &entry(
+                "mod",
+                archive_root.join("..").join("Other").join("mod"),
+                ModStatus::Archived,
+            ),
             &game,
             false,
             &[],

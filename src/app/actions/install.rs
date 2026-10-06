@@ -12,6 +12,82 @@ fn initial_candidate_install_status(
     }
 }
 
+/// Rebase an identity-targeted install onto the physical parent of its existing mod.
+///
+/// XXMI keeps active and disabled content in the same mod directory, so a nested
+/// target must keep its category/grouping parent for Replace, Merge, and retry
+/// installs. Unreal stores disabled mods in a separate root; only its archived
+/// targets use the existing parent-root behavior. Unreal live/disabled targets
+/// rebase both roots together so the worker can still detect conflicts across
+/// its paired active and disabled locations.
+fn update_target_roots_for_existing_mod(
+    target_root: PathBuf,
+    disabled_target_root: Option<PathBuf>,
+    mods: &[ModEntry],
+    game_id: &str,
+    target_id: Option<&str>,
+    backend: GameBackend,
+) -> (PathBuf, Option<PathBuf>) {
+    let Some(target_id) = target_id else {
+        return (target_root, disabled_target_root);
+    };
+    let Some(target) = mods
+        .iter()
+        .find(|mod_entry| mod_entry.id == target_id && mod_entry.game_id == game_id)
+    else {
+        return (target_root, disabled_target_root);
+    };
+    if backend == GameBackend::Xxmi || target.status == ModStatus::Archived {
+        let target_root = target
+            .root_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(target_root);
+        return (target_root, disabled_target_root);
+    }
+    let Some(disabled_target_root) = disabled_target_root else {
+        return (target_root, None);
+    };
+    let source_root = if target.status == ModStatus::Disabled {
+        &disabled_target_root
+    } else {
+        &target_root
+    };
+    let Ok(relative_target) = target.root_path.strip_prefix(source_root) else {
+        return (target_root, Some(disabled_target_root));
+    };
+    if relative_target
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return (target_root, Some(disabled_target_root));
+    }
+    let Some(relative_parent) = relative_target.parent() else {
+        return (target_root, Some(disabled_target_root));
+    };
+    (
+        target_root.join(relative_parent),
+        Some(disabled_target_root.join(relative_parent)),
+    )
+}
+
+fn find_existing_install_target<'a>(
+    mods: &'a [ModEntry],
+    game_id: &str,
+    update_target_mod_id: Option<&str>,
+    active_target: &Path,
+    disabled_target: Option<&Path>,
+) -> Option<&'a ModEntry> {
+    mods.iter().find(|mod_entry| {
+        mod_entry.game_id == game_id
+            && update_target_mod_id.is_none_or(|target_id| mod_entry.id == target_id)
+            && (HestiaApp::install_path_matches_mod_root(active_target, &mod_entry.root_path)
+                || disabled_target.is_some_and(|path| {
+                    HestiaApp::install_path_matches_mod_root(path, &mod_entry.root_path)
+                }))
+    })
+}
+
 impl HestiaApp {
     fn consume_install_events(&mut self) {
         while let Ok(event) = self.install_event_rx.try_recv() {
@@ -202,14 +278,41 @@ impl HestiaApp {
         job_id: u64,
         candidate_indices: Vec<usize>,
         choice: ConflictChoice,
-        mut target_root: PathBuf,
+        target_root: PathBuf,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
         preferred_names: Vec<String>,
     ) {
         let Some(job) = self.install_inflight.get(&job_id).cloned() else {
             return;
         };
-        target_root = self.update_target_root_for_job(job_id, target_root);
+        let game_backend = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == job.game_id)
+            .map(|game| game.definition.backend)
+            .unwrap_or_default();
+        let disabled_target_root = if game_backend == GameBackend::UnrealEngine {
+            self.state
+                .games
+                .iter()
+                .find(|game| game.definition.id == job.game_id)
+                .and_then(|game| {
+                    game.disabled_mods_path(self.state.static_prefs.use_default_mods_path)
+                })
+        } else {
+            None
+        };
+        let (rebased_target_root, disabled_target_root) = self.update_target_roots_for_job(
+            job_id,
+            target_root,
+            disabled_target_root,
+        );
+        let target_root = rebased_target_root;
+        let update_target_mod_id = self
+            .pending_browse_install_meta
+            .get(&job_id)
+            .and_then(|meta| meta.update_target_mod_id.clone());
         if self.install_commit_touches_locked_active_mod(
             job_id,
             choice,
@@ -222,39 +325,27 @@ impl HestiaApp {
         let preserved_states = if job.preserve_existing_state
             && matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge)
         {
-            let disabled_root = self
-                .state
-                .games
-                .iter()
-                .find(|game| game.definition.id == job.game_id)
-                .and_then(|game| {
-                    game.disabled_mods_path(self.state.static_prefs.use_default_mods_path)
-                });
             preferred_names
                 .iter()
                 .map(|preferred_name| {
                     let target_path = target_root.join(preferred_name);
-                    let disabled_target_path =
-                        disabled_root.as_ref().map(|root| root.join(preferred_name));
-                    self.state.mods.iter().find_map(|mod_entry| {
-                        if mod_entry.game_id != job.game_id {
-                            return None;
+                    let disabled_target_path = disabled_target_root
+                        .as_ref()
+                        .map(|root| root.join(preferred_name));
+                    find_existing_install_target(
+                        &self.state.mods,
+                        &job.game_id,
+                        update_target_mod_id.as_deref(),
+                        &target_path,
+                        disabled_target_path.as_deref(),
+                    )
+                    .map(|mod_entry| {
+                        let status = mod_entry.status.clone();
+                        let mut paths = vec![(target_path.clone(), status.clone())];
+                        if let Some(disabled_target_path) = disabled_target_path.as_ref() {
+                            paths.push((disabled_target_path.clone(), status));
                         }
-                        let matches_target =
-                            Self::install_path_matches_mod_root(&target_path, &mod_entry.root_path)
-                                || disabled_target_path.as_ref().is_some_and(|path| {
-                                    Self::install_path_matches_mod_root(path, &mod_entry.root_path)
-                                });
-                        if matches_target {
-                            let status = mod_entry.status.clone();
-                            let mut paths = vec![(target_path.clone(), status.clone())];
-                            if let Some(disabled_target_path) = disabled_target_path.as_ref() {
-                                paths.push((disabled_target_path.clone(), status));
-                            }
-                            Some(paths)
-                        } else {
-                            None
-                        }
+                        paths
                     })
                 })
                 .flatten()
@@ -278,17 +369,12 @@ impl HestiaApp {
         if let Some(current) = self.install_inflight.get_mut(&job_id) {
             current.preserved_states = preserved_states.clone();
         }
-        let game_backend = self
-            .state
-            .games
-            .iter()
-            .find(|game| game.definition.id == job.game_id)
-            .map(|game| game.definition.backend)
-            .unwrap_or_default();
         if matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge) {
             if let Err(err) = self.preserve_existing_install_metadata(
                 &job.game_id,
                 &target_root,
+                disabled_target_root.as_deref(),
+                update_target_mod_id.as_deref(),
                 &preferred_names,
                 game_backend,
             ) {
@@ -311,17 +397,6 @@ impl HestiaApp {
                 return;
             }
         }
-        let disabled_target_root = if game_backend == GameBackend::UnrealEngine {
-            self.state
-                .games
-                .iter()
-                .find(|game| game.definition.id == job.game_id)
-                .and_then(|game| {
-                    game.disabled_mods_path(self.state.static_prefs.use_default_mods_path)
-                })
-        } else {
-            None
-        };
         if self
             .install_request_tx
             .send(InstallRequest::Install {
@@ -356,31 +431,22 @@ impl HestiaApp {
         &mut self,
         game_id: &str,
         target_root: &Path,
+        disabled_target_root: Option<&Path>,
+        update_target_mod_id: Option<&str>,
         preferred_names: &[String],
         backend: GameBackend,
     ) -> Result<()> {
-        let disabled_root = self
-            .state
-            .games
-            .iter()
-            .find(|game| game.definition.id == game_id)
-            .and_then(|game| game.disabled_mods_path(self.state.static_prefs.use_default_mods_path));
         let mut existing_ids = HashSet::new();
-        for mod_entry in &self.state.mods {
-            if mod_entry.game_id != game_id {
-                continue;
-            }
-            let matches_target = preferred_names.iter().any(|preferred_name| {
-                let active_target = target_root.join(preferred_name);
-                let disabled_target = disabled_root
-                    .as_ref()
-                    .map(|root| root.join(preferred_name));
-                Self::install_path_matches_mod_root(&active_target, &mod_entry.root_path)
-                    || disabled_target.as_ref().is_some_and(|path| {
-                        Self::install_path_matches_mod_root(path, &mod_entry.root_path)
-                    })
-            });
-            if matches_target {
+        for preferred_name in preferred_names {
+            let active_target = target_root.join(preferred_name);
+            let disabled_target = disabled_target_root.map(|root| root.join(preferred_name));
+            if let Some(mod_entry) = find_existing_install_target(
+                &self.state.mods,
+                game_id,
+                update_target_mod_id,
+                &active_target,
+                disabled_target.as_deref(),
+            ) {
                 existing_ids.insert(mod_entry.id.clone());
             }
         }
@@ -473,26 +539,32 @@ impl HestiaApp {
         None
     }
 
-    fn update_target_root_for_job(&self, job_id: u64, target_root: PathBuf) -> PathBuf {
+    fn update_target_roots_for_job(
+        &self,
+        job_id: u64,
+        target_root: PathBuf,
+        disabled_target_root: Option<PathBuf>,
+    ) -> (PathBuf, Option<PathBuf>) {
         let Some(meta) = self.pending_browse_install_meta.get(&job_id) else {
-            return target_root;
+            return (target_root, disabled_target_root);
         };
-        let Some(target_id) = meta.update_target_mod_id.as_deref() else {
-            return target_root;
+        let Some(backend) = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == meta.game_id)
+            .map(|game| game.definition.backend)
+        else {
+            return (target_root, disabled_target_root);
         };
-        let Some(target) = self.state.mods.iter().find(|mod_entry| {
-            mod_entry.id == target_id && mod_entry.game_id == meta.game_id
-        }) else {
-            return target_root;
-        };
-        if target.status != ModStatus::Archived {
-            return target_root;
-        }
-        target
-            .root_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or(target_root)
+        update_target_roots_for_existing_mod(
+            target_root,
+            disabled_target_root,
+            &self.state.mods,
+            &meta.game_id,
+            meta.update_target_mod_id.as_deref(),
+            backend,
+        )
     }
 
     fn cancel_install_job_as_locked(&mut self, job_id: u64) {
@@ -708,6 +780,33 @@ impl HestiaApp {
 mod install_candidate_state_tests {
     use super::*;
 
+    fn mod_entry(id: &str, game_id: &str, root_path: &str, status: ModStatus) -> ModEntry {
+        ModEntry {
+            id: id.to_string(),
+            game_id: game_id.to_string(),
+            folder_name: Path::new(root_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("mod")
+                .to_string(),
+            root_path: PathBuf::from(root_path),
+            status,
+            metadata: Default::default(),
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: Default::default(),
+            source: None,
+            update_state: Default::default(),
+        }
+    }
+
     #[test]
     fn preserved_replace_state_overrides_each_configured_choice() {
         for requested in [
@@ -744,5 +843,239 @@ mod install_candidate_state_tests {
             initial_candidate_install_status(ModInstallState::Auto, None),
             ModStatus::Disabled
         );
+    }
+
+    #[test]
+    fn nested_xxmi_update_uses_the_exact_target_parent() {
+        let mods = vec![
+            mod_entry(
+                "same-name-peer",
+                "game",
+                "Mods/Other/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "target",
+                "game",
+                "Mods/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+        ];
+
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                PathBuf::from("Mods"),
+                None,
+                &mods,
+                "game",
+                Some("target"),
+                GameBackend::Xxmi,
+            )
+            .0,
+            PathBuf::from("Mods/Ardelia")
+        );
+    }
+
+    #[test]
+    fn nested_disabled_xxmi_update_uses_the_exact_target_parent() {
+        let mods = vec![mod_entry(
+            "target",
+            "game",
+            "Mods/Ardelia/Outfit A",
+            ModStatus::Disabled,
+        )];
+
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                PathBuf::from("Mods"),
+                None,
+                &mods,
+                "game",
+                Some("target"),
+                GameBackend::Xxmi,
+            )
+            .0,
+            PathBuf::from("Mods/Ardelia")
+        );
+    }
+
+    #[test]
+    fn archived_target_keeps_parent_root_behavior() {
+        let mods = vec![mod_entry(
+            "archived",
+            "game",
+            "Mods_Archived/Ardelia/Outfit A",
+            ModStatus::Archived,
+        )];
+
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                PathBuf::from("Mods"),
+                None,
+                &mods,
+                "game",
+                Some("archived"),
+                GameBackend::UnrealEngine,
+            )
+            .0,
+            PathBuf::from("Mods_Archived/Ardelia")
+        );
+    }
+
+    #[test]
+    fn ordinary_jobs_and_unreal_targets_keep_their_supplied_root() {
+        let mods = vec![
+            mod_entry(
+                "unreal-active",
+                "game",
+                "Paks/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "unreal-disabled",
+                "game",
+                "Paks/~mods-disabledByHestia/Ardelia/Outfit B",
+                ModStatus::Disabled,
+            ),
+        ];
+        let supplied_root = PathBuf::from("Paks/~mods");
+
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                supplied_root.clone(),
+                None,
+                &mods,
+                "game",
+                None,
+                GameBackend::Xxmi,
+            )
+            .0,
+            supplied_root
+        );
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                PathBuf::from("Paks/~mods"),
+                None,
+                &mods,
+                "game",
+                Some("unreal-active"),
+                GameBackend::UnrealEngine,
+            )
+            .0,
+            PathBuf::from("Paks/~mods")
+        );
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                PathBuf::from("Paks/~mods"),
+                None,
+                &mods,
+                "game",
+                Some("unreal-disabled"),
+                GameBackend::UnrealEngine,
+            )
+            .0,
+            PathBuf::from("Paks/~mods")
+        );
+    }
+
+    #[test]
+    fn nested_unreal_updates_rebase_paired_roots_by_exact_identity() {
+        let mods = vec![
+            mod_entry(
+                "same-name-peer",
+                "game",
+                "Active/Other/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "same-id-other-game",
+                "other-game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "active-target",
+                "game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "disabled-target",
+                "game",
+                "Disabled/Ardelia/Outfit B",
+                ModStatus::Disabled,
+            ),
+        ];
+        let active_root = PathBuf::from("Active");
+        let disabled_root = PathBuf::from("Disabled");
+
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                active_root.clone(),
+                Some(disabled_root.clone()),
+                &mods,
+                "game",
+                Some("active-target"),
+                GameBackend::UnrealEngine,
+            ),
+            (
+                PathBuf::from("Active/Ardelia"),
+                Some(PathBuf::from("Disabled/Ardelia")),
+            )
+        );
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                active_root.clone(),
+                Some(disabled_root.clone()),
+                &mods,
+                "game",
+                Some("disabled-target"),
+                GameBackend::UnrealEngine,
+            ),
+            (
+                PathBuf::from("Active/Ardelia"),
+                Some(PathBuf::from("Disabled/Ardelia")),
+            )
+        );
+        assert_eq!(
+            update_target_roots_for_existing_mod(
+                active_root.clone(),
+                Some(disabled_root.clone()),
+                &mods,
+                "game",
+                None,
+                GameBackend::UnrealEngine,
+            ),
+            (active_root, Some(disabled_root))
+        );
+    }
+
+    #[test]
+    fn exact_unreal_update_identity_wins_over_opposite_root_same_name() {
+        let mods = vec![
+            mod_entry(
+                "active-peer",
+                "game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "disabled-target",
+                "game",
+                "Disabled/Ardelia/Outfit A",
+                ModStatus::Disabled,
+            ),
+        ];
+        let selected = find_existing_install_target(
+            &mods,
+            "game",
+            Some("disabled-target"),
+            Path::new("Active/Ardelia/Outfit A"),
+            Some(Path::new("Disabled/Ardelia/Outfit A")),
+        )
+        .expect("the identity-targeted disabled mod should be selected");
+
+        assert_eq!(selected.id, "disabled-target");
+        assert_eq!(selected.status, ModStatus::Disabled);
     }
 }

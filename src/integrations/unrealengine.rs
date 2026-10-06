@@ -2,9 +2,9 @@ use std::{
     ffi::OsStr,
     fs,
     hash::Hasher,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 #[cfg(windows)]
@@ -29,6 +29,8 @@ use crate::{
 };
 
 const LEGACY_UNREAL_DISABLED_MODS_DIR: &str = "~mods-disabled";
+const MOD_ROOT_MARKER: &str = "mod-root";
+const STALE_STAGING_DIR_AGE: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub fn scan_game_mods(game: &GameInstall, use_default_path: bool) -> Result<Vec<ModEntry>> {
     let mut mods = Vec::new();
@@ -64,14 +66,19 @@ pub fn disable_mod(
     let disabled_root = game
         .disabled_mods_path(use_default_path)
         .ok_or_else(|| anyhow!("disabled mods path is not configured"))?;
-    fs::create_dir_all(&disabled_root)?;
-    let target = next_available_mod_path(&disabled_root, &mod_entry.folder_name);
+    let active_root = game
+        .mods_path(use_default_path)
+        .ok_or_else(|| anyhow!("mods path is not configured"))?;
+    let relative = relative_mod_path(&active_root, &mod_entry.root_path, &mod_entry.folder_name);
+    let target = next_available_relative_mod_path(&disabled_root, &relative)?;
     fs::rename(&mod_entry.root_path, &target)
         .with_context(|| format!("failed to move mod to {}", target.display()))?;
     mod_entry.root_path = target;
+    mod_entry.folder_name = relative_file_name(&mod_entry.root_path)?;
     mod_entry.status = ModStatus::Disabled;
     mod_entry.updated_at = Utc::now();
     write_portable_metadata(mod_entry)?;
+    mark_mod_root(&mod_entry.root_path)?;
     Ok(())
 }
 
@@ -86,14 +93,19 @@ pub fn enable_mod(
     let active_root = game
         .mods_path(use_default_path)
         .ok_or_else(|| anyhow!("mods path is not configured"))?;
-    fs::create_dir_all(&active_root)?;
-    let target = next_available_mod_path(&active_root, &mod_entry.folder_name);
+    let disabled_root = game
+        .disabled_mods_path(use_default_path)
+        .ok_or_else(|| anyhow!("disabled mods path is not configured"))?;
+    let relative = relative_mod_path(&disabled_root, &mod_entry.root_path, &mod_entry.folder_name);
+    let target = next_available_relative_mod_path(&active_root, &relative)?;
     fs::rename(&mod_entry.root_path, &target)
         .with_context(|| format!("failed to move mod to {}", target.display()))?;
     mod_entry.root_path = target;
+    mod_entry.folder_name = relative_file_name(&mod_entry.root_path)?;
     mod_entry.status = ModStatus::Active;
     mod_entry.updated_at = Utc::now();
     write_portable_metadata(mod_entry)?;
+    mark_mod_root(&mod_entry.root_path)?;
     Ok(())
 }
 
@@ -105,19 +117,150 @@ fn scan_root(game: &GameInstall, root: &Path, status: ModStatus) -> Result<Vec<M
     let mut mods = Vec::new();
     for entry in fs::read_dir(root).with_context(|| format!("failed to read {}", root.display()))? {
         let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
         let path = entry.path();
-        if !path.is_dir() || path.file_name() == Some(OsStr::new(MOD_META_DIR)) {
+        if !entry.file_type()?.is_dir() || is_scan_helper_dir(&path) {
             continue;
         }
-        if cleanup_metadata_only_mod_dir(&path)? {
+
+        if skip_install_scratch_dir(&path) {
             continue;
         }
-        if !mod_dir_has_payload(&path)? {
-            continue;
+        let mut explicit_roots = Vec::new();
+        collect_explicit_mod_roots(&path, &mut explicit_roots)?;
+        if explicit_roots.is_empty() {
+            if has_real_scan_payload(&path)? {
+                explicit_roots.push(path);
+            } else {
+                cleanup_metadata_only_mod_dir(&path)?;
+            }
         }
-        mods.push(scan_mod_dir(game, path, status.clone())?);
+        for mod_path in explicit_roots {
+            mods.push(scan_mod_dir(game, mod_path, status.clone())?);
+        }
     }
     Ok(mods)
+}
+
+fn is_package_file(path: &Path) -> bool {
+    path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("pak")
+            || ext.eq_ignore_ascii_case("utoc")
+            || ext.eq_ignore_ascii_case("ucas")
+    })
+}
+
+fn is_scan_helper_dir(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == OsStr::new(MOD_META_DIR))
+}
+
+fn install_scratch_kind(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| {
+            name.starts_with(".hestia-install-")
+                || name.starts_with(".hestia_tmp_")
+                || name.starts_with(".hestia_old_")
+        })
+}
+
+fn staging_dir_is_abandoned(path: &Path) -> bool {
+    let Ok(modified) = fs::metadata(path).and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= STALE_STAGING_DIR_AGE)
+}
+
+fn skip_install_scratch_dir(path: &Path) -> bool {
+    if !install_scratch_kind(path) {
+        return false;
+    }
+    if staging_dir_is_abandoned(path) {
+        let _ = fs::remove_dir_all(path);
+    }
+    true
+}
+
+fn path_is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(true)
+}
+
+fn entry_is_link(entry: &fs::DirEntry) -> Result<bool> {
+    Ok(entry.file_type()?.is_symlink())
+}
+
+fn managed_mod_root(path: &Path) -> bool {
+    let marker = path.join(MOD_META_DIR).join(MOD_ROOT_MARKER);
+    !path_is_link(&marker) && marker.is_file()
+}
+
+fn directory_has_direct_package(path: &Path) -> Result<bool> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
+        if entry.file_type()?.is_file() && is_package_file(&entry.path()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn collect_explicit_mod_roots(path: &Path, roots: &mut Vec<PathBuf>) -> Result<()> {
+    if is_scan_helper_dir(path) || skip_install_scratch_dir(path) || path_is_link(path) {
+        return Ok(());
+    }
+    if managed_mod_root(path) || directory_has_direct_package(path)? {
+        if has_real_scan_payload(path)? {
+            roots.push(path.to_path_buf());
+        } else {
+            cleanup_metadata_only_mod_dir(path)?;
+        }
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? || !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let child = entry.path();
+        if is_scan_helper_dir(&child) || skip_install_scratch_dir(&child) {
+            continue;
+        }
+        collect_explicit_mod_roots(&child, roots)?;
+    }
+    Ok(())
+}
+
+fn has_real_scan_payload(root: &Path) -> Result<bool> {
+    if !root.is_dir() || path_is_link(root) {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
+        let path = entry.path();
+        if is_scan_helper_dir(&path) || skip_install_scratch_dir(&path) {
+            continue;
+        }
+        if entry.file_type()?.is_file()
+            || (entry.file_type()?.is_dir() && has_real_scan_payload(&path)?)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn scan_mod_dir(game: &GameInstall, root_path: PathBuf, status: ModStatus) -> Result<ModEntry> {
@@ -197,8 +340,14 @@ fn migrate_legacy_disabled_mods(active_root: &Path, disabled_root: &Path) -> Res
         .with_context(|| format!("failed to read {}", legacy_root.display()))?
     {
         let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
         let path = entry.path();
-        if !path.is_dir() || path.file_name() == Some(OsStr::new(MOD_META_DIR)) {
+        if !entry.file_type()?.is_dir()
+            || is_scan_helper_dir(&path)
+            || skip_install_scratch_dir(&path)
+        {
             continue;
         }
         let Some(folder_name) = path.file_name().and_then(OsStr::to_str) else {
@@ -264,7 +413,23 @@ pub fn write_portable_metadata(mod_entry: &ModEntry) -> Result<()> {
         created_at: Some(mod_entry.created_at),
         updated_at: Some(mod_entry.updated_at),
     };
-    persistence::save_portable_mod_state(&mod_entry.root_path, &portable)
+    persistence::save_portable_mod_state(&mod_entry.root_path, &portable)?;
+    if managed_mod_root(&mod_entry.root_path)
+        || directory_has_direct_package(&mod_entry.root_path)?
+    {
+        mark_mod_root(&mod_entry.root_path)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn mark_mod_root(root: &Path) -> Result<()> {
+    let metadata_dir = root.join(MOD_META_DIR);
+    fs::create_dir_all(&metadata_dir)?;
+    let marker = metadata_dir.join(MOD_ROOT_MARKER);
+    if !marker.exists() {
+        fs::write(marker, b"managed mod root\n")?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -555,7 +720,15 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
     let mut content_size_bytes = 0_u64;
     let mut found_payload = false;
 
-    for entry in walkdir::WalkDir::new(root) {
+    let walker = walkdir::WalkDir::new(root).into_iter().filter_entry(|entry| {
+        if entry.depth() == 0 || entry.file_type().is_symlink() {
+            return entry.depth() == 0;
+        }
+        let path = entry.path();
+        !(entry.file_type().is_dir()
+            && (is_scan_helper_dir(path) || install_scratch_kind(path)))
+    });
+    for entry in walker {
         let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
@@ -598,6 +771,73 @@ fn next_available_mod_path(root: &Path, folder_name: &str) -> PathBuf {
         }
     }
     unreachable!()
+}
+
+fn relative_mod_path(base: &Path, root_path: &Path, folder_name: &str) -> PathBuf {
+    root_path
+        .strip_prefix(base)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(folder_name))
+}
+
+fn relative_file_name(path: &Path) -> Result<String> {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("invalid mod folder name"))
+}
+
+fn next_available_relative_mod_path(base: &Path, relative: &Path) -> Result<PathBuf> {
+    validate_relative_mod_path(relative)?;
+    reject_mod_root_ancestors(base, relative)?;
+    let parent = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| base.join(parent))
+        .unwrap_or_else(|| base.to_path_buf());
+    fs::create_dir_all(&parent)?;
+    let folder_name = relative_file_name(relative)?;
+    Ok(next_available_mod_path(&parent, &folder_name))
+}
+
+fn validate_relative_mod_path(relative: &Path) -> Result<()> {
+    if relative.as_os_str().is_empty() {
+        bail!("mod relative path is empty");
+    }
+    for component in relative.components() {
+        if matches!(
+            component,
+            Component::Prefix(..) | Component::RootDir | Component::ParentDir
+        ) {
+            bail!("mod relative path escapes its storage root");
+        }
+    }
+    Ok(())
+}
+
+fn reject_mod_root_ancestors(base: &Path, relative: &Path) -> Result<()> {
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    let mut current = base.to_path_buf();
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        if !current.exists() {
+            break;
+        }
+        if path_is_link(&current) {
+            bail!("cannot place mod below linked directory: {}", current.display());
+        }
+        if managed_mod_root(&current) || directory_has_direct_package(&current)? {
+            bail!(
+                "cannot place mod below existing Unreal mod root: {}",
+                current.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -643,6 +883,166 @@ mod tests {
     }
 
     #[test]
+    fn scans_nested_active_and_disabled_mods_by_direct_package_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let active = game
+            .mods_path(false)
+            .unwrap()
+            .join("Characters")
+            .join("Ardelia")
+            .join("Outfit A");
+        let disabled = game
+            .disabled_mods_path(false)
+            .unwrap()
+            .join("Characters")
+            .join("Ardelia")
+            .join("Outfit B");
+        fs::create_dir_all(active.join("components")).unwrap();
+        fs::create_dir_all(&disabled).unwrap();
+        fs::write(active.join("main.PAK"), "active").unwrap();
+        fs::write(active.join("components").join("part.ucas"), "component").unwrap();
+        fs::write(disabled.join("main.UTOC"), "disabled").unwrap();
+        fs::write(disabled.join("main.ucas"), "disabled").unwrap();
+
+        let mut scanned = scan_game_mods(&game, false).unwrap();
+        scanned.sort_by(|a, b| a.root_path.cmp(&b.root_path));
+
+        assert_eq!(scanned.len(), 2);
+        assert_eq!(scanned[0].root_path, active);
+        assert_eq!(scanned[0].status, ModStatus::Active);
+        assert_eq!(scanned[1].root_path, disabled);
+        assert_eq!(scanned[1].status, ModStatus::Disabled);
+    }
+
+    #[test]
+    fn direct_package_root_keeps_nested_components_atomic() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let root = game.mods_path(false).unwrap().join("Multipart");
+        fs::create_dir_all(root.join("components")).unwrap();
+        fs::write(root.join("main.pak"), "main").unwrap();
+        fs::write(root.join("components").join("part.pak"), "part").unwrap();
+
+        let scanned = scan_game_mods(&game, false).unwrap();
+
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].root_path, root);
+    }
+
+    #[test]
+    fn legacy_metadata_container_splits_into_nested_package_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let grouping = game.mods_path(false).unwrap().join("Ardelia");
+        let first = grouping.join("Outfit A");
+        let second = grouping.join("Outfit B");
+        fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
+        fs::write(
+            grouping.join(MOD_META_DIR).join("metadata.json"),
+            "{}",
+        )
+        .unwrap();
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("outfit.pak"), "first").unwrap();
+        fs::write(second.join("outfit.pak"), "second").unwrap();
+
+        let mut scanned = scan_game_mods(&game, false).unwrap();
+        scanned.sort_by(|a, b| a.root_path.cmp(&b.root_path));
+
+        assert_eq!(scanned.len(), 2);
+        assert_eq!(scanned[0].root_path, first);
+        assert_eq!(scanned[1].root_path, second);
+    }
+
+    #[test]
+    fn managed_marker_keeps_multipart_unreal_root_atomic() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let root = game.mods_path(false).unwrap().join("Multipart");
+        fs::create_dir_all(root.join("components")).unwrap();
+        fs::write(root.join("components").join("one.pak"), "one").unwrap();
+        fs::create_dir_all(root.join(MOD_META_DIR)).unwrap();
+        fs::write(root.join(MOD_META_DIR).join(MOD_ROOT_MARKER), b"managed\n").unwrap();
+
+        let scanned = scan_game_mods(&game, false).unwrap();
+
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].root_path, root);
+    }
+
+    #[test]
+    fn legacy_non_package_fallback_does_not_block_later_nested_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let grouping = game.mods_path(false).unwrap().join("Ardelia");
+        fs::create_dir_all(&grouping).unwrap();
+        fs::write(grouping.join("cover.jpg"), "cover").unwrap();
+
+        let entry = scan_game_mods(&game, false).unwrap().remove(0);
+        write_portable_metadata(&entry).unwrap();
+        assert!(!grouping.join(MOD_META_DIR).join(MOD_ROOT_MARKER).exists());
+
+        let child = grouping.join("Outfit");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("outfit.pak"), "pak").unwrap();
+
+        let scanned = scan_game_mods(&game, false).unwrap();
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].root_path, child);
+    }
+
+    #[test]
+    fn scratch_and_helper_trees_are_ignored_without_deleting_active_staging() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let grouping = game.mods_path(false).unwrap().join("Ardelia");
+        let actual = grouping.join("Outfit");
+        fs::create_dir_all(&actual).unwrap();
+        fs::write(actual.join("outfit.pak"), "actual").unwrap();
+        fs::create_dir_all(grouping.join(".hestia-install-live").join("nested")).unwrap();
+        fs::write(
+            grouping
+                .join(".hestia-install-live")
+                .join("nested")
+                .join("scratch.pak"),
+            "scratch",
+        )
+        .unwrap();
+        fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
+        fs::write(
+            grouping.join(MOD_META_DIR).join("helper.pak"),
+            "helper",
+        )
+        .unwrap();
+
+        let scanned = scan_game_mods(&game, false).unwrap();
+
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].root_path, actual);
+        assert!(grouping.join(".hestia-install-live").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_unreal_mod_directories_are_ignored() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let active_root = game.mods_path(false).unwrap();
+        let actual = active_root.join("Actual");
+        let link = active_root.join("Linked");
+        fs::create_dir_all(&actual).unwrap();
+        fs::write(actual.join("actual.pak"), "actual").unwrap();
+        std::os::unix::fs::symlink(&actual, &link).unwrap();
+
+        let scanned = scan_game_mods(&game, false).unwrap();
+
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].root_path, actual);
+    }
+
+    #[test]
     fn disable_and_enable_move_whole_mod_folder_between_unreal_roots() {
         let temp = tempfile::tempdir().unwrap();
         let game = nte_game(temp.path());
@@ -665,6 +1065,139 @@ mod tests {
         enable_mod(&mut entry, &game, false).unwrap();
         assert_eq!(entry.status, ModStatus::Active);
         assert!(active_mod.join("spider_P.pak").is_file());
+    }
+
+    #[test]
+    fn nested_disable_enable_preserves_relative_path_and_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let active_mod = game
+            .mods_path(false)
+            .unwrap()
+            .join("Ardelia")
+            .join("Outfit");
+        fs::create_dir_all(&active_mod).unwrap();
+        fs::write(active_mod.join("outfit.pak"), "pak").unwrap();
+
+        let mut entry = scan_game_mods(&game, false).unwrap().remove(0);
+        let id = entry.id.clone();
+        disable_mod(&mut entry, &game, false).unwrap();
+        let disabled_mod = game
+            .disabled_mods_path(false)
+            .unwrap()
+            .join("Ardelia")
+            .join("Outfit");
+        assert_eq!(entry.root_path, disabled_mod);
+        assert!(!active_mod.exists());
+
+        let rescanned_disabled = scan_game_mods(&game, false).unwrap();
+        assert_eq!(rescanned_disabled.len(), 1);
+        assert_eq!(rescanned_disabled[0].id, id);
+        assert_eq!(rescanned_disabled[0].root_path, disabled_mod);
+
+        enable_mod(&mut entry, &game, false).unwrap();
+        assert_eq!(entry.id, id);
+        assert_eq!(entry.root_path, active_mod);
+
+        let rescanned_active = scan_game_mods(&game, false).unwrap();
+        assert_eq!(rescanned_active.len(), 1);
+        assert_eq!(rescanned_active[0].id, id);
+        assert_eq!(rescanned_active[0].root_path, active_mod);
+    }
+
+    #[test]
+    fn same_basename_categories_remain_separate_and_collision_stays_in_category() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let active_root = game.mods_path(false).unwrap();
+        let disabled_root = game.disabled_mods_path(false).unwrap();
+        let ardelia = active_root.join("Ardelia").join("Same");
+        let beatrice = active_root.join("Beatrice").join("Same");
+        let disabled_same = disabled_root.join("Ardelia").join("Same");
+        fs::create_dir_all(&ardelia).unwrap();
+        fs::create_dir_all(&beatrice).unwrap();
+        fs::create_dir_all(&disabled_same).unwrap();
+        fs::write(ardelia.join("ardelia.pak"), "active").unwrap();
+        fs::write(beatrice.join("beatrice.pak"), "active").unwrap();
+        fs::write(disabled_same.join("disabled.pak"), "disabled").unwrap();
+
+        let mut scanned = scan_game_mods(&game, false).unwrap();
+        scanned.sort_by(|a, b| a.root_path.cmp(&b.root_path));
+        assert_eq!(scanned.len(), 3);
+        let mut disabled_entry = scanned
+            .into_iter()
+            .find(|entry| entry.status == ModStatus::Disabled)
+            .unwrap();
+        let id = disabled_entry.id.clone();
+
+        enable_mod(&mut disabled_entry, &game, false).unwrap();
+        let expected = active_root.join("Ardelia").join("Same (2)");
+        assert_eq!(disabled_entry.root_path, expected);
+        assert_eq!(disabled_entry.folder_name, "Same (2)");
+
+        let rescanned = scan_game_mods(&game, false).unwrap();
+        assert_eq!(
+            rescanned
+                .iter()
+                .filter(|entry| entry.root_path.starts_with(active_root.join("Ardelia")))
+                .count(),
+            2
+        );
+        assert_eq!(
+            rescanned
+                .iter()
+                .find(|entry| entry.id == id)
+                .map(|entry| entry.root_path.clone()),
+            Some(expected)
+        );
+        assert!(
+            rescanned
+                .iter()
+                .any(|entry| entry.root_path == beatrice)
+        );
+    }
+
+    #[test]
+    fn moving_below_existing_mod_root_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let active_root = game.mods_path(false).unwrap();
+        let disabled_root = game.disabled_mods_path(false).unwrap();
+        let source = active_root.join("Ardelia").join("Outfit");
+        let blocking_parent = disabled_root.join("Ardelia");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&blocking_parent).unwrap();
+        fs::write(source.join("outfit.pak"), "source").unwrap();
+        fs::write(blocking_parent.join("whole.pak"), "blocking").unwrap();
+
+        let mut entry = scan_game_mods(&game, false)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.status == ModStatus::Active)
+            .unwrap();
+        let error = disable_mod(&mut entry, &game, false).unwrap_err();
+
+        assert!(error.to_string().contains("existing Unreal mod root"));
+        assert!(source.join("outfit.pak").is_file());
+    }
+
+    #[test]
+    fn relative_move_target_rejects_parent_traversal_without_moving_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = nte_game(temp.path());
+        let source = temp.path().join("External Mod");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("mod.pak"), "source").unwrap();
+        let mut entry = scan_mod_dir(&game, source.clone(), ModStatus::Active).unwrap();
+        entry.folder_name = "../outside/mod".to_string();
+
+        let error = disable_mod(&mut entry, &game, false).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("mod relative path escapes its storage root"));
+        assert!(source.join("mod.pak").is_file());
+        assert!(!temp.path().join("outside").exists());
     }
 
     #[test]

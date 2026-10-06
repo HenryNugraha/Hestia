@@ -24,6 +24,11 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
 const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x08000000;
 
+/// A marker in the existing Hestia metadata directory identifying a directory
+/// that Hestia already treats as one mod root.  The marker is needed for
+/// multipart mods whose active payload has no `.ini` directly at the root.
+const MOD_ROOT_MARKER: &str = "mod-root";
+
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
@@ -382,15 +387,26 @@ pub fn archive_mod(
         bail!("mod is already archived");
     }
     let archive_root = archived_mods_root(game, use_default_path)?;
-    fs::create_dir_all(&archive_root)?;
-    let destination = archive_root.join(&mod_entry.folder_name);
+    let live_root = game
+        .mods_path(use_default_path)
+        .ok_or_else(|| anyhow!("game has no live mods path"))?;
+    let original_path = mod_entry.root_path.clone();
+    let relative_path = original_path
+        .strip_prefix(&live_root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(&mod_entry.folder_name));
+    fs::create_dir_all(
+        archive_root.join(relative_path.parent().unwrap_or_else(|| Path::new("."))),
+    )?;
+    let destination = archive_root.join(&relative_path);
     if destination.exists() {
         bail!(
             "archive destination already exists: {}",
             destination.display()
         );
     }
-    let original_path = mod_entry.root_path.clone();
     let original_status = mod_entry.status.clone();
     let original_updated_at = mod_entry.updated_at;
     fs::rename(&original_path, &destination)?;
@@ -398,7 +414,14 @@ pub fn archive_mod(
     mod_entry.archive_original_path = Some(original_path.clone());
     mod_entry.status = ModStatus::Archived;
     mod_entry.updated_at = Utc::now();
-    if let Err(err) = write_portable_metadata(mod_entry) {
+    let metadata_result = (|| {
+        write_portable_metadata(mod_entry)?;
+        // Archiving is an explicit selection of this directory as one mod,
+        // including legacy payloads without a direct ini.  Keep that choice
+        // stable if the archive is scanned after a restart.
+        mark_mod_root(&destination)
+    })();
+    if let Err(err) = metadata_result {
         mod_entry.root_path = original_path.clone();
         mod_entry.archive_original_path = None;
         mod_entry.status = original_status;
@@ -426,12 +449,17 @@ pub fn restore_mod(
         .mods_path(use_default_path)
         .ok_or_else(|| anyhow!("game has no live mods path"))?;
     fs::create_dir_all(&live_root)?;
+    let archived_path = mod_entry.root_path.clone();
+    let archive_root = archived_mods_root(game, use_default_path)?;
     let configured_destination = live_root.join(&mod_entry.folder_name);
+    let derived_destination =
+        archived_path_relative_destination(&archive_root, &live_root, &archived_path);
     let destination = mod_entry
         .archive_original_path
         .as_deref()
         .filter(|path| path_is_within(&live_root, path))
         .map(Path::to_path_buf)
+        .or(derived_destination)
         .unwrap_or(configured_destination);
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
@@ -440,7 +468,6 @@ pub fn restore_mod(
         bail!("live mod folder already exists: {}", destination.display());
     }
 
-    let archived_path = mod_entry.root_path.clone();
     let archived_was_disabled = archived_path.join(DISABLED_CONTAINER).is_dir();
     fs::rename(&archived_path, &destination)?;
     if let Err(err) = move_disabled_contents_to_active(&destination) {
@@ -459,7 +486,13 @@ pub fn restore_mod(
     mod_entry.archive_original_path = None;
     mod_entry.status = ModStatus::Active;
     mod_entry.updated_at = Utc::now();
-    if let Err(err) = write_portable_metadata(mod_entry) {
+    let metadata_result = (|| {
+        write_portable_metadata(mod_entry)?;
+        // Restore is also an explicit selection of the archived directory as
+        // one mod, including legacy non-ini payloads.
+        mark_mod_root(&destination)
+    })();
+    if let Err(err) = metadata_result {
         let rollback_layout = if archived_was_disabled {
             Some(move_active_contents_to_disabled(&destination))
         } else {
@@ -492,6 +525,13 @@ fn move_disabled_contents_to_active(root: &Path) -> Result<()> {
     }
     if !substantive_entries(root)?.is_empty() {
         bail!("cannot enable mod with content already in its live root");
+    }
+
+    // A disabled imported multipart mod exposes no direct ini while its
+    // payload is in DISABLED_BY_HESTIA.  Preserve that root when enabling so
+    // nested discovery does not reinterpret its component folders as mods.
+    if !directory_has_direct_ini(&disabled_root)? {
+        mark_mod_root(root)?;
     }
 
     let entries = fs::read_dir(&disabled_root)?.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -946,11 +986,20 @@ fn scan_archived_mods(
     }
 
     let mod_dirs = collect_scannable_mod_dirs(&root)?;
+    let live_root = game
+        .mods_path(use_default_path)
+        .ok_or_else(|| anyhow!("game has no live mods path"))?;
 
     // Process each mod directory in parallel
     let mods: Result<Vec<ModEntry>> = mod_dirs
         .par_iter()
-        .map(|path| load_mod_entry(game, path.clone(), true, scan_rabbitfx_requirement))
+        .map(|path| {
+            let mut mod_entry =
+                load_mod_entry(game, path.clone(), true, scan_rabbitfx_requirement)?;
+            mod_entry.archive_original_path =
+                archived_path_relative_destination(&root, &live_root, path);
+            Ok(mod_entry)
+        })
         .collect();
 
     mods
@@ -966,6 +1015,18 @@ pub(crate) fn archived_mods_root(game: &GameInstall, use_default_path: bool) -> 
     Ok(parent.join("Mods_Archived"))
 }
 
+fn archived_path_relative_destination(
+    archive_root: &Path,
+    live_root: &Path,
+    archived_path: &Path,
+) -> Option<PathBuf> {
+    let relative = archived_path
+        .strip_prefix(archive_root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())?;
+    Some(live_root.join(relative))
+}
+
 /// Scratch folders an install leaves behind when it is interrupted or when the
 /// old folder could not be disposed of. They still hold a full mod payload, so
 /// without this they would scan as duplicate mods — and 3dmigoto would load
@@ -974,7 +1035,7 @@ fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
     let name = path.file_name().and_then(OsStr::to_str)?;
     if name.starts_with(".hestia_old_") {
         Some(InstallScratch::Retired)
-    } else if name.starts_with(".hestia_tmp_") {
+    } else if name.starts_with(".hestia_tmp_") || name.starts_with(".hestia-install-") {
         Some(InstallScratch::Staging)
     } else {
         None
@@ -1004,36 +1065,150 @@ fn staging_dir_is_abandoned(path: &Path) -> bool {
 fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     let mut mod_dirs = Vec::new();
     for entry in fs::read_dir(root)? {
-        let path = entry?.path();
-        if !path.is_dir() {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
             continue;
         }
-        if path
-            .file_name()
-            .is_some_and(|name| name == OsStr::new(MOD_META_DIR))
-        {
+        let path = entry.path();
+        if !entry.file_type()?.is_dir() || is_scan_helper_dir(&path) {
             continue;
         }
-        match install_scratch_kind(&path) {
-            Some(InstallScratch::Retired) => {
-                let _ = fs::remove_dir_all(&path);
-                continue;
-            }
-            Some(InstallScratch::Staging) => {
-                if staging_dir_is_abandoned(&path) {
-                    let _ = fs::remove_dir_all(&path);
-                }
-                continue;
-            }
-            None => {}
+        if skip_install_scratch_dir(&path) {
+            continue;
         }
-        if mod_dir_has_payload(&path)? {
-            mod_dirs.push(path);
+
+        let mut explicit_roots = Vec::new();
+        collect_explicit_mod_roots(&path, &mut explicit_roots)?;
+        if explicit_roots.is_empty() {
+            // Legacy XXMI mods did not require an ini at the root.  Keep the
+            // entire top-level directory together when no stronger nested
+            // boundaries identify child mods.
+            if has_real_scan_payload(&path)? {
+                mod_dirs.push(path);
+            } else {
+                cleanup_metadata_only_mod_dir(&path)?;
+            }
         } else {
-            cleanup_metadata_only_mod_dir(&path)?;
+            mod_dirs.extend(explicit_roots);
         }
     }
     Ok(mod_dirs)
+}
+
+/// Find boundaries that identify actual mod roots.  A directory with no
+/// direct ini is an organizational container, so its non-ini child folders
+/// are not independently treated as mods merely because they contain files.
+fn collect_explicit_mod_roots(path: &Path, roots: &mut Vec<PathBuf>) -> Result<()> {
+    if is_scan_helper_dir(path) || skip_install_scratch_dir(path) || path_is_link(path) {
+        return Ok(());
+    }
+    if managed_mod_root(path)? || directory_has_direct_ini(path)? || has_disabled_container(path) {
+        if has_real_scan_payload(path)? {
+            roots.push(path.to_path_buf());
+        } else {
+            cleanup_metadata_only_mod_dir(path)?;
+        }
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? || !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let child = entry.path();
+        if is_scan_helper_dir(&child) || skip_install_scratch_dir(&child) {
+            continue;
+        }
+        collect_explicit_mod_roots(&child, roots)?;
+    }
+    Ok(())
+}
+
+fn is_scan_helper_dir(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name == OsStr::new(MOD_META_DIR) || name == OsStr::new(DISABLED_CONTAINER)
+    })
+}
+
+fn has_disabled_container(path: &Path) -> bool {
+    let disabled = path.join(DISABLED_CONTAINER);
+    disabled.is_dir() && !path_is_link(&disabled)
+}
+
+fn directory_has_direct_ini(path: &Path) -> Result<bool> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_file() && is_ini_file(&entry.path()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn path_is_link(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return true;
+    };
+    metadata.file_type().is_symlink()
+}
+
+fn entry_is_link(entry: &fs::DirEntry) -> Result<bool> {
+    Ok(entry.file_type()?.is_symlink())
+}
+
+fn managed_mod_root(path: &Path) -> Result<bool> {
+    let marker = path.join(MOD_META_DIR).join(MOD_ROOT_MARKER);
+    Ok(!path_is_link(&marker) && marker.is_file())
+}
+
+fn has_real_scan_payload(root: &Path) -> Result<bool> {
+    if !root.is_dir() || path_is_link(root) {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == OsStr::new(DISABLED_CONTAINER) {
+            if has_real_scan_payload(&path)? {
+                return Ok(true);
+            }
+            continue;
+        }
+        if is_scan_helper_dir(&path) || install_scratch_kind(&path).is_some() {
+            continue;
+        }
+        if entry.file_type()?.is_file()
+            || (entry.file_type()?.is_dir() && has_real_scan_payload(&path)?)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn skip_install_scratch_dir(path: &Path) -> bool {
+    match install_scratch_kind(path) {
+        Some(InstallScratch::Retired) => {
+            let _ = fs::remove_dir_all(path);
+            true
+        }
+        Some(InstallScratch::Staging) => {
+            if staging_dir_is_abandoned(path) {
+                let _ = fs::remove_dir_all(path);
+            }
+            true
+        }
+        None => false,
+    }
 }
 
 fn load_mod_entry(
@@ -1178,7 +1353,9 @@ fn hydrate_from_existing_state(discovered: &mut ModEntry, state: &AppState) {
         discovered.metadata.user = existing.metadata.user.clone();
         discovered.metadata.prompt_for_missing_metadata =
             existing.metadata.prompt_for_missing_metadata;
-        discovered.archive_original_path = existing.archive_original_path.clone();
+        if existing.archive_original_path.is_some() || discovered.archive_original_path.is_none() {
+            discovered.archive_original_path = existing.archive_original_path.clone();
+        }
         discovered.unsafe_content_auto = existing.unsafe_content_auto;
         discovered.unsafe_content_preference = existing.unsafe_content_preference;
         discovered.unsafe_content = existing.unsafe_content;
@@ -1199,7 +1376,28 @@ fn write_portable_metadata(mod_entry: &ModEntry) -> Result<()> {
         created_at: Some(mod_entry.created_at),
         updated_at: Some(mod_entry.updated_at),
     };
-    persistence::save_portable_mod_state(&mod_entry.root_path, &portable)
+    persistence::save_portable_mod_state(&mod_entry.root_path, &portable)?;
+    if managed_mod_root(&mod_entry.root_path)?
+        || directory_has_direct_ini(&mod_entry.root_path)?
+        || has_disabled_container(&mod_entry.root_path)
+    {
+        mark_mod_root(&mod_entry.root_path)?;
+    }
+    Ok(())
+}
+
+/// Mark a completed XXMI payload as one managed mod root.  This is separate
+/// from the portable JSON because a multipart root can have no direct `.ini`,
+/// while legacy container metadata must remain insufficient to suppress
+/// nested discovery.
+pub(crate) fn mark_mod_root(root: &Path) -> Result<()> {
+    let metadata_dir = root.join(MOD_META_DIR);
+    fs::create_dir_all(&metadata_dir)?;
+    let marker = metadata_dir.join(MOD_ROOT_MARKER);
+    if !marker.exists() {
+        fs::write(marker, b"managed mod root\n")?;
+    }
+    Ok(())
 }
 
 fn detect_status(root: &Path) -> Result<ModStatus> {
@@ -1251,9 +1449,26 @@ fn directory_has_entries(root: &Path) -> Result<bool> {
 }
 
 fn cleanup_metadata_only_mod_dir(root: &Path) -> Result<bool> {
-    if root.is_dir() && root.join(MOD_META_DIR).is_dir() && !mod_dir_has_payload(root)? {
+    if root.is_dir()
+        && root.join(MOD_META_DIR).is_dir()
+        && !mod_dir_has_payload(root)?
+        && !has_install_scratch_child(root)?
+    {
         fs::remove_dir_all(root)?;
         return Ok(true);
+    }
+    Ok(false)
+}
+
+fn has_install_scratch_child(root: &Path) -> Result<bool> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry_is_link(&entry)? {
+            continue;
+        }
+        if entry.file_type()?.is_dir() && install_scratch_kind(&entry.path()).is_some() {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -1751,6 +1966,200 @@ mod tests {
         assert!(empty.exists());
     }
 
+    #[test]
+    fn scan_collection_discovers_nested_ini_mods_without_splitting_loose_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods_root = temp.path();
+        fs::create_dir_all(mods_root.join("Ardelia").join("Outfit 1")).unwrap();
+        fs::create_dir_all(mods_root.join("Ardelia").join("Outfit 2")).unwrap();
+        fs::write(
+            mods_root
+                .join("Ardelia")
+                .join("Outfit 1")
+                .join("mod.INI"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
+        fs::write(
+            mods_root
+                .join("Ardelia")
+                .join("Outfit 2")
+                .join("mod.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(mods_root.join("Ardelia").join("images")).unwrap();
+        fs::write(
+            mods_root.join("Ardelia").join("images").join("cover.png"),
+            b"cover",
+        )
+        .unwrap();
+
+        let mut mod_dirs = collect_scannable_mod_dirs(mods_root).unwrap();
+        mod_dirs.sort();
+
+        assert_eq!(
+            mod_dirs,
+            vec![
+                mods_root.join("Ardelia").join("Outfit 1"),
+                mods_root.join("Ardelia").join("Outfit 2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_collection_stops_at_direct_ini_mod_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Multipart");
+        fs::create_dir_all(root.join("components")).unwrap();
+        fs::write(root.join("main.ini"), "[TextureOverride]\n").unwrap();
+        fs::write(root.join("components").join("part.ini"), "[TextureOverride]\n").unwrap();
+
+        assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![root]);
+    }
+
+    #[test]
+    fn scan_collection_handles_multiple_nesting_and_disabled_children() {
+        let temp = tempfile::tempdir().unwrap();
+        let active = temp
+            .path()
+            .join("Characters")
+            .join("Ardelia")
+            .join("Outfit 1");
+        let disabled = temp
+            .path()
+            .join("Characters")
+            .join("Ardelia")
+            .join("Outfit 2")
+            .join(DISABLED_CONTAINER);
+        fs::create_dir_all(&active).unwrap();
+        fs::create_dir_all(&disabled).unwrap();
+        fs::write(active.join("mod.ini"), "[TextureOverride]\n").unwrap();
+        fs::write(disabled.join("mod.ini"), "[TextureOverride]\n").unwrap();
+
+        let mut mod_dirs = collect_scannable_mod_dirs(temp.path()).unwrap();
+        mod_dirs.sort();
+
+        assert_eq!(
+            mod_dirs,
+            vec![
+                active,
+                temp.path()
+                    .join("Characters")
+                    .join("Ardelia")
+                    .join("Outfit 2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_collection_preserves_marked_multipart_root_and_ignores_nested_scratch() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Multipart");
+        fs::create_dir_all(root.join(MOD_META_DIR)).unwrap();
+        fs::write(
+            root.join(MOD_META_DIR).join(MOD_ROOT_MARKER),
+            b"managed mod root\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("components")).unwrap();
+        fs::write(root.join("components").join("part.ini"), "[TextureOverride]\n").unwrap();
+        fs::create_dir_all(root.join(".hestia-install-live")).unwrap();
+        fs::write(
+            root.join(".hestia-install-live").join("scratch.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
+
+        assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![root]);
+    }
+
+    #[test]
+    fn scan_collection_does_not_promote_scratch_or_helpers_to_grouping_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let grouping = temp.path().join("Ardelia");
+        let actual_mod = grouping.join("Actual Mod");
+        fs::create_dir_all(&actual_mod).unwrap();
+        fs::write(actual_mod.join("mod.ini"), "[TextureOverride]\n").unwrap();
+        fs::create_dir_all(grouping.join(".hestia-install-live")).unwrap();
+        fs::write(
+            grouping.join(".hestia-install-live").join("scratch.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(grouping.join("Nested").join(".hestia-install-live")).unwrap();
+        fs::write(
+            grouping
+                .join("Nested")
+                .join(".hestia-install-live")
+                .join("scratch.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
+        fs::write(
+            grouping.join(MOD_META_DIR).join("old-metadata.ini"),
+            "[Constants]\n",
+        )
+        .unwrap();
+
+        let mod_dirs = collect_scannable_mod_dirs(temp.path()).unwrap();
+
+        assert_eq!(mod_dirs, vec![actual_mod]);
+        assert!(grouping.exists());
+    }
+
+    #[test]
+    fn legacy_non_ini_fallback_does_not_block_later_nested_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let grouping = temp.path().join("Ardelia");
+        fs::create_dir_all(&grouping).unwrap();
+        fs::write(grouping.join("cover.png"), b"cover").unwrap();
+
+        let entry = archive_test_entry(&grouping, ModStatus::Active);
+        write_portable_metadata(&entry).unwrap();
+        assert!(!grouping.join(MOD_META_DIR).join(MOD_ROOT_MARKER).exists());
+
+        let child = grouping.join("Actual Mod");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("mod.ini"), "[TextureOverride]\n").unwrap();
+
+        assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![child]);
+    }
+
+    #[test]
+    fn enabling_disabled_multipart_root_keeps_its_managed_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Imported Multipart");
+        fs::create_dir_all(root.join("Part A")).unwrap();
+        fs::create_dir_all(root.join("Part B")).unwrap();
+        fs::write(root.join("Part A").join("part.ini"), "[TextureOverride]\n").unwrap();
+        fs::write(root.join("Part B").join("part.ini"), "[TextureOverride]\n").unwrap();
+        let mut entry = archive_test_entry(&root, ModStatus::Active);
+
+        disable_mod(&mut entry).unwrap();
+        assert_eq!(entry.status, ModStatus::Disabled);
+        enable_mod(&mut entry).unwrap();
+        assert_eq!(entry.status, ModStatus::Active);
+
+        assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![root]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_collection_ignores_symlinked_mod_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let actual = temp.path().join("Actual");
+        let link = temp.path().join("Linked");
+        fs::create_dir_all(&actual).unwrap();
+        fs::write(actual.join("mod.ini"), "[TextureOverride]\n").unwrap();
+
+        std::os::unix::fs::symlink(&actual, &link).unwrap();
+
+        let mod_dirs = collect_scannable_mod_dirs(temp.path()).unwrap();
+        assert_eq!(mod_dirs, vec![actual]);
+    }
+
     fn archive_test_game(mods_path: &Path) -> GameInstall {
         GameInstall {
             definition: GameDefinition {
@@ -1851,6 +2260,76 @@ mod tests {
         assert!(restored.join("mod.ini").is_file());
         assert!(!old_mods.join("Test Mod").exists());
         assert!(entry.archive_original_path.is_none());
+    }
+
+    #[test]
+    fn archive_and_restore_preserve_nested_relative_paths_after_rescan() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let root = mods.join("Ardelia").join("Same");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mod.ini"), "[TextureOverride]\nhash = abc").unwrap();
+        let game = archive_test_game(&mods);
+        let mut entry = archive_test_entry(&root, ModStatus::Active);
+
+        let archived = archive_mod(&mut entry, &game, false).unwrap();
+        assert_eq!(
+            archived,
+            temp.path()
+                .join("Mods_Archived")
+                .join("Ardelia")
+                .join("Same")
+        );
+        assert!(!root.exists());
+
+        let mut rescanned = scan_archived_mods(&game, false, false).unwrap();
+        assert_eq!(rescanned.len(), 1);
+        assert_eq!(
+            rescanned[0].archive_original_path,
+            Some(root.clone())
+        );
+        rescanned[0].archive_original_path = None;
+        let restored = restore_mod(&mut rescanned.remove(0), &game, false).unwrap();
+
+        assert_eq!(restored, root);
+        assert!(restored.join("mod.ini").is_file());
+    }
+
+    #[test]
+    fn archive_duplicate_folder_names_keep_category_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("Mods");
+        let first_root = mods.join("Ardelia").join("Same");
+        let second_root = mods.join("Beatrice").join("Same");
+        fs::create_dir_all(&first_root).unwrap();
+        fs::create_dir_all(&second_root).unwrap();
+        fs::write(first_root.join("mod.ini"), "[TextureOverride]\nhash = first").unwrap();
+        fs::write(second_root.join("mod.ini"), "[TextureOverride]\nhash = second").unwrap();
+        let game = archive_test_game(&mods);
+        let mut first = archive_test_entry(&first_root, ModStatus::Active);
+        let mut second = archive_test_entry(&second_root, ModStatus::Active);
+
+        archive_mod(&mut first, &game, false).unwrap();
+        archive_mod(&mut second, &game, false).unwrap();
+        assert!(
+            temp.path()
+                .join("Mods_Archived")
+                .join("Ardelia")
+                .join("Same")
+                .is_dir()
+        );
+        assert!(
+            temp.path()
+                .join("Mods_Archived")
+                .join("Beatrice")
+                .join("Same")
+                .is_dir()
+        );
+
+        first.archive_original_path = None;
+        second.archive_original_path = None;
+        assert_eq!(restore_mod(&mut first, &game, false).unwrap(), first_root);
+        assert_eq!(restore_mod(&mut second, &game, false).unwrap(), second_root);
     }
 
     #[test]
