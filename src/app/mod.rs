@@ -265,6 +265,7 @@ impl eframe::App for HestiaApp {
                 profiling::scope!("dialogs_and_window_state");
                 self.render_pending_conflict(&ctx);
                 self.render_pending_import(&ctx);
+                self.render_game_overlay_file_prompt(&ctx);
                 // Blocking profile operations are modal and must stay above every
                 // other Hestia window and overlay.
                 self.render_profile_dialogs(&ctx);

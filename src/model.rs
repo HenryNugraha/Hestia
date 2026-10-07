@@ -1938,12 +1938,25 @@ impl OverlayHotkey {
         b'W', b'A', b'S', b'D', b'Q', b'E', b'Z', b'C', b'X', b'R', b'F', VK_F10,
     ];
 
+    /// Common app shortcuts are intercepted by the overlay's global
+    /// registration. Reserve their Ctrl forms unless Alt is also held.
+    const GLOBAL_CTRL_KEYS: [u8; 14] = [
+        b'B', b'G', b'H', b'I', b'J', b'K', b'L', b'N', b'O', b'P', b'T', b'U', b'V', b'Y',
+    ];
+
+    fn is_global_ctrl_key(key: u8) -> bool {
+        Self::GLOBAL_CTRL_KEYS.contains(&key) || key.is_ascii_digit()
+    }
+
     pub fn new(ctrl: bool, alt: bool, shift: bool, key: u8) -> Result<Self, OverlayHotkeyProblem> {
         if !(ctrl || alt) || Self::key_label(key).is_none() {
             return Err(OverlayHotkeyProblem::NotAllowed);
         }
         // Alt+F4 closes the window that has the keyboard.
-        if Self::RESERVED_KEYS.contains(&key) || (alt && key == VK_F4) {
+        if Self::RESERVED_KEYS.contains(&key)
+            || (alt && key == VK_F4)
+            || (ctrl && !alt && Self::is_global_ctrl_key(key))
+        {
             return Err(OverlayHotkeyProblem::Reserved);
         }
         Ok(Self {
@@ -2103,8 +2116,8 @@ mod overlay_hotkey_tests {
             OverlayHotkey::parse(" shift + alt + j ").unwrap().label(),
             "Alt+Shift+J"
         );
-        let saved = serde_json::to_string(&OverlayHotkey::parse("Ctrl+K").unwrap()).unwrap();
-        assert_eq!(saved, "\"Ctrl+K\"");
+        let saved = serde_json::to_string(&OverlayHotkey::parse("Ctrl+M").unwrap()).unwrap();
+        assert_eq!(saved, "\"Ctrl+M\"");
     }
 
     #[test]
@@ -2115,6 +2128,7 @@ mod overlay_hotkey_tests {
             "Alt+Space",
             "Alt+F4",
             "Ctrl+F",
+            "Ctrl+K",
             "Alt+W",
             "Alt+F10",
             "Alt+H+J",
@@ -2139,6 +2153,42 @@ mod overlay_hotkey_tests {
             Err(OverlayHotkeyProblem::Reserved)
         );
         assert!(OverlayHotkey::new(true, false, false, 0x73).is_ok());
+    }
+
+    #[test]
+    fn global_ctrl_shortcuts_are_reserved_without_alt() {
+        for key in [
+            b'B', b'G', b'H', b'I', b'J', b'K', b'L', b'N', b'O', b'P', b'T', b'U', b'V', b'Y',
+        ] {
+            assert_eq!(
+                OverlayHotkey::new(true, false, false, key),
+                Err(OverlayHotkeyProblem::Reserved)
+            );
+            assert_eq!(
+                OverlayHotkey::new(true, false, true, key),
+                Err(OverlayHotkeyProblem::Reserved)
+            );
+        }
+        for key in b'0'..=b'9' {
+            assert_eq!(
+                OverlayHotkey::new(true, false, false, key),
+                Err(OverlayHotkeyProblem::Reserved)
+            );
+        }
+        assert!(OverlayHotkey::new(true, true, false, b'K').is_ok());
+        assert!(OverlayHotkey::new(true, false, false, b'M').is_ok());
+        assert!(OverlayHotkey::new(true, false, false, super::VK_F12).is_ok());
+    }
+
+    #[test]
+    fn invalid_global_ctrl_hotkeys_parse_and_deserialize_to_default() {
+        for name in ["Ctrl+K", "Ctrl+Shift+V", "Ctrl+9"] {
+            assert!(OverlayHotkey::parse(name).is_none(), "{name}");
+            assert_eq!(
+                serde_json::from_str::<OverlayHotkey>(&format!("\"{name}\"")).unwrap(),
+                OverlayHotkey::DEFAULT
+            );
+        }
     }
 }
 

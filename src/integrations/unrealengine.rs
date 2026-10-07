@@ -164,6 +164,7 @@ fn install_scratch_kind(path: &Path) -> bool {
             name.starts_with(".hestia-install-")
                 || name.starts_with(".hestia_tmp_")
                 || name.starts_with(".hestia_old_")
+                || name.starts_with(".hestia-retired-")
         })
 }
 
@@ -176,11 +177,37 @@ fn staging_dir_is_abandoned(path: &Path) -> bool {
         .is_ok_and(|age| age >= STALE_STAGING_DIR_AGE)
 }
 
+fn retired_stage_sibling(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name().and_then(OsStr::to_str)?;
+    let stage_name = name.strip_prefix(".hestia-retired-")?;
+    if !stage_name.starts_with(".hestia-install-") {
+        return None;
+    }
+    Some(path.parent()?.join(stage_name))
+}
+
+fn retired_install_has_live_stage(path: &Path) -> bool {
+    retired_stage_sibling(path)
+        .is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
+}
+
+fn is_retired_install_scratch(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| {
+            name.starts_with(".hestia_old_") || name.starts_with(".hestia-retired-")
+        })
+}
+
 fn skip_install_scratch_dir(path: &Path) -> bool {
     if !install_scratch_kind(path) {
         return false;
     }
-    if staging_dir_is_abandoned(path) {
+    if is_retired_install_scratch(path) {
+        if !retired_install_has_live_stage(path) {
+            let _ = fs::remove_dir_all(path);
+        }
+    } else if staging_dir_is_abandoned(path) {
         let _ = fs::remove_dir_all(path);
     }
     true
@@ -1010,6 +1037,12 @@ mod tests {
             "scratch",
         )
         .unwrap();
+        let live_retired = grouping.join(".hestia-retired-.hestia-install-live");
+        fs::create_dir_all(&live_retired).unwrap();
+        fs::write(live_retired.join("retired.pak"), "retired").unwrap();
+        let orphan_retired = grouping.join(".hestia-retired-after-failed-dispose");
+        fs::create_dir_all(&orphan_retired).unwrap();
+        fs::write(orphan_retired.join("retired.pak"), "retired").unwrap();
         fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
         fs::write(
             grouping.join(MOD_META_DIR).join("helper.pak"),
@@ -1022,6 +1055,8 @@ mod tests {
         assert_eq!(scanned.len(), 1);
         assert_eq!(scanned[0].root_path, actual);
         assert!(grouping.join(".hestia-install-live").exists());
+        assert!(live_retired.exists());
+        assert!(!orphan_retired.exists());
     }
 
     #[cfg(unix)]

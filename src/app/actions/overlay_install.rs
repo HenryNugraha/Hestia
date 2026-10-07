@@ -1,10 +1,9 @@
 // GameBanana installs the in-game overlay asks for.  Hestia installs them
 // like its Browse page's "Install disabled", and tells the overlay how they
-// go.  The questions Hestia's windows would ask go to the overlay instead, and
-// nothing here waits for Hestia's window, which is often minimized while a
-// game runs.  The GameBanana downloads Hestia's window starts for the
-// overlay's game show there like its own installs, and their questions stay
-// in the window.
+// go.  Questions are shown in the overlay while it runs; if it closes, the
+// conflict goes to Hestia's normal conflict window and the file question is
+// shown in a main-window fallback.  The GameBanana downloads Hestia's window
+// starts for the overlay's game show there like its own installs.
 
 /// How often Hestia looks at an overlay install's progress.
 const OVERLAY_INSTALL_POLL: Duration = Duration::from_millis(200);
@@ -28,6 +27,61 @@ enum OverlayInstallQuestion {
         unsafe_content: bool,
     },
     SameName(PendingConflict),
+}
+
+/// Returns questions the main window still needs to render and moves
+/// conflicts to its existing conflict queue.
+fn handoff_overlay_question(
+    question: OverlayInstallQuestion,
+    conflicts: &mut Vec<PendingConflict>,
+) -> Option<OverlayInstallQuestion> {
+    match question {
+        question @ OverlayInstallQuestion::File { .. } => Some(question),
+        OverlayInstallQuestion::SameName(conflict) => {
+            conflicts.push(conflict);
+            None
+        }
+    }
+}
+
+fn first_overlay_file_question<'a>(
+    installs: &'a [OverlayInstall],
+    process_game_id: Option<&str>,
+) -> Option<&'a OverlayInstall> {
+    installs.iter().find(|install| {
+        process_game_id != Some(install.game_id.as_str())
+            && matches!(&install.question, Some(OverlayInstallQuestion::File { .. }))
+    })
+}
+
+fn take_pending_overlay_conflict(
+    conflicts: &mut VecDeque<PendingConflict>,
+    job_id: u64,
+) -> Option<PendingConflict> {
+    let index = conflicts
+        .iter()
+        .position(|conflict| conflict.job_id == job_id)?;
+    conflicts.remove(index)
+}
+
+fn overlay_install_task_is_live(
+    status: Option<TaskStatus>,
+    pending_finalize: bool,
+    install_inflight: bool,
+    pending_conflict: bool,
+) -> bool {
+    if pending_finalize || install_inflight || pending_conflict {
+        return true;
+    }
+    matches!(
+        status,
+        Some(
+            TaskStatus::Queued
+                | TaskStatus::Canceling
+                | TaskStatus::Downloading
+                | TaskStatus::Installing
+        )
+    )
 }
 
 /// A GameBanana download Hestia's window started for the overlay's game,
@@ -119,14 +173,29 @@ impl HestiaApp {
                 );
             }
             FromOverlay::SameName { mod_id, choice } => {
-                let Some(install) = self.game_overlay_install_mut(mod_id) else {
+                let Some(task_id) = self
+                    .game_overlay
+                    .installs
+                    .iter()
+                    .find(|install| install.mod_id == mod_id)
+                    .map(|install| install.task_id)
+                else {
                     return;
                 };
-                if !matches!(install.question, Some(OverlayInstallQuestion::SameName(_))) {
-                    return;
-                }
-                let Some(OverlayInstallQuestion::SameName(conflict)) = install.question.take()
-                else {
+                let conflict = self
+                    .game_overlay_install_mut(mod_id)
+                    .and_then(|install| match install.question.take() {
+                        Some(OverlayInstallQuestion::SameName(conflict)) => Some(conflict),
+                        Some(question) => {
+                            install.question = Some(question);
+                            None
+                        }
+                        None => None,
+                    })
+                    .or_else(|| {
+                        take_pending_overlay_conflict(&mut self.pending_conflicts, task_id)
+                    });
+                let Some(conflict) = conflict else {
                     return;
                 };
                 let (choice, action) = match choice {
@@ -147,11 +216,19 @@ impl HestiaApp {
                 );
             }
             FromOverlay::CancelInstall { mod_id } => {
-                let Some(install) = self.game_overlay_install_mut(mod_id) else {
+                let Some(task_id) = self
+                    .game_overlay
+                    .installs
+                    .iter()
+                    .find(|install| install.mod_id == mod_id)
+                    .map(|install| install.task_id)
+                else {
                     return;
                 };
-                let task_id = install.task_id;
-                match install.question.take() {
+                let question = self
+                    .game_overlay_install_mut(mod_id)
+                    .and_then(|install| install.question.take());
+                match question {
                     Some(OverlayInstallQuestion::File { .. }) => {
                         self.update_task_status(task_id, TaskStatus::Canceled);
                     }
@@ -159,7 +236,15 @@ impl HestiaApp {
                         self.log_action(text.conflict_cancel(), &conflict.preferred_name);
                         self.drop_install_job(task_id, TaskStatus::Canceled);
                     }
-                    None => return,
+                    None => {
+                        let Some(conflict) =
+                            take_pending_overlay_conflict(&mut self.pending_conflicts, task_id)
+                        else {
+                            return;
+                        };
+                        self.log_action(text.conflict_cancel(), &conflict.preferred_name);
+                        self.drop_install_job(task_id, TaskStatus::Canceled);
+                    }
                 }
                 let title = self
                     .state
@@ -426,8 +511,15 @@ impl HestiaApp {
             return;
         };
         let install = self.game_overlay.installs.remove(index);
-        self.send_game_overlay_library_now();
-        if let Some(process) = &self.game_overlay.process {
+        let same_game_process = self
+            .game_overlay
+            .process
+            .as_ref()
+            .is_some_and(|process| process.game_id == install.game_id);
+        if same_game_process {
+            self.send_game_overlay_library_now();
+        }
+        if same_game_process && let Some(process) = &self.game_overlay.process {
             process.outbox().send(overlay_protocol::ToOverlay::Install(
                 overlay_protocol::InstallUpdate {
                     mod_id: install.mod_id,
@@ -440,11 +532,57 @@ impl HestiaApp {
         }
     }
 
+    /// Moves a conflict question to Hestia's normal conflict window when the
+    /// overlay can no longer receive an answer.  File questions stay on the
+    /// overlay install record so the main window can render them without
+    /// losing the install's category or task identity.
+    fn handoff_game_overlay_questions(&mut self) {
+        let mut conflicts = Vec::new();
+        for install in &mut self.game_overlay.installs {
+            install.sent = None;
+            let Some(question) = install.question.take() else {
+                continue;
+            };
+            install.question = handoff_overlay_question(question, &mut conflicts);
+        }
+        self.pending_conflicts.extend(conflicts);
+    }
+
+    /// Keeps an overlay install until its normal download/install lifecycle
+    /// has consumed it.  This is needed after the overlay closes: the task
+    /// may still be waiting for a file answer, or its final refresh may still
+    /// need the overlay category captured on the install record.
+    fn overlay_install_is_live(&self, task_id: u64) -> bool {
+        overlay_install_task_is_live(
+            self.state
+                .tasks
+                .iter()
+                .find(|task| task.id == task_id)
+                .map(|task| task.status),
+            self.pending_install_finalize.contains_key(&task_id),
+            self.install_inflight.contains_key(&task_id),
+            self.pending_conflicts
+                .iter()
+                .any(|conflict| conflict.job_id == task_id),
+        )
+    }
+
     /// Tells the overlay how its installs go, each change once.
     fn sync_game_overlay_installs(&mut self, ctx: &egui::Context) {
         let Some(process) = &self.game_overlay.process else {
-            // They go on in Hestia.
-            self.game_overlay.installs.clear();
+            // They go on in Hestia. Keep their records for questions,
+            // category assignment, and finalization after the overlay closes.
+            self.handoff_game_overlay_questions();
+            let live_task_ids: std::collections::HashSet<u64> = self
+                .game_overlay
+                .installs
+                .iter()
+                .filter(|install| self.overlay_install_is_live(install.task_id))
+                .map(|install| install.task_id)
+                .collect();
+            self.game_overlay
+                .installs
+                .retain(|install| live_task_ids.contains(&install.task_id));
             self.game_overlay.window_downloads.clear();
             return;
         };
@@ -454,12 +592,24 @@ impl HestiaApp {
             .game_overlay
             .installs
             .iter()
+            .filter(|install| install.game_id == game_id)
             .map(|install| self.game_overlay_install_stage(install))
             .collect();
         stages.reverse();
         let mut busy = false;
+        let live_task_ids: std::collections::HashSet<u64> = self
+            .game_overlay
+            .installs
+            .iter()
+            .filter(|install| self.overlay_install_is_live(install.task_id))
+            .map(|install| install.task_id)
+            .collect();
         self.game_overlay.installs.retain_mut(|install| {
             use overlay_protocol::InstallStage;
+
+            if install.game_id != game_id {
+                return live_task_ids.contains(&install.task_id);
+            }
 
             let stage = stages.pop().expect("a stage for each install");
             busy |= matches!(
@@ -490,6 +640,20 @@ impl HestiaApp {
         install: &OverlayInstall,
     ) -> overlay_protocol::InstallStage {
         use overlay_protocol::{InstallFile, InstallStage};
+
+        // A conflict handed to Hestia's normal window remains attached to
+        // this task while the game overlay may restart. Report the same
+        // question to the overlay too; whichever surface answers first owns
+        // the queued conflict and the other becomes a no-op.
+        if let Some(conflict) = self
+            .pending_conflicts
+            .iter()
+            .find(|conflict| conflict.job_id == install.task_id)
+        {
+            return InstallStage::SameName {
+                folder: conflict.preferred_name.clone(),
+            };
+        }
 
         match &install.question {
             Some(OverlayInstallQuestion::File { files, .. }) => {
@@ -824,6 +988,118 @@ fn window_download_outcome(
 mod window_download_tests {
     use super::*;
     use crate::overlay_protocol::InstallStage;
+
+    #[test]
+    fn overlay_questions_handoff_without_losing_file_or_conflict_state() {
+        let file = gamebanana::ModFile {
+            id: 7,
+            file_name: "summer.zip".to_owned(),
+            file_size: 12,
+            download_url: Some("https://example.test/summer.zip".to_owned()),
+            description: Some("the selected file".to_owned()),
+            date_added: 0,
+            download_count: 0,
+            version: None,
+            is_archived: false,
+        };
+        let kept = handoff_overlay_question(
+            OverlayInstallQuestion::File {
+                files: vec![file.clone()],
+                unsafe_content: true,
+            },
+            &mut Vec::new(),
+        );
+        assert!(matches!(
+            kept,
+            Some(OverlayInstallQuestion::File {
+                files,
+                unsafe_content: true
+            }) if files.len() == 1
+                && files[0].id == file.id
+                && files[0].file_name == file.file_name
+        ));
+
+        let conflict = PendingConflict {
+            job_id: 42,
+            candidate_indices: vec![0],
+            preferred_name: "summer".to_owned(),
+            target_root: PathBuf::from("mods"),
+            existing_target: PathBuf::from("mods/summer"),
+            gb_profile: None,
+        };
+        let mut conflicts = Vec::new();
+        assert!(
+            handoff_overlay_question(
+                OverlayInstallQuestion::SameName(conflict.clone()),
+                &mut conflicts,
+            )
+            .is_none()
+        );
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].job_id, conflict.job_id);
+        assert_eq!(conflicts[0].preferred_name, conflict.preferred_name);
+    }
+
+    #[test]
+    fn fallback_skips_file_question_for_the_running_game() {
+        let installs = vec![
+            OverlayInstall {
+                mod_id: 1,
+                game_id: "running".to_owned(),
+                category_id: None,
+                task_id: 11,
+                question: Some(OverlayInstallQuestion::File {
+                    files: Vec::new(),
+                    unsafe_content: false,
+                }),
+                sent: None,
+            },
+            OverlayInstall {
+                mod_id: 2,
+                game_id: "closed".to_owned(),
+                category_id: Some("category".to_owned()),
+                task_id: 22,
+                question: Some(OverlayInstallQuestion::File {
+                    files: Vec::new(),
+                    unsafe_content: true,
+                }),
+                sent: None,
+            },
+        ];
+        let fallback = first_overlay_file_question(&installs, Some("running"))
+            .expect("the other game's question stays available");
+        assert_eq!(fallback.task_id, 22);
+        assert_eq!(fallback.game_id, "closed");
+        assert!(first_overlay_file_question(&installs, Some("none")).is_some());
+    }
+
+    #[test]
+    fn a_handed_off_conflict_can_be_answered_only_once() {
+        let conflict = PendingConflict {
+            job_id: 91,
+            candidate_indices: vec![0],
+            preferred_name: "summer".to_owned(),
+            target_root: PathBuf::from("mods"),
+            existing_target: PathBuf::from("mods/summer"),
+            gb_profile: None,
+        };
+        let mut conflicts = VecDeque::from([conflict]);
+        assert!(take_pending_overlay_conflict(&mut conflicts, 91).is_some());
+        assert!(take_pending_overlay_conflict(&mut conflicts, 91).is_none());
+    }
+
+    #[test]
+    fn finalization_keeps_overlay_category_record_after_task_history_is_cleared() {
+        assert!(overlay_install_task_is_live(None, true, false, false));
+        assert!(overlay_install_task_is_live(None, false, true, false));
+        assert!(!overlay_install_task_is_live(None, false, false, false));
+        assert!(!overlay_install_task_is_live(
+            Some(TaskStatus::Completed),
+            false,
+            false,
+            false
+        ));
+    }
 
     #[test]
     fn a_window_download_shows_its_files_as_one() {

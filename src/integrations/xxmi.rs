@@ -1033,7 +1033,7 @@ fn archived_path_relative_destination(
 /// them alongside the real one.
 fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
     let name = path.file_name().and_then(OsStr::to_str)?;
-    if name.starts_with(".hestia_old_") {
+    if name.starts_with(".hestia_old_") || name.starts_with(".hestia-retired-") {
         Some(InstallScratch::Retired)
     } else if name.starts_with(".hestia_tmp_") || name.starts_with(".hestia-install-") {
         Some(InstallScratch::Staging)
@@ -1043,8 +1043,8 @@ fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
 }
 
 enum InstallScratch {
-    /// Already swapped out by a Replace install — deleting it is the pending
-    /// disposal finishing late, so it is always safe to remove.
+    /// The old payload of a Replace install. Its matching stage may still
+    /// need it for rollback; disposal can finish once that stage is gone.
     Retired,
     /// An install may still be copying into it right now, so only sweep it once
     /// it has clearly been abandoned.
@@ -1060,6 +1060,20 @@ fn staging_dir_is_abandoned(path: &Path) -> bool {
     SystemTime::now()
         .duration_since(modified)
         .is_ok_and(|age| age >= STALE_STAGING_DIR_AGE)
+}
+
+fn retired_stage_sibling(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name().and_then(OsStr::to_str)?;
+    let stage_name = name.strip_prefix(".hestia-retired-")?;
+    if !stage_name.starts_with(".hestia-install-") {
+        return None;
+    }
+    Some(path.parent()?.join(stage_name))
+}
+
+fn retired_install_has_live_stage(path: &Path) -> bool {
+    retired_stage_sibling(path)
+        .is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
 }
 
 fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
@@ -1198,7 +1212,9 @@ fn has_real_scan_payload(root: &Path) -> Result<bool> {
 fn skip_install_scratch_dir(path: &Path) -> bool {
     match install_scratch_kind(path) {
         Some(InstallScratch::Retired) => {
-            let _ = fs::remove_dir_all(path);
+            if !retired_install_has_live_stage(path) {
+                let _ = fs::remove_dir_all(path);
+            }
             true
         }
         Some(InstallScratch::Staging) => {
@@ -2096,6 +2112,12 @@ mod tests {
             "[TextureOverride]\n",
         )
         .unwrap();
+        let live_retired = grouping.join(".hestia-retired-.hestia-install-live");
+        fs::create_dir_all(&live_retired).unwrap();
+        fs::write(live_retired.join("retired.ini"), "[TextureOverride]\n").unwrap();
+        let orphan_retired = grouping.join(".hestia-retired-after-failed-dispose");
+        fs::create_dir_all(&orphan_retired).unwrap();
+        fs::write(orphan_retired.join("retired.ini"), "[TextureOverride]\n").unwrap();
         fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
         fs::write(
             grouping.join(MOD_META_DIR).join("old-metadata.ini"),
@@ -2107,6 +2129,8 @@ mod tests {
 
         assert_eq!(mod_dirs, vec![actual_mod]);
         assert!(grouping.exists());
+        assert!(live_retired.exists());
+        assert!(!orphan_retired.exists());
     }
 
     #[test]

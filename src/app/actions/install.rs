@@ -88,6 +88,55 @@ fn find_existing_install_target<'a>(
     })
 }
 
+/// Return whether an install would replace an active Unreal mod while the game is running.
+///
+/// An update target is an identity, so its current physical root and status decide whether the
+/// game lock applies. In particular, a disabled target may share a relative folder name with an
+/// active mod in the paired root without touching that active mod.
+fn install_targets_active_mod(
+    mods: &[ModEntry],
+    game_id: &str,
+    update_target_mod_id: Option<&str>,
+    target_root: &Path,
+    disabled_target_root: Option<&Path>,
+    allow_disabled_identity_override: bool,
+    preferred_names: &[String],
+) -> bool {
+    let active_mod_matches_path = |target_path: &Path| {
+        mods.iter().any(|mod_entry| {
+            mod_entry.game_id == game_id
+                && mod_entry.status == ModStatus::Active
+                && HestiaApp::install_path_matches_mod_root(target_path, &mod_entry.root_path)
+        })
+    };
+
+    if let Some(target_id) = update_target_mod_id {
+        if let Some(target) = mods
+            .iter()
+            .find(|mod_entry| mod_entry.game_id == game_id && mod_entry.id == target_id)
+        {
+            return preferred_names.iter().any(|preferred_name| {
+                let active_target_path = target_root.join(preferred_name);
+                let disabled_identity_matches_name = allow_disabled_identity_override
+                    && target.status == ModStatus::Disabled
+                    && disabled_target_root.is_some_and(|root| {
+                        let disabled_target_path = root.join(preferred_name);
+                        HestiaApp::install_path_matches_mod_root(
+                            &disabled_target_path,
+                            &target.root_path,
+                        )
+                    });
+                !disabled_identity_matches_name
+                    && active_mod_matches_path(&active_target_path)
+            });
+        }
+    }
+
+    preferred_names.iter().any(|preferred_name| {
+        active_mod_matches_path(&target_root.join(preferred_name))
+    })
+}
+
 impl HestiaApp {
     fn consume_install_events(&mut self) {
         while let Ok(event) = self.install_event_rx.try_recv() {
@@ -318,6 +367,8 @@ impl HestiaApp {
             choice,
             &target_root,
             &preferred_names,
+            disabled_target_root.as_deref(),
+            update_target_mod_id.as_deref(),
         ) {
             self.cancel_install_job_as_locked(job_id);
             return;
@@ -469,6 +520,8 @@ impl HestiaApp {
         choice: ConflictChoice,
         target_root: &Path,
         preferred_names: &[String],
+        disabled_target_root: Option<&Path>,
+        update_target_mod_id: Option<&str>,
     ) -> bool {
         if !matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge) {
             return false;
@@ -488,14 +541,15 @@ impl HestiaApp {
             return false;
         }
 
-        preferred_names.iter().any(|preferred_name| {
-            let target_path = target_root.join(preferred_name);
-            self.state.mods.iter().any(|mod_entry| {
-                mod_entry.game_id == job.game_id
-                    && mod_entry.status == ModStatus::Active
-                    && Self::install_path_matches_mod_root(&target_path, &mod_entry.root_path)
-            })
-        })
+        install_targets_active_mod(
+            &self.state.mods,
+            &job.game_id,
+            update_target_mod_id,
+            target_root,
+            disabled_target_root,
+            job.preserve_existing_state || job.install_state == ModInstallState::Disabled,
+            preferred_names,
+        )
     }
 
     /// Find an existing target in either Unreal storage root.  The dialog and
@@ -1077,5 +1131,166 @@ mod install_candidate_state_tests {
 
         assert_eq!(selected.id, "disabled-target");
         assert_eq!(selected.status, ModStatus::Disabled);
+    }
+
+    #[test]
+    fn disabled_identity_update_does_not_lock_against_active_same_name_peer() {
+        let mods = vec![
+            mod_entry(
+                "active-peer",
+                "game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "disabled-target",
+                "game",
+                "Disabled/Ardelia/Outfit A",
+                ModStatus::Disabled,
+            ),
+        ];
+
+        assert!(!install_targets_active_mod(
+            &mods,
+            "game",
+            Some("disabled-target"),
+            Path::new("Active/Ardelia"),
+            Some(Path::new("Disabled/Ardelia")),
+            true,
+            &["Outfit A".to_string()],
+        ));
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            Some("disabled-target"),
+            Path::new("Active/Ardelia"),
+            Some(Path::new("Disabled/Ardelia")),
+            false,
+            &["Outfit A".to_string()],
+        ));
+    }
+
+    #[test]
+    fn disabled_identity_batch_still_locks_other_active_candidate() {
+        let mods = vec![
+            mod_entry(
+                "active-peer",
+                "game",
+                "Active/Ardelia/Outfit B",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "disabled-target",
+                "game",
+                "Disabled/Ardelia/Outfit A",
+                ModStatus::Disabled,
+            ),
+        ];
+
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            Some("disabled-target"),
+            Path::new("Active/Ardelia"),
+            Some(Path::new("Disabled/Ardelia")),
+            true,
+            &["Outfit A".to_string(), "Outfit B".to_string()],
+        ));
+    }
+
+    #[test]
+    fn active_identity_update_still_locks_its_exact_physical_target() {
+        let mods = vec![
+            mod_entry(
+                "same-name-peer",
+                "game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "active-target",
+                "game",
+                "Active/Other/Outfit A",
+                ModStatus::Active,
+            ),
+        ];
+
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            Some("active-target"),
+            Path::new("Active/Other"),
+            None,
+            true,
+            &["Outfit A".to_string()],
+        ));
+    }
+
+    #[test]
+    fn ordinary_unreal_conflict_still_locks_active_path() {
+        let mods = vec![mod_entry(
+            "active-mod",
+            "game",
+            "Active/Ardelia/Outfit A",
+            ModStatus::Active,
+        )];
+
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            None,
+            Path::new("Active/Ardelia"),
+            None,
+            false,
+            &["Outfit A".to_string()],
+        ));
+    }
+
+    #[test]
+    fn stale_identity_falls_back_to_active_path_protection() {
+        let mods = vec![mod_entry(
+            "active-peer",
+            "game",
+            "Active/Ardelia/Outfit A",
+            ModStatus::Active,
+        )];
+
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            Some("missing-target"),
+            Path::new("Active/Ardelia"),
+            None,
+            false,
+            &["Outfit A".to_string()],
+        ));
+    }
+
+    #[test]
+    fn renamed_identity_falls_back_to_active_path_protection() {
+        let mods = vec![
+            mod_entry(
+                "renamed-target",
+                "game",
+                "Active/Ardelia/Renamed Outfit",
+                ModStatus::Active,
+            ),
+            mod_entry(
+                "active-peer",
+                "game",
+                "Active/Ardelia/Outfit A",
+                ModStatus::Active,
+            ),
+        ];
+
+        assert!(install_targets_active_mod(
+            &mods,
+            "game",
+            Some("renamed-target"),
+            Path::new("Active/Ardelia"),
+            None,
+            false,
+            &["Outfit A".to_string()],
+        ));
     }
 }

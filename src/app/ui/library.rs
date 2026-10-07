@@ -248,7 +248,8 @@ fn render_folder_selection_checkbox(ui: &mut Ui, checked: bool, visible: bool) -
 #[cfg(test)]
 mod category_tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use crate::model::ModMetadata;
+    use std::collections::HashSet;
 
     fn ids(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -351,31 +352,113 @@ mod category_tests {
     }
 
     #[test]
-    fn category_sort_by_mod_count_supports_both_directions() {
-        let categories = vec![
-            category("a", "A", 0),
-            category("b", "B", 1),
-            category("c", "C", 2),
+    fn category_sort_by_mod_count_supports_effective_membership() {
+        let categories = vec![category("a", "Characters", 0), category("b", "Tools", 1)];
+        let mods = vec![
+            category_test_mod("explicit", "game", Some("a"), ""),
+            category_test_mod("legacy", "game", None, "Characters"),
+            category_test_mod("stale", "game", Some("missing"), "Characters"),
+            category_test_mod("tool", "game", Some("b"), "Tools"),
+            category_test_mod("other", "game", Some("b"), "Characters"),
+            category_test_mod("other-game", "other-game", None, "Characters"),
         ];
-        let counts = HashMap::from([
-            ("a".to_string(), 2),
-            ("b".to_string(), 5),
-            ("c".to_string(), 1),
-        ]);
+
+        let member_count =
+            |category_id: &str| category_member_count(&categories, &mods, "game", category_id);
 
         let mut ascending = categories.clone();
-        sort_categories_with_counts(&mut ascending, ModCategorySortMode::ByModCountAsc, |id| {
-            counts.get(id).copied().unwrap_or_default()
-        });
+        sort_categories_with_counts(
+            &mut ascending,
+            ModCategorySortMode::ByModCountAsc,
+            member_count,
+        );
         let ascending_ids: Vec<_> = ascending.into_iter().map(|category| category.id).collect();
-        assert_eq!(ascending_ids, ids(&["c", "a", "b"]));
+        assert_eq!(ascending_ids, ids(&["b", "a"]));
 
-        let mut descending = categories;
-        sort_categories_with_counts(&mut descending, ModCategorySortMode::ByModCountDesc, |id| {
-            counts.get(id).copied().unwrap_or_default()
-        });
+        let mut descending = categories.clone();
+        sort_categories_with_counts(
+            &mut descending,
+            ModCategorySortMode::ByModCountDesc,
+            member_count,
+        );
         let descending_ids: Vec<_> = descending.into_iter().map(|category| category.id).collect();
-        assert_eq!(descending_ids, ids(&["b", "a", "c"]));
+        assert_eq!(descending_ids, ids(&["a", "b"]));
+    }
+
+    fn category_test_mod(
+        id: &str,
+        game_id: &str,
+        category_id: Option<&str>,
+        category_name: &str,
+    ) -> ModEntry {
+        let mut metadata = ModMetadata::default();
+        metadata.user.category_id = category_id.map(str::to_string);
+        metadata.user.category = category_name.to_string();
+        ModEntry {
+            id: id.to_string(),
+            game_id: game_id.to_string(),
+            folder_name: id.to_string(),
+            root_path: PathBuf::from(id),
+            status: ModStatus::Active,
+            metadata,
+            discovered_tools: Vec::new(),
+            archive_original_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            content_mtime: None,
+            ini_hash: None,
+            content_size_bytes: 0,
+            unsafe_content: false,
+            unsafe_content_auto: false,
+            unsafe_content_preference: UnsafeContentPreference::Auto,
+            source: None,
+            update_state: ModUpdateState::Unlinked,
+        }
+    }
+
+    #[test]
+    fn category_rename_snapshots_effective_members_before_name_change() {
+        let categories = vec![
+            category("target", "Characters", 0),
+            category("other", "Characters", 1),
+            ModCategory {
+                id: "other-game-target".to_string(),
+                game_id: "other-game".to_string(),
+                name: "Characters".to_string(),
+                order: 0,
+                gamebanana_character: None,
+            },
+        ];
+        let mut mods = vec![
+            category_test_mod("explicit", "game", Some("target"), "Characters"),
+            category_test_mod("legacy", "game", None, " characters "),
+            category_test_mod("stale", "game", Some("missing"), "Characters"),
+            category_test_mod("other-category", "game", Some("other"), "Characters"),
+            category_test_mod("other-game", "other-game", None, "Characters"),
+        ];
+
+        let affected = category_member_indices_for_game(&categories, &mods, "game", "target");
+        assert_eq!(
+            affected
+                .iter()
+                .map(|index| mods[*index].id.as_str())
+                .collect::<Vec<_>>(),
+            ["explicit", "legacy", "stale"]
+        );
+
+        rename_category_members(&mut mods, &affected, "target", "Outfits");
+
+        for index in affected {
+            assert_eq!(
+                mods[index].metadata.user.category_id.as_deref(),
+                Some("target")
+            );
+            assert_eq!(mods[index].metadata.user.category, "Outfits");
+        }
+        assert_eq!(mods[3].metadata.user.category_id.as_deref(), Some("other"));
+        assert_eq!(mods[3].metadata.user.category, "Characters");
+        assert_eq!(mods[4].metadata.user.category_id, None);
+        assert_eq!(mods[4].metadata.user.category, "Characters");
     }
 
     fn folder_checkbox_input(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> egui::RawInput {
@@ -697,12 +780,18 @@ pub(crate) fn sort_categories_with_counts<F>(
     }
 }
 
-/// How many of a game's mods a category has, as sorting by count counts them.
-fn category_member_count(mods: &[ModEntry], game_id: &str, category_id: &str) -> usize {
+/// How many of a game's mods a category has, as sorting, folder tiles, and
+/// category labels count them.
+pub(crate) fn category_member_count(
+    categories: &[ModCategory],
+    mods: &[ModEntry],
+    game_id: &str,
+    category_id: &str,
+) -> usize {
     mods.iter()
         .filter(|mod_entry| {
             mod_entry.game_id == game_id
-                && mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
+                && effective_category_id(categories, mod_entry) == Some(category_id)
         })
         .count()
 }
@@ -734,6 +823,37 @@ fn effective_category_id<'a>(
                 && category.name.trim().eq_ignore_ascii_case(legacy)
         })
         .map(|category| category.id.as_str())
+}
+
+fn category_member_indices_for_game(
+    categories: &[ModCategory],
+    mods: &[ModEntry],
+    game_id: &str,
+    category_id: &str,
+) -> Vec<usize> {
+    mods.iter()
+        .enumerate()
+        .filter(|(_, mod_entry)| {
+            mod_entry.game_id == game_id
+                && effective_category_id(categories, mod_entry) == Some(category_id)
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn rename_category_members(
+    mods: &mut [ModEntry],
+    member_indices: &[usize],
+    category_id: &str,
+    category_name: &str,
+) {
+    for &index in member_indices {
+        let Some(mod_entry) = mods.get_mut(index) else {
+            continue;
+        };
+        mod_entry.metadata.user.category_id = Some(category_id.to_string());
+        mod_entry.metadata.user.category = category_name.to_string();
+    }
 }
 
 /// Compares two mods by the library's sort setting alone.
@@ -2216,7 +2336,12 @@ impl HestiaApp {
     }
 
     fn category_member_count(&self, game_id: &str, category_id: &str) -> usize {
-        category_member_count(&self.state.mods, game_id, category_id)
+        category_member_count(
+            &self.state.categories,
+            &self.state.mods,
+            game_id,
+            category_id,
+        )
     }
 
     fn mod_category_label(&self, mod_entry: &ModEntry) -> String {
@@ -2944,6 +3069,22 @@ impl HestiaApp {
         if self.folder_batch_game_busy(&game_id) {
             return;
         }
+        // Resolve legacy name-only and stale-ID assignments before changing the
+        // category name. Once the name changes, those entries can no longer be
+        // found through the fallback used by `effective_category_id`.
+        let member_indices = category_member_indices_for_game(
+            &self.state.categories,
+            &self.state.mods,
+            &game_id,
+            category_id,
+        );
+        let backend = self
+            .state
+            .games
+            .iter()
+            .find(|game| game.definition.id == game_id)
+            .map(|game| game.definition.backend)
+            .unwrap_or_default();
         let Some(category) = self
             .state
             .categories
@@ -2953,13 +3094,18 @@ impl HestiaApp {
             return;
         };
         category.name = trimmed.to_string();
-        for mod_entry in
-            self.state.mods.iter_mut().filter(|mod_entry| {
-                mod_entry.metadata.user.category_id.as_deref() == Some(category_id)
-            })
-        {
-            mod_entry.metadata.user.category = trimmed.to_string();
-            let _ = xxmi::save_mod_metadata(mod_entry);
+        rename_category_members(&mut self.state.mods, &member_indices, category_id, trimmed);
+        for &index in &member_indices {
+            if let Some(mod_entry) = self.state.mods.get_mut(index) {
+                match backend {
+                    GameBackend::Xxmi => {
+                        let _ = xxmi::save_mod_metadata(mod_entry);
+                    }
+                    GameBackend::UnrealEngine => {
+                        let _ = unrealengine::write_portable_metadata(mod_entry);
+                    }
+                }
+            }
         }
         self.clear_category_rename();
         self.save_state();
@@ -6515,18 +6661,10 @@ impl HestiaApp {
                                             card.13.as_deref() == Some(category.id.as_str())
                                         })
                                         .collect();
-                                    let category_mod_count = self
-                                        .state
-                                        .mods
-                                        .iter()
-                                        .filter(|mod_entry| {
-                                            mod_entry.game_id == selected_game_id
-                                                && self
-                                                    .effective_mod_category_id(mod_entry)
-                                                    .as_deref()
-                                                    == Some(category.id.as_str())
-                                        })
-                                        .count();
+                                    let category_mod_count = self.category_member_count(
+                                        &selected_game_id,
+                                        &category.id,
+                                    );
                                     if section_cards.is_empty()
                                         && (search_filter_active || !show_empty_category_folders)
                                         && category_rename_target_id.as_deref()

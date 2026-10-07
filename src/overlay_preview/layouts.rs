@@ -189,7 +189,10 @@ pub(super) enum Space {
 /// A category linked to a GameBanana character shows the character's
 /// GameBanana mods after its own, as cards numbered on from its own mods,
 /// then a card for the list's state while it loads, failed or is empty.
-/// GameBanana mods already installed are left out.
+/// GameBanana mods already installed are left out.  While GameBanana is
+/// enabled, linked categories stay visible for a search even when none of
+/// their local mods match, so the selected category can ask for remote-only
+/// results.
 struct Filter {
     /// The search as typed.
     query: String,
@@ -215,6 +218,7 @@ impl Filter {
         let mut mods = Vec::with_capacity(catalog.categories.len());
         for (index, category) in catalog.categories.iter().enumerate() {
             let all = matches_category(category, &needle);
+            let linked = gamebanana.enabled() && category.character.is_some();
             let list = list_key(category, &needle).and_then(|key| gamebanana.list(&key));
             // A mod the overlay installs waits behind its card until the
             // card crosses.
@@ -232,7 +236,7 @@ impl Filter {
                 .filter(|(_, costume)| !held(costume.gamebanana_id))
                 .map(|(costume_index, _)| costume_index)
                 .collect();
-            if all || !visible.is_empty() {
+            if all || !visible.is_empty() || linked {
                 categories.push(index);
                 if let Some(list) = list {
                     let own = category.costumes.len();
@@ -4070,6 +4074,7 @@ fn is_loose(category: &Category) -> bool {
 #[cfg(test)]
 mod tests {
     use super::super::data::Costume;
+    use crate::overlay_protocol::Browse;
     use super::*;
 
     #[test]
@@ -5163,6 +5168,30 @@ mod tests {
     }
 
     #[test]
+    fn an_enabled_gamebanana_link_keeps_remote_only_searches_selectable() {
+        let mut ardelia = named("Ardelia", &["Local Match", "Other"]);
+        ardelia.character = Some(7);
+        let catalog = live_catalog(vec![ardelia]);
+        let mut gamebanana = GameBanana::default();
+
+        // GameBanana is disabled in the library preview, so an unrelated
+        // search keeps the normal local-only filtering.
+        let disabled = Filter::new(&catalog, "remote", &gamebanana);
+        assert!(disabled.categories.is_empty());
+
+        gamebanana.set_enabled(true);
+        let remote = Filter::new(&catalog, "remote", &gamebanana);
+        assert_eq!(remote.categories, [0]);
+        assert!(remote.mods[0].is_empty());
+
+        // A local match still shows only the matching local card until its
+        // selected category asks GameBanana for the remote query.
+        let local = Filter::new(&catalog, "match", &gamebanana);
+        assert_eq!(local.categories, [0]);
+        assert_eq!(local.mods, [vec![0]]);
+    }
+
+    #[test]
     fn search_keeps_a_selection_it_shows_and_otherwise_moves_to_the_first_match() {
         let mut layouts = search_layouts();
         assert_eq!(layouts.selected_category, 0);
@@ -5584,9 +5613,18 @@ mod tests {
     }
 
     fn gamebanana_page(character: u64, ids: &[u64], more: bool) -> ToOverlay {
+        gamebanana_page_query(character, "", ids, more)
+    }
+
+    fn gamebanana_page_query(
+        character: u64,
+        query: &str,
+        ids: &[u64],
+        more: bool,
+    ) -> ToOverlay {
         ToOverlay::BrowsePage(crate::overlay_protocol::BrowsePage {
             character,
-            query: String::new(),
+            query: query.into(),
             page: 1,
             mods: ids
                 .iter()
@@ -5635,6 +5673,99 @@ mod tests {
         assert!(layouts.visible_mods().contains(&layouts.carousel_focus));
         layouts.set_gamebanana(true, false);
         assert_eq!(layouts.visible_mods(), [0, 1, 2, 4], "the pages it had");
+    }
+
+    #[test]
+    fn a_remote_only_search_starts_and_keeps_its_gamebanana_answer() {
+        let mut ardelia = named("Ardelia", &["Local Match"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        let context = egui::Context::default();
+        layouts.set_gamebanana(true, false);
+        assert_eq!(layouts.take_gamebanana_requests(), [FromOverlay::ListCharacters]);
+
+        layouts.set_search("remote-only");
+        assert_eq!(layouts.filter.categories, [0]);
+        assert!(layouts.visible_mods().is_empty(), "before the remote list starts");
+
+        // The selected linked category is kept in the filter, so the first
+        // frame creates its loading card instead of becoming a dead end.
+        layouts.update_gamebanana(&context, 0.0);
+        assert_eq!(layouts.visible_mods(), [1]);
+        assert!(layouts.take_gamebanana_requests().is_empty());
+        layouts.update_gamebanana(&context, 1.0);
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::Browse(Browse {
+                character: 7,
+                query: "remote-only".into(),
+                page: 1,
+            })]
+        );
+
+        // The answer is remote-only: no local card matches the query, but
+        // the GameBanana card becomes visible and remains selectable.
+        layouts.receive_gamebanana(vec![gamebanana_page_query(
+            7,
+            "remote-only",
+            &[42],
+            false,
+        )]);
+        assert_eq!(layouts.visible_mods(), [1]);
+        assert!(matches!(
+            layouts.card(0, 1),
+            Some(Card::GameBanana(item)) if item.id == 42
+        ));
+    }
+
+    #[test]
+    fn a_remote_only_search_keeps_empty_and_failed_answers_visible() {
+        let mut ardelia = named("Ardelia", &["Local"]);
+        ardelia.character = Some(7);
+        let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
+        let context = egui::Context::default();
+        layouts.set_gamebanana(true, false);
+        layouts.take_gamebanana_requests();
+        layouts.set_search("remote-only");
+
+        layouts.update_gamebanana(&context, 0.0);
+        layouts.update_gamebanana(&context, 1.0);
+        layouts.take_gamebanana_requests();
+        let mut empty = match gamebanana_page_query(7, "remote-only", &[], false) {
+            ToOverlay::BrowsePage(page) => page,
+            _ => unreachable!(),
+        };
+        layouts.receive_gamebanana(vec![ToOverlay::BrowsePage(empty.clone())]);
+        assert_eq!(layouts.visible_mods(), [1]);
+        assert!(matches!(
+            layouts.card(0, 1),
+            Some(Card::Status(StatusCard::Empty))
+        ));
+        layouts.update_gamebanana(&context, 2.0);
+        assert!(
+            layouts.take_gamebanana_requests().is_empty(),
+            "an empty answer is terminal until explicitly retried"
+        );
+
+        // A new search key starts a fresh list, whose failure remains visible
+        // as its retry card rather than hiding the linked category.
+        layouts.set_search("remote-failure");
+        layouts.update_gamebanana(&context, 2.0);
+        layouts.update_gamebanana(&context, 3.0);
+        layouts.take_gamebanana_requests();
+        empty.query = "remote-failure".into();
+        empty.error = Some("offline".into());
+        layouts.receive_gamebanana(vec![ToOverlay::BrowsePage(empty)]);
+        assert_eq!(layouts.visible_mods(), [1]);
+        assert!(matches!(
+            layouts.card(0, 1),
+            Some(Card::Status(StatusCard::Failed))
+        ));
+        layouts.update_gamebanana(&context, 4.0);
+        assert!(
+            layouts.take_gamebanana_requests().is_empty(),
+            "a failed answer waits for the retry action"
+        );
     }
 
     #[test]

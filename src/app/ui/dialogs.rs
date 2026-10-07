@@ -907,6 +907,116 @@ impl HestiaApp {
         }
     }
 
+    /// Shows a file question left by the in-game overlay after its process
+    /// closes.  Keeping this on the overlay install record lets the answer go
+    /// through the same handler as an in-overlay answer, including the
+    /// original task and category.
+    fn render_game_overlay_file_prompt(&mut self, ctx: &egui::Context) {
+        let process_game_id = self
+            .game_overlay
+            .process
+            .as_ref()
+            .map(|process| process.game_id.as_str());
+        let Some(install) =
+            first_overlay_file_question(&self.game_overlay.installs, process_game_id)
+        else {
+            return;
+        };
+        let task_id = install.task_id;
+        let game_id = install.game_id.clone();
+        let mod_id = install.mod_id;
+        let Some(OverlayInstallQuestion::File { files, .. }) = &install.question else {
+            return;
+        };
+        let files = files.clone();
+
+        let text = self.text();
+        let mod_name = self
+            .state
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| task.title.clone())
+            .or_else(|| {
+                self.browse_state
+                    .details
+                    .get(&mod_id)
+                    .map(|detail| detail.profile.name.clone())
+            })
+            .unwrap_or_else(|| format!("Mod {mod_id}"));
+        let mut open = true;
+        let mut answer = None;
+        let window = egui::Window::new(icon_text_sized(
+            Icon::Files,
+            text.browse_choose_files(),
+            14.0,
+            14.0,
+        ))
+        .id(egui::Id::new(("game_overlay_file_prompt", task_id)))
+        .default_pos(ctx.viewport_rect().min + egui::vec2(16.0, 16.0))
+        .default_size(egui::vec2(420.0, 420.0))
+        .order(egui::Order::Foreground)
+        .resizable(false)
+        .collapsible(false)
+        .constrain_to(ctx.viewport_rect())
+        .open(&mut open)
+        .frame(
+            egui::Frame::window(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(16))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
+        );
+        window.show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                static_label(
+                    ui,
+                    icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)),
+                );
+                ui.vertical(|ui| {
+                    static_label(ui, bold(&mod_name, Some(16.0)).underline());
+                    ui.add_space(4.0);
+                    static_label(
+                        ui,
+                        RichText::new(text.browse_multiple_files_prompt()).size(14.0),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for file in &files {
+                        if ui.button(&file.file_name).clicked() {
+                            answer = Some(overlay_protocol::FromOverlay::PickFile {
+                                mod_id,
+                                file_id: file.id,
+                            });
+                        }
+                        if let Some(description) = file
+                            .description
+                            .as_deref()
+                            .filter(|description| !description.trim().is_empty())
+                        {
+                            ui.add(
+                                egui::Label::new(RichText::new(description).small().weak()).wrap(),
+                            );
+                        }
+                        ui.add_space(4.0);
+                    }
+                });
+            ui.horizontal(|ui| {
+                if ui.button(text.cancel()).clicked() {
+                    answer = Some(overlay_protocol::FromOverlay::CancelInstall { mod_id });
+                }
+            });
+        });
+        if !open && answer.is_none() {
+            answer = Some(overlay_protocol::FromOverlay::CancelInstall { mod_id });
+        }
+        if let Some(answer) = answer {
+            self.handle_game_overlay_install(&game_id, answer);
+        }
+    }
+
     fn detect_drag_and_drop(&mut self, ctx: &egui::Context) {
         let text = self.text();
         // Show a visual cue when files are hovered

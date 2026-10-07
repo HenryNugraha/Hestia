@@ -141,6 +141,7 @@ impl HestiaApp {
                 // Its game exited, or stopped being a supported one.
                 if let Some(process) = process.take() {
                     tracing::info!(game = %process.game_id, "Closing the in-game overlay");
+                    self.handoff_game_overlay_questions();
                     process.close();
                 }
                 self.game_overlay.sent = None;
@@ -254,6 +255,7 @@ impl HestiaApp {
             if process.started.elapsed() > GAME_OVERLAY_GOOD_RUN {
                 self.game_overlay.failures = 0;
             }
+            self.handoff_game_overlay_questions();
             process.close();
             self.game_overlay.sent = None;
             self.game_overlay_failed(ctx, "The in-game overlay closed unexpectedly".to_owned());
@@ -641,7 +643,7 @@ fn game_overlay_library(
             .get(game_id)
             .copied()
             .unwrap_or_default(),
-        |category_id| category_member_count(&state.mods, game_id, category_id),
+        |category_id| category_member_count(&state.categories, &state.mods, game_id, category_id),
     );
     let super_category = gamebanana::character_super_category_id_for_hestia(game_id);
     let mut drafts: Vec<OverlayCategoryDraft> = categories
