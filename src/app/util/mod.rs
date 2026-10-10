@@ -1,3 +1,4 @@
+include!("censor.rs");
 include!("file_locks.rs");
 include!("formatting.rs");
 include!("markdown.rs");

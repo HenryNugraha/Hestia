@@ -518,6 +518,9 @@ pub struct HestiaApp {
     mod_full_textures: HashMap<String, egui::TextureHandle>,
     browse_image_textures: HashMap<String, egui::TextureHandle>,
     browse_thumb_textures: HashMap<String, egui::TextureHandle>,
+    /// Blurred copies of the pictures above, by the picture they copy, drawn
+    /// in place of a censored picture. See `censor_copy`.
+    censored_copies: HashMap<egui::TextureId, egui::TextureHandle>,
     icon_request_tx: WorkerTx<IconRequest>,
     icon_result_rx: WorkerRx<IconResult>,
     mod_image_request_tx: WorkerTx<LocalModImageRequest>,

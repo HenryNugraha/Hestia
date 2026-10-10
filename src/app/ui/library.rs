@@ -6803,6 +6803,18 @@ impl HestiaApp {
                                     (tile.id.clone(), texture)
                                 })
                                 .collect();
+                        // Censored folders show their picture's blurred copy, picked here
+                        // because the tiles draw where the app can't be reached.
+                        let folder_tile_copies: HashMap<String, egui::TextureHandle> = folder_tiles
+                            .iter()
+                            .filter(|tile| tile.representative_unsafe_content)
+                            .filter_map(|tile| {
+                                let texture = folder_tile_textures.get(&tile.id)?.as_ref()?;
+                                let censored = self.should_censor_unsafe();
+                                let copy = self.censored_copy(texture, censored)?;
+                                Some((tile.id.clone(), copy.clone()))
+                            })
+                            .collect();
                         let visible_card_ids: Vec<String> = match library_group_mode {
                             LibraryGroupMode::None => {
                                 cards.iter().map(|card| card.0.clone()).collect()
@@ -7121,11 +7133,18 @@ impl HestiaApp {
                                                         }
                                                         self.get_mod_thumb_texture(mod_id, 2)
                                                     };
-                                                    if let Some(texture) = cover_texture {
+                                                    // Owned, so its censored copy can be looked up.
+                                                    let cover_texture = cover_texture.cloned();
+                                                    let mut needs_unsafe_cover =
+                                                        *unsafe_content && should_censor_unsafe;
+                                                    if let Some(texture) = &cover_texture {
+                                                        let copy = self
+                                                            .censored_copy(texture, needs_unsafe_cover);
+                                                        needs_unsafe_cover &= copy.is_none();
                                                         paint_thumbnail_image(
                                                             ui,
                                                             rect,
-                                                            texture,
+                                                            copy.unwrap_or(texture),
                                                             ThumbnailFit::CoverTop,
                                                             Color32::WHITE,
                                                             egui::CornerRadius::same(8),
@@ -7153,7 +7172,7 @@ impl HestiaApp {
                                                             Color32::from_gray(150),
                                                         );
                                                     }
-                                                    if *unsafe_content && should_censor_unsafe {
+                                                    if needs_unsafe_cover {
                                                         paint_unsafe_overlay(
                                                             ui,
                                                             rect,
@@ -7957,11 +7976,15 @@ impl HestiaApp {
                                     },
                                     Color32::from_rgba_premultiplied(45, 48, 53, 242),
                                 );
+                                let mut needs_unsafe_cover =
+                                    tile.representative_unsafe_content && should_censor_unsafe;
                                 if let Some(Some(texture)) = folder_tile_textures.get(&tile.id) {
+                                    let copy = folder_tile_copies.get(&tile.id);
+                                    needs_unsafe_cover &= copy.is_none();
                                     paint_thumbnail_image(
                                         ui,
                                         thumb_rect,
-                                        texture,
+                                        copy.unwrap_or(texture),
                                         ThumbnailFit::CoverTop,
                                         Color32::from_white_alpha(205),
                                         egui::CornerRadius {
@@ -8004,7 +8027,7 @@ impl HestiaApp {
                                         Color32::from_rgba_premultiplied(205, 213, 220, 78),
                                     );
                                 }
-                                if tile.representative_unsafe_content && should_censor_unsafe {
+                                if needs_unsafe_cover {
                                     paint_unsafe_overlay(
                                         ui,
                                         thumb_rect,
@@ -11454,15 +11477,18 @@ impl HestiaApp {
                                             });
 
                                         if let Some(texture) = &texture_owned {
+                                            let censored =
+                                                selected.unsafe_content && self.should_censor_unsafe();
+                                            let copy = self.censored_copy(texture, censored);
                                             paint_thumbnail_image(
                                                 ui,
                                                 rect,
-                                                texture,
+                                                copy.unwrap_or(texture),
                                                 ThumbnailFit::Cover,
                                                 Color32::WHITE,
                                                 egui::CornerRadius::same(4),
                                             );
-                                            if selected.unsafe_content && self.should_censor_unsafe() {
+                                            if censored && copy.is_none() {
                                                 paint_unsafe_overlay(
                                                     ui,
                                                     rect,

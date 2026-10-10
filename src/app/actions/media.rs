@@ -1959,10 +1959,10 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::ModThumb { texture_key, image });
                         continue;
                     }
-                    let texture = ctx.load_texture(
+                    let texture = self.load_censorable_texture(
+                        ctx,
                         format!("mod-thumb-{}", texture_key),
                         image,
-                        egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::ModThumb, texture_key, 2, texture);
                     thumb_uploads += 1;
@@ -1986,8 +1986,7 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::ModFull { texture_key, image });
                         continue;
                     }
-                    let texture =
-                        ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
+                    let texture = self.load_censorable_texture(ctx, texture_key.clone(), image);
                     self.insert_tracked_texture(TextureKind::ModFull, texture_key, 3, texture);
                     full_uploads += 1;
                     full_upload_bytes = full_upload_bytes.saturating_add(upload_bytes);
@@ -2010,10 +2009,10 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::BrowseThumb { texture_key, image });
                         continue;
                     }
-                    let texture = ctx.load_texture(
+                    let texture = self.load_censorable_texture(
+                        ctx,
                         format!("browse-image-thumb-{}", texture_key),
                         image,
-                        egui::TextureOptions::LINEAR,
                     );
                     self.insert_tracked_texture(TextureKind::BrowseThumb, texture_key, 2, texture);
                     thumb_uploads += 1;
@@ -2037,8 +2036,7 @@ impl HestiaApp {
                             .push_back(PendingTextureUpload::BrowseFull { texture_key, image });
                         continue;
                     }
-                    let texture =
-                        ctx.load_texture(texture_key.clone(), image, egui::TextureOptions::LINEAR);
+                    let texture = self.load_censorable_texture(ctx, texture_key.clone(), image);
                     self.insert_tracked_texture(TextureKind::BrowseFull, texture_key, 3, texture);
                     full_uploads += 1;
                     full_upload_bytes = full_upload_bytes.saturating_add(upload_bytes);
@@ -2050,6 +2048,7 @@ impl HestiaApp {
             ctx.request_repaint();
         }
         self.evict_textures_to_budget(ctx.input(|i| i.time));
+        self.drop_orphaned_censored_copies(ctx);
     }
 }
 

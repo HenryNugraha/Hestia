@@ -560,6 +560,7 @@ impl HestiaApp {
             mod_full_textures,
             browse_image_textures: HashMap::new(),
             browse_thumb_textures: HashMap::new(),
+            censored_copies: HashMap::new(),
             icon_request_tx,
             icon_result_rx,
             mod_image_request_tx,
@@ -1499,6 +1500,62 @@ impl HestiaApp {
         }
         if cleared_any {
             self.rebuild_texture_tracking();
+        }
+    }
+
+    /// Uploads a picture along with its censored copy (see `censor_copy`), so
+    /// turning censoring on or off never has to load pictures again.
+    fn load_censorable_texture(
+        &mut self,
+        ctx: &egui::Context,
+        name: String,
+        image: egui::ColorImage,
+    ) -> egui::TextureHandle {
+        let copy = censor_copy(&image);
+        let texture = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
+        let copy = ctx.load_texture(
+            format!("{}-censored", texture.name()),
+            copy,
+            egui::TextureOptions::LINEAR,
+        );
+        self.censored_copies.insert(texture.id(), copy);
+        texture
+    }
+
+    /// Pictures leave their caches in many places, so their copies go once
+    /// egui no longer knows the picture they copy.
+    fn drop_orphaned_censored_copies(&mut self, ctx: &egui::Context) {
+        if self.censored_copies.is_empty() {
+            return;
+        }
+        let orphaned: Vec<egui::TextureId> = {
+            let textures = ctx.tex_manager();
+            let textures = textures.read();
+            self.censored_copies
+                .keys()
+                .filter(|original| textures.meta(**original).is_none())
+                .copied()
+                .collect()
+        };
+        // Dropped only after the read lock is gone: dropping a texture locks
+        // egui's textures again.
+        for original in orphaned {
+            self.censored_copies.remove(&original);
+        }
+    }
+
+    /// The blurred copy to draw in place of `texture` while it is censored,
+    /// once it has loaded.  Without one, draw the picture under
+    /// `paint_unsafe_overlay`.
+    fn censored_copy(
+        &self,
+        texture: &egui::TextureHandle,
+        censored: bool,
+    ) -> Option<&egui::TextureHandle> {
+        if censored {
+            self.censored_copies.get(&texture.id())
+        } else {
+            None
         }
     }
 

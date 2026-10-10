@@ -667,6 +667,8 @@ impl HestiaApp {
                                         8.0,
                                         Color32::from_rgba_premultiplied(45, 48, 53, 242),
                                     );
+                                    let mut needs_unsafe_cover =
+                                        card.unsafe_content && self.should_censor_unsafe();
                                     if let Some(url) = &card.thumbnail_url {
                                         let key = Self::browse_thumb_texture_key(url, ThumbnailProfile::Card);
                                         let clip = ui.clip_rect();
@@ -689,11 +691,16 @@ impl HestiaApp {
                                             );
                                         }
 
-                                        if let Some(texture) = self.get_browse_thumb_texture(&key, priority) {
+                                        // Owned, so its censored copy can be looked up.
+                                        if let Some(texture) =
+                                            self.get_browse_thumb_texture(&key, priority).cloned()
+                                        {
+                                            let copy = self.censored_copy(&texture, needs_unsafe_cover);
+                                            needs_unsafe_cover &= copy.is_none();
                                             paint_thumbnail_image(
                                                 ui,
                                                 rect,
-                                                texture,
+                                                copy.unwrap_or(&texture),
                                                 ThumbnailFit::Cover,
                                                 Color32::WHITE,
                                                 egui::CornerRadius::same(8),
@@ -722,7 +729,7 @@ impl HestiaApp {
                                             egui::CornerRadius::same(8),
                                         );
                                     }
-                                    if card.unsafe_content && self.should_censor_unsafe() {
+                                    if needs_unsafe_cover {
                                         paint_unsafe_overlay(
                                             ui,
                                             rect,
@@ -1970,15 +1977,18 @@ impl HestiaApp {
                                             });
 
                                         if let Some(texture) = &texture {
+                                            let censored =
+                                                detail.unsafe_content && self.should_censor_unsafe();
+                                            let copy = self.censored_copy(texture, censored);
                                             paint_thumbnail_image(
                                                 ui,
                                                 rect,
-                                                texture,
+                                                copy.unwrap_or(texture),
                                                 ThumbnailFit::Cover,
                                                 Color32::WHITE,
                                                 egui::CornerRadius::same(4),
                                             );
-                                            if detail.unsafe_content && self.should_censor_unsafe() {
+                                            if censored && copy.is_none() {
                                                 paint_unsafe_overlay(
                                                     ui,
                                                     rect,

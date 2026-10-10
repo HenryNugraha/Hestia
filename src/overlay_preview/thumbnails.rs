@@ -30,11 +30,6 @@ const MAX_UPLOADS_PER_POLL: usize = 4;
 const FIRST_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 
-/// The library covers a censored card with this dark color at this opacity,
-/// out of 255.  Censored pictures are darkened the same way when they load.
-const CENSOR_COVER: [u32; 3] = [12, 12, 14];
-const CENSOR_COVER_ALPHA: u32 = 230;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Priority {
     Demand,
@@ -166,30 +161,33 @@ struct DecodeResult {
 fn decode_thumbnail(path: &Path, censored: bool) -> Result<DecodedThumbnail, String> {
     // Hestia's downloaded pictures are `.bin` files, so read the format from
     // the contents rather than the extension.
-    let mut image = image::ImageReader::open(path)
+    let image = image::ImageReader::open(path)
         .and_then(|reader| reader.with_guessed_format())
         .map_err(|error| error.to_string())
         .and_then(|reader| reader.decode().map_err(|error| error.to_string()))
         .map_err(|error| format!("failed to decode {}: {error}", path.display()))?
         .thumbnail(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION)
         .to_rgba8();
-    if censored {
-        censor(&mut image);
-    }
     let size = [image.width() as usize, image.height() as usize];
+    if censored {
+        // The same tiny blurred copy the library draws for a censored card.
+        let copy = crate::app::censor_copy(&egui::ColorImage::from_rgba_unmultiplied(
+            size,
+            image.as_raw(),
+        ));
+        return Ok(DecodedThumbnail {
+            size: copy.size,
+            rgba: copy
+                .pixels
+                .iter()
+                .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+                .collect(),
+        });
+    }
     Ok(DecodedThumbnail {
         size,
         rgba: image.into_raw(),
     })
-}
-
-/// Darkens a picture like the library's cover on censored cards.
-fn censor(image: &mut image::RgbaImage) {
-    for pixel in image.pixels_mut() {
-        for (channel, cover) in pixel.0.iter_mut().zip(CENSOR_COVER) {
-            *channel = (cover + u32::from(*channel) * (255 - CENSOR_COVER_ALPHA) / 255) as u8;
-        }
-    }
 }
 
 fn decode_worker(
@@ -430,8 +428,9 @@ impl ThumbnailCache {
         self.failures.clear();
     }
 
-    /// The pictures to darken like the library's censored cards.  Pictures
-    /// that were censored and no longer are, or the other way, load again.
+    /// The pictures to blur and darken, like the library's censored cards.
+    /// Pictures that were censored and no longer are, or the other way, load
+    /// again.
     pub(super) fn set_censored(&mut self, paths: HashSet<PathBuf>) {
         let changed: Vec<PathBuf> = {
             let mut censored = self
@@ -680,10 +679,21 @@ mod tests {
     }
 
     #[test]
-    fn censored_pictures_darken_like_the_library_cover() {
-        let mut image = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 128, 200]));
-        censor(&mut image);
-        assert_eq!(image.get_pixel(0, 0).0, [37, 12, 26, 200]);
+    fn censored_pictures_load_as_the_librarys_blurred_copy() {
+        let directory = tempfile::tempdir().expect("create test directory");
+        let path = directory.path().join("picture.png");
+        image::RgbaImage::from_pixel(1200, 600, image::Rgba([255, 0, 128, 255]))
+            .save(&path)
+            .expect("write test image");
+
+        let decoded = decode_thumbnail(&path, true).expect("decode censored picture");
+        let expected = crate::app::censor_copy(&egui::ColorImage::new(
+            [640, 320],
+            vec![egui::Color32::from_rgb(255, 0, 128); 640 * 320],
+        ));
+        assert_eq!(decoded.size, expected.size);
+        // Darker, but not black.
+        assert_eq!(&decoded.rgba[..4], &[112, 7, 60, 255]);
     }
 
     #[test]

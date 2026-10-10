@@ -502,7 +502,9 @@ fn paint_unsafe_overlay(
 ) {
     let rounding = rounding.into();
     
-    // Paint a semi-transparent dark overlay to censor the content
+    // Paint a semi-transparent dark overlay to censor the content. Censored
+    // pictures show their blurred copy instead (see `censor_copy`) once it has
+    // loaded, so this covers the moment before that.
     ui.painter().rect_filled(
         rect,
         rounding,
