@@ -1,6 +1,8 @@
 //! The hotkeys on the back of the focused mod card.  Hestia reads a mod's
 //! hotkeys once its card is focused, and the card gets a keys button when it
-//! has any.  The button, a click on the back, or R turns the card over.
+//! has any.  The button, a click on the back, or R turns the card over.  A
+//! click on a key, or Space on the one W and S picked, has Hestia press it in
+//! the game.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +34,10 @@ const PADDING: f32 = 10.0;
 const HEADER_HEIGHT: f32 = 37.0;
 const ROW_HEIGHT: f32 = 24.0;
 const KEYCAP_HEIGHT: f32 = 18.0;
+/// How long a key stays lit after the game got it.
+const LIT_SECS: f64 = 0.6;
+/// How long a key shows it waits for Hestia's answer, at most.
+const ANSWER_SECS: f64 = 20.0;
 
 /// Which side of a card shows, and how wide it is while it turns, 1 being
 /// its full width.
@@ -125,6 +131,8 @@ struct Flip {
     started_at: f64,
     /// The first row the back shows.
     scroll: usize,
+    /// The row Space presses.
+    selected: usize,
 }
 
 impl Flip {
@@ -137,6 +145,21 @@ impl Flip {
     fn turning(&self, now: f64) -> bool {
         now - self.started_at < FLIP_SECS
     }
+}
+
+/// A key Hestia was asked to press and hasn't answered about.
+struct Press {
+    id: u64,
+    mod_id: String,
+    index: usize,
+    sent_at: f64,
+}
+
+/// A key the game got, lit for a moment.
+struct Lit {
+    mod_id: String,
+    index: usize,
+    at: f64,
 }
 
 #[derive(Default)]
@@ -158,8 +181,13 @@ pub(super) struct CardKeys {
     back: Option<Rect>,
     last_back: Option<Rect>,
     hidden_rows: usize,
+    /// How many rows the settled back fits.
+    fit: usize,
     wheel: f32,
     label: Label,
+    presses: Vec<Press>,
+    next_press: u64,
+    lit: Option<Lit>,
 }
 
 impl CardKeys {
@@ -179,6 +207,13 @@ impl CardKeys {
     }
 
     pub(super) fn receive(&mut self, answer: ModHotkeys) {
+        if let Some(flip) = self
+            .flip
+            .as_mut()
+            .filter(|flip| flip.mod_id == answer.mod_id)
+        {
+            flip.selected = flip.selected.min(answer.hotkeys.len().saturating_sub(1));
+        }
         self.hotkeys.insert(answer.mod_id, answer.hotkeys);
     }
 
@@ -212,6 +247,7 @@ impl CardKeys {
                     back: true,
                     started_at: now,
                     scroll: 0,
+                    selected: 0,
                 });
             }
             _ => return,
@@ -257,6 +293,82 @@ impl CardKeys {
 
     pub(super) fn turning(&self, now: f64) -> bool {
         self.flip.as_ref().is_some_and(|flip| flip.turning(now))
+    }
+
+    /// Whether the mod's card shows its hotkeys, or turns to them.
+    pub(super) fn showing(&self, mod_id: &str) -> bool {
+        self.flip
+            .as_ref()
+            .is_some_and(|flip| flip.mod_id == mod_id && flip.back)
+    }
+
+    /// Moves the back's selection a row up for a negative direction, or down,
+    /// and scrolls it into view.  False when there's no row that way.
+    pub(super) fn select(&mut self, direction: i32) -> bool {
+        let Some(flip) = self.flip.as_mut().filter(|flip| flip.back) else {
+            return false;
+        };
+        let count = self.hotkeys.get(&flip.mod_id).map_or(0, Vec::len);
+        let Some(selected) = flip
+            .selected
+            .checked_add_signed(direction.signum() as isize)
+            .filter(|&selected| selected < count)
+        else {
+            return false;
+        };
+        flip.selected = selected;
+        flip.scroll = flip
+            .scroll
+            .min(selected)
+            .max((selected + 1).saturating_sub(self.fit.max(1)));
+        true
+    }
+
+    /// Asks Hestia to press the selected key of the card showing its back.
+    pub(super) fn press_selected(&mut self, now: f64) {
+        if let Some(flip) = self.flip.as_ref().filter(|flip| flip.back) {
+            let (mod_id, index) = (flip.mod_id.clone(), flip.selected);
+            self.press(mod_id, index, now);
+        }
+    }
+
+    fn press(&mut self, mod_id: String, index: usize, now: f64) {
+        let Some(row) = self.hotkeys.get(&mod_id).and_then(|rows| rows.get(index)) else {
+            return;
+        };
+        let key = row.raw.clone();
+        self.next_press += 1;
+        let id = self.next_press;
+        self.presses
+            .retain(|press| now - press.sent_at < ANSWER_SECS);
+        self.presses.push(Press {
+            id,
+            mod_id: mod_id.clone(),
+            index,
+            sent_at: now,
+        });
+        self.requests.push(FromOverlay::PressHotkey {
+            id,
+            mod_id,
+            index,
+            key,
+        });
+    }
+
+    /// Hestia answered a press.  Lights its key when the game got it.  Gives
+    /// back why it didn't, for the warning strip.
+    pub(super) fn pressed(&mut self, id: u64, error: Option<String>, now: f64) -> Option<String> {
+        if let Some(at) = self.presses.iter().position(|press| press.id == id) {
+            let press = self.presses.remove(at);
+            if error.is_none() {
+                self.lit = Some(Lit {
+                    mod_id: press.mod_id,
+                    index: press.index,
+                    at: now,
+                });
+            }
+        }
+        error
     }
 
     /// Call before anything reads `owns_press` this frame.
@@ -407,11 +519,13 @@ impl CardKeys {
 
     /// The back of the mod's card: its name, then its hotkeys.  `card` is
     /// where the whole card goes, `shown` the part that shows while it
-    /// turns.  True when its keys button was clicked.
+    /// turns.  `selecting` marks the row Space presses.  True when its keys
+    /// button was clicked.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn paint_back(
         &mut self,
         ui: &Ui,
+        id: egui::Id,
         card: Rect,
         shown: Rect,
         mod_id: &str,
@@ -419,9 +533,11 @@ impl CardKeys {
         border: Stroke,
         reveal: f32,
         overlay_opacity: u8,
+        selecting: bool,
         button: Option<KeysButton>,
     ) -> bool {
         let settled = shown.width() >= card.width();
+        let now = ui.input(|input| input.time);
         if settled {
             self.own_clicks.push(card);
             self.back = Some(card);
@@ -473,11 +589,14 @@ impl CardKeys {
         let hidden = rows.len().saturating_sub(fit);
         if settled {
             self.hidden_rows = hidden;
+            self.fit = fit;
         }
-        let first = self.flip.as_mut().map_or(0, |flip| {
+        let (first, selected) = self.flip.as_mut().map_or((0, None), |flip| {
             flip.scroll = flip.scroll.min(hidden);
-            flip.scroll
+            (flip.scroll, selecting.then_some(flip.selected))
         });
+        let mut clicked_row = None;
+        let mut lit_moving = false;
         let key_font = FontId::proportional(11.0);
         let label_font = FontId::proportional(12.0);
         let key_color = fade(content_gray(235, overlay_opacity));
@@ -496,7 +615,47 @@ impl CardKeys {
             .fold(0.0_f32, f32::max)
             .min(room * 0.5);
         for (line, row) in rows.iter().skip(first).take(fit).enumerate() {
+            let index = first + line;
             let y = list.min.y + line as f32 * ROW_HEIGHT + ROW_HEIGHT * 0.5;
+            let row_rect = Rect::from_min_max(
+                egui::pos2(list.min.x - 4.0, y - ROW_HEIGHT * 0.5),
+                egui::pos2(list.min.x + room, y + ROW_HEIGHT * 0.5),
+            );
+            // Above the card, so a click on a key presses it, not turns the
+            // card back.
+            let hovered = settled && {
+                let response = ui
+                    .interact(row_rect, id.with(index), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() {
+                    clicked_row = Some(index);
+                }
+                response.hovered()
+            };
+            if hovered || selected == Some(index) {
+                painter.rect_filled(
+                    row_rect,
+                    CornerRadius::same(4),
+                    fade(rgba_alpha(
+                        255,
+                        255,
+                        255,
+                        if hovered { 26 } else { 16 },
+                        overlay_opacity,
+                    )),
+                );
+            }
+            let waiting = self.presses.iter().any(|press| {
+                press.mod_id == mod_id && press.index == index && now - press.sent_at < ANSWER_SECS
+            });
+            let lit = self
+                .lit
+                .as_ref()
+                .filter(|lit| lit.mod_id == mod_id && lit.index == index)
+                .map(|lit| (now - lit.at) / LIT_SECS)
+                .filter(|progress| (0.0..1.0).contains(progress))
+                .map_or(0.0, |progress| 1.0 - progress as f32);
+            lit_moving |= lit > 0.0;
             let key = elided_galley(ui, &row.key, key_font.clone(), key_color, column - 10.0);
             let keycap = Rect::from_min_size(
                 egui::pos2(list.min.x, y - KEYCAP_HEIGHT * 0.5),
@@ -507,10 +666,27 @@ impl CardKeys {
                 CornerRadius::same(3),
                 fade(rgba_alpha(58, 58, 58, 255, overlay_opacity)),
             );
+            if lit > 0.0 {
+                painter.rect_filled(
+                    keycap,
+                    CornerRadius::same(3),
+                    fade(scale_color_alpha(
+                        content_color(ACCENT, overlay_opacity),
+                        lit * 0.6,
+                    )),
+                );
+            }
             painter.rect_stroke(
                 keycap,
                 CornerRadius::same(3),
-                Stroke::new(1.0, fade(content_gray(96, overlay_opacity))),
+                Stroke::new(
+                    1.0,
+                    fade(if waiting || lit > 0.0 {
+                        content_color(ACCENT, overlay_opacity)
+                    } else {
+                        content_gray(96, overlay_opacity)
+                    }),
+                ),
                 StrokeKind::Inside,
             );
             painter.galley(
@@ -560,6 +736,15 @@ impl CardKeys {
             Stroke::new(border.width, fade(border.color)),
             StrokeKind::Inside,
         );
+        if lit_moving {
+            ui.ctx().request_repaint();
+        }
+        if let Some(index) = clicked_row {
+            if let Some(flip) = &mut self.flip {
+                flip.selected = index;
+            }
+            self.press(mod_id.to_owned(), index, now);
+        }
         button.is_some_and(|button| self.button(ui, button, overlay_opacity))
     }
 }
@@ -594,6 +779,7 @@ mod tests {
                 .map(|index| ModHotkey {
                     key: format!("F{index}"),
                     label: format!("Key {index}"),
+                    raw: format!("VK_F{index}"),
                 })
                 .collect(),
         }
@@ -679,6 +865,83 @@ mod tests {
         // It's back on its front a quarter of the time later.
         assert_eq!(keys.face("some", quarter * 2.0 + 1e-6), Face::FRONT);
         assert!(keys.flip.is_none());
+    }
+
+    #[test]
+    fn the_selection_stays_on_the_rows_and_in_view() {
+        let mut keys = CardKeys::default();
+        keys.receive(answer("some", 4));
+        assert!(!keys.select(1), "nothing to select on the front");
+        keys.toggle("some", 0.0);
+        keys.fit = 2;
+        assert!(!keys.select(-1));
+        assert!(keys.select(1));
+        assert!(keys.select(1));
+        let flip = keys.flip.as_ref().unwrap();
+        assert_eq!((flip.selected, flip.scroll), (2, 1));
+        assert!(keys.select(1));
+        assert!(!keys.select(1), "below the last row is the categories row");
+        for _ in 0..3 {
+            assert!(keys.select(-1));
+        }
+        let flip = keys.flip.as_ref().unwrap();
+        assert_eq!((flip.selected, flip.scroll), (0, 0));
+        // A shorter list from Hestia keeps the selection on it.
+        assert!(keys.select(1) && keys.select(1) && keys.select(1));
+        keys.receive(answer("some", 2));
+        assert_eq!(keys.flip.as_ref().unwrap().selected, 1);
+    }
+
+    #[test]
+    fn space_asks_hestia_to_press_the_selected_key() {
+        let mut keys = CardKeys::default();
+        keys.receive(answer("some", 3));
+        keys.press_selected(0.0);
+        assert!(keys.take_requests().is_empty(), "the front presses nothing");
+        keys.toggle("some", 0.0);
+        keys.select(1);
+        keys.press_selected(1.0);
+        keys.press_selected(1.5);
+        assert_eq!(
+            keys.take_requests(),
+            vec![
+                FromOverlay::PressHotkey {
+                    id: 1,
+                    mod_id: "some".into(),
+                    index: 1,
+                    key: "VK_F1".into(),
+                },
+                FromOverlay::PressHotkey {
+                    id: 2,
+                    mod_id: "some".into(),
+                    index: 1,
+                    key: "VK_F1".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_answer_lights_the_key_or_gives_the_error() {
+        let mut keys = CardKeys::default();
+        keys.receive(answer("some", 2));
+        keys.toggle("some", 0.0);
+        keys.press_selected(1.0);
+        keys.press_selected(1.1);
+        assert_eq!(keys.presses.len(), 2);
+        assert_eq!(keys.pressed(1, None, 2.0), None);
+        let lit = keys.lit.as_ref().unwrap();
+        assert_eq!((lit.mod_id.as_str(), lit.index, lit.at), ("some", 0, 2.0));
+        assert_eq!(
+            keys.pressed(2, Some("no".into()), 2.5),
+            Some("no".to_owned())
+        );
+        assert_eq!(keys.lit.as_ref().unwrap().at, 2.0);
+        assert!(keys.presses.is_empty());
+        // One Hestia never answered stops showing.
+        keys.press_selected(3.0);
+        keys.press_selected(3.0 + ANSWER_SECS);
+        assert_eq!(keys.presses.len(), 1);
     }
 
     #[test]

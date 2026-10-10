@@ -1579,7 +1579,7 @@ mod profile_switcher_geometry_tests {
             vec![LUCIDE_FAMILY.to_string()],
         );
         ctx.set_fonts(fonts);
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.set_width(240.0);
             ui.spacing_mut().item_spacing.y = PROFILE_SELECTOR_FOOTER_GAP;
             let create = profile_selector_action_row(ui, Icon::Plus, "New profile", true);
@@ -1600,7 +1600,8 @@ mod profile_switcher_geometry_tests {
                 PROFILE_SELECTOR_FOOTER_GAP,
                 "the new row must sit directly below Duplicate on the same rhythm"
             );
-        });
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]
@@ -1617,7 +1618,7 @@ mod profile_switcher_geometry_tests {
         let scroll_rect = std::cell::Cell::new(None);
         let footer_rect = std::cell::Cell::new(None);
         let max_height = std::cell::Cell::new(0.0);
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.set_width(240.0);
             ui.set_height(600.0);
             let row_gap = ui.spacing().item_spacing.y;
@@ -1643,7 +1644,8 @@ mod profile_switcher_geometry_tests {
                 Sense::hover(),
             );
             footer_rect.set(Some(footer.rect));
-        });
+        })
+        .drop_without_applying_deltas();
 
         let scroll_rect = scroll_rect.get().expect("scroll area");
         let footer_rect = footer_rect.get().expect("footer");
@@ -1778,7 +1780,7 @@ mod profile_switcher_geometry_tests {
     #[test]
     fn profile_name_action_footer_does_not_consume_remaining_window_height() {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.set_width(440.0);
             ui.set_height(300.0);
             ui.add_space(100.0);
@@ -1788,7 +1790,8 @@ mod profile_switcher_geometry_tests {
 
             assert_eq!(response.response.rect.top(), top);
             assert_eq!(response.response.rect.height(), expected_height);
-        });
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]
@@ -1887,7 +1890,7 @@ mod profile_switcher_geometry_tests {
     #[test]
     fn profile_name_hint_row_keeps_its_height_with_and_without_a_hint() {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.set_width(346.0);
             let before = ui.cursor().top();
             profile_name_hint_row(ui, None);
@@ -1897,6 +1900,7 @@ mod profile_switcher_geometry_tests {
             let with = ui.cursor().top() - mid;
             assert_eq!(without, with);
             assert!(without >= 18.0);
-        });
+        })
+        .drop_without_applying_deltas();
     }
 }

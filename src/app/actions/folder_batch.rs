@@ -276,7 +276,7 @@ impl HestiaApp {
             || self
                 .hotkey_requests_inflight
                 .iter()
-                .any(|request_game_id| request_game_id == game_id);
+                .any(|(request_game_id, _)| request_game_id == game_id);
         if self.folder_batch_job.is_some() {
             return false;
         }

@@ -18,9 +18,14 @@ pub(crate) const OVERLAY_ARG: &str = "--overlay";
 pub(crate) const UNCATEGORIZED_ID: &str = "hestia:uncategorized";
 
 /// The overlay's window title.  XXMI takes keys only from the game or a
-/// window titled "Hestia", so Hestia gives the overlay that title just while
-/// it presses the reload key, then this one back.
+/// window titled "Hestia", so the overlay has that title just while Hestia
+/// presses a key for the game through it, or while a key the overlay doesn't
+/// use is down, then this one back.
 pub(crate) const OVERLAY_TITLE: &str = "Hestia overlay";
+
+/// Marks the keys Hestia presses for the game, so the overlay leaves them
+/// alone: the overlay may be in front while Hestia presses them.
+pub(crate) const HESTIA_INPUT_MARK: usize = 0x4845_5354;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -54,6 +59,13 @@ pub(crate) enum ToOverlay {
     Install(InstallUpdate),
     /// A mod's hotkeys the overlay asked for with `FromOverlay::Hotkeys`.
     Hotkeys(ModHotkeys),
+    /// Hestia has pressed, or couldn't press, a hotkey the overlay asked for
+    /// with `FromOverlay::PressHotkey`.
+    HotkeyPressed {
+        id: u64,
+        /// Why the game didn't get it, for the overlay's warning strip.
+        error: Option<String>,
+    },
     /// Hestia's settings changed.
     Settings(Settings),
 }
@@ -207,6 +219,17 @@ pub(crate) enum FromOverlay {
     Hotkeys {
         mod_id: String,
     },
+    /// Press one of a mod's hotkeys in the game, like a click on it in
+    /// Hestia's hotkey list.  Hestia answers with `ToOverlay::HotkeyPressed`.
+    PressHotkey {
+        /// The overlay's number for it, which the answer repeats.
+        id: u64,
+        mod_id: String,
+        /// Its place in the list Hestia sent.
+        index: usize,
+        /// Its `ModHotkey::raw`, in case the list has changed since.
+        key: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,6 +295,9 @@ pub(crate) struct ModHotkey {
     /// The key as the library shows it, such as "Ctrl+H".
     pub key: String,
     pub label: String,
+    /// The key as the mod's file has it, such as "ctrl VK_H".
+    #[serde(default)]
+    pub raw: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -519,8 +545,14 @@ mod tests {
                 hotkeys: vec![ModHotkey {
                     key: "Ctrl+H".into(),
                     label: "Hat".into(),
+                    raw: "ctrl VK_H".into(),
                 }],
             }),
+            ToOverlay::HotkeyPressed { id: 4, error: None },
+            ToOverlay::HotkeyPressed {
+                id: 5,
+                error: Some("Turn this mod on to use its hotkeys.".into()),
+            },
             ToOverlay::Settings(Settings::default()),
         ];
         for message in messages {
@@ -583,6 +615,12 @@ mod tests {
             FromOverlay::AllCharacters { show: true },
             FromOverlay::Hotkeys {
                 mod_id: "mod-1".into(),
+            },
+            FromOverlay::PressHotkey {
+                id: 4,
+                mod_id: "mod-1".into(),
+                index: 0,
+                key: "ctrl VK_H".into(),
             },
         ] {
             let line = encode(&message).unwrap();

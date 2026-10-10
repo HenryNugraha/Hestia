@@ -180,6 +180,8 @@ pub(super) enum Space {
     Enable,
     Install,
     TryAgain,
+    /// The card shows its hotkeys, and Space presses the selected one.
+    PressHotkey,
 }
 
 /// What a search shows.  A category whose name matches shows all its mods,
@@ -568,6 +570,7 @@ impl Layouts {
                 ToOverlay::Pictures(pictures) => {
                     characters_changed |= self.gamebanana.apply_pictures(&pictures);
                     lists_changed = true;
+                    self.thumbnails.retry_failed();
                 }
                 ToOverlay::Install(update) => {
                     let mods = match &update.stage {
@@ -970,6 +973,8 @@ impl Layouts {
     /// active mod, as it would on a fresh start.
     pub(super) fn replace_catalog(&mut self, catalog: Catalog) {
         self.keys.library_changed();
+        // Mods' folders and pictures may have changed with it.
+        self.thumbnails.retry_failed();
         let selection = self.selection();
         let previous_index = self.selected_category;
         let query = std::mem::take(&mut self.filter.query);
@@ -1290,6 +1295,44 @@ impl Layouts {
         ctx.request_repaint();
     }
 
+    /// The focused card shows its hotkeys, or turns to them, and W, S and
+    /// Space work on them.
+    pub(super) fn hotkeys_shown(&self) -> bool {
+        self.row == Row::Mods
+            && self
+                .focused_mod_id()
+                .is_some_and(|mod_id| self.keys.showing(&mod_id))
+    }
+
+    /// Moves through the focused card's hotkeys.  False when they don't
+    /// show or there's no row that way, so the key switches rows.
+    pub(super) fn select_hotkey(&mut self, ctx: &egui::Context, direction: i32) -> bool {
+        if !self.hotkeys_shown() {
+            return false;
+        }
+        ctx.request_repaint();
+        self.keys.select(direction)
+    }
+
+    /// Asks Hestia to press the focused card's selected hotkey in the game.
+    pub(super) fn press_hotkey(&mut self, ctx: &egui::Context, now: f64) {
+        if self.hotkeys_shown() {
+            self.keys.press_selected(now);
+            ctx.request_repaint();
+        }
+    }
+
+    /// Hestia answered a hotkey press.  Gives back why the game didn't get
+    /// it.
+    pub(super) fn hotkey_pressed(
+        &mut self,
+        id: u64,
+        error: Option<String>,
+        now: f64,
+    ) -> Option<String> {
+        self.keys.pressed(id, error, now)
+    }
+
     /// The focused card's mod, when it's one of the library's.
     fn focused_mod_id(&self) -> Option<String> {
         match self.card(self.selected_category, self.carousel_focus)? {
@@ -1575,12 +1618,15 @@ impl Layouts {
             .filter(|costume| costume.active)
             .count();
         let loose = is_loose(category);
+        let pressing = self.hotkeys_shown();
         ShortcutAvailability {
             categories,
             mods,
-            exclusive: !(focused.active && (loose || active_count == 1)),
+            exclusive: pressing || !(focused.active && (loose || active_count == 1)),
             toggle: true,
-            space: if loose {
+            space: if pressing {
+                Space::PressHotkey
+            } else if loose {
                 Space::Enable
             } else {
                 Space::Exclusive
@@ -2600,6 +2646,7 @@ impl Layouts {
             });
             let clicked = self.keys.paint_back(
                 ui,
+                card_id.with("key-rows"),
                 full_rect,
                 visual_rect,
                 mod_id,
@@ -2607,6 +2654,7 @@ impl Layouts {
                 Stroke::new(1.5, border),
                 reveal,
                 overlay_opacity,
+                self.row == Row::Mods,
                 button,
             );
             if clicked || (settled && response.clicked()) {
@@ -4622,12 +4670,14 @@ mod tests {
         input.time = Some(time);
         input.events = events;
         super::super::apply_preview_style(context);
-        let _ = context.run_ui(input, |ui| {
-            layouts.show_carousel(ui, 94);
-            if show_category_strip {
-                layouts.show_category_strip(ui, 94);
-            }
-        });
+        context
+            .run_ui(input, |ui| {
+                layouts.show_carousel(ui, 94);
+                if show_category_strip {
+                    layouts.show_category_strip(ui, 94);
+                }
+            })
+            .drop_without_applying_deltas();
     }
 
     fn pointer_button_event(pos: egui::Pos2, pressed: bool) -> egui::Event {

@@ -100,6 +100,7 @@ pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
             .map(|(key, label)| ModHotkey {
                 key: key.to_owned(),
                 label: label.to_owned(),
+                raw: key.to_owned(),
             })
             .collect(),
     }

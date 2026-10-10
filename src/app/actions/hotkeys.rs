@@ -11,7 +11,9 @@ impl HestiaApp {
         }
         // The customization worker processes requests sequentially and sends exactly one
         // completion per request, including failed reads and worker panics.
-        self.hotkey_requests_inflight.push_back(game_id);
+        let overlay_press = self.game_overlay.pending_hotkey_press.take();
+        self.hotkey_requests_inflight
+            .push_back((game_id, overlay_press));
         true
     }
 
@@ -145,7 +147,29 @@ impl HestiaApp {
 
     fn consume_hotkey_customization_events(&mut self) {
         while let Ok(event) = self.hotkey_customization_rx.try_recv() {
-            self.hotkey_requests_inflight.pop_front();
+            let overlay_press = self
+                .hotkey_requests_inflight
+                .pop_front()
+                .and_then(|(_, overlay_press)| overlay_press);
+            if let Some(id) = overlay_press {
+                let reached = match &event {
+                    HotkeyCustomizationEvent::ValueFinished { status, .. } => {
+                        status.starts_with("sent ") || status == "unchanged"
+                    }
+                    HotkeyCustomizationEvent::CommandFinished { message, .. } => {
+                        message.starts_with("sent ")
+                    }
+                    _ => false,
+                };
+                self.answer_game_overlay_hotkey(
+                    id,
+                    (!reached).then(|| {
+                        self.text()
+                            .get(TextKey::GameOverlayHotkeyNotSent)
+                            .to_owned()
+                    }),
+                );
+            }
             match event {
                 HotkeyCustomizationEvent::ValuesLoaded {
                     mod_id,
@@ -380,7 +404,7 @@ impl HestiaApp {
         // Keep the frame loop alive so polling continues while the app is otherwise idle.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
-        let now = ctx.input(|input| input.time);
+        let now = logic_time();
         // (Re)arm the watch when its mod, game, or effective Mods path changes. The initial
         // values were already loaded by `select_hotkeys_source`, so just seed the token and wait
         // for the next flush. Root discovery itself is cached and deadline-gated.

@@ -982,4 +982,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Ubah", // FolderBatchScopeChange
     "{mods} mod terdampak", // FolderBatchScopeModCount
     "Rincian", // FolderBatchReportDetails
+    "Aktifkan mod ini untuk memakai tombolnya.", // GameOverlayHotkeyModOff
+    "Tombol tidak sampai ke game. Lepaskan semua tombol, lalu coba lagi.", // GameOverlayHotkeyNotSent
+    "Nyalakan \"Izinkan Hestia mengubah konfigurasi d3dx.ini\" di pengaturan Hestia untuk menekan tombol mod di sini.", // GameOverlayHotkeyNotAllowed
+    "Tekan tombol ini", // GameOverlayHintPressHotkey
 ];

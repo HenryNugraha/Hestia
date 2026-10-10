@@ -272,7 +272,7 @@ impl HestiaApp {
     ) -> bool {
         let ttl_secs = ttl.as_secs_f64();
         ctx.request_repaint_after(ttl);
-        let now = ctx.input(|input| input.time);
+        let now = logic_time();
         if let Some(cache) = self.game_process_running_cache.get(&game.definition.id)
             && now < cache.next_check_at
         {

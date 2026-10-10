@@ -102,6 +102,7 @@ impl Hint {
                 Space::Enable => TextKey::GameOverlayHintEnable,
                 Space::Install => TextKey::GameOverlayHintInstall,
                 Space::TryAgain => TextKey::GameOverlayHintTryAgain,
+                Space::PressHotkey => TextKey::GameOverlayHintPressHotkey,
             },
             Self::Navigate => TextKey::GameOverlayHintNavigate,
             Self::Mods => TextKey::GameOverlayHintMods,
@@ -341,6 +342,10 @@ mod tests {
         assert_eq!(label(Space::Enable), ("Enable this mod", "Enable this mod"));
         assert_eq!(label(Space::Install), ("Install", "Install"));
         assert_eq!(label(Space::TryAgain), ("Try again", "Try again"));
+        assert_eq!(
+            label(Space::PressHotkey),
+            ("Press this key", "Press this key")
+        );
     }
 
     #[test]

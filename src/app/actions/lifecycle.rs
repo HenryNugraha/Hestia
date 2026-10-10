@@ -413,6 +413,7 @@ impl HestiaApp {
             show_modified_locally_mods: true,
             show_ignoring_update_mods: true,
             selected_category_folder_id: None,
+            category_folder_forward_id: None,
             selected_library_folder_ids: HashSet::new(),
             library_folder_selection_anchor: None,
             library_folder_contents_scope: FolderContentsScope::Visible,
@@ -2795,14 +2796,47 @@ impl HestiaApp {
 
     fn leave_category_folder_view(&mut self) -> bool {
         self.clear_library_folder_selection();
-        if self.selected_category_folder_id.is_none() {
+        let Some(folder_id) = self.selected_category_folder_id.take() else {
             return false;
-        }
-        self.selected_category_folder_id = None;
+        };
+        self.category_folder_forward_id = Some(folder_id);
         self.selected_mods.clear();
         self.set_selected_mod_id(None);
         self.library_selection_section = LibrarySelectionSection::Folders;
         self.library_folder_selection_context = None;
+        true
+    }
+
+    /// Opens the category folder the library last went back out of, like a browser's forward
+    /// button, while it still is one of this game's folders.
+    fn reopen_left_category_folder(&mut self) -> bool {
+        if self.selected_category_folder_id.is_some()
+            || self
+                .state
+                .static_prefs
+                .effective_library_category_display_mode()
+                != LibraryCategoryDisplayMode::Folders
+        {
+            return false;
+        }
+        let Some(game_id) = self.selected_game().map(|game| game.definition.id.clone()) else {
+            return false;
+        };
+        let Some(folder_id) = self.category_folder_forward_id.take() else {
+            return false;
+        };
+        if !self
+            .categories_for_game(&game_id)
+            .iter()
+            .any(|category| category.id == folder_id)
+        {
+            return false;
+        }
+        self.clear_library_folder_selection();
+        self.selected_category_folder_id = Some(folder_id);
+        self.selected_mods.clear();
+        self.library_folder_selection_context = None;
+        self.library_selection_section = LibrarySelectionSection::Mods;
         true
     }
 
@@ -3072,10 +3106,10 @@ impl HestiaApp {
         }
 
         if self.current_view == ViewMode::Library {
-            let library_key_context = app_window_focused
-                && !text_input_active
-                && !self.right_pane_bound_window_open()
-                && !egui::Popup::is_any_open(ctx);
+            // The windows that cover the right pane (Tasks, Settings, the log...) leave the
+            // library usable beside them, so its keys work while they're open too.
+            let library_key_context =
+                app_window_focused && !text_input_active && !egui::Popup::is_any_open(ctx);
             if library_key_context
                 && ctx.input(|input| !input.modifiers.shift && !input.modifiers.alt)
                 && ctx.input_mut(|input| {
@@ -3115,6 +3149,7 @@ impl HestiaApp {
                     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                         self.clear_library_folder_selection();
                         self.selected_category_folder_id = Some(folder_id.clone());
+                        self.category_folder_forward_id = None;
                         self.library_folder_selection_context = None;
                         self.library_selection_section = LibrarySelectionSection::Mods;
                     }
@@ -3141,6 +3176,16 @@ impl HestiaApp {
                     .input(|input| input.pointer.button_clicked(egui::PointerButton::Extra1)));
             if folder_back_requested {
                 self.leave_category_folder_view();
+            }
+            let folder_forward_requested = library_key_context
+                && self.selected_category_folder_id.is_none()
+                && self.category_folder_forward_id.is_some()
+                && (ctx.input_mut(|input| {
+                    input.consume_shortcut(&egui::KeyboardShortcut::new(alt, egui::Key::ArrowRight))
+                }) || ctx
+                    .input(|input| input.pointer.button_clicked(egui::PointerButton::Extra2)));
+            if folder_forward_requested {
+                self.reopen_left_category_folder();
             }
             if library_key_context
                 && !folder_selection_active
@@ -3802,6 +3847,7 @@ impl HestiaApp {
             self.clear_library_folder_selection();
             self.library_folder_selection_context = None;
             self.selected_category_folder_id = None;
+            self.category_folder_forward_id = None;
             self.library_visible_folder_ids.clear();
             self.library_visible_mod_ids.clear();
             self.library_selection_section = if self.state.static_prefs.effective_library_category_display_mode()

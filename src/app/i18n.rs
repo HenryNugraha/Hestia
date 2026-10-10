@@ -973,10 +973,16 @@ pub(crate) enum TextKey {
     FolderBatchScopeChange,
     FolderBatchScopeModCount,
     FolderBatchReportDetails,
+
+    // In-game overlay: pressing a mod's hotkeys from its card
+    GameOverlayHotkeyModOff,
+    GameOverlayHotkeyNotSent,
+    GameOverlayHotkeyNotAllowed,
+    GameOverlayHintPressHotkey,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::FolderBatchReportDetails as usize + 1;
+    const COUNT: usize = Self::GameOverlayHintPressHotkey as usize + 1;
 }
 
 include!("i18n/en_us.rs");

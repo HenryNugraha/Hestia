@@ -2,6 +2,12 @@
 // the overlay asks for through Browse's caches, then downloads their pictures
 // and sends those as they arrive.
 
+/// Pictures that failed to download, after the client's own retries, get
+/// this many more tries, this long apart.  GameBanana's picture server can
+/// turn many requests at once away for a while.
+const OVERLAY_PICTURE_RETRIES: usize = 1;
+const OVERLAY_PICTURE_RETRY_DELAY: Duration = Duration::from_secs(5);
+
 /// What the overlay's GameBanana requests need, taken from the app when one
 /// arrives.
 #[derive(Clone)]
@@ -164,50 +170,70 @@ impl OverlayBrowse {
     }
 
     /// Downloads pictures into Browse's image cache, and sends each one as it
-    /// lands.
-    async fn download_pictures(&self, missing: Vec<(u64, String)>, characters: bool) {
-        let mut downloads = tokio::task::JoinSet::new();
-        for (id, url) in missing {
-            let client = self.runtime.http_client();
-            let limiter = Arc::clone(&self.runtime.thumb_image_limiter);
-            let portable = self.portable.clone();
-            let limit = self.cache_limit_bytes;
-            downloads.spawn(async move {
-                let _permit = limiter.acquire().await.ok();
-                let bytes = client
-                    .get(&url)
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .bytes()
-                    .await?
-                    .to_vec();
-                image::guess_format(&bytes)?;
-                let key = HestiaApp::browse_image_cache_key(&url);
-                let path = persistence::cache_file_path(&key);
-                tokio::task::spawn_blocking(move || {
-                    persistence::cache_put(&portable, &key, "browse-img", &bytes, limit)
-                })
-                .await??;
-                Ok::<_, anyhow::Error>((id, path))
-            });
-        }
-        while let Some(done) = downloads.join_next().await {
-            match done {
-                Ok(Ok((id, path))) => {
-                    let mut pictures = overlay_protocol::Pictures::default();
-                    if characters {
-                        pictures.characters.push((id, path));
-                    } else {
-                        pictures.mods.push((id, path));
-                    }
-                    self.outbox.add_pictures(pictures);
-                }
-                Ok(Err(error)) => {
-                    tracing::debug!(error = %format!("{error:#}"), "An overlay picture failed");
-                }
-                Err(_) => {}
+    /// lands.  The ones that fail get another try a little later.
+    async fn download_pictures(&self, mut missing: Vec<(u64, String)>, characters: bool) {
+        for round in 0..=OVERLAY_PICTURE_RETRIES {
+            if missing.is_empty() {
+                return;
             }
+            if round > 0 {
+                tokio::time::sleep(OVERLAY_PICTURE_RETRY_DELAY).await;
+            }
+            let mut downloads = tokio::task::JoinSet::new();
+            for (id, url) in std::mem::take(&mut missing) {
+                let download = self.download_picture(url.clone());
+                downloads.spawn(async move { (id, url, download.await) });
+            }
+            while let Some(done) = downloads.join_next().await {
+                let Ok((id, url, result)) = done else {
+                    continue;
+                };
+                match result {
+                    Ok(path) => {
+                        let mut pictures = overlay_protocol::Pictures::default();
+                        if characters {
+                            pictures.characters.push((id, path));
+                        } else {
+                            pictures.mods.push((id, path));
+                        }
+                        self.outbox.add_pictures(pictures);
+                    }
+                    Err(error) => {
+                        tracing::debug!(error = %format!("{error:#}"), round, "An overlay picture failed");
+                        missing.push((id, url));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Downloads one picture into Browse's image cache.
+    fn download_picture(
+        &self,
+        url: String,
+    ) -> impl std::future::Future<Output = Result<PathBuf>> + Send + 'static {
+        let client = self.runtime.http_client();
+        let limiter = Arc::clone(&self.runtime.thumb_image_limiter);
+        let portable = self.portable.clone();
+        let limit = self.cache_limit_bytes;
+        async move {
+            let _permit = limiter.acquire().await.ok();
+            let bytes = client
+                .get(&url)
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await?
+                .to_vec();
+            image::guess_format(&bytes)?;
+            let key = HestiaApp::browse_image_cache_key(&url);
+            let path = persistence::cache_file_path(&key);
+            tokio::task::spawn_blocking(move || {
+                persistence::cache_put(&portable, &key, "browse-img", &bytes, limit)
+            })
+            .await??;
+            Ok(path)
         }
     }
 }

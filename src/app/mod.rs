@@ -106,6 +106,14 @@ fn request_animation_repaint(ctx: &egui::Context) {
     }
 }
 
+/// Seconds on a clock that keeps running while the window is minimized. eframe still
+/// runs `logic` then, but leaves `input.time` at the last shown frame, which would
+/// stall the watchers that pace themselves by it.
+fn logic_time() -> f64 {
+    static START: Lazy<Instant> = Lazy::new(Instant::now);
+    START.elapsed().as_secs_f64()
+}
+
 impl eframe::App for HestiaApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         profiling::scope!("app::logic");
@@ -156,7 +164,10 @@ impl eframe::App for HestiaApp {
         self.poll_live_state_watch(ctx);
         self.poll_d3dx_reload_config_watch(ctx);
         self.poll_game_overlay(ctx, frame);
-        if !self.profile_operation_locks_app() {
+        // While minimized, eframe runs `logic` without a new frame: input still holds the
+        // last shown frame's keys and dropped files, so acting on it would repeat them.
+        let window_shown = ctx.input(|input| input.viewport().visible().unwrap_or(true));
+        if window_shown && !self.profile_operation_locks_app() {
             self.detect_drag_and_drop(ctx);
             self.handle_shortcuts(ctx);
         }
@@ -350,6 +361,13 @@ impl eframe::App for HestiaApp {
         // geometry to the save debounce.
         if self.floating_window_save_due.take().is_some() {
             self.save_state();
+        }
+        // Closing before the renderer proved itself is no crash: a window minimized from the
+        // start draws nothing at all. Forget the attempt, so the next launch tries the same
+        // renderer again instead of marking it failed.
+        if self.renderer_boot_unconfirmed {
+            self.renderer_boot_unconfirmed = false;
+            crate::renderer::confirm_boot(&self.portable);
         }
     }
 }

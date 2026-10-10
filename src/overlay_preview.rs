@@ -193,8 +193,10 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             .expect("valid embedded app icon");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            // Hestia titles the overlay "Hestia" just while it presses the
-            // reload key, never while the search takes the keys.
+            // The overlay is titled "Hestia", which XXMI takes keys from,
+            // just while Hestia presses a key for the game through it or a
+            // key the overlay doesn't use is down, never while the search
+            // takes the keys.
             .with_title(if preview {
                 "Hestia — Overlay preview"
             } else {
@@ -539,6 +541,16 @@ impl eframe::App for OverlayPreview {
                     .replace_catalog(data::catalog_from_library(library));
             }
             self.samples.receive_hotkeys(news.hotkeys);
+            for (id, error) in news.pressed {
+                if let Some(error) = self.samples.hotkey_pressed(id, error, now) {
+                    live.strip.warn(now);
+                    live.notice = Some(Notice {
+                        text: error,
+                        until: now + live::WARNING_SECONDS,
+                        warning: true,
+                    });
+                }
+            }
             // After the library, which has the mods an install added.
             for news in self.samples.receive_gamebanana(news.gamebanana) {
                 let (key, name, warning) = match news {
@@ -650,7 +662,13 @@ impl eframe::App for OverlayPreview {
                         }
                     } else if self.session.is_open() || self.pinned {
                         match command {
+                            // A card showing its hotkeys takes W, S and Space.
+                            keyboard::Command::Row(direction)
+                                if self.samples.select_hotkey(&ctx, direction) => {}
                             keyboard::Command::Row(direction) => self.samples.switch_row(direction),
+                            keyboard::Command::Exclusive if self.samples.hotkeys_shown() => {
+                                self.samples.press_hotkey(&ctx, now)
+                            }
                             keyboard::Command::Move(direction) => {
                                 commands.push(move_in_row(self.samples.row(), direction))
                             }
@@ -963,6 +981,12 @@ impl eframe::App for OverlayPreview {
                 })
                 .collect();
             self.samples.receive_hotkeys(answers);
+            // The preview has no game, so every press goes through.
+            for request in &hotkey_requests {
+                if let FromOverlay::PressHotkey { id, .. } = request {
+                    self.samples.hotkey_pressed(*id, None, now);
+                }
+            }
         }
         if let Some(live) = &mut self.live {
             for request in requests {

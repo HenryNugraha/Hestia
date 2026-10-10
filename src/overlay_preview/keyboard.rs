@@ -9,6 +9,10 @@
 //! turns them into commands and session events.  While a search is being
 //! typed, letters and Space pass on to the search field instead.  Capture runs
 //! and other platforms read the same keys from egui.
+//!
+//! The keys the overlay doesn't use still reach the game: XXMI, the mod
+//! loader, takes keys from a window titled "Hestia" as well as from the game,
+//! so the overlay lends itself that title while one of them is down.
 
 #[cfg(any(windows, test))]
 use std::{
@@ -109,6 +113,13 @@ const RIGHT_SHIFT_SCAN_CODE: u32 = 0x36;
 
 #[cfg(any(windows, test))]
 const REPEAT_DELAY: Duration = Duration::from_millis(300);
+/// How long the overlay keeps XXMI's title after the last key it lent it for
+/// is up.  Longer than a slow game frame.
+#[cfg(any(windows, test))]
+const TITLE_LINGER: Duration = Duration::from_millis(200);
+/// How often to look whether to give XXMI's title back.
+#[cfg(windows)]
+const TITLE_CHECK: Duration = Duration::from_millis(50);
 #[cfg(any(windows, test))]
 const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
 
@@ -223,6 +234,10 @@ const fn bit(key: u32) -> u32 {
 const SHIFT_KEYS: u32 = bit(vk::LSHIFT) | bit(vk::RSHIFT);
 #[cfg(any(windows, test))]
 const WINDOWS_KEYS: u32 = bit(vk::LWIN) | bit(vk::RWIN);
+/// Shift, Ctrl and Alt, which the game may take with a key it gets.
+#[cfg(any(windows, test))]
+const MODIFIER_KEYS: u32 =
+    SHIFT_KEYS | bit(vk::LCONTROL) | bit(vk::RCONTROL) | bit(vk::LMENU) | bit(vk::RMENU);
 
 fn slot(key: u32) -> Option<(usize, Role)> {
     let key = if key == hotkey_key() { HOTKEY } else { key };
@@ -549,10 +564,111 @@ impl Router {
     }
 }
 
+/// A change to the overlay's title.
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Title {
+    /// Take the title XXMI takes keys from.
+    Lend,
+    /// Take the overlay's own back.
+    GiveBack,
+}
+
+/// Keeps the title XXMI takes keys from on the overlay while keys the overlay
+/// doesn't use are down, so the game gets them.  Not while a search is typed
+/// or one of the overlay's own keys is down, since the game would get those
+/// too.  A key that went down then holds the title back until it's up, and so
+/// does a key that was down before the overlay had the keyboard.
+///
+/// The title stays a moment after the last key is up, for XXMI to see it go
+/// up: XXMI only acts on a key that goes down after it saw it up.
+#[cfg(any(windows, test))]
+#[derive(Debug, Default)]
+struct Lender {
+    /// Down, and the game sees them.
+    lent: Vec<u32>,
+    /// Down, and the game mustn't see them.
+    held_back: Vec<u32>,
+    /// Whether the overlay has the title.
+    titled: bool,
+    /// When the last lent key went up, while the overlay still has the title.
+    emptied: Option<Instant>,
+}
+
+#[cfg(any(windows, test))]
+impl Lender {
+    fn titled(&self) -> bool {
+        self.titled
+    }
+
+    /// A key the overlay doesn't use went down.  `blocked` while a search is
+    /// typed or one of the overlay's keys is down.
+    fn press(&mut self, key: u32, blocked: bool) -> Option<Title> {
+        if self.lent.contains(&key) || self.held_back.contains(&key) {
+            // A repeat.
+            return None;
+        }
+        if blocked || !self.held_back.is_empty() {
+            self.held_back.push(key);
+            return None;
+        }
+        self.lent.push(key);
+        self.emptied = None;
+        (!std::mem::replace(&mut self.titled, true)).then_some(Title::Lend)
+    }
+
+    fn release(&mut self, key: u32, now: Instant) {
+        self.held_back.retain(|&held| held != key);
+        self.lent.retain(|&lent| lent != key);
+        self.note_emptied(now);
+    }
+
+    /// One of the overlay's own keys went down.  The keys lent so far stay
+    /// held back until they're up.
+    fn stop(&mut self) -> Option<Title> {
+        self.held_back.append(&mut self.lent);
+        self.give_back()
+    }
+
+    /// Starts over with `held` down, none of them lent.
+    fn reset(&mut self, held: Vec<u32>) -> Option<Title> {
+        self.lent.clear();
+        self.held_back = held;
+        self.give_back()
+    }
+
+    /// Forgets the keys that are up, for a release that never arrived, and
+    /// gives the title back once the last lent key has been up a moment.
+    fn tick(&mut self, down: impl Fn(u32) -> bool, now: Instant) -> Option<Title> {
+        self.held_back.retain(|&held| down(held));
+        self.lent.retain(|&lent| down(lent));
+        self.note_emptied(now);
+        if self
+            .emptied
+            .is_some_and(|emptied| now.saturating_duration_since(emptied) >= TITLE_LINGER)
+        {
+            return self.give_back();
+        }
+        None
+    }
+
+    fn note_emptied(&mut self, now: Instant) {
+        if self.titled && self.lent.is_empty() && self.emptied.is_none() {
+            self.emptied = Some(now);
+        }
+    }
+
+    fn give_back(&mut self) -> Option<Title> {
+        self.emptied = None;
+        std::mem::take(&mut self.titled).then_some(Title::GiveBack)
+    }
+}
+
 #[cfg(windows)]
 struct Shared {
     ctx: Context,
     router: Router,
+    lender: Lender,
 }
 
 // The window procedure runs on the thread that owns the window, which is also
@@ -576,9 +692,25 @@ fn with_shared<T>(f: impl FnOnce(&mut Shared) -> T) -> Option<T> {
 /// Updates the router, then asks for a frame once the borrow has ended.
 #[cfg(windows)]
 fn notify<T>(update: impl FnOnce(&mut Router) -> T) -> Option<T> {
-    let (result, ctx) = with_shared(|shared| (update(&mut shared.router), shared.ctx.clone()))?;
+    notify_shared(|shared| update(&mut shared.router))
+}
+
+/// Updates the router and the lender, then asks for a frame once the borrow
+/// has ended.
+#[cfg(windows)]
+fn notify_shared<T>(update: impl FnOnce(&mut Shared) -> T) -> Option<T> {
+    let (result, ctx) = with_shared(|shared| (update(shared), shared.ctx.clone()))?;
     ctx.request_repaint();
     Some(result)
+}
+
+/// Changes the overlay's title, after the borrow of the shared state has
+/// ended: the change goes through the window procedure.
+#[cfg(windows)]
+fn apply_title(title: Option<Title>) {
+    if let Some(title) = title {
+        super::platform::lend_title(title == Title::Lend);
+    }
 }
 
 #[cfg(windows)]
@@ -598,6 +730,18 @@ fn physical_keys() -> u32 {
         .fold(0, |held, (index, _)| held | (1 << index))
 }
 
+/// The keys the overlay doesn't use that are down, but Shift, Ctrl and Alt.
+#[cfg(windows)]
+fn untracked_keys_down() -> Vec<u32> {
+    (0x08..=0xFE)
+        .filter(|&key| {
+            !matches!(key, vk::SHIFT | vk::CONTROL | vk::MENU)
+                && slot(key).is_none()
+                && physically_down(key)
+        })
+        .collect()
+}
+
 /// Whether a `Keyboard` is alive on this thread.
 #[cfg(windows)]
 pub(super) fn installed() -> bool {
@@ -610,9 +754,27 @@ pub(super) fn installed() -> bool {
 /// window should swallow it.  `next` peeks at the following key message.
 #[cfg(windows)]
 pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<KeyMessage>) -> bool {
-    if !installed() || slot(message.key).is_none() {
+    if !installed() {
         return false;
     }
+    let Some((index, _)) = slot(message.key) else {
+        // The game gets it while it's down.
+        let now = Instant::now();
+        let title = with_shared(|shared| {
+            if message.pressed {
+                let router = &shared.router;
+                let blocked = router.typing || router.down & !MODIFIER_KEYS != 0;
+                shared.lender.press(message.key, blocked)
+            } else {
+                // The title goes back on a later frame.
+                shared.lender.release(message.key, now);
+                None
+            }
+        })
+        .flatten();
+        apply_title(title);
+        return false;
+    };
     let consumed = consumes(message.key);
     // Peek before borrowing: PeekMessageW can dispatch sent messages into the
     // window procedure.
@@ -627,14 +789,18 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     }
     .filter(|&key| !physically_down(key));
     let now = Instant::now();
-    notify(|router| {
-        let swallow = router.key(message.key, message.pressed, now);
+    // The game mustn't get the overlay's own keys.
+    let own_press = message.pressed && (1_u32 << index) & MODIFIER_KEYS == 0;
+    let (swallow, title) = notify_shared(|shared| {
+        let swallow = shared.router.key(message.key, message.pressed, now);
         if let Some(key) = other_shift {
-            router.key(key, false, now);
+            shared.router.key(key, false, now);
         }
-        swallow
+        (swallow, own_press.then(|| shared.lender.stop()).flatten())
     })
-    .unwrap_or(consumed)
+    .unwrap_or((consumed, None));
+    apply_title(title);
+    swallow
 }
 
 /// The hotkey arrived.  `took_focus` is true when the overlay has just taken
@@ -642,14 +808,28 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
 #[cfg(windows)]
 pub(super) fn hotkey(focused: bool, took_focus: bool) {
     let held = if took_focus { physical_keys() } else { 0 };
-    notify(|router| {
+    let others = if took_focus {
+        untracked_keys_down()
+    } else {
+        Vec::new()
+    };
+    let title = notify_shared(|shared| {
+        let router = &mut shared.router;
         if took_focus {
             router.reset(held, bit(HOTKEY));
         } else if focused {
             router.hotkey_pressed();
         }
         router.push(Event::Hotkey { focused });
-    });
+        // The hotkey is one of the overlay's keys.
+        if took_focus {
+            shared.lender.reset(others)
+        } else {
+            shared.lender.stop()
+        }
+    })
+    .flatten();
+    apply_title(title);
 }
 
 /// Asks for a frame, for news from the window procedure that isn't a key.
@@ -662,7 +842,13 @@ pub(super) fn wake() {
 pub(super) fn activated() {
     if installed() {
         let held = physical_keys();
-        notify(|router| router.reset(held, 0));
+        let others = untracked_keys_down();
+        let title = notify_shared(|shared| {
+            shared.router.reset(held, 0);
+            shared.lender.reset(others)
+        })
+        .flatten();
+        apply_title(title);
     }
 }
 
@@ -674,10 +860,13 @@ pub(super) fn clicked() {
 
 #[cfg(windows)]
 pub(super) fn deactivated() {
-    notify(|router| {
-        router.clear();
-        router.push(Event::Deactivated);
+    notify_shared(|shared| {
+        shared.router.clear();
+        shared.router.push(Event::Deactivated);
+        shared.lender.reset(Vec::new());
     });
+    // Whatever the lender knew, a window in the back keeps its own title.
+    apply_title(Some(Title::GiveBack));
 }
 
 /// Keyboard state for the overlay window.  Create it on the thread that runs
@@ -693,6 +882,7 @@ impl Keyboard {
             *shared.borrow_mut() = Some(Shared {
                 ctx,
                 router: Router::default(),
+                lender: Lender::default(),
             });
         });
         #[cfg(not(windows))]
@@ -703,7 +893,20 @@ impl Keyboard {
     pub(super) fn drain(&self) -> Vec<Event> {
         #[cfg(windows)]
         {
-            with_shared(|shared| shared.router.events.drain(..).collect()).unwrap_or_default()
+            let now = Instant::now();
+            let Some((events, title, titled)) = with_shared(|shared| {
+                let title = shared.lender.tick(physically_down, now);
+                let titled = shared.lender.titled().then(|| shared.ctx.clone());
+                (shared.router.events.drain(..).collect(), title, titled)
+            }) else {
+                return Vec::new();
+            };
+            apply_title(title);
+            if let Some(ctx) = titled {
+                // Look again soon, to give the title back.
+                ctx.request_repaint_after(TITLE_CHECK);
+            }
+            events
         }
         #[cfg(not(windows))]
         {
@@ -742,6 +945,7 @@ impl Drop for Keyboard {
                 *shared = None;
             }
         });
+        apply_title(Some(Title::GiveBack));
     }
 }
 
@@ -1439,6 +1643,107 @@ mod tests {
             keys.drain(),
             vec![Event::Search, Event::Search, command(Command::Exclusive)]
         );
+    }
+
+    #[test]
+    fn keys_the_overlay_does_not_use_lend_the_title_while_down() {
+        const K: u32 = 0x4B;
+        let start = Instant::now();
+        let later = |millis| start + Duration::from_millis(millis);
+        let down = |_| true;
+        let mut lender = Lender::default();
+        assert_eq!(lender.press(UNUSED, false), Some(Title::Lend));
+        // A repeat, and a second key, keep it.
+        assert_eq!(lender.press(UNUSED, false), None);
+        assert_eq!(lender.press(K, false), None);
+        lender.release(UNUSED, later(10));
+        assert_eq!(lender.tick(down, later(500)), None);
+        lender.release(K, later(500));
+        // XXMI gets a moment to see the key go up.
+        assert_eq!(lender.tick(down, later(600)), None);
+        assert!(lender.titled());
+        assert_eq!(lender.tick(down, later(700)), Some(Title::GiveBack));
+        assert_eq!(lender.tick(down, later(800)), None);
+        assert!(!lender.titled());
+    }
+
+    #[test]
+    fn a_key_in_the_moment_after_keeps_the_title() {
+        let start = Instant::now();
+        let later = |millis| start + Duration::from_millis(millis);
+        let down = |_| true;
+        let mut lender = Lender::default();
+        lender.press(UNUSED, false);
+        lender.release(UNUSED, later(10));
+        assert_eq!(lender.press(UNUSED, false), None);
+        assert_eq!(lender.tick(down, later(300)), None);
+        lender.release(UNUSED, later(300));
+        assert_eq!(lender.tick(down, later(500)), Some(Title::GiveBack));
+    }
+
+    #[test]
+    fn a_key_pressed_while_blocked_holds_the_title_back_until_up() {
+        const K: u32 = 0x4B;
+        let now = Instant::now();
+        let mut lender = Lender::default();
+        assert_eq!(lender.press(UNUSED, true), None);
+        // The search ended or the overlay's key is up, but the game would
+        // see the first key go down now.
+        assert_eq!(lender.press(K, false), None);
+        lender.release(UNUSED, now);
+        lender.release(K, now);
+        assert!(!lender.titled());
+        assert_eq!(lender.press(K, false), Some(Title::Lend));
+    }
+
+    #[test]
+    fn the_overlays_own_key_takes_the_title_back_at_once() {
+        const K: u32 = 0x4B;
+        let now = Instant::now();
+        let mut lender = Lender::default();
+        lender.press(UNUSED, false);
+        assert_eq!(lender.stop(), Some(Title::GiveBack));
+        assert_eq!(lender.stop(), None);
+        // Down when the overlay's key went down, so held back.
+        assert_eq!(lender.press(K, false), None);
+        lender.release(UNUSED, now);
+        lender.release(K, now);
+        assert_eq!(lender.press(K, false), Some(Title::Lend));
+        // Also in the moment after the last key went up.
+        lender.release(K, now);
+        assert_eq!(lender.stop(), Some(Title::GiveBack));
+    }
+
+    #[test]
+    fn keys_down_before_the_keyboard_came_hold_the_title_back() {
+        const K: u32 = 0x4B;
+        let start = Instant::now();
+        let later = |millis| start + Duration::from_millis(millis);
+        let mut lender = Lender::default();
+        lender.press(UNUSED, false);
+        assert_eq!(lender.reset(vec![K]), Some(Title::GiveBack));
+        assert_eq!(lender.press(UNUSED, false), None);
+        // Up without a release reaching the overlay.
+        assert_eq!(lender.tick(|key| key == UNUSED, later(0)), None);
+        assert_eq!(lender.held_back, vec![UNUSED]);
+        assert_eq!(lender.tick(|_| false, later(0)), None);
+        assert_eq!(lender.press(K, false), Some(Title::Lend));
+        assert_eq!(lender.tick(|_| false, later(10)), None);
+        assert_eq!(lender.tick(|_| false, later(300)), Some(Title::GiveBack));
+    }
+
+    #[test]
+    fn modifiers_do_not_block_lending() {
+        let mut router = Router::default();
+        let now = Instant::now();
+        router.key(vk::LCONTROL, true, now);
+        router.key(vk::RSHIFT, true, now);
+        assert_eq!(router.down & !MODIFIER_KEYS, 0);
+        router.key(vk::W, true, now);
+        assert_ne!(router.down & !MODIFIER_KEYS, 0);
+        router.key(vk::W, false, now);
+        router.key(vk::LWIN, true, now);
+        assert_ne!(router.down & !MODIFIER_KEYS, 0);
     }
 
     #[cfg(windows)]

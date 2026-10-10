@@ -49,6 +49,9 @@ struct GameOverlay {
     /// The game the preview in Settings shows the overlay for, while no
     /// game runs.  Hestia's own window stands in for the game.
     preview: Option<String>,
+    /// The overlay's number for the hotkey press about to go to the hotkey
+    /// worker, which its answer repeats.
+    pending_hotkey_press: Option<u64>,
 }
 
 impl HestiaApp {
@@ -168,6 +171,7 @@ impl HestiaApp {
         let mut browse = Vec::new();
         let mut installs = Vec::new();
         let mut hotkeys = Vec::new();
+        let mut presses = Vec::new();
         let mut opacity_changed = None;
         let mut all_characters_changed = None;
         let mut exited = false;
@@ -199,6 +203,12 @@ impl HestiaApp {
                 OverlayEvent::Message(overlay_protocol::FromOverlay::Hotkeys { mod_id }) => {
                     hotkeys.push(mod_id);
                 }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::PressHotkey {
+                    id,
+                    mod_id,
+                    index,
+                    key,
+                }) => presses.push((id, mod_id, index, key)),
                 OverlayEvent::Message(
                     message @ (overlay_protocol::FromOverlay::Install(_)
                     | overlay_protocol::FromOverlay::PickFile { .. }
@@ -236,17 +246,29 @@ impl HestiaApp {
             for message in installs {
                 self.handle_game_overlay_install(&game_id, message);
             }
-            if let Some(process) = &self.game_overlay.process {
-                for mod_id in hotkeys {
-                    // A mod that's gone leaves the overlay with the next library.
-                    if let Some(entry) = self
-                        .state
-                        .mods
-                        .iter()
-                        .find(|entry| entry.id == mod_id && entry.game_id == game_id)
-                    {
-                        process.send_hotkeys(mod_id, entry.root_path.clone());
-                    }
+            for mod_id in hotkeys {
+                // A mod that's gone leaves the overlay with the next library.
+                let Some(entry) = self
+                    .state
+                    .mods
+                    .iter()
+                    .find(|entry| entry.id == mod_id && entry.game_id == game_id)
+                    .cloned()
+                else {
+                    continue;
+                };
+                // Pressing a key that cycles a value starts from the value the
+                // mod has now.
+                self.ensure_hotkey_values_cached(&entry);
+                if let Some(process) = &self.game_overlay.process {
+                    process.send_hotkeys(mod_id, entry.root_path);
+                }
+            }
+            for (id, mod_id, index, key) in presses {
+                if let Err(error) =
+                    self.press_game_overlay_hotkey(&game_id, id, &mod_id, index, &key)
+                {
+                    self.answer_game_overlay_hotkey(id, Some(error));
                 }
             }
         }
@@ -290,6 +312,88 @@ impl HestiaApp {
             if library.is_some() {
                 self.game_overlay.sent = library;
             }
+        }
+    }
+
+    /// Presses one of a mod's hotkeys the overlay asked for, like a click on
+    /// it in the library's hotkey list.  The hotkey worker's answer goes to the
+    /// overlay later.  The error is for the overlay's warning strip.
+    fn press_game_overlay_hotkey(
+        &mut self,
+        game_id: &str,
+        id: u64,
+        mod_id: &str,
+        index: usize,
+        key: &str,
+    ) -> Result<(), String> {
+        let text = self.text();
+        let not_sent = || text.get(TextKey::GameOverlayHotkeyNotSent).to_owned();
+        let Some(entry) = self
+            .state
+            .mods
+            .iter()
+            .find(|entry| entry.id == mod_id && entry.game_id == game_id)
+            .cloned()
+        else {
+            return Err(not_sent());
+        };
+        if entry.status != ModStatus::Active {
+            return Err(text.get(TextKey::GameOverlayHotkeyModOff).to_owned());
+        }
+        if self.folder_batch_blocks_mod(mod_id) {
+            return Err(text.folder_batch_busy_tooltip().to_owned());
+        }
+        let Some(game) = self.game_for_mod(&entry) else {
+            return Err(not_sent());
+        };
+        if !game.is_xxmi() || !self.game_process_running(&game) {
+            return Err(not_sent());
+        }
+        if !self.xxmi_reload_hotkey_capable_for_game(&game) {
+            return Err(text.get(TextKey::GameOverlayHotkeyNotAllowed).to_owned());
+        }
+        if self.other_running_xxmi_game(&game).is_some() {
+            return Err(not_sent());
+        }
+        // The overlay names the row by its place and its key, in case the
+        // mod's files changed since it read them.
+        let rows = hotkeys_list_rows(&parse_mod_config_inis(&entry.root_path));
+        let Some(row) = rows
+            .get(index)
+            .filter(|row| row.raw_key == key)
+            .or_else(|| rows.iter().find(|row| row.raw_key == key))
+        else {
+            return Err(not_sent());
+        };
+        if row.raw_key.trim().is_empty() {
+            return Err(not_sent());
+        }
+        let current_values = self.cached_hotkey_values(mod_id);
+        let current = hotkey_current_value(row, &current_values);
+        self.game_overlay.pending_hotkey_press = Some(id);
+        match (row.var_name.as_deref(), next_hotkey_value(row, current)) {
+            (Some(var_name), Some(value)) => self.set_hotkey_value(
+                mod_id,
+                &row.ini_rel_path,
+                var_name,
+                &value,
+                &row.raw_key,
+                &row.values,
+            ),
+            // Keys that don't cycle a value Hestia knows get one press.
+            _ => self.run_hotkey_command(mod_id, &row.raw_key, &row.label),
+        }
+        // Nothing went to the hotkey worker, so nothing will answer.
+        match self.game_overlay.pending_hotkey_press.take() {
+            Some(_) => Err(not_sent()),
+            None => Ok(()),
+        }
+    }
+
+    /// Answers a hotkey press the overlay asked for, when it still runs.
+    fn answer_game_overlay_hotkey(&self, id: u64, error: Option<String>) {
+        if let Some(process) = &self.game_overlay.process {
+            process.answer_hotkey(id, error);
         }
     }
 

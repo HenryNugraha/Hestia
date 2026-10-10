@@ -453,7 +453,7 @@ impl HestiaApp {
         };
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(poll_interval));
 
-        let now = ctx.input(|input| input.time);
+        let now = logic_time();
         let identity_changed = importer_root_watch_identity_changed(
             self.d3dx_reload_config_watch.as_ref().map(|watch| {
                 (

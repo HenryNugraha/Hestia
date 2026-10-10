@@ -523,7 +523,7 @@ fn zip_top_level_sanitize_map(
         if first == OsStr::new("__MACOSX") {
             continue;
         }
-        if components.next().is_some() || entry.name().ends_with('/') {
+        if components.next().is_some() || entry.name_raw().ends_with(b"/") {
             has_top_level_dir = true;
             let original = first.to_os_string();
             if !original_names.contains_key(&original) {
@@ -888,7 +888,7 @@ fn extract_zip_with_cancel(
         }
         let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
         let outpath = destination.join(relative);
-        if entry.name().ends_with('/') {
+        if entry.name_raw().ends_with(b"/") {
             if !register_zip_output(&mut known_output_kinds, &outpath, true) {
                 has_conflicting_paths = true;
             }
@@ -984,7 +984,7 @@ fn extract_zip_serial(
         }
         let relative = zip_entry_relative_path(&enclosed, sanitized_top_level)?;
         let outpath = destination.join(relative);
-        if entry.name().ends_with('/') {
+        if entry.name_raw().ends_with(b"/") {
             ensure_directory(&outpath, &mut created_dirs)?;
         } else {
             if let Some(parent) = outpath.parent() {

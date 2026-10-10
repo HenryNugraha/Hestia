@@ -72,6 +72,9 @@ pub(super) struct News {
     pub gamebanana: Vec<ToOverlay>,
     /// Mods' hotkeys, in the order they came.
     pub hotkeys: Vec<ModHotkeys>,
+    /// Answers to hotkey presses: the press's number, and why the game
+    /// didn't get it.
+    pub pressed: Vec<(u64, Option<String>)>,
 }
 
 pub(super) struct Link {
@@ -219,6 +222,10 @@ fn read_messages(inbox: &Mutex<Inbox>, ctx: &egui::Context) {
             }
             Ok(ToOverlay::Hotkeys(hotkeys)) => {
                 lock(inbox).news.hotkeys.push(hotkeys);
+                ctx.request_repaint();
+            }
+            Ok(ToOverlay::HotkeyPressed { id, error }) => {
+                lock(inbox).news.pressed.push((id, error));
                 ctx.request_repaint();
             }
             Ok(ToOverlay::GameProcesses { pids }) => platform::set_game_processes(&pids),

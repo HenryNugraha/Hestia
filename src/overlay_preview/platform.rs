@@ -487,8 +487,52 @@ fn overlay_window() -> Option<windows::Win32::Foundation::HWND> {
 pub(super) fn hide() {
     use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
 
+    lend_title(false);
     if let Some(hwnd) = overlay_window() {
         let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
+    }
+}
+
+/// XXMI takes keys from a window with this title as well as from the game.
+#[cfg(windows)]
+const XXMI_TITLE: &str = "Hestia";
+
+/// The overlay's title before it lent itself `XXMI_TITLE`.
+#[cfg(windows)]
+static LENT_TITLE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Gives the overlay the title XXMI takes keys from, so the game gets the
+/// keys that are down, or gives it its own back.  Hestia gives it that title
+/// itself while it presses a key for the game through it, and then the
+/// overlay leaves the title, and taking it back, to Hestia.
+#[cfg(windows)]
+pub(super) fn lend_title(lend: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextW, SetWindowTextW};
+    use windows::core::PCWSTR;
+
+    let Some(hwnd) = overlay_window() else {
+        return;
+    };
+    let set = |title: &str| {
+        let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe { SetWindowTextW(hwnd, PCWSTR::from_raw(title.as_ptr())) }.is_ok()
+    };
+    let mut lent = LENT_TITLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if lend {
+        if lent.is_some() {
+            return;
+        }
+        let mut buffer = [0_u16; 256];
+        let length = unsafe { GetWindowTextW(hwnd, &mut buffer) };
+        let title = String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)]);
+        if title != XXMI_TITLE && set(XXMI_TITLE) {
+            tracing::debug!("The overlay lent itself XXMI's title for a key");
+            *lent = Some(title);
+        }
+    } else if let Some(title) = lent.take() {
+        set(&title);
     }
 }
 
@@ -987,8 +1031,9 @@ unsafe fn keyboard_message(
 ) -> Option<windows::Win32::Foundation::LRESULT> {
     use windows::Win32::Foundation::LRESULT;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SC_KEYMENU, WA_INACTIVE, WM_ACTIVATE, WM_CHAR, WM_DEADCHAR, WM_HOTKEY, WM_LBUTTONDOWN,
-        WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSCHAR, WM_SYSCOMMAND, WM_SYSDEADCHAR, WM_XBUTTONDOWN,
+        GetMessageExtraInfo, SC_KEYMENU, WA_INACTIVE, WM_ACTIVATE, WM_CHAR, WM_DEADCHAR, WM_HOTKEY,
+        WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSCHAR, WM_SYSCOMMAND, WM_SYSDEADCHAR,
+        WM_XBUTTONDOWN,
     };
 
     match msg {
@@ -1021,6 +1066,16 @@ unsafe fn keyboard_message(
         }
         _ => {
             let key = keyboard::KeyMessage::parse(msg, wparam.0, lparam.0)?;
+            // A key Hestia presses for the game does nothing here.  Read
+            // before anything peeks at the next message, which changes this.
+            if unsafe { GetMessageExtraInfo() }.0 as usize
+                == crate::overlay_protocol::HESTIA_INPUT_MARK
+            {
+                if key.pressed {
+                    SWALLOW_CHARACTERS.store(true, Ordering::Relaxed);
+                }
+                return Some(LRESULT(0));
+            }
             let swallow = keyboard::key_message(key, || unsafe { peek_key_message(hwnd) });
             if key.pressed {
                 SWALLOW_CHARACTERS.store(swallow, Ordering::Relaxed);
@@ -1198,7 +1253,7 @@ mod tests {
         ctx.set_pixels_per_point(2.0);
         // egui applies scale changes at the next pass rather than immediately.
         ctx.begin_pass(egui::RawInput::default());
-        let _ = ctx.end_pass();
+        ctx.end_pass().drop_without_applying_deltas();
         assert!((ctx.pixels_per_point() - 2.0).abs() < f32::EPSILON);
         let rects = physical_region_rects(
             &ctx,

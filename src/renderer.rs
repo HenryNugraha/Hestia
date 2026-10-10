@@ -304,7 +304,8 @@ fn env_ladder() -> Option<Vec<Rung>> {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BootRecord {
     /// Renderer id currently being tried. Still present at startup means the
-    /// previous launch never reached [`PASSES_TO_CONFIRM`].
+    /// previous launch never reached [`PASSES_TO_CONFIRM`] and didn't close
+    /// cleanly either.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     attempt: Option<String>,
     /// Renderer ids that died before confirming. Skipped by the ladder.
@@ -555,7 +556,8 @@ pub fn boot_confirmed(ctx: &egui::Context) -> bool {
     ctx.cumulative_pass_nr() >= PASSES_TO_CONFIRM
 }
 
-/// Clears the boot breadcrumb; the renderer reached the screen.
+/// Clears the boot breadcrumb: the renderer reached the screen, or the app
+/// closed cleanly before it had the chance.
 pub fn confirm_boot(portable: &PortablePaths) {
     let path = breadcrumb_path(portable);
     let mut record = BootRecord::load(&path);
@@ -588,7 +590,8 @@ mod tests {
             backend: wgpu::Backend::Dx12,
             subgroup_min_size: 0,
             subgroup_max_size: 0,
-            transient_saves_memory: false,
+            transient_saves_memory: Some(false),
+            limit_bucket: None,
         }
     }
 

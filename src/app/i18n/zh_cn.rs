@@ -982,4 +982,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "更改", // FolderBatchScopeChange
     "影响 {mods} 个模组", // FolderBatchScopeModCount
     "详情", // FolderBatchReportDetails
+    "启用此模组后才能使用它的快捷键。", // GameOverlayHotkeyModOff
+    "按键没有传到游戏。请松开所有按键后重试。", // GameOverlayHotkeyNotSent
+    "在 Hestia 设置中开启“允许 Hestia 修改 d3dx.ini 配置”后，才能在这里按下模组快捷键。", // GameOverlayHotkeyNotAllowed
+    "按下此键", // GameOverlayHintPressHotkey
 ];

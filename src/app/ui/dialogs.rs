@@ -1057,9 +1057,7 @@ impl HestiaApp {
             let mut seen_paths = HashSet::with_capacity(dropped_files.len());
             let mut queued_count = 0;
             for file in dropped_files {
-                let Some(path) = file.path else {
-                    continue;
-                };
+                let path = file.path().to_path_buf();
                 if !seen_paths.insert(path.clone()) {
                     self.install_batch_stats.skipped += 1;
                     continue;

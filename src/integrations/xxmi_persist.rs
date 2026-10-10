@@ -3295,7 +3295,8 @@ fn send_keyboard_input(vk: u16, key_up: bool, label: &str) -> Result<()> {
                     KEYBD_EVENT_FLAGS(0)
                 },
                 time: 0,
-                dwExtraInfo: 0,
+                // The in-game overlay leaves keys with this mark alone.
+                dwExtraInfo: crate::overlay_protocol::HESTIA_INPUT_MARK,
             },
         },
     }];
@@ -3727,10 +3728,11 @@ pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>>
 enum AcceptedForeground {
     Window(windows::Win32::Foundation::HWND),
     /// A window that passes every key to the game while it has the key down, so only as long
-    /// as no other key is down: the in-game overlay titled "Hestia".
+    /// as no key but the pressed one and its modifiers is down: the in-game overlay titled
+    /// "Hestia".
     Quiet {
         hwnd: windows::Win32::Foundation::HWND,
-        key: u16,
+        spec: KeySpec,
     },
 }
 
@@ -3739,11 +3741,33 @@ fn accepted_foreground_still_active(accepted: AcceptedForeground) -> bool {
     match accepted {
         AcceptedForeground::Window(expected) => foreground_window_title_and_pid()
             .is_some_and(|(foreground, _, _)| foreground == expected),
-        AcceptedForeground::Quiet { hwnd, key } => {
+        AcceptedForeground::Quiet { hwnd, spec } => {
             foreground_window_title_and_pid().is_some_and(|(foreground, _, _)| foreground == hwnd)
-                && !keyboard_key_down_except(key)
+                && !keyboard_key_down_except(&key_spec_keys(spec))
         }
     }
+}
+
+/// The keys a press of `spec` holds down, with each modifier's left and right key, which
+/// the key table also marks down for the generic one.
+#[cfg(windows)]
+fn key_spec_keys(spec: KeySpec) -> Vec<u16> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT,
+        VK_SHIFT,
+    };
+
+    let mut keys = vec![spec.key];
+    for (held, modifier) in [
+        (spec.ctrl, [VK_CONTROL, VK_LCONTROL, VK_RCONTROL]),
+        (spec.alt, [VK_MENU, VK_LMENU, VK_RMENU]),
+        (spec.shift, [VK_SHIFT, VK_LSHIFT, VK_RSHIFT]),
+    ] {
+        if held {
+            keys.extend(modifier.map(|vk| vk.0));
+        }
+    }
+    keys
 }
 
 #[cfg(windows)]
@@ -3833,12 +3857,12 @@ fn keyboard_key_down_for_reload() -> bool {
 }
 
 #[cfg(windows)]
-fn keyboard_key_down_except(key: u16) -> bool {
+fn keyboard_key_down_except(keys: &[u16]) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-    (0x08..=0xfe)
-        .filter(|vk| *vk != i32::from(key))
-        .any(|vk| unsafe { GetAsyncKeyState(vk) } < 0)
+    (0x08..=0xfe_u16)
+        .filter(|vk| !keys.contains(vk))
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0)
 }
 
 #[cfg(windows)]
@@ -4096,7 +4120,10 @@ fn send_reload_hotkey_via_overlay(
         }
         let accepted = AcceptedForeground::Quiet {
             hwnd: overlay,
-            key: vk,
+            spec: KeySpec {
+                key: vk,
+                ..KeySpec::default()
+            },
         };
         let title = OverlayTitle::take(overlay);
         let done = wait_for_foreground_window(
@@ -4133,6 +4160,66 @@ fn send_reload_hotkey_via_overlay(
         )));
     }
     Ok(None)
+}
+
+/// Presses a mod's hotkey with the in-game overlay in front, through its title like the
+/// reload key.  The press waits until the overlay's search doesn't take the keys and no key
+/// has been down for a moment.  A press that a key or the foreground ended early isn't tried
+/// again, since the game may have taken it.  Returns `None` when the overlay lost the
+/// foreground before the press, so the caller looks again.
+#[cfg(windows)]
+fn send_key_spec_via_overlay(
+    spec: KeySpec,
+    overlay: windows::Win32::Foundation::HWND,
+) -> Result<Option<String>> {
+    let started = std::time::Instant::now();
+    loop {
+        let overlay_foreground = foreground_window_title_and_pid()
+            .is_some_and(|(foreground, _, _)| foreground == overlay);
+        if !overlay_foreground {
+            return Ok(None);
+        }
+        if started.elapsed() >= FOCUS_ROUTE_RETRY_TIMEOUT {
+            return Ok(Some(format!(
+                "skipped: keys were down or the in-game overlay's search took them for {}ms",
+                FOCUS_ROUTE_RETRY_TIMEOUT.as_millis()
+            )));
+        }
+        if game_overlay_typing() {
+            std::thread::sleep(KEYBOARD_IDLE_POLL);
+            continue;
+        }
+        let remaining = FOCUS_ROUTE_RETRY_TIMEOUT.saturating_sub(started.elapsed());
+        if !wait_for_keyboard_idle(remaining.min(Duration::from_millis(1_500)))
+            || game_overlay_typing()
+        {
+            continue;
+        }
+        let accepted = AcceptedForeground::Quiet {
+            hwnd: overlay,
+            spec,
+        };
+        let title = OverlayTitle::take(overlay);
+        let titled = wait_for_foreground_window(
+            overlay,
+            Some(HESTIA_WINDOW_TITLE),
+            FOREGROUND_SETTLE_TIMEOUT,
+        );
+        let sent = titled && send_key_spec(spec, accepted)?;
+        drop(title);
+        if sent {
+            return Ok(Some(
+                "sent mod hotkey via the in-game overlay's title".to_string(),
+            ));
+        }
+        if titled {
+            return Ok(Some(
+                "skipped: a key or the foreground ended the press through the in-game overlay \
+                 early"
+                    .to_string(),
+            ));
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -4396,6 +4483,22 @@ pub fn send_mod_hotkey_foreground_aware(
                         )
                     },
                 });
+            }
+            ReloadForeground::Overlay { title, hwnd } => {
+                if !reload_hotkey_supported(&importer_root) {
+                    return Ok(ReloadHotkeyReport {
+                        message: format!(
+                            "skipped: the in-game overlay is foreground but additional_foreground_window is unavailable; {label}"
+                        ),
+                    });
+                }
+                if let Some(message) = send_key_spec_via_overlay(spec, hwnd)? {
+                    return Ok(ReloadHotkeyReport {
+                        message: with_hint(format!("{message}; {label}")),
+                    });
+                }
+                // It closed or hid, so the game or Hestia may be in front now.
+                last_foreground = ReloadForeground::Overlay { title, hwnd };
             }
             other => {
                 last_foreground = other;

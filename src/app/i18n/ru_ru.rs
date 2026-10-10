@@ -981,4 +981,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Изменить", // FolderBatchScopeChange
     "Затронуто модов: {mods}", // FolderBatchScopeModCount
     "Подробности", // FolderBatchReportDetails
+    "Включите этот мод, чтобы использовать его горячие клавиши.", // GameOverlayHotkeyModOff
+    "Клавиша не дошла до игры. Отпустите все клавиши и попробуйте снова.", // GameOverlayHotkeyNotSent
+    "Включите «Разрешить Hestia изменять конфигурацию d3dx.ini» в настройках Hestia, чтобы нажимать здесь горячие клавиши модов.", // GameOverlayHotkeyNotAllowed
+    "Нажать эту клавишу", // GameOverlayHintPressHotkey
 ];

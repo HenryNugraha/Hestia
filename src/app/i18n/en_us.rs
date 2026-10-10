@@ -982,4 +982,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Change", // FolderBatchScopeChange
     "{mods} mods affected", // FolderBatchScopeModCount
     "Details", // FolderBatchReportDetails
+    "Turn this mod on to use its hotkeys.", // GameOverlayHotkeyModOff
+    "The key didn't reach the game. Let go of all keys and try again.", // GameOverlayHotkeyNotSent
+    "Turn on \"Let Hestia modify d3dx.ini configuration\" in Hestia's settings to press mod hotkeys here.", // GameOverlayHotkeyNotAllowed
+    "Press this key", // GameOverlayHintPressHotkey
 ];

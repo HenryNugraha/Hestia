@@ -863,7 +863,7 @@ mod folder_batch_layout_tests {
     ) -> (egui::Rect, bool) {
         let mut button_rect = egui::Rect::NOTHING;
         let mut popup_open = false;
-        let _ = context.run_ui(input, |ui| {
+        context.run_ui(input, |ui| {
             let response = folder_batch_sized_action_button(
                 ui,
                 enabled,
@@ -875,7 +875,8 @@ mod folder_batch_layout_tests {
                 popup_open = true;
                 ui.label("Delete choice");
             });
-        });
+        })
+        .drop_without_applying_deltas();
         (button_rect, popup_open)
     }
 
@@ -977,7 +978,7 @@ mod folder_batch_layout_tests {
         ));
         let mut responses = Vec::new();
 
-        let _ = context.run_ui(input, |ui| {
+        context.run_ui(input, |ui| {
             ui.horizontal_wrapped(|ui| {
                 responses.push(folder_batch_sized_action_button(
                     ui,
@@ -1004,7 +1005,8 @@ mod folder_batch_layout_tests {
                     egui::Button::new("Delete contents"),
                 ));
             });
-        });
+        })
+        .drop_without_applying_deltas();
 
         assert_eq!(responses.len(), 4);
         assert_eq!(responses[0].rect.min.y, responses[1].rect.min.y);

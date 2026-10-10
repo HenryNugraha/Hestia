@@ -336,6 +336,9 @@ pub struct HestiaApp {
     show_modified_locally_mods: bool,
     show_ignoring_update_mods: bool,
     selected_category_folder_id: Option<String>,
+    /// The category folder the library last went back out of, which the forward button opens
+    /// again.
+    category_folder_forward_id: Option<String>,
     selected_library_folder_ids: HashSet<String>,
     library_folder_selection_anchor: Option<String>,
     library_folder_contents_scope: FolderContentsScope,
@@ -430,7 +433,9 @@ pub struct HestiaApp {
     // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
     hotkeys_write_block_cache: Option<(String, bool, f64)>,
     hotkey_customization_tx: WorkerTx<HotkeyCustomizationRequest>,
-    hotkey_requests_inflight: VecDeque<String>,
+    /// The game of each request the hotkey worker has, and the overlay's number for a press it
+    /// asked for.
+    hotkey_requests_inflight: VecDeque<(String, Option<u64>)>,
     hotkey_customization_rx: WorkerRx<HotkeyCustomizationEvent>,
     hotkey_clear_inflight: HashSet<String>,
     hotkey_clear_confirm_target_id: Option<String>,

@@ -555,6 +555,12 @@ impl OverlayProcess {
         let _ = self.hotkeys.send((mod_id, root));
     }
 
+    /// Answers a hotkey press the overlay asked for.
+    fn answer_hotkey(&self, id: u64, error: Option<String>) {
+        self.outbox
+            .send(overlay_protocol::ToOverlay::HotkeyPressed { id, error });
+    }
+
     fn send_settings(&self, settings: overlay_protocol::Settings) {
         self.outbox
             .send(overlay_protocol::ToOverlay::Settings(settings));
@@ -654,6 +660,7 @@ fn read_hotkeys(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<(St
             .map(|row| overlay_protocol::ModHotkey {
                 key: row.key,
                 label: row.label,
+                raw: row.raw_key,
             })
             .collect();
         outbox.send(overlay_protocol::ToOverlay::Hotkeys(

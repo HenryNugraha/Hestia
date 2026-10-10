@@ -1259,18 +1259,173 @@ impl HestiaApp {
                     });
                 }
             });
+        if popup_is_open {
+            keep_game_switcher_menu_above_dim(ui.ctx(), popup_id);
+        }
     }
+}
+
+fn game_switcher_dim_layer() -> egui::LayerId {
+    egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("game_switcher_dim_overlay"),
+    )
 }
 
 fn paint_game_switcher_dim_overlay(ctx: &egui::Context) {
     let screen_rect = ctx.viewport_rect();
-    egui::Area::new(egui::Id::new("game_switcher_dim_overlay"))
-        .order(egui::Order::Foreground)
+    let layer = game_switcher_dim_layer();
+    egui::Area::new(layer.id)
+        .order(layer.order)
         .fixed_pos(screen_rect.min)
-        .interactable(false)
+        // Interactable so the dim swallows hover and clicks meant for the library beneath
+        // it; the pointer passes straight through non-interactable areas.
+        .interactable(true)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(screen_rect.size(), Sense::hover());
             ui.painter()
                 .rect_filled(rect, 0.0, Color32::from_black_alpha(200));
         });
+}
+
+/// A click on the dim raises it like any interactable area, which would leave the menu under
+/// the dim the next time the switcher opens. Keep the menu directly above it while open.
+fn keep_game_switcher_menu_above_dim(ctx: &egui::Context, popup_id: egui::Id) {
+    ctx.set_sublayer(
+        game_switcher_dim_layer(),
+        egui::LayerId::new(egui::Order::Foreground, popup_id),
+    );
+}
+
+#[cfg(test)]
+mod game_switcher_dim_tests {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    struct SwitcherFrame {
+        switcher: egui::Rect,
+        library: egui::Rect,
+        menu: Option<egui::Rect>,
+        tile: Option<egui::Rect>,
+        library_hovered: bool,
+        library_clicked: bool,
+        tile_clicked: bool,
+    }
+
+    fn pointer_input(pos: egui::Pos2, pressed: Option<bool>) -> egui::RawInput {
+        let mut events = vec![egui::Event::PointerMoved(pos)];
+        if let Some(pressed) = pressed {
+            events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(480.0, 320.0),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+
+    /// One frame wired like the top bar: the switcher button, a library row the dim covers,
+    /// then the dim, the switcher menu with one game tile, and the menu kept above the dim.
+    fn run_switcher_frame(ctx: &egui::Context, input: egui::RawInput) -> SwitcherFrame {
+        let frame = std::cell::Cell::new(None);
+        ctx.run_ui(input, |ui| {
+            let (switcher_rect, switcher) =
+                ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::click());
+            let (library_rect, library) =
+                ui.allocate_exact_size(egui::vec2(480.0, 200.0), Sense::click());
+            let popup_id = ui.id().with("game_selector_popup");
+            let popup_was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+            let popup_is_open = if switcher.clicked() {
+                !popup_was_open
+            } else {
+                popup_was_open
+            };
+            if popup_is_open {
+                paint_game_switcher_dim_overlay(ui.ctx());
+            }
+            let menu = egui::Popup::menu(&switcher).id(popup_id).show(|ui| {
+                let (_, tile) = ui.allocate_exact_size(egui::vec2(120.0, 60.0), Sense::click());
+                tile
+            });
+            if popup_is_open {
+                keep_game_switcher_menu_above_dim(ui.ctx(), popup_id);
+            }
+            frame.set(Some(SwitcherFrame {
+                switcher: switcher_rect,
+                library: library_rect,
+                menu: menu.as_ref().map(|menu| menu.response.rect),
+                tile: menu.as_ref().map(|menu| menu.inner.rect),
+                library_hovered: library.hovered(),
+                library_clicked: library.clicked(),
+                tile_clicked: menu.is_some_and(|menu| menu.inner.clicked()),
+            }));
+        })
+        .drop_without_applying_deltas();
+        frame.get().expect("switcher frame ran")
+    }
+
+    fn click(ctx: &egui::Context, pos: egui::Pos2) -> SwitcherFrame {
+        run_switcher_frame(ctx, pointer_input(pos, Some(true)));
+        run_switcher_frame(ctx, pointer_input(pos, Some(false)))
+    }
+
+    /// Opens the switcher, then lets the menu finish the sizing pass it runs on every reopen.
+    fn open_switcher(ctx: &egui::Context, switcher: egui::Pos2) -> SwitcherFrame {
+        run_switcher_frame(ctx, pointer_input(switcher, None));
+        click(ctx, switcher);
+        run_switcher_frame(ctx, pointer_input(switcher, None));
+        let open = run_switcher_frame(ctx, pointer_input(switcher, None));
+        assert!(open.menu.is_some(), "the switcher menu should be open");
+        open
+    }
+
+    #[test]
+    fn game_switcher_dim_blocks_the_library_and_keeps_the_menu_on_top() {
+        let ctx = egui::Context::default();
+        let first = run_switcher_frame(&ctx, pointer_input(egui::pos2(470.0, 310.0), None));
+        let switcher = first.switcher.center();
+        let library = first.library.right_bottom() - egui::vec2(20.0, 20.0);
+
+        // Repeat so a dismiss click on the dim can never leave a later menu buried under it.
+        for round in 1..=3 {
+            let open = open_switcher(&ctx, switcher);
+            assert!(
+                !open.menu.expect("menu").contains(library),
+                "the library point must sit outside the menu"
+            );
+
+            let hover = run_switcher_frame(&ctx, pointer_input(library, None));
+            assert!(
+                !hover.library_hovered,
+                "round {round}: the library under the dim lit up"
+            );
+            let dismiss = click(&ctx, library);
+            assert!(
+                !dismiss.library_clicked,
+                "round {round}: the click that closes the menu reached the library"
+            );
+            run_switcher_frame(&ctx, pointer_input(library, None));
+            let closed = run_switcher_frame(&ctx, pointer_input(library, None));
+            assert!(closed.menu.is_none(), "round {round}: the menu stayed open");
+            assert!(
+                closed.library_hovered,
+                "round {round}: the library should respond again once the menu closes"
+            );
+
+            let open = open_switcher(&ctx, switcher);
+            let pick = click(&ctx, open.tile.expect("tile").center());
+            assert!(
+                pick.tile_clicked,
+                "round {round}: the menu ended up under the dim"
+            );
+        }
+    }
 }

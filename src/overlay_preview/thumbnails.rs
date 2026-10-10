@@ -13,6 +13,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 const MAX_THUMBNAIL_DIMENSION: u32 = 640;
@@ -21,6 +22,13 @@ const MAX_RESIDENT_TEXTURES: usize = 64;
 const MAX_FAILED_PATHS: usize = 256;
 const RESULT_CHANNEL_CAPACITY: usize = MAX_QUEUED_WORK;
 const MAX_UPLOADS_PER_POLL: usize = 4;
+
+/// A picture that failed loads again after this long, twice as long after
+/// each failure in a row, up to `MAX_RETRY_DELAY`.  A failure is often over a
+/// moment later: a mod's folder moves while it turns on or off, and Hestia
+/// may still be saving a picture.
+const FIRST_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// The library covers a censored card with this dark color at this opacity,
 /// out of 255.  Censored pictures are darkened the same way when they load.
@@ -189,13 +197,18 @@ fn decode_worker(
     results: SyncSender<DecodeResult>,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
     censored: Arc<Mutex<HashSet<PathBuf>>>,
+    decode: impl Fn(&Path, bool) -> Result<DecodedThumbnail, String>,
 ) {
     while let Some(path) = queue.pop_blocking() {
         let censored = censored
             .lock()
             .expect("thumbnail censor lock poisoned")
             .contains(&path);
-        let image = decode_thumbnail(&path, censored);
+        // A picture that crashes its decoder fails alone, instead of ending
+        // the worker and every picture after it.
+        let image =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode(&path, censored)))
+                .unwrap_or_else(|_| Err(format!("decoding {} crashed", path.display())));
         if results
             .send(DecodeResult {
                 path,
@@ -220,7 +233,17 @@ fn decode_worker(
 enum CacheEntry {
     Pending(Priority),
     Texture(egui::TextureHandle),
-    Failed,
+    /// Loads again when it's drawn after `retry_at`.
+    Failed {
+        retry_at: Instant,
+    },
+}
+
+/// How long a picture waits to load again after `failures` failures in a row.
+fn retry_delay(failures: u32) -> Duration {
+    FIRST_RETRY_DELAY
+        .saturating_mul(1 << failures.saturating_sub(1).min(16))
+        .min(MAX_RETRY_DELAY)
 }
 
 /// A small UI-thread cache backed by one bounded decode worker.
@@ -237,6 +260,8 @@ pub(super) struct ThumbnailCache {
     entries: HashMap<PathBuf, CacheEntry>,
     resident_lru: VecDeque<PathBuf>,
     failed_lru: VecDeque<PathBuf>,
+    /// Failures in a row, by picture.
+    failures: HashMap<PathBuf, u32>,
 }
 
 impl ThumbnailCache {
@@ -256,6 +281,7 @@ impl ThumbnailCache {
                     results_tx,
                     worker_repaint_context,
                     worker_censored,
+                    decode_thumbnail,
                 )
             })
             .expect("failed to start overlay thumbnail worker");
@@ -269,27 +295,37 @@ impl ThumbnailCache {
             entries: HashMap::new(),
             resident_lru: VecDeque::new(),
             failed_lru: VecDeque::new(),
+            failures: HashMap::new(),
         }
     }
 
     /// Return a resident texture immediately, or queue a demand decode.
     pub(super) fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
         self.set_repaint_context(ctx);
-        if let Some(entry) = self.entries.get(path) {
-            if let CacheEntry::Texture(texture) = entry {
+        match self.entries.get(path) {
+            Some(CacheEntry::Texture(texture)) => {
                 let texture = texture.clone();
                 self.touch_resident(path);
                 return Some(texture);
             }
-            let speculative = matches!(entry, CacheEntry::Pending(Priority::Speculative));
-            if speculative {
-                if self.queue.promote(path) {
-                    if let Some(CacheEntry::Pending(priority)) = self.entries.get_mut(path) {
-                        *priority = Priority::Demand;
-                    }
+            Some(CacheEntry::Pending(Priority::Speculative)) => {
+                if self.queue.promote(path)
+                    && let Some(CacheEntry::Pending(priority)) = self.entries.get_mut(path)
+                {
+                    *priority = Priority::Demand;
+                }
+                return None;
+            }
+            Some(CacheEntry::Pending(Priority::Demand)) => return None,
+            Some(&CacheEntry::Failed { retry_at }) => {
+                let now = Instant::now();
+                if now < retry_at {
+                    // Draw again when it's due, even if nothing else moves.
+                    ctx.request_repaint_after(retry_at - now);
+                    return None;
                 }
             }
-            return None;
+            None => {}
         }
 
         let path = path.to_path_buf();
@@ -350,6 +386,7 @@ impl ThumbnailCache {
             }
             match result.image {
                 Ok(decoded) => {
+                    self.failures.remove(&result.path);
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
                         decoded.size,
                         decoded.rgba.as_slice(),
@@ -364,8 +401,16 @@ impl ThumbnailCache {
                     self.touch_resident(&result.path);
                     self.evict_resident_if_needed();
                 }
-                Err(_) => {
-                    self.entries.insert(result.path.clone(), CacheEntry::Failed);
+                Err(error) => {
+                    let failures = self.failures.entry(result.path.clone()).or_insert(0);
+                    *failures += 1;
+                    if *failures == 1 {
+                        tracing::debug!(%error, "An overlay picture didn't load");
+                    }
+                    let retry_at = Instant::now() + retry_delay(*failures);
+                    self.entries
+                        .insert(result.path.clone(), CacheEntry::Failed { retry_at });
+                    remove_path(&mut self.failed_lru, &result.path);
                     self.failed_lru.push_back(result.path);
                     self.evict_failed_if_needed();
                 }
@@ -374,6 +419,15 @@ impl ThumbnailCache {
         if completed {
             ctx.request_repaint();
         }
+    }
+
+    /// Loads the pictures that failed again the next time they're drawn.
+    /// Hestia sends a new library or pictures after files changed.
+    pub(super) fn retry_failed(&mut self) {
+        self.entries
+            .retain(|_, entry| !matches!(entry, CacheEntry::Failed { .. }));
+        self.failed_lru.clear();
+        self.failures.clear();
     }
 
     /// The pictures to darken like the library's censored cards.  Pictures
@@ -394,7 +448,7 @@ impl ThumbnailCache {
         for path in changed {
             if matches!(
                 self.entries.get(&path),
-                Some(CacheEntry::Texture(_) | CacheEntry::Failed)
+                Some(CacheEntry::Texture(_) | CacheEntry::Failed { .. })
             ) {
                 self.entries.remove(&path);
             }
@@ -446,7 +500,8 @@ impl ThumbnailCache {
             let Some(path) = self.failed_lru.pop_front() else {
                 break;
             };
-            if matches!(self.entries.get(&path), Some(CacheEntry::Failed)) {
+            self.failures.remove(&path);
+            if matches!(self.entries.get(&path), Some(CacheEntry::Failed { .. })) {
                 self.entries.remove(&path);
             }
         }
@@ -483,6 +538,37 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    /// A cache whose decodes the test does itself, with `results`.
+    fn cache_without_worker(results: Option<Receiver<DecodeResult>>) -> ThumbnailCache {
+        ThumbnailCache {
+            queue: Arc::new(DecodeQueue::new()),
+            repaint_context: Arc::new(Mutex::new(None)),
+            results,
+            censored: Arc::new(Mutex::new(HashSet::new())),
+            worker: None,
+            entries: HashMap::new(),
+            resident_lru: VecDeque::new(),
+            failed_lru: VecDeque::new(),
+            failures: HashMap::new(),
+        }
+    }
+
+    fn queued(cache: &ThumbnailCache) -> usize {
+        let state = cache
+            .queue
+            .state
+            .lock()
+            .expect("thumbnail queue lock poisoned");
+        state.demand.len() + state.speculative.len()
+    }
+
+    fn make_due(cache: &mut ThumbnailCache, path: &Path) {
+        let Some(CacheEntry::Failed { retry_at }) = cache.entries.get_mut(path) else {
+            panic!("{} didn't fail", path.display());
+        };
+        *retry_at = Instant::now();
+    }
 
     #[test]
     fn demand_replaces_oldest_speculative_work_and_wins_next_pop() {
@@ -538,16 +624,7 @@ mod tests {
     fn evicted_speculative_entry_can_be_requeued_on_revisit() {
         // Pause decoding by constructing the cache without a worker. This
         // exercises saturation deterministically through the public API.
-        let mut cache = ThumbnailCache {
-            queue: Arc::new(DecodeQueue::new()),
-            repaint_context: Arc::new(Mutex::new(None)),
-            results: None,
-            censored: Arc::new(Mutex::new(HashSet::new())),
-            worker: None,
-            entries: HashMap::new(),
-            resident_lru: VecDeque::new(),
-            failed_lru: VecDeque::new(),
-        };
+        let mut cache = cache_without_worker(None);
         let ctx = egui::Context::default();
         cache.prefetch(
             &ctx,
@@ -611,16 +688,7 @@ mod tests {
 
     #[test]
     fn changing_what_is_censored_loads_those_pictures_again() {
-        let mut cache = ThumbnailCache {
-            queue: Arc::new(DecodeQueue::new()),
-            repaint_context: Arc::new(Mutex::new(None)),
-            results: None,
-            censored: Arc::new(Mutex::new(HashSet::new())),
-            worker: None,
-            entries: HashMap::new(),
-            resident_lru: VecDeque::new(),
-            failed_lru: VecDeque::new(),
-        };
+        let mut cache = cache_without_worker(None);
         let ctx = egui::Context::default();
         let kept = PathBuf::from("kept.png");
         let flipped = PathBuf::from("flipped.png");
@@ -638,5 +706,118 @@ mod tests {
         assert!(cache.is_censored(&flipped));
         assert!(cache.entries.contains_key(&kept));
         assert!(!cache.entries.contains_key(&flipped));
+    }
+
+    #[test]
+    fn failed_pictures_wait_longer_after_each_failure() {
+        assert_eq!(retry_delay(1), Duration::from_secs(2));
+        assert_eq!(retry_delay(2), Duration::from_secs(4));
+        assert_eq!(retry_delay(3), Duration::from_secs(8));
+        assert_eq!(retry_delay(6), MAX_RETRY_DELAY);
+        assert_eq!(retry_delay(u32::MAX), MAX_RETRY_DELAY);
+    }
+
+    #[test]
+    fn a_failed_picture_loads_again_once_its_wait_is_over() {
+        let (results, receiver) = mpsc::sync_channel(RESULT_CHANNEL_CAPACITY);
+        let mut cache = cache_without_worker(Some(receiver));
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("mod-turning-on/preview.png");
+        let decoded = |image| DecodeResult {
+            path: path.clone(),
+            censored: false,
+            image,
+        };
+
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(cache.queue.pop_blocking(), Some(path.clone()));
+        results
+            .send(decoded(Err("the folder is moving".to_owned())))
+            .unwrap();
+        cache.poll(&ctx);
+        // Drawn again while it waits, it doesn't load.
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(queued(&cache), 0);
+
+        make_due(&mut cache, &path);
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(cache.queue.pop_blocking(), Some(path.clone()));
+        results
+            .send(decoded(Err("the folder is moving".to_owned())))
+            .unwrap();
+        cache.poll(&ctx);
+        assert_eq!(cache.failures.get(&path), Some(&2));
+
+        make_due(&mut cache, &path);
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(cache.queue.pop_blocking(), Some(path.clone()));
+        results
+            .send(decoded(Ok(DecodedThumbnail {
+                size: [1, 1],
+                rgba: vec![255; 4],
+            })))
+            .unwrap();
+        cache.poll(&ctx);
+        assert!(cache.get(&ctx, &path).is_some());
+        assert!(cache.failures.is_empty());
+    }
+
+    #[test]
+    fn new_files_from_hestia_load_failed_pictures_right_away() {
+        let mut cache = cache_without_worker(None);
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("gamebanana.bin");
+        cache.entries.insert(
+            path.clone(),
+            CacheEntry::Failed {
+                retry_at: Instant::now() + MAX_RETRY_DELAY,
+            },
+        );
+        cache.failures.insert(path.clone(), 5);
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(queued(&cache), 0);
+
+        cache.retry_failed();
+        assert!(cache.failures.is_empty());
+        assert!(cache.get(&ctx, &path).is_none());
+        assert_eq!(cache.queue.pop_blocking(), Some(path));
+    }
+
+    #[test]
+    fn a_picture_that_crashes_its_decoder_fails_alone() {
+        let queue = Arc::new(DecodeQueue::new());
+        let (results, receiver) = mpsc::sync_channel(RESULT_CHANNEL_CAPACITY);
+        let worker_queue = Arc::clone(&queue);
+        let worker = thread::spawn(move || {
+            decode_worker(
+                worker_queue,
+                results,
+                Arc::new(Mutex::new(None)),
+                Arc::new(Mutex::new(HashSet::new())),
+                |path, _| {
+                    assert!(path != Path::new("broken.png"), "a decoder bug");
+                    Ok(DecodedThumbnail {
+                        size: [1, 1],
+                        rgba: vec![255; 4],
+                    })
+                },
+            );
+        });
+        for path in ["broken.png", "fine.png"] {
+            queue.push(PathBuf::from(path), Priority::Demand);
+        }
+        let wait = Duration::from_secs(10);
+        let broken = receiver
+            .recv_timeout(wait)
+            .expect("the broken picture's result");
+        assert_eq!(broken.path, Path::new("broken.png"));
+        assert!(broken.image.unwrap_err().contains("crashed"));
+        let fine = receiver
+            .recv_timeout(wait)
+            .expect("the next picture's result");
+        assert_eq!(fine.path, Path::new("fine.png"));
+        assert!(fine.image.is_ok());
+        queue.stop();
+        worker.join().expect("the worker ends normally");
     }
 }

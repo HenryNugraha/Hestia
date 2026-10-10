@@ -530,7 +530,43 @@ fn prepare_markdown_content(html: &str) -> String {
             format!(r#"<img src="{real_url}">"#)
         });
 
-    html2md::parse_html(&sanitized_html)
+    let mut handlers: HashMap<String, Box<dyn html2md::TagHandlerFactory>> = HashMap::new();
+    handlers.insert("a".to_string(), Box::new(VerbatimLinkHandler::default));
+    html2md::parse_html_custom(&sanitized_html, &handlers)
+}
+
+/// html2md's own link handler percent-decodes link targets, which turns `%26` into `&`, `%23`
+/// into `#` and `%29` into `)` and breaks real links. Same handler, minus the decoding.
+#[derive(Default)]
+struct VerbatimLinkHandler {
+    start_pos: usize,
+    url: String,
+    emit_unchanged: bool,
+}
+
+impl html2md::TagHandler for VerbatimLinkHandler {
+    fn handle(&mut self, tag: &html2md::Handle, printer: &mut html2md::StructuredPrinter) {
+        // Markdown has no named anchors, so those stay raw HTML.
+        if html2md::common::get_tag_attr(tag, "name").is_some() {
+            html2md::TagHandler::handle(&mut html2md::dummy::IdentityHandler, tag, printer);
+            self.emit_unchanged = true;
+        }
+        self.start_pos = printer.data.len();
+        let href = html2md::common::get_tag_attr(tag, "href").unwrap_or_default();
+        let href = href.trim_matches(|c: char| c.is_ascii_whitespace());
+        self.url = if href.contains(|c: char| c.is_ascii_whitespace()) {
+            format!("<{href}>")
+        } else {
+            href.to_string()
+        };
+    }
+
+    fn after_handle(&mut self, printer: &mut html2md::StructuredPrinter) {
+        if !self.emit_unchanged {
+            printer.insert_str(self.start_pos, "[");
+            printer.append_str(&format!("]({})", self.url));
+        }
+    }
 }
 
 fn mod_primary_description_markdown(
@@ -1296,5 +1332,68 @@ mod markdown_render_image_tests {
         );
         assert_eq!(cache.prepared_builds, 1);
         assert_eq!(baseline_bytes, cached_bytes);
+    }
+}
+
+#[cfg(test)]
+mod markdown_link_tests {
+    use super::*;
+
+    #[test]
+    fn prepare_keeps_link_targets_as_written() {
+        let cases = [
+            (
+                r#"<p><a href="https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Fdl%3Fid%3D1%26key%3Dabc&amp;sa=D">mirror</a></p>"#,
+                "[mirror](https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Fdl%3Fid%3D1%26key%3Dabc&sa=D)",
+            ),
+            (
+                r#"<p><a href="https://example.com/search?tag=%23genshin&amp;page=2">hashtag</a></p>"#,
+                "[hashtag](https://example.com/search?tag=%23genshin&page=2)",
+            ),
+            (
+                r#"<p><a href="https://example.com/q?x=a+b&amp;y=100%25">percent</a></p>"#,
+                "[percent](https://example.com/q?x=a+b&y=100%25)",
+            ),
+            (
+                r#"<p><a href="https://example.com/a%29b">unbalanced</a> after</p>"#,
+                "[unbalanced](https://example.com/a%29b) after",
+            ),
+            (
+                r#"<p><a href="https://example.com/dl/%FF%FEfile.zip">legacy link</a></p>"#,
+                "[legacy link](https://example.com/dl/%FF%FEfile.zip)",
+            ),
+            (
+                r#"<p><a href="https://example.com/%3Cx%3E%20y">angle</a></p>"#,
+                "[angle](https://example.com/%3Cx%3E%20y)",
+            ),
+            (
+                r#"<p>Get <a href="https://example.com/files/my%20mod%20v2.zip">the file</a></p>"#,
+                "Get [the file](https://example.com/files/my%20mod%20v2.zip)",
+            ),
+            (
+                r#"<p><a href=' https://example.com/a%20b '>padded</a></p>"#,
+                "[padded](https://example.com/a%20b)",
+            ),
+            (
+                r#"<p><A HREF=https://example.com/a%20b>loud</A></p>"#,
+                "[loud](https://example.com/a%20b)",
+            ),
+            (
+                r#"<p><a href="https://example.com/my file.zip">spaced</a></p>"#,
+                "[spaced](<https://example.com/my file.zip>)",
+            ),
+        ];
+        for (html, expected) in cases {
+            assert_eq!(prepare_markdown_content(html).trim(), expected, "input: {html}");
+        }
+    }
+
+    #[test]
+    fn prepare_passes_html_only_links_through_unchanged() {
+        let markdown = prepare_markdown_content(
+            r#"<p>x<a name="top" href="https://example.com/a%20b"></a> see<sup><a href="https://example.com/c%26d">1</a></sup></p>"#,
+        );
+        assert!(markdown.contains(r#"href="https://example.com/a%20b""#), "{markdown}");
+        assert!(markdown.contains(r#"href="https://example.com/c%26d""#), "{markdown}");
     }
 }

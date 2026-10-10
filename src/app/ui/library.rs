@@ -306,14 +306,15 @@ mod category_tests {
                 time: Some(time),
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input.take(), |ui| {
+            ctx.run_ui(input.take(), |ui| {
                 value.set(animate_library_selection(
                     ui.ctx(),
                     animation_id,
                     has_selection,
                     section,
                 ));
-            });
+            })
+            .drop_without_applying_deltas();
             value.get()
         };
 
@@ -492,7 +493,7 @@ mod category_tests {
         const TILE_WIDTH: f32 = 112.0;
         let clicked_checkboxes = std::cell::RefCell::new(Vec::new());
         let opened_tiles = std::cell::RefCell::new(Vec::new());
-        let _ = ctx.run_ui(input, |ui| {
+        ctx.run_ui(input, |ui| {
             ui.set_width(480.0);
             ui.spacing_mut().item_spacing.x = TILE_GAP;
             ui.horizontal(|ui| {
@@ -537,7 +538,8 @@ mod category_tests {
                     assert_eq!(tile_rect.left(), index as f32 * (TILE_WIDTH + TILE_GAP));
                 }
             });
-        });
+        })
+        .drop_without_applying_deltas();
         (
             clicked_checkboxes.into_inner(),
             opened_tiles.into_inner(),
@@ -6462,7 +6464,7 @@ impl HestiaApp {
                         .on_hover_text(text.back_to_category_folders())
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if back_response.clicked() {
-                        self.selected_category_folder_id = None;
+                        self.category_folder_forward_id = self.selected_category_folder_id.take();
                         self.clear_library_folder_selection();
                         self.selected_mods.clear();
                         egui::Popup::close_all(ui.ctx());
@@ -9388,6 +9390,9 @@ impl HestiaApp {
                             self.dragging_mod_ids.clear();
                         }
                         if let Some(category_folder_id) = pending_category_folder_id {
+                            // Going somewhere new leaves nothing for forward to return to,
+                            // like a web browser.
+                            self.category_folder_forward_id = None;
                             self.selected_category_folder_id = category_folder_id;
                             self.clear_library_folder_selection();
                             self.selected_mods.clear();
