@@ -602,6 +602,7 @@ pub(crate) enum TextKey {
     SettingsGeneralBehaviorWhenLaunchingGame,
     SettingsGeneralBehaviorAfterInstallingMod,
     SettingsGeneralBehaviorNewModInstallState,
+    SettingsGeneralBehaviorNewModInstallStateTooltip,
     SettingsGeneralBehaviorWhenLaunchingTool,
     SettingsGeneralBehaviorDoNothing,
     SettingsGeneralBehaviorMinimizeHestia,
@@ -3871,6 +3872,10 @@ impl TextCatalog {
 
     fn new_mod_install_state(self) -> &'static str {
         self.get(TextKey::SettingsGeneralBehaviorNewModInstallState)
+    }
+
+    fn new_mod_install_state_tooltip(self) -> &'static str {
+        self.get(TextKey::SettingsGeneralBehaviorNewModInstallStateTooltip)
     }
 
     fn when_launching_tool(self) -> &'static str {

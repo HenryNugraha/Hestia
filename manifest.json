@@ -1,12 +1,12 @@
 {
   "app": "hestia",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "url": "https://github.com/HenryNugraha/Hestia",
   "download": [
-    "https://hestia.hnawc.com/binary/1.9.2/hestia.exe",
-    "https://github.com/HenryNugraha/Hestia/releases/download/1.9.2/hestia.exe"
+    "https://hestia.hnawc.com/binary/1.10.0/hestia.exe",
+    "https://github.com/HenryNugraha/Hestia/releases/download/1.10.0/hestia.exe"
   ],
-  "bytes": 74892288,
-  "sha256": "3d3eb87026f1119ad0279f81b4c15f9a541dad5c2f6d52ed09f7dabd8c359d17",
-  "signature": "4MFJoLkT+9Qyj9pnkHXhX5/j6xdEdDpMrKycDk7RhVDyQ6ORGhpLPQUqUhRzWQHqEjq4xhb/b5Xm3yE2AgyaCQ=="
+  "bytes": 81534976,
+  "sha256": "7152ad8fb27a042161a7455b4644f5a600b3c865ec6d264556a3ce6490e67d51",
+  "signature": "EVnjFbhroesgKe3zqaySZ45xj6x9IBWaxG/czhi+dSkuiseBTGMFeNoMdI2aZ59ryAXpaCv3Mg7MzyLg1bdgAw=="
 }

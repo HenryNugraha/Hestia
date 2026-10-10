@@ -599,6 +599,7 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "启动游戏时：", // SettingsGeneralBehaviorWhenLaunchingGame
     "安装 Mod 后：", // SettingsGeneralBehaviorAfterInstallingMod
     "新 Mod 的安装状态：", // SettingsGeneralBehaviorNewModInstallState
+    "自动：\n• 如果分类中已有启用的 Mod，新 Mod 将以禁用状态安装。\n• 如果没有启用的 Mod，启用第一个新 Mod，其余以禁用状态安装。\n• 没有分类的 Mod 始终以禁用状态安装。", // SettingsGeneralBehaviorNewModInstallStateTooltip
     "启动工具时：", // SettingsGeneralBehaviorWhenLaunchingTool
     "不执行操作", // SettingsGeneralBehaviorDoNothing
     "最小化 Hestia", // SettingsGeneralBehaviorMinimizeHestia

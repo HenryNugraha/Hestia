@@ -3,67 +3,100 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // l10n order: English, Bahasa Indonesia, Simplified Chinese, Russian.
 // Add empty string "" to skip a language.
 
-pub(crate) const WHATS_NEW_DATE: L10n =
-    l10n("xx xx 2026", "xx xx 2026", "2026年 xx月 xx日", "xx xx 2026");
-pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[l10n(
-    "A few more tiny performance optimizations",
-    "Sedikit optimasi performa tambahan",
-    "又做了一点额外的性能优化",
-    "Ещё немного дополнительных оптимизаций производительности",
-)];
+pub(crate) const WHATS_NEW_DATE: L10n = l10n(
+    "10 October 2026",
+    "10 Oktober 2026",
+    "2026年 10月 10日",
+    "10 октября 2026"
+);
+pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
+    l10n(
+        concat!(
+            "Added a new overlay feature on supported games\n",
+            "▸ Press ALT+H to bring the overlay up\n",
+            "▸ Navigate characters & mods with ASWD\n",
+            "▸ Space or SHIFT+Space to enable/disable mods",
+        ),
+        concat!(
+            "Menambahkan fitur overlay baru pada game yang didukung\n",
+            "▸ Tekan ALT+H untuk menampilkan overlay\n",
+            "▸ Navigasi pilihan karakter & mod dengan ASWD\n",
+            "▸ Tekan Space atau SHIFT+Space untuk mengaktifkan/menonaktifkan mod",
+        ),
+        concat!(
+            "在受支持的游戏中新增游戏内浮层功能\n",
+            "▸ 按 ALT+H 打开浮层\n",
+            "▸ 使用 ASWD 在角色和模组列表中移动\n",
+            "▸ 按 Space 或 SHIFT+Space 启用/禁用模组",
+        ),
+        concat!(
+            "В поддерживаемых играх появился внутриигровой оверлей\n",
+            "▸ Нажмите ALT+H, чтобы открыть оверлей\n",
+            "▸ Перемещайтесь по спискам персонажей и модов с помощью ASWD\n",
+            "▸ Нажимайте Space или SHIFT+Space, чтобы включать и отключать моды",
+        ),
+    ),
+    l10n(
+        "Now supports adjusting interface size",
+        "Sekarang bisa memperbesar/memperkecil tampilan aplikasi",
+        "现在可以放大或缩小应用界面",
+        "Теперь размер интерфейса можно менять",
+    ),
+    l10n(
+        concat!(
+            "Added an option to always install a mod as Enabled or Disabled\n",
+            "▸ Plus an Auto option with smart detection",
+        ),
+        concat!(
+            "Menambahkan opsi untuk selalu memasang mod dalam keadaan Aktif atau Nonaktif\n",
+            "▸ Opsi Otomatis: aktif/nonaktif sesuai kategori",
+        ),
+        concat!(
+            "新增选项，可始终将模组安装为启用或禁用状态\n",
+            "▸ “自动”选项根据分类决定启用或禁用模组",
+        ),
+        concat!(
+            "Добавлена возможность всегда устанавливать мод включённым или отключённым\n",
+            "▸ Вариант «Авто» выбирает состояние мода в зависимости от категории",
+        ),
+    ),
+    l10n(
+        "Censored mods are now blurred",
+        "Mod kini disensor dengan blur",
+        "需要遮蔽的模组图片现在会模糊显示",
+        "Цензурированные изображения модов теперь размыты",
+    ),
+];
 
 pub(crate) const FEEDBACK_SURVEY_ENABLED: bool = true;
-pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 32;
+pub(crate) const FEEDBACK_SURVEY_LAUNCH_DELAY: u32 = 16;
 pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
     "Quick Feedback",
     "Survey Singkat",
-    "小调查",
+    "快速反馈",
     "Быстрый отзыв",
 );
 pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
     q(
-        "profile_feature",
+        "overlay_feature",
         l10n(
-            "Do you find the mod profiles feature useful?",
-            "Apakah fitur profil mod berguna bagi Anda?",
-            "你觉得 mod 配置文件功能有用吗？",
-            "Вы находите функцию профилей полезной?",
+            "How easy is it to use the new in-game overlay?",
+            "Seberapa mudah menggunakan overlay baru di dalam game?",
+            "使用新的游戏内浮层有多容易？",
+            "Насколько легко пользоваться новым внутриигровым оверлеем?",
         ),
         &[
-            a(1, l10n("Yes", "Iya", "是的", "Да")),
-            a(2, l10n("No", "Tidak", "不", "Нет")),
+            a(1, l10n("Easy", "Mudah", "简单", "Легко")),
+            a(2, l10n("Moderate", "Sedang", "一般", "Средне")),
+            a(3, l10n("Difficult", "Sulit", "困难", "Сложно")),
             a(
-                3,
+                4,
                 l10n(
-                    "Never used it",
-                    "Tidak pernah pakai",
-                    "从未使用过",
-                    "Не использовал",
+                    "Haven't tried it yet",
+                    "Belum mencobanya",
+                    "还没试过",
+                    "Ещё не пробовал(а)",
                 ),
-            ),
-        ],
-    ),
-    q(
-        "hotkeys_introduction",
-        l10n(
-            "If you've used the new Hotkeys feature, has it worked correctly for you?",
-            "Kalau kamu sudah mencoba fitur Hotkeys baru, apakah berfungsi dengan benar?",
-            "如果你使用过新的快捷键功能，它是否正常工作？",
-            "Если вы уже пользовались новой функцией горячих клавиш, она работает корректно?",
-        ),
-        &[
-            a(
-                1,
-                l10n(
-                    "Works well",
-                    "Berfungsi baik",
-                    "运行良好",
-                    "Работает хорошо",
-                ),
-            ),
-            a(
-                2,
-                l10n("Has issues", "Ada masalah", "存在问题", "Есть проблемы"),
             ),
         ],
     ),

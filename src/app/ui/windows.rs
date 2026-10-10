@@ -3080,7 +3080,9 @@ impl HestiaApp {
                                                     ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Enabled, text.mod_install_state(ModInstallState::Enabled));
                                                     ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Disabled, text.mod_install_state(ModInstallState::Disabled));
                                                     ui.selectable_value(&mut self.state.static_prefs.mod_install_state, ModInstallState::Auto, text.mod_install_state(ModInstallState::Auto));
-                                                });
+                                                })
+                                                .response
+                                                .on_hover_text(text.new_mod_install_state_tooltip());
                                         },
                                     );
                                     ui.add_space(8.0);

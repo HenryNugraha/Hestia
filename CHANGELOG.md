@@ -1,15 +1,22 @@
 # Changelog
 
-## [1.10.0-alpha] - 2026-09-xx
+## [1.10.0] - 2026-10-10
 
 ### Added
-- 
+- Added a new in-game overlay feature.
+- Added support for adjusting the interface size.
+- Added support for selecting multiple folders for bulk operations.
+- Added an option to always install a mod as Enabled or Disabled, plus an Auto option.
 
 ### Fixed
-- 
+- Fixed a bug that caused deep scans to appear to freeze when forcibly stopped.
+- Fixed NSFW mod thumbnails in folder view not being censored.
 
 ### Changed
-- 
+- Upgraded Rust and dependency versions.
+- Censored images are now properly blurred.
+- Brought back the list view.
+- Adjusted the mod scanner to scan subfolders.
 
 ## [1.9.2] - 2026-09-12
 

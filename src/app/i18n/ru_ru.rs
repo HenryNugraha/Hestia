@@ -599,6 +599,7 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "При запуске игры:", // SettingsGeneralBehaviorWhenLaunchingGame
     "После установки мода:", // SettingsGeneralBehaviorAfterInstallingMod
     "Состояние нового мода:", // SettingsGeneralBehaviorNewModInstallState
+    "Авто:\n• Если в категории уже есть включённый мод, новые моды устанавливаются отключёнными.\n• Если включённых модов нет, первый новый мод включается, а остальные устанавливаются отключёнными.\n• Моды без категории всегда устанавливаются отключёнными.", // SettingsGeneralBehaviorNewModInstallStateTooltip
     "При запуске утилиты:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Ничего не делать", // SettingsGeneralBehaviorDoNothing
     "Свернуть Hestia", // SettingsGeneralBehaviorMinimizeHestia

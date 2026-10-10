@@ -1,6 +1,6 @@
 [package]
 name = "hestia"
-version = "1.10.0-alpha"
+version = "1.10.0"
 authors = ["Henry Nugraha"]
 edition = "2024"
 
@@ -20,8 +20,6 @@ windows_subsystem = "windows"
 winres = "0.1"
 
 [features]
-# Frame profiling: build with `--features profile`, then connect puffin_viewer to
-# localhost:8585, or set HESTIA_PROFILE_DUMP=<path> for periodic aggregate dumps.
 profile = ["dep:puffin", "dep:puffin_http", "profiling/profile-with-puffin"]
 
 [dependencies]
@@ -101,9 +99,6 @@ codegen-units = 1
 opt-level = 3
 strip = true
 
-# Image codec crates stay optimized in dev builds: unoptimized decode/encode is
-# 10-30x slower and dominates thumbnail, GIF, and clipboard-image latency while
-# testing. Scoped to these crates so incremental builds of hestia are unaffected.
 [profile.dev.package]
 image = { opt-level = 2 }
 png = { opt-level = 2 }

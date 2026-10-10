@@ -599,6 +599,7 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "When launching a game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "After installing a mod:", // SettingsGeneralBehaviorAfterInstallingMod
     "New mod install state:", // SettingsGeneralBehaviorNewModInstallState
+    "Auto:\n• If the category already has an enabled mod, install new mods disabled.\n• If none are enabled, enable the first new mod and install the rest disabled.\n• Mods without a category always install disabled.", // SettingsGeneralBehaviorNewModInstallStateTooltip
     "When launching a tool:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Do Nothing", // SettingsGeneralBehaviorDoNothing
     "Minimize Hestia", // SettingsGeneralBehaviorMinimizeHestia

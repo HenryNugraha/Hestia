@@ -599,6 +599,7 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Saat menjalankan game:", // SettingsGeneralBehaviorWhenLaunchingGame
     "Setelah memasang mod:", // SettingsGeneralBehaviorAfterInstallingMod
     "Status pemasangan mod baru:", // SettingsGeneralBehaviorNewModInstallState
+    "Otomatis:\n• Jika kategori sudah memiliki mod yang aktif, pasang mod baru dalam keadaan nonaktif.\n• Jika belum ada mod yang aktif, aktifkan mod baru pertama dan pasang sisanya dalam keadaan nonaktif.\n• Mod tanpa kategori selalu dipasang dalam keadaan nonaktif.", // SettingsGeneralBehaviorNewModInstallStateTooltip
     "Saat menjalankan alat:", // SettingsGeneralBehaviorWhenLaunchingTool
     "Jangan lakukan apa-apa", // SettingsGeneralBehaviorDoNothing
     "Minimalkan Hestia", // SettingsGeneralBehaviorMinimizeHestia
