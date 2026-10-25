@@ -987,4 +987,30 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "The key didn't reach the game. Let go of all keys and try again.", // GameOverlayHotkeyNotSent
     "Turn on \"Let Hestia modify d3dx.ini configuration\" in Hestia's settings to press mod hotkeys here.", // GameOverlayHotkeyNotAllowed
     "Press this key", // GameOverlayHintPressHotkey
+
+    // Newer mod files
+    "New files", // NewFiles
+    "New files are available for this mod.", // NewerFilesTooltip
+    "View files", // ViewFiles
+    "Ignore", // DismissFileNotice
+    "New file", // NewerFile
+    "Choose files", // ChooseUpdateFiles
+    "More installation options", // FileReviewInstallMenu
+    "Install as a separate mod", // FileReviewInstallSeparate
+    "Merge with installed mod", // FileReviewInstallMerge
+    "New files are available, but Hestia can’t confirm how they relate to your installed version. Choose how to handle them:", // FileReviewIntroNew
+    "New file is available, but Hestia can’t confirm how it relates to your installed version. Choose how to handle it:", // FileReviewIntroNewSingular
+    "Choose files to update this mod, install separately, or merge.", // FileReviewIntroAll
+    "Installed: {files}", // FileReviewInstalledSummary
+    "Replace this mod with the selected files.", // FileReviewUpdateTooltip
+    "Choose how to install the selected files.", // FileReviewInstallTooltip
+    "Install separately without changing this mod.", // FileReviewSeparateTooltip
+    "Add to this mod, replacing files with the same names.", // FileReviewMergeTooltip
+    "Hide this notice for the current new files. Future files will still appear.", // FileReviewIgnoreTooltip
+    "Close without installing anything.", // FileReviewCloseTooltip
+    "Select at least one file first.", // FileReviewSelectFilesTooltip
+    "Install the selected files.", // FilePromptInstallTooltip
+    "Close without installing anything.", // FilePromptCancelTooltip
+    "This mod changed. Open the file list again.", // FileReviewTargetChanged
+    "Mods with new files: {count}", // NewFilesInFolder
 ];

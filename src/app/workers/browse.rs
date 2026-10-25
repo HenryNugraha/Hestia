@@ -176,7 +176,9 @@ fn spawn_browse_worker(
                 BrowseRequest::FetchDetail {
                     nonce,
                     mod_id,
+                    is_tool,
                     force_refresh,
+                    include_update_history,
                     cached_profile_json,
                 } => {
                     let detail_tx = tx.clone();
@@ -185,18 +187,20 @@ fn spawn_browse_worker(
                     let detail_limiter = Arc::clone(&json_limiter);
                     tokio::spawn(async move {
                         let _permit = detail_limiter.acquire().await.ok();
-                        let cache_key = gamebanana::profile_cache_key(mod_id);
+                        let cache_key = gamebanana::profile_cache_key_typed(mod_id, is_tool);
                         match load_profile_with_cache(
                             &detail_portable,
                             &detail_client,
                             mod_id,
+                            is_tool,
                             force_refresh,
+                            include_update_history,
                             &cache_key,
                             cached_profile_json.as_deref(),
                         )
                         .await
                         {
-                            Ok((profile, used_cache_fallback)) => {
+                            Ok((profile, used_cache_fallback, profile_cached_at)) => {
                                 if used_cache_fallback {
                                     let _ = detail_tx.send(BrowseEvent::DetailWarning {
                                         _nonce: nonce,
@@ -207,7 +211,9 @@ fn spawn_browse_worker(
                                 let _ = detail_tx.send(BrowseEvent::DetailLoaded {
                                     _nonce: nonce,
                                     mod_id,
+                                    is_tool,
                                     profile,
+                                    profile_cached_at,
                                 });
                             }
                             Err(err) => {
@@ -220,18 +226,28 @@ fn spawn_browse_worker(
                         }
                     });
                 }
-                BrowseRequest::FetchUpdates { nonce, mod_id, force_refresh } => {
+                BrowseRequest::FetchUpdates {
+                    nonce,
+                    mod_id,
+                    is_tool,
+                    force_refresh,
+                } => {
                     let updates_tx = tx.clone();
                     let updates_portable = portable.clone();
                     let updates_client = runtime_services.http_client();
                     let updates_limiter = Arc::clone(&json_limiter);
                     tokio::spawn(async move {
                         let _permit = updates_limiter.acquire().await.ok();
-                        let cache_key = gamebanana::updates_cache_key(mod_id);
+                        let cache_key = if is_tool {
+                            format!("{}:tool", gamebanana::updates_cache_key(mod_id))
+                        } else {
+                            gamebanana::updates_cache_key(mod_id)
+                        };
                         match load_updates_with_cache(
                             &updates_portable,
                             &updates_client,
                             mod_id,
+                            is_tool,
                             force_refresh,
                             &cache_key,
                         )
@@ -344,6 +360,48 @@ where
 #[cfg(test)]
 mod browse_worker_tests {
     use super::*;
+
+    #[test]
+    fn checked_profile_fallback_preserves_history_and_rejects_other_mods() {
+        let raw = r#"{"_idRow":728107,"update_history":{"records":[]}}"#;
+        assert!(cached_detail_profile(Some(raw), 728107).unwrap().update_history.is_some());
+        assert!(cached_detail_profile(Some(raw), 1).is_none());
+        assert!(cached_detail_profile(Some("invalid"), 728107).is_none());
+    }
+
+    #[test]
+    fn typed_profile_cache_keys_do_not_alias_mod_and_tool_ids() {
+        assert_ne!(
+            gamebanana::profile_cache_key_typed(728107, false),
+            gamebanana::profile_cache_key_typed(728107, true)
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_detail_profile_has_no_fresh_network_observation_time() {
+        let raw = r#"{"_idRow":728107,"_sName":"cached"}"#;
+        let client = MiddlewareClientBuilder::new(reqwest::Client::new()).build();
+        let portable = PortablePaths {
+            state_archive: std::env::temp_dir().join("hestia-profile-cache-test-state"),
+            state_source: None,
+            history_db: std::env::temp_dir().join("hestia-profile-cache-test-history"),
+        };
+        let (_, used_cache_fallback, profile_cached_at) = load_profile_with_cache(
+            &portable,
+            &client,
+            728107,
+            false,
+            false,
+            false,
+            "profile-cache-test",
+            Some(raw),
+        )
+        .await
+        .expect("cached profile should load without a network request");
+
+        assert!(!used_cache_fallback);
+        assert_eq!(profile_cached_at, None);
+    }
 
     #[test]
     fn my_mod_updates_freshness_window_bounds() {
@@ -563,40 +621,53 @@ async fn load_character_categories_with_cache(
     }
 }
 
+fn cached_detail_profile(raw: Option<&str>, mod_id: u64) -> Option<gamebanana::ProfileResponse> {
+    let profile: gamebanana::ProfileResponse = serde_json::from_str(raw?).ok()?;
+    (profile.id == mod_id).then_some(profile)
+}
+
 async fn load_profile_with_cache(
     portable: &PortablePaths,
     client: &ClientWithMiddleware,
     mod_id: u64,
+    is_tool: bool,
     force_refresh: bool,
+    include_update_history: bool,
     cache_key: &str,
     cached_profile_json: Option<&str>,
-) -> Result<(gamebanana::ProfileResponse, bool)> {
+) -> Result<(gamebanana::ProfileResponse, bool, Option<DateTime<Utc>>)> {
     if !force_refresh {
         if let Some(raw) = cached_profile_json {
             if let Ok(profile) = serde_json::from_str::<gamebanana::ProfileResponse>(raw) {
-                return Ok((profile, false));
+                return Ok((profile, false, None));
             }
         }
         if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
             if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached) {
-                return Ok((profile, false));
+                return Ok((profile, false, None));
             }
         }
     }
 
-    match gamebanana::fetch_profile_async(client, mod_id).await {
-        Ok(profile) => {
+    match gamebanana::fetch_profile_async_typed(client, mod_id, is_tool).await {
+        Ok(mut profile) => {
+            if include_update_history {
+                gamebanana::attach_update_history_async(client, &mut profile, false).await;
+            }
             if let Ok(bytes) = serde_json::to_vec(&profile) {
                 cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
-            Ok((profile, false))
+            Ok((profile, false, Some(Utc::now())))
         }
         Err(err) if force_refresh => {
+            if let Some(profile) = cached_detail_profile(cached_profile_json, mod_id) {
+                return Ok((profile, true, None));
+            }
             if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
             {
                 if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
                 {
-                    return Ok((profile, true));
+                    return Ok((profile, true, None));
                 }
             }
             Err(err)
@@ -609,6 +680,7 @@ async fn load_updates_with_cache(
     portable: &PortablePaths,
     client: &ClientWithMiddleware,
     mod_id: u64,
+    is_tool: bool,
     force_refresh: bool,
     cache_key: &str,
 ) -> Result<(gamebanana::ApiEnvelope<gamebanana::UpdateRecord>, bool)> {
@@ -622,7 +694,21 @@ async fn load_updates_with_cache(
         }
     }
 
-    match gamebanana::fetch_updates_async(client, mod_id).await {
+    let fetched = if is_tool {
+        gamebanana::fetch_update_history_async(client, mod_id, true)
+            .await
+            .map(|history| gamebanana::ApiEnvelope {
+                metadata: gamebanana::ApiMetadata {
+                    record_count: history.records.len(),
+                    per_page: history.records.len(),
+                    is_complete: true,
+                },
+                records: history.records,
+            })
+    } else {
+        gamebanana::fetch_updates_async(client, mod_id).await
+    };
+    match fetched {
         Ok(updates) => {
             if let Ok(bytes) = serde_json::to_vec(&updates) {
                 cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);

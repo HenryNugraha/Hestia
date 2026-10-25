@@ -987,4 +987,30 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tombol tidak sampai ke game. Lepaskan semua tombol, lalu coba lagi.", // GameOverlayHotkeyNotSent
     "Nyalakan \"Izinkan Hestia mengubah konfigurasi d3dx.ini\" di pengaturan Hestia untuk menekan tombol mod di sini.", // GameOverlayHotkeyNotAllowed
     "Tekan tombol ini", // GameOverlayHintPressHotkey
+
+    // Newer mod files
+    "File baru", // NewFiles
+    "Ada file baru untuk mod ini.", // NewerFilesTooltip
+    "Lihat file", // ViewFiles
+    "Abaikan", // DismissFileNotice
+    "File baru", // NewerFile
+    "Pilih file", // ChooseUpdateFiles
+    "Opsi pemasangan lainnya", // FileReviewInstallMenu
+    "Pasang sebagai mod terpisah", // FileReviewInstallSeparate
+    "Gabungkan dengan mod terpasang", // FileReviewInstallMerge
+    "File baru tersedia, tapi Hestia tidak tahu hubungannya dengan versi yang terpasang. Pilih cara menanganinya:", // FileReviewIntroNew
+    "File baru tersedia, tapi Hestia tidak tahu hubungannya dengan versi yang terpasang. Pilih cara menanganinya:", // FileReviewIntroNewSingular
+    "Pilih file untuk memperbarui mod ini, memasangnya terpisah, atau menggabungkannya.", // FileReviewIntroAll
+    "Terpasang: {files}", // FileReviewInstalledSummary
+    "Ganti mod ini dengan file yang dipilih.", // FileReviewUpdateTooltip
+    "Pilih cara memasang file yang dipilih.", // FileReviewInstallTooltip
+    "Pasang terpisah tanpa mengubah mod ini.", // FileReviewSeparateTooltip
+    "Tambahkan ke mod ini dan ganti file dengan nama yang sama.", // FileReviewMergeTooltip
+    "Sembunyikan pemberitahuan ini untuk file baru saat ini. File mendatang tetap akan muncul.", // FileReviewIgnoreTooltip
+    "Tutup tanpa memasang apa pun.", // FileReviewCloseTooltip
+    "Pilih setidaknya satu file terlebih dahulu.", // FileReviewSelectFilesTooltip
+    "Pasang file yang dipilih.", // FilePromptInstallTooltip
+    "Tutup tanpa memasang apa pun.", // FilePromptCancelTooltip
+    "Mod ini berubah. Buka kembali daftar file.", // FileReviewTargetChanged
+    "Mod dengan file baru: {count}", // NewFilesInFolder
 ];

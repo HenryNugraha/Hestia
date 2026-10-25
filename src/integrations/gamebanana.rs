@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
@@ -229,11 +229,7 @@ fn credit_entry_from_value(value: &serde_json::Value) -> Option<CreditEntry> {
     };
     let role = non_empty_string(object.get("_sRole"));
 
-    (user.is_some() || name.is_some() || role.is_some()).then_some(CreditEntry {
-        user,
-        name,
-        role,
-    })
+    (user.is_some() || name.is_some() || role.is_some()).then_some(CreditEntry { user, name, role })
 }
 
 fn append_credit_authors(value: &serde_json::Value, credits: &mut Vec<CreditEntry>) {
@@ -299,7 +295,7 @@ where
     Ok(credits)
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModFile {
     #[serde(rename = "_idRow")]
     pub id: u64,
@@ -321,7 +317,77 @@ pub struct ModFile {
     pub is_archived: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+fn deserialize_optional_status<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(number)) => number
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("GameBanana status is not an integer")),
+        Some(serde_json::Value::String(status)) => status
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| serde::de::Error::custom("GameBanana status is not an integer")),
+        Some(_) => Err(serde::de::Error::custom(
+            "GameBanana status is neither a number nor a string",
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUpdateFile {
+    #[serde(flatten)]
+    file: ModFile,
+    #[serde(rename = "_bHasContents")]
+    has_contents: Option<bool>,
+    #[serde(rename = "_sAnalysisState")]
+    analysis_state: Option<String>,
+    #[serde(rename = "_sAnalysisResult")]
+    analysis_result: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUpdateRecord {
+    #[serde(rename = "_idRow")]
+    id: u64,
+    #[serde(rename = "_sName", default)]
+    name: String,
+    #[serde(rename = "_tsDateModified", default)]
+    date_modified: i64,
+    #[serde(rename = "_tsDateAdded", default)]
+    date_added: i64,
+    #[serde(rename = "_sProfileUrl", default)]
+    profile_url: String,
+    #[serde(rename = "_sText")]
+    html_text: Option<String>,
+    #[serde(rename = "_sVersion")]
+    version: Option<String>,
+    #[serde(
+        rename = "_nStatus",
+        default,
+        deserialize_with = "deserialize_optional_status"
+    )]
+    status: Option<i64>,
+    #[serde(rename = "_aFileRowIds", default)]
+    file_ids: Option<Vec<u64>>,
+    #[serde(rename = "_aFiles", default)]
+    files: Option<Vec<RawUpdateFile>>,
+    #[serde(rename = "attachments_usable", default)]
+    cached_attachments_usable: Option<bool>,
+    #[serde(rename = "_bIsPrivate", default)]
+    is_private: bool,
+    #[serde(rename = "_bIsTrashed", default)]
+    is_trashed: bool,
+    #[serde(rename = "_bIsWithheld", default)]
+    is_withheld: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UpdateRecord {
     #[serde(rename = "_idRow")]
     pub id: u64,
@@ -337,12 +403,106 @@ pub struct UpdateRecord {
     pub html_text: Option<String>,
     #[serde(rename = "_sVersion")]
     pub version: Option<String>,
+    /// GameBanana sends this as either the JSON number `0` or the string
+    /// `"0"`; nonzero values mean the update is moderated and unusable.
+    #[serde(
+        rename = "_nStatus",
+        default,
+        deserialize_with = "deserialize_optional_status"
+    )]
+    pub status: Option<i64>,
+    /// File ids attached to this update. These are optional because older
+    /// records and malformed/partial API responses may omit the field.
+    #[serde(rename = "_aFileRowIds", default)]
+    pub file_ids: Option<Vec<u64>>,
+    /// Full file metadata attached to this update, when GameBanana includes it.
+    #[serde(rename = "_aFiles", default)]
+    pub files: Option<Vec<ModFile>>,
+    /// False when an attached file explicitly failed analysis or has no
+    /// contents. Missing analysis fields remain neutral.
+    #[serde(rename = "attachments_usable", default = "default_attachments_usable")]
+    pub attachments_usable: bool,
     #[serde(rename = "_bIsPrivate", default)]
     pub is_private: bool,
     #[serde(rename = "_bIsTrashed", default)]
     pub is_trashed: bool,
     #[serde(rename = "_bIsWithheld", default)]
     pub is_withheld: bool,
+}
+
+fn default_attachments_usable() -> bool {
+    true
+}
+
+impl<'de> Deserialize<'de> for UpdateRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawUpdateRecord::deserialize(deserializer)?;
+        let explicit_attachment_failure = raw.files.as_ref().is_some_and(|files| {
+            files.iter().any(|file| {
+                file.has_contents == Some(false)
+                    || file
+                        .analysis_state
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|state| !state.is_empty())
+                        .is_some_and(|state| !state.eq_ignore_ascii_case("done"))
+                    || file
+                        .analysis_result
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|result| !result.is_empty())
+                        .is_some_and(|result| !result.eq_ignore_ascii_case("ok"))
+            })
+        });
+        let derived_attachments_usable = !explicit_attachment_failure;
+        let attachments_usable = match raw.cached_attachments_usable {
+            // Serialized cache records no longer contain the raw analysis
+            // fields, so preserve their computed result unless the current
+            // payload explicitly contains a failed analysis state.
+            Some(_) if explicit_attachment_failure => false,
+            Some(cached) => cached,
+            None => derived_attachments_usable,
+        };
+        let files = raw
+            .files
+            .map(|files| files.into_iter().map(|file| file.file).collect());
+        Ok(Self {
+            id: raw.id,
+            name: raw.name,
+            date_modified: raw.date_modified,
+            date_added: raw.date_added,
+            profile_url: raw.profile_url,
+            html_text: raw.html_text,
+            version: raw.version,
+            status: raw.status,
+            file_ids: raw.file_ids,
+            files,
+            attachments_usable,
+            is_private: raw.is_private,
+            is_trashed: raw.is_trashed,
+            is_withheld: raw.is_withheld,
+        })
+    }
+}
+
+impl UpdateRecord {
+    /// Whether this update is suitable as public release metadata.
+    /// Missing status is treated like the legacy public shape; explicit
+    /// nonzero status and moderation flags make the record unusable.
+    pub fn is_public(&self) -> bool {
+        self.status.unwrap_or_default() == 0
+            && !self.is_private
+            && !self.is_trashed
+            && !self.is_withheld
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UpdateHistory {
+    pub records: Vec<UpdateRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -439,7 +599,11 @@ pub struct ProfileResponse {
     pub preview_media: Option<PreviewMedia>,
     #[serde(rename = "_aSubmitter")]
     pub submitter: Option<SubmissionAuthor>,
-    #[serde(rename = "_aCredits", default, deserialize_with = "deserialize_credits")]
+    #[serde(
+        rename = "_aCredits",
+        default,
+        deserialize_with = "deserialize_credits"
+    )]
     pub credits: Vec<CreditEntry>,
     #[serde(rename = "_aFiles", default)]
     pub files: Vec<ModFile>,
@@ -453,6 +617,14 @@ pub struct ProfileResponse {
     pub category: Option<SubmissionCategory>,
     #[serde(rename = "_aSuperCategory")]
     pub super_category: Option<SubmissionCategory>,
+    /// Hestia-owned cache metadata. This field is absent for API-only
+    /// profiles and present only after a complete update-log fetch.
+    #[serde(
+        rename = "update_history",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub update_history: Option<UpdateHistory>,
 }
 
 pub fn profile_category_name(profile: &ProfileResponse) -> Option<String> {
@@ -646,17 +818,17 @@ mod tests {
         assert_eq!(profile.credits[0].role.as_deref(), Some("Recolor"));
         assert_eq!(profile.credits[1].user.as_ref().unwrap().name, "Dimit");
         assert_eq!(
-            profile.credits[1]
-                .user
-                .as_ref()
-                .unwrap()
-                .profile_url,
+            profile.credits[1].user.as_ref().unwrap().profile_url,
             "https://gamebanana.com/members/2"
         );
         assert_eq!(profile.credits[1].role.as_deref(), Some("Developer"));
         assert_eq!(
             all_authors(&profile),
-            vec!["Submitter".to_owned(), "YouWhenMe".to_owned(), "Dimit".to_owned()]
+            vec![
+                "Submitter".to_owned(),
+                "YouWhenMe".to_owned(),
+                "Dimit".to_owned()
+            ]
         );
 
         let cached = serde_json::to_value(&profile).unwrap();
@@ -716,7 +888,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(singleton_group.credits.len(), 1);
-        assert_eq!(singleton_group.credits[0].user.as_ref().unwrap().name, "Dimit");
+        assert_eq!(
+            singleton_group.credits[0].user.as_ref().unwrap().name,
+            "Dimit"
+        );
     }
 
     #[test]
@@ -803,7 +978,10 @@ mod tests {
             install_block_reason(&profile).as_deref(),
             Some("This mod has been deleted and cannot be installed automatically.")
         );
-        assert_eq!(unavailable_reason(&profile).as_deref(), Some("Mod was deleted"));
+        assert_eq!(
+            unavailable_reason(&profile).as_deref(),
+            Some("Mod was deleted")
+        );
     }
 
     #[test]
@@ -877,7 +1055,10 @@ mod tests {
             install_block_reason(&profile).as_deref(),
             Some("This mod has been withheld and cannot be installed automatically.")
         );
-        assert_eq!(unavailable_reason(&profile).as_deref(), Some("Mod is now withheld"));
+        assert_eq!(
+            unavailable_reason(&profile).as_deref(),
+            Some("Mod is now withheld")
+        );
     }
 
     #[test]
@@ -899,6 +1080,223 @@ mod tests {
         assert!(!is_unavailable(&profile));
         assert_eq!(install_block_reason(&profile), None);
         assert_eq!(unavailable_reason(&profile), None);
+    }
+
+    #[test]
+    fn update_records_accept_string_and_numeric_status_and_round_trip_attachments() {
+        let profile: ProfileResponse = serde_json::from_str(
+            r#"{
+                "_idRow": 728107,
+                "update_history": {
+                    "records": [
+                        {
+                            "_idRow": 465719,
+                            "_nStatus": "0",
+                            "_aFileRowIds": [1853590],
+                            "_aFiles": [{
+                                "_idRow": 1853590,
+                                "_sFile": "si101.rar",
+                                "_nFilesize": 123,
+                                "_tsDateAdded": 456,
+                                "_bHasContents": true,
+                                "_sAnalysisState": "done",
+                                "_sAnalysisResult": "ok",
+                                "_sDownloadUrl": "https://gamebanana.com/dl/1853590"
+                            }]
+                        },
+                        {"_idRow": 465720, "_nStatus": 1},
+                        {
+                            "_idRow": 465721,
+                            "_aFileRowIds": [1853591],
+                            "_aFiles": [{
+                                "_idRow": 1853591,
+                                "_sFile": "failed.rar",
+                                "_nFilesize": 123,
+                                "_tsDateAdded": 456,
+                                "_bHasContents": false,
+                                "_sAnalysisState": "done",
+                                "_sAnalysisResult": "ok"
+                            }]
+                        },
+                        {
+                            "_idRow": 465722,
+                            "_aFileRowIds": [1853592],
+                            "_aFiles": [{
+                                "_idRow": 1853592,
+                                "_sFile": "unknown-analysis.rar",
+                                "_nFilesize": 123,
+                                "_tsDateAdded": 456
+                            }]
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+        let history = profile.update_history.as_ref().expect("cached history");
+        assert_eq!(history.records[0].status, Some(0));
+        assert!(history.records[0].is_public());
+        assert_eq!(history.records[0].file_ids, Some(vec![1853590]));
+        assert_eq!(
+            history.records[0].files.as_ref().unwrap()[0].file_name,
+            "si101.rar"
+        );
+        assert!(history.records[0].attachments_usable);
+        assert_eq!(history.records[1].status, Some(1));
+        assert!(!history.records[1].is_public());
+        assert!(!history.records[2].attachments_usable);
+        assert!(history.records[3].attachments_usable);
+
+        let cached = serde_json::to_value(&profile).unwrap();
+        assert!(cached.get("update_history").is_some());
+        assert_eq!(
+            cached["update_history"]["records"][0]["_aFiles"][0]["_sFile"],
+            "si101.rar"
+        );
+        let restored: ProfileResponse = serde_json::from_value(cached).unwrap();
+        assert_eq!(restored.update_history, profile.update_history);
+    }
+
+    #[test]
+    fn update_history_validator_accepts_complete_pages_and_rejects_partial_or_repeated_pages() {
+        let record = |id| UpdateRecord {
+            id,
+            name: String::new(),
+            date_modified: 0,
+            date_added: 0,
+            profile_url: String::new(),
+            html_text: None,
+            version: None,
+            status: Some(0),
+            file_ids: None,
+            files: None,
+            attachments_usable: true,
+            is_private: false,
+            is_trashed: false,
+            is_withheld: false,
+        };
+        let metadata = |record_count, is_complete| ApiMetadata {
+            record_count,
+            per_page: UPDATE_HISTORY_PAGE_SIZE,
+            is_complete,
+        };
+
+        let complete = ApiEnvelope {
+            metadata: metadata(1, true),
+            records: vec![record(1)],
+        };
+        assert_eq!(
+            validate_update_history_pages(&[complete])
+                .unwrap()
+                .records
+                .len(),
+            1
+        );
+
+        let partial = ApiEnvelope {
+            metadata: metadata(2, true),
+            records: vec![record(1)],
+        };
+        assert!(validate_update_history_pages(&[partial]).is_err());
+
+        let first_page = ApiEnvelope {
+            metadata: metadata(2, false),
+            records: vec![record(1), record(2)],
+        };
+        assert!(validate_update_history_pages(&[first_page]).is_err());
+
+        let repeated_first = ApiEnvelope {
+            metadata: metadata(2, false),
+            records: vec![record(1)],
+        };
+        let repeated_last = ApiEnvelope {
+            metadata: metadata(2, true),
+            records: vec![record(1)],
+        };
+        assert!(validate_update_history_pages(&[repeated_first, repeated_last]).is_err());
+    }
+
+    fn test_mod_file(id: u64, download_url: Option<&str>, is_archived: bool) -> ModFile {
+        ModFile {
+            id,
+            file_name: format!("file-{id}.zip"),
+            file_size: 0,
+            date_added: 0,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: download_url.map(str::to_owned),
+            is_archived,
+        }
+    }
+
+    #[test]
+    fn update_history_fetch_eligibility_includes_archived_catalog_entries() {
+        let archived_source = test_mod_file(1, None, true);
+        let active_candidate = test_mod_file(2, Some("https://example.com/2"), false);
+        let profile = ProfileResponse {
+            files: vec![active_candidate.clone()],
+            archived_files: vec![archived_source],
+            ..Default::default()
+        };
+        assert!(should_fetch_update_history(&profile));
+
+        let source_in_active_array = test_mod_file(3, None, true);
+        let profile = ProfileResponse {
+            files: vec![source_in_active_array, active_candidate],
+            ..Default::default()
+        };
+        assert!(should_fetch_update_history(&profile));
+    }
+
+    #[test]
+    fn update_history_fetch_eligibility_requires_distinct_catalog_files_and_active_url() {
+        let duplicate_id = test_mod_file(1, Some("https://example.com/1"), false);
+        let duplicate_profile = ProfileResponse {
+            files: vec![duplicate_id.clone()],
+            archived_files: vec![duplicate_id],
+            ..Default::default()
+        };
+        assert!(!should_fetch_update_history(&duplicate_profile));
+
+        let single_file_profile = ProfileResponse {
+            files: vec![test_mod_file(1, None, false)],
+            ..Default::default()
+        };
+        assert!(!should_fetch_update_history(&single_file_profile));
+
+        let no_active_download_profile = ProfileResponse {
+            archived_files: vec![test_mod_file(1, None, true), test_mod_file(2, None, true)],
+            ..Default::default()
+        };
+        assert!(!should_fetch_update_history(&no_active_download_profile));
+
+        let all_flagged_archived_profile = ProfileResponse {
+            files: vec![
+                test_mod_file(1, Some("https://example.com/1"), true),
+                test_mod_file(2, Some("https://example.com/2"), true),
+            ],
+            ..Default::default()
+        };
+        assert!(!should_fetch_update_history(&all_flagged_archived_profile));
+
+        let archived_array_duplicate_profile = ProfileResponse {
+            files: vec![test_mod_file(1, Some("https://example.com/1"), false)],
+            archived_files: vec![test_mod_file(1, None, true), test_mod_file(2, None, true)],
+            ..Default::default()
+        };
+        assert!(!should_fetch_update_history(
+            &archived_array_duplicate_profile
+        ));
+
+        let two_active_profile = ProfileResponse {
+            files: vec![
+                test_mod_file(1, Some("https://example.com/1"), false),
+                test_mod_file(2, Some("https://example.com/2"), false),
+            ],
+            ..Default::default()
+        };
+        assert!(should_fetch_update_history(&two_active_profile));
     }
 
     #[test]
@@ -943,6 +1341,34 @@ pub fn is_unavailable(profile: &ProfileResponse) -> bool {
         || profile.id == 0
         || profile.is_trashed
         || profile.is_withheld
+}
+
+/// Update history is useful when a profile has more than one catalog entry,
+/// including files the author has archived, and at least one currently
+/// downloadable file. The active `_aFiles` array supplies candidates, while
+/// the archive flag and `_aArchivedFiles` membership still identify archived
+/// entries when the API returns inconsistent arrays.
+fn should_fetch_update_history(profile: &ProfileResponse) -> bool {
+    let mut catalog_file_ids = HashSet::new();
+    for file in profile.files.iter().chain(&profile.archived_files) {
+        if file.id != 0 {
+            catalog_file_ids.insert(file.id);
+        }
+    }
+
+    catalog_file_ids.len() >= 2
+        && profile.files.iter().any(|file| {
+            file.id != 0
+                && !file.is_archived
+                && !profile
+                    .archived_files
+                    .iter()
+                    .any(|archived| archived.id == file.id)
+                && file
+                    .download_url
+                    .as_deref()
+                    .is_some_and(|url| !url.trim().is_empty())
+        })
 }
 
 pub fn install_block_reason(profile: &ProfileResponse) -> Option<String> {
@@ -1277,23 +1703,142 @@ pub async fn fetch_updates_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
 ) -> Result<ApiEnvelope<UpdateRecord>> {
-    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/Mod/{mod_id}/Updates"))?;
+    fetch_updates_page_async(client, mod_id, false, 1).await
+}
+
+async fn fetch_updates_page_async(
+    client: &ClientWithMiddleware,
+    mod_id: u64,
+    is_tool: bool,
+    page: usize,
+) -> Result<ApiEnvelope<UpdateRecord>> {
+    let kind = item_api_kind(is_tool);
+    let mut url = Url::parse(&format!("{GAMEBANANA_API_BASE}/{kind}/{mod_id}/Updates"))?;
     {
         let mut query_pairs = url.query_pairs_mut();
-        query_pairs.append_pair("_nPage", "1");
-        query_pairs.append_pair("_nPerpage", "50");
+        query_pairs.append_pair("_nPage", &page.to_string());
+        query_pairs.append_pair("_nPerpage", &UPDATE_HISTORY_PAGE_SIZE.to_string());
     }
     let response = client
         .get(url.as_str())
         .send()
         .await
-        .context("failed to fetch GameBanana mod updates")?;
+        .with_context(|| format!("failed to fetch GameBanana {kind} updates"))?;
     response
         .error_for_status()
-        .context("GameBanana mod updates returned an error")?
+        .with_context(|| format!("GameBanana {kind} updates returned an error"))?
         .json()
         .await
-        .context("failed to parse GameBanana mod updates")
+        .with_context(|| format!("failed to parse GameBanana {kind} updates"))
+}
+
+const UPDATE_HISTORY_PAGE_SIZE: usize = 50;
+const UPDATE_HISTORY_MAX_PAGES: usize = 5;
+const UPDATE_HISTORY_ATTACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Validate and combine the pages returned by the update-log endpoint.
+///
+/// A history is usable only when every requested page is present, metadata is
+/// stable, the record count matches, and every record id is unique. Keeping
+/// this as a pure helper makes the neutral-on-failure behavior testable without
+/// an HTTP server.
+fn validate_update_history_pages(pages: &[ApiEnvelope<UpdateRecord>]) -> Result<UpdateHistory> {
+    let Some(first_page) = pages.first() else {
+        bail!("GameBanana update history returned no pages");
+    };
+    let expected_record_count = first_page.metadata.record_count;
+    if first_page.metadata.per_page != UPDATE_HISTORY_PAGE_SIZE {
+        bail!("GameBanana update history returned an unexpected page size");
+    }
+    if expected_record_count > UPDATE_HISTORY_MAX_PAGES * UPDATE_HISTORY_PAGE_SIZE {
+        bail!("GameBanana update history exceeds the pagination limit");
+    }
+    if pages.len() > UPDATE_HISTORY_MAX_PAGES {
+        bail!("GameBanana update history exceeded the pagination limit");
+    }
+
+    let mut records = Vec::new();
+    let mut record_ids = HashSet::new();
+    for (page_index, page) in pages.iter().enumerate() {
+        if page.metadata.record_count != expected_record_count
+            || page.metadata.per_page != UPDATE_HISTORY_PAGE_SIZE
+        {
+            bail!("GameBanana update history metadata changed between pages");
+        }
+        if page.records.len() > UPDATE_HISTORY_PAGE_SIZE {
+            bail!("GameBanana update history returned too many records on a page");
+        }
+
+        for record in &page.records {
+            if record.id == 0 || !record_ids.insert(record.id) {
+                bail!("GameBanana update history contains a duplicate or invalid record id");
+            }
+        }
+
+        let is_last_page = page_index + 1 == pages.len();
+        if page.metadata.is_complete {
+            if !is_last_page {
+                bail!("GameBanana update history has pages after a complete page");
+            }
+        } else if is_last_page || page.records.len() != UPDATE_HISTORY_PAGE_SIZE {
+            bail!("GameBanana update history contains a partial page");
+        }
+
+        records.extend(page.records.iter().cloned());
+    }
+
+    if records.len() != expected_record_count {
+        bail!("GameBanana update history record count did not match metadata");
+    }
+
+    Ok(UpdateHistory { records })
+}
+
+/// Fetch a complete update history for either a mod or a tool. Any incomplete
+/// or inconsistent history is returned as an error so callers can keep it
+/// absent from a cached profile and use the normal matching path.
+pub async fn fetch_update_history_async(
+    client: &ClientWithMiddleware,
+    mod_id: u64,
+    is_tool: bool,
+) -> Result<UpdateHistory> {
+    let mut pages = Vec::new();
+    for page_number in 1..=UPDATE_HISTORY_MAX_PAGES {
+        let page = fetch_updates_page_async(client, mod_id, is_tool, page_number).await?;
+        let is_complete = page.metadata.is_complete;
+        pages.push(page);
+        if is_complete {
+            return validate_update_history_pages(&pages);
+        }
+    }
+
+    validate_update_history_pages(&pages)
+}
+
+/// Best-effort attachment used by profile workers. The cache field is reset
+/// before fetching so a failed refresh cannot leave stale or partial history
+/// looking complete.
+pub async fn attach_update_history_async(
+    client: &ClientWithMiddleware,
+    profile: &mut ProfileResponse,
+    is_tool: bool,
+) {
+    profile.update_history = None;
+    if is_unavailable(profile) {
+        return;
+    }
+    if !should_fetch_update_history(profile) {
+        return;
+    }
+
+    let history = tokio::time::timeout(
+        UPDATE_HISTORY_ATTACH_TIMEOUT,
+        fetch_update_history_async(client, profile.id, is_tool),
+    )
+    .await;
+    if let Ok(Ok(history)) = history {
+        profile.update_history = Some(history);
+    }
 }
 
 /// Per GameBanana's dev guidance, `_aPreviewContent` is the current preview

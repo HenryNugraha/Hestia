@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.10.1-alpha] - 2026-10-xx
+
+### Added
+- 
+
+### Fixed
+- 
+
+### Changed
+- Improved update file detection logic to better identify the correct files across multiple mod variants, inconsistent filenames, and poorly organized uploads.
+
 ## [1.10.0] - 2026-10-10
 
 ### Added

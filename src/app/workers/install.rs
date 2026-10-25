@@ -194,6 +194,7 @@ fn spawn_install_workers(
                         mod_entry_id,
                         mod_root_path,
                         profile,
+                        profile_cached_at,
                     } => {
                         let profile_for_work = profile.clone();
                         let portable = portable.clone();
@@ -270,6 +271,7 @@ fn spawn_install_workers(
                                     mod_entry_id,
                                     profile,
                                     rel_paths,
+                                    profile_cached_at,
                                 });
                             }
                             Ok(Err(err)) => {

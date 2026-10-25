@@ -1569,11 +1569,21 @@ pub struct ModSourceData {
     pub gamebanana: Option<GameBananaLink>,
     pub snapshot: Option<GameBananaSnapshot>,
     pub raw_profile_json: Option<String>,
+    /// Wall-clock time when this source snapshot/raw profile was cached.
+    /// Missing on legacy metadata; cache selection falls back to profile/file
+    /// timestamps in that case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_cached_at: Option<DateTime<Utc>>,
     /// The earliest time a transient GameBanana request failure may be retried
     /// automatically. Terminal source states are represented by `MissingSource`
     /// and are not retried by bulk update checks.
     #[serde(default)]
     pub update_check_retry_after: Option<DateTime<Utc>>,
+    /// GameBanana file IDs the user has explicitly dismissed from the passive
+    /// "new files" notice.  IDs are intentionally retained rather than a
+    /// boolean so a later upload can surface without another preference.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dismissed_newer_file_ids: Vec<u64>,
     pub file_set: FileSetRecipe,
     pub prefs: UpdatePrefs,
     #[serde(default)]
@@ -1617,6 +1627,9 @@ pub struct GameBananaSnapshot {
     pub description: Option<String>,
     pub preview_urls: Vec<String>,
     pub files: Vec<GameBananaFileMeta>,
+    /// Complete optional release evidence, retained for offline update actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_history: Option<crate::integrations::gamebanana::UpdateHistory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<GameBananaCategoryLink>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1641,6 +1654,8 @@ pub struct GameBananaFileMeta {
     pub date_added: i64,
     pub download_count: u64,
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     pub download_url: Option<String>,
     pub archived: bool,
 }
@@ -1661,6 +1676,10 @@ pub struct FileSetRecipe {
 pub struct TrackedFileMeta {
     pub file_id: u64,
     pub file_name: String,
+    /// GameBanana archive size when it was observed. `None` means older
+    /// metadata never recorded it; zero is a valid observed value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
     pub date_added: i64,
     pub version: Option<String>,
     pub archived: bool,
@@ -1671,9 +1690,9 @@ pub struct TrackedFileMeta {
     pub label: Option<String>,
 }
 
-/// `label` is matching metadata, not file identity: persisted
-/// `ignored_update_signature`s predate the field and must keep comparing equal
-/// to freshly computed signatures that now carry labels.
+/// `label` and `file_size` are matching metadata, not file identity: persisted
+/// `ignored_update_signature`s predate these fields and must keep comparing
+/// equal to freshly computed signatures that now carry them.
 impl PartialEq for TrackedFileMeta {
     fn eq(&self, other: &Self) -> bool {
         self.file_id == other.file_id
@@ -2361,6 +2380,17 @@ pub struct BrowseDownloadTaskPayload {
     pub post_install_rename_to: Option<String>,
     #[serde(default)]
     pub profile_json: Option<String>,
+    /// Observation time when the profile was fetched from the network. Cache
+    /// hits and fallback profiles leave this unset because their age is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_cached_at: Option<DateTime<Utc>>,
+    /// Whether the GameBanana source is a Tool rather than a Mod.
+    #[serde(default)]
+    pub is_tool: bool,
+    /// A file-review action chosen by the user.  Normal browse installs leave
+    /// this unset so their configured conflict policy still applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explicit_resolution: Option<ImportResolution>,
 }
 
 impl BrowseDownloadTaskPayload {
@@ -3634,6 +3664,37 @@ mod install_state_tests {
         assert_eq!(
             payload.effective_install_state().staged_status(),
             ModStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn explicit_retry_resolution_roundtrips_and_legacy_payload_defaults() {
+        let mut value = json!({
+            "game_id": "game",
+            "mod_id": 7,
+            "file": {
+                "id": 3,
+                "file_name": "mod.zip",
+                "file_size": 1,
+                "date_added": 0
+            },
+            "explicit_resolution": "Merge"
+        });
+        let parsed: BrowseDownloadTaskPayload = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(parsed.explicit_resolution, Some(ImportResolution::Merge));
+        value
+            .as_object_mut()
+            .expect("retry payload serializes as object")
+            .remove("explicit_resolution");
+        let legacy: BrowseDownloadTaskPayload = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.explicit_resolution, None);
+        assert_eq!(
+            serde_json::from_value::<BrowseDownloadTaskPayload>(
+                serde_json::to_value(parsed).unwrap()
+            )
+            .unwrap()
+            .explicit_resolution,
+            Some(ImportResolution::Merge)
         );
     }
 

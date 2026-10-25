@@ -4,10 +4,10 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "10 October 2026",
-    "10 Oktober 2026",
-    "2026年 10月 10日",
-    "10 октября 2026"
+    "xx October 2026",
+    "xx Oktober 2026",
+    "2026年 10月 xx日",
+    "xx октября 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
@@ -76,31 +76,29 @@ pub(crate) const FEEDBACK_SURVEY_TITLE: L10n = l10n(
     "快速反馈",
     "Быстрый отзыв",
 );
-pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[
-    q(
-        "overlay_feature",
-        l10n(
-            "How easy is it to use the new in-game overlay?",
-            "Seberapa mudah menggunakan overlay baru di dalam game?",
-            "使用新的游戏内浮层有多容易？",
-            "Насколько легко пользоваться новым внутриигровым оверлеем?",
-        ),
-        &[
-            a(1, l10n("Easy", "Mudah", "简单", "Легко")),
-            a(2, l10n("Moderate", "Sedang", "一般", "Средне")),
-            a(3, l10n("Difficult", "Sulit", "困难", "Сложно")),
-            a(
-                4,
-                l10n(
-                    "Haven't tried it yet",
-                    "Belum mencobanya",
-                    "还没试过",
-                    "Ещё не пробовал(а)",
-                ),
-            ),
-        ],
+pub(crate) const FEEDBACK_SURVEY_QUESTIONS: &[ContentSurveyQuestion] = &[q(
+    "overlay_feature",
+    l10n(
+        "How easy is it to use the new in-game overlay?",
+        "Seberapa mudah menggunakan overlay baru di dalam game?",
+        "使用新的游戏内浮层有多容易？",
+        "Насколько легко пользоваться новым внутриигровым оверлеем?",
     ),
-];
+    &[
+        a(1, l10n("Easy", "Mudah", "简单", "Легко")),
+        a(2, l10n("Moderate", "Sedang", "一般", "Средне")),
+        a(3, l10n("Difficult", "Sulit", "困难", "Сложно")),
+        a(
+            4,
+            l10n(
+                "Haven't tried it yet",
+                "Belum mencobanya",
+                "还没试过",
+                "Ещё не пробовал(а)",
+            ),
+        ),
+    ],
+)];
 pub(crate) const FEEDBACK_SURVEY_MESSAGE_LABEL: L10n = l10n(
     "Anything else?\nFeature requests, issues, or suggestions are welcome!",
     "Ada lagi?\nPermintaan fitur, masalah, atau saran boleh ditulis di sini!",

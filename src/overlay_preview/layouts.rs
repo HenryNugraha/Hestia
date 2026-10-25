@@ -4122,8 +4122,8 @@ fn is_loose(category: &Category) -> bool {
 #[cfg(test)]
 mod tests {
     use super::super::data::Costume;
-    use crate::overlay_protocol::Browse;
     use super::*;
+    use crate::overlay_protocol::Browse;
 
     #[test]
     fn display_names_remove_versions_but_preserve_meaningful_numbers() {
@@ -5666,12 +5666,7 @@ mod tests {
         gamebanana_page_query(character, "", ids, more)
     }
 
-    fn gamebanana_page_query(
-        character: u64,
-        query: &str,
-        ids: &[u64],
-        more: bool,
-    ) -> ToOverlay {
+    fn gamebanana_page_query(character: u64, query: &str, ids: &[u64], more: bool) -> ToOverlay {
         ToOverlay::BrowsePage(crate::overlay_protocol::BrowsePage {
             character,
             query: query.into(),
@@ -5732,11 +5727,17 @@ mod tests {
         let mut layouts = Layouts::new(live_catalog(vec![ardelia]));
         let context = egui::Context::default();
         layouts.set_gamebanana(true, false);
-        assert_eq!(layouts.take_gamebanana_requests(), [FromOverlay::ListCharacters]);
+        assert_eq!(
+            layouts.take_gamebanana_requests(),
+            [FromOverlay::ListCharacters]
+        );
 
         layouts.set_search("remote-only");
         assert_eq!(layouts.filter.categories, [0]);
-        assert!(layouts.visible_mods().is_empty(), "before the remote list starts");
+        assert!(
+            layouts.visible_mods().is_empty(),
+            "before the remote list starts"
+        );
 
         // The selected linked category is kept in the filter, so the first
         // frame creates its loading card instead of becoming a dead end.
@@ -5755,12 +5756,7 @@ mod tests {
 
         // The answer is remote-only: no local card matches the query, but
         // the GameBanana card becomes visible and remains selectable.
-        layouts.receive_gamebanana(vec![gamebanana_page_query(
-            7,
-            "remote-only",
-            &[42],
-            false,
-        )]);
+        layouts.receive_gamebanana(vec![gamebanana_page_query(7, "remote-only", &[42], false)]);
         assert_eq!(layouts.visible_mods(), [1]);
         assert!(matches!(
             layouts.card(0, 1),

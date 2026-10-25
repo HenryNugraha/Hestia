@@ -229,6 +229,8 @@ struct CategoryFolderTile {
     disabled_count: usize,
     archived_count: usize,
     has_update: bool,
+    has_new_files: bool,
+    new_files_count: usize,
     representative_mod_id: Option<String>,
     representative_unsafe_content: bool,
 }
@@ -1509,6 +1511,131 @@ fn paint_modified_update_badge(ui: &mut Ui, text: TextCatalog, button_rect: egui
     );
 }
 
+fn paint_modified_new_files_badge(ui: &mut Ui, text: TextCatalog, button_rect: egui::Rect) {
+    let badge_size = Vec2::new(45.0, 14.0);
+    let badge_rect = egui::Rect::from_min_size(
+        button_rect.right_top() - egui::vec2(badge_size.x - 3.0, 3.0),
+        badge_size,
+    );
+    ui.painter().rect(
+        badge_rect,
+        egui::CornerRadius::same(4),
+        Color32::from_rgb(45, 78, 100),
+        egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186)),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text.modified(),
+        egui::FontId::proportional(8.0),
+        Color32::from_rgb(190, 220, 240),
+    );
+}
+
+fn paint_folder_update_badge(
+    ui: &mut Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    has_update: bool,
+    has_new_files: bool,
+    text: TextCatalog,
+    new_files_count: usize,
+) {
+    let blue = Color32::from_rgba_premultiplied(82, 134, 186, 235);
+    let orange = Color32::from_rgba_premultiplied(186, 84, 43, 235);
+    let border = if has_update && has_new_files {
+        Color32::from_rgba_premultiplied(95, 95, 95, 220)
+    } else if has_update {
+        Color32::from_rgba_premultiplied(122, 74, 54, 225)
+    } else {
+        Color32::from_rgba_premultiplied(62, 104, 148, 230)
+    };
+
+    if has_update && has_new_files {
+        const TEXTURE_WIDTH: usize = 96;
+        const TEXTURE_HEIGHT: usize = 72;
+        let texture_key = egui::Id::new("mixed_new_files_badge_radial_gradient");
+        let texture = ui.ctx().data(|data| {
+            data.get_temp::<egui::TextureHandle>(texture_key)
+        });
+        let texture = texture.unwrap_or_else(|| {
+            let mut pixels = Vec::with_capacity(TEXTURE_WIDTH * TEXTURE_HEIGHT);
+            for y in 0..TEXTURE_HEIGHT {
+                for x in 0..TEXTURE_WIDTH {
+                    let normalized_x = x as f32 / (TEXTURE_WIDTH - 1) as f32;
+                    let normalized_y = y as f32 / (TEXTURE_HEIGHT - 1) as f32;
+                    let radial_distance =
+                        (normalized_x * normalized_x + normalized_y * normalized_y).sqrt()
+                            / 2.0_f32.sqrt();
+                    let amount = ((radial_distance - 0.15) / 0.60).clamp(0.0, 1.0);
+                    let channel = |start: u8, end: u8| {
+                        (f32::from(start)
+                            + (f32::from(end) - f32::from(start)) * amount)
+                            .round() as u8
+                    };
+                    pixels.push(Color32::from_rgba_premultiplied(
+                        channel(blue.r(), orange.r()),
+                        channel(blue.g(), orange.g()),
+                        channel(blue.b(), orange.b()),
+                        channel(blue.a(), orange.a()),
+                    ));
+                }
+            }
+            let image = egui::ColorImage::new([TEXTURE_WIDTH, TEXTURE_HEIGHT], pixels);
+            let texture = ui.ctx().load_texture(
+                "mixed_new_files_badge_radial_gradient",
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(texture_key, texture.clone());
+            });
+            texture
+        });
+        egui::Image::from_texture(&texture)
+            .fit_to_exact_size(rect.size())
+            .corner_radius(egui::CornerRadius::same(5))
+            .paint_at(ui, rect);
+    } else {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(5),
+            if has_update { orange } else { blue },
+        );
+    }
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(5),
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "!",
+        egui::FontId::proportional(13.0),
+        Color32::WHITE,
+    );
+
+    let tooltip = match (has_update, has_new_files) {
+        (true, true) => format!(
+            "{} {}",
+            mod_update_state_tooltip(ModUpdateState::UpdateAvailable),
+            text.new_files_in_folder(new_files_count)
+        ),
+        (true, false) => mod_update_state_tooltip(ModUpdateState::UpdateAvailable).to_owned(),
+        (false, true) => text.new_files_in_folder(new_files_count),
+        (false, false) => String::new(),
+    };
+    ui.interact(
+        rect,
+        id,
+        Sense::hover(),
+    )
+    .on_hover_text(tooltip);
+}
+
 fn paint_selected_mod_count_badge(ui: &mut Ui, text: TextCatalog, count: usize) {
     let label = text.selected_count(count);
     let badge_size = Vec2::new((label.len() as f32 * 5.2 + 14.0).max(66.0), 16.0);
@@ -2519,7 +2646,7 @@ impl HestiaApp {
         changed
     }
 
-    fn has_modified_update_available(mod_entry: &ModEntry) -> bool {
+    fn has_modified_update_available(&self, mod_entry: &ModEntry) -> bool {
         if !matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally) {
             return false;
         }
@@ -2529,33 +2656,72 @@ impl HestiaApp {
         if source.ignore_update_always {
             return false;
         }
-        let Some(profile) = source_profile_for_compare(source) else {
+        let Some(evidence) = self.cached_grouped_evidence_for_mod(mod_entry) else {
             return false;
         };
-        let local_sync_ts = selected_file_baseline_ts(&source.file_set)
-            .or(profile.date_updated.or(Some(profile.date_modified)));
-        if !matches!(
-            determine_file_set_update_state(&source.file_set, local_sync_ts, &profile),
-            ModUpdateState::UpdateAvailable
-        ) {
+        Self::has_modified_update_available_from_evidence(mod_entry, &evidence)
+    }
+
+    fn has_modified_update_available_from_evidence(
+        mod_entry: &ModEntry,
+        evidence: &CachedUpdateEvidence,
+    ) -> bool {
+        Self::has_modified_update_available_from_effective_state(
+            mod_entry,
+            mod_entry.update_state,
+            evidence,
+        )
+    }
+
+    fn has_modified_update_available_from_effective_state(
+        mod_entry: &ModEntry,
+        effective_state: ModUpdateState,
+        evidence: &CachedUpdateEvidence,
+    ) -> bool {
+        let Some(source) = mod_entry.source.as_ref() else {
+            return false;
+        };
+        if source.ignore_update_always
+            || effective_state != ModUpdateState::ModifiedLocally
+            || evidence.state != ModUpdateState::UpdateAvailable
+        {
             return false;
         }
-        let current_signature = current_update_signature_for_state(
-            &source.file_set,
-            &profile,
-            ModUpdateState::UpdateAvailable,
-        );
         !source
             .ignored_update_signature
             .as_ref()
             .is_some_and(|ignored| {
-                current_signature
-                    .as_ref()
+                ignored.prearmed_next_update
+                    || evidence.signature.as_ref() == Some(ignored)
+            })
+    }
+
+    fn has_modified_update_available_from_grouped(
+        mod_entry: &ModEntry,
+        grouped_state: ModUpdateState,
+        grouped_signature: Option<&IgnoredUpdateSignature>,
+    ) -> bool {
+        let Some(source) = mod_entry.source.as_ref() else {
+            return false;
+        };
+        if source.ignore_update_always {
+            return false;
+        }
+        if !matches!(mod_entry.update_state, ModUpdateState::ModifiedLocally)
+            || grouped_state != ModUpdateState::UpdateAvailable
+        {
+            return false;
+        }
+        !source
+            .ignored_update_signature
+            .as_ref()
+            .is_some_and(|ignored| {
+                grouped_signature
                     .is_some_and(|current| ignored.prearmed_next_update || ignored == current)
             })
     }
 
-    fn mod_update_badge(text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
+    fn mod_update_badge(&self, text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
         // A linked mod with no reconciled verdict yet (no cached snapshot to
         // compare against -- never successfully checked, or awaiting the
         // throttled network check) must never read as "Unlinked": the GameBanana
@@ -2580,17 +2746,21 @@ impl HestiaApp {
                 );
             }
         }
-        if Self::has_modified_update_available(mod_entry) {
+        if self.has_modified_update_available(mod_entry) {
             (
                 text.modified_update_available(),
                 Color32::from_rgb(196, 166, 126),
             )
+        } else if mod_has_local_changes_for_update_check(mod_entry) {
+            (text.modified(), Color32::from_rgb(179, 133, 133))
+        } else if self.has_newer_files_notice(mod_entry) {
+            (text.new_files(), Color32::from_rgb(120, 160, 200))
         } else {
             Self::mod_update_state_badge(text, mod_entry.update_state)
         }
     }
 
-    fn mod_update_badge_tooltip(mod_entry: &ModEntry) -> &'static str {
+    fn mod_update_badge_tooltip(&self, mod_entry: &ModEntry) -> &'static str {
         if mod_entry.update_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
@@ -2612,8 +2782,12 @@ impl HestiaApp {
                 };
             }
         }
-        if Self::has_modified_update_available(mod_entry) {
+        if self.has_modified_update_available(mod_entry) {
             mod_update_state_tooltip(ModUpdateState::UpdateAvailable)
+        } else if mod_has_local_changes_for_update_check(mod_entry) {
+            mod_update_state_tooltip(ModUpdateState::ModifiedLocally)
+        } else if self.has_newer_files_notice(mod_entry) {
+            self.text().newer_files_tooltip()
         } else {
             mod_update_state_tooltip(mod_entry.update_state)
         }
@@ -4014,11 +4188,11 @@ impl HestiaApp {
             Self::local_changes_action_for_mod(&self.state.mods[index])
         {
             if Self::local_changes_action_button(ui, text, 12.0,mark_as_not_modified).clicked() {
-                if let Some(mod_entry) = self.state.mods.get_mut(index) {
-                    if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                if self.set_mod_ignore_local_changes_grouped(mod_id, mark_as_not_modified) {
+                    if let Some(mod_entry) = self.state.mods.get_mut(index) {
                         let _ = xxmi::save_mod_metadata(mod_entry);
-                        self.save_state();
                     }
+                    self.save_state();
                 }
                 ui.close();
             }
@@ -4043,7 +4217,9 @@ impl HestiaApp {
             changed = true;
         }
         let can_use_ignore_once = ignore_current_update
-            || ignore_once_signature_for_mod(&self.state.mods[index]).is_some();
+            || self
+                .cached_grouped_signature_for_mod(&self.state.mods[index])
+                .is_some();
 
         let ignore_once_response = ui.add_enabled(
             can_use_ignore_once,
@@ -4075,7 +4251,10 @@ impl HestiaApp {
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
             } else if ignore_current_update {
-                let current_signature = ignore_once_signature_for_mod(&self.state.mods[index]);
+                let current_signature = self.cached_grouped_signature_for_mod(&self.state.mods[index]);
+                let grouped_raw_state = self
+                    .cached_grouped_evidence_for_mod(&self.state.mods[index])
+                    .map(|evidence| evidence.state);
                 if let Some(mod_entry) = self.state.mods.get_mut(index) {
                     if let Some(signature) = current_signature {
                         let prearmed_next_update = signature.prearmed_next_update;
@@ -4084,7 +4263,7 @@ impl HestiaApp {
                             source.ignored_update_signature = Some(signature);
                         }
                         if prearmed_next_update {
-                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                            if let Some(raw_state) = grouped_raw_state {
                                 mod_entry.update_state = raw_state;
                             }
                         } else {
@@ -4095,22 +4274,27 @@ impl HestiaApp {
                             source.ignore_update_always = false;
                             source.ignored_update_signature = None;
                         }
-                        if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                        if let Some(raw_state) = grouped_raw_state {
                             mod_entry.update_state = raw_state;
                         }
                     }
                     cancel_mod = Some(mod_entry.clone());
                     let _ = xxmi::save_mod_metadata(mod_entry);
                 }
-            } else if let Some(mod_entry) = self.state.mods.get_mut(index) {
+            } else {
+                let grouped_raw_state = self
+                    .cached_grouped_evidence_for_mod(&self.state.mods[index])
+                    .map(|evidence| evidence.state);
+                if let Some(mod_entry) = self.state.mods.get_mut(index) {
                 if let Some(source) = mod_entry.source.as_mut() {
                     source.ignore_update_always = false;
                     source.ignored_update_signature = None;
                 }
-                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                if let Some(raw_state) = grouped_raw_state {
                     mod_entry.update_state = raw_state;
                 }
-                let _ = xxmi::save_mod_metadata(mod_entry);
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                }
             }
             if let Some(mod_entry) = cancel_mod {
                 self.cancel_update_process_for_mod(&mod_entry);
@@ -4296,10 +4480,17 @@ impl HestiaApp {
                     .mods
                     .iter()
                     .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
-                    .and_then(ignore_once_signature_for_mod)
+                    .and_then(|mod_entry| self.cached_grouped_signature_for_mod(mod_entry))
             } else {
                 None
             };
+            let grouped_raw_state = self
+                .state
+                .mods
+                .iter()
+                .find(|mod_entry| mod_entry.id.as_str() == mod_id.as_str())
+                .and_then(|mod_entry| self.cached_grouped_evidence_for_mod(mod_entry))
+                .map(|evidence| evidence.state);
 
             let Some(mod_entry) = self
                 .state
@@ -4328,7 +4519,7 @@ impl HestiaApp {
                         source.ignored_update_signature = Some(signature);
                     }
                     if prearmed_next_update {
-                        if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                        if let Some(raw_state) = grouped_raw_state {
                             mod_entry.update_state = raw_state;
                         }
                     } else {
@@ -4343,7 +4534,7 @@ impl HestiaApp {
                     source.ignore_update_always = false;
                     source.ignored_update_signature = None;
                 }
-                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                if let Some(raw_state) = grouped_raw_state {
                     mod_entry.update_state = raw_state;
                 }
             }
@@ -4403,8 +4594,8 @@ impl HestiaApp {
                 .as_ref()
                 .is_some_and(|source| source.ignored_update_signature.is_some())
                 && !ignore_update_always;
-            let can_use_ignore_once =
-                ignore_current_update || ignore_once_signature_for_mod(mod_entry).is_some();
+            let can_use_ignore_once = ignore_current_update
+                || self.cached_grouped_signature_for_mod(mod_entry).is_some();
             match Self::local_changes_action_for_mod(mod_entry) {
                 Some(true) => any_modified = true,
                 Some(false) => any_marked_not_modified = true,
@@ -4498,8 +4689,15 @@ impl HestiaApp {
             if ignore && !mod_has_local_changes_for_update_check(mod_entry) {
                 continue;
             }
-            if set_mod_ignore_local_changes(mod_entry, ignore) {
-                let _ = xxmi::save_mod_metadata(mod_entry);
+            if self.set_mod_ignore_local_changes_grouped(mod_id, ignore) {
+                if let Some(mod_entry) = self
+                    .state
+                    .mods
+                    .iter_mut()
+                    .find(|entry| entry.id == *mod_id)
+                {
+                    let _ = xxmi::save_mod_metadata(mod_entry);
+                }
                 touched = true;
             }
         }
@@ -5681,6 +5879,7 @@ impl HestiaApp {
                             || !self.show_unlinked_mods
                             || !self.show_up_to_date_mods
                             || !self.show_update_available_mods
+                            || !self.show_new_files_mods
                             || !self.show_check_skipped_mods
                             || !self.show_missing_source_mods
                             || !self.show_modified_locally_mods
@@ -5838,6 +6037,7 @@ impl HestiaApp {
                                     self.show_unlinked_mods = true;
                                     self.show_up_to_date_mods = true;
                                     self.show_update_available_mods = true;
+                                    self.show_new_files_mods = true;
                                     self.show_check_skipped_mods = true;
                                     self.show_missing_source_mods = true;
                                     self.show_modified_locally_mods = true;
@@ -5847,6 +6047,7 @@ impl HestiaApp {
                                     self.show_unlinked_mods = false;
                                     self.show_up_to_date_mods = false;
                                     self.show_update_available_mods = false;
+                                    self.show_new_files_mods = false;
                                     self.show_check_skipped_mods = false;
                                     self.show_missing_source_mods = false;
                                     self.show_modified_locally_mods = false;
@@ -5870,6 +6071,11 @@ impl HestiaApp {
                                         text.update_available(),
                                     )
                                     .on_hover_text(mod_update_state_tooltip(ModUpdateState::UpdateAvailable))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .changed();
+                                let new_files_changed = ui
+                                    .checkbox(&mut self.show_new_files_mods, text.new_files())
+                                    .on_hover_text(text.newer_files_tooltip())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .changed();
                                 let check_skipped_changed = ui
@@ -5905,6 +6111,7 @@ impl HestiaApp {
                                 if unlinked_changed
                                     || up_to_date_changed
                                     || update_available_changed
+                                    || new_files_changed
                                     || check_skipped_changed
                                     || missing_source_changed
                                     || modified_locally_changed
@@ -6650,6 +6857,43 @@ impl HestiaApp {
                             self.category_rename_name.clone();
                         let scroll_to_category_id = self.library_scroll_to_category_id.clone();
                         let search_filter_active = !self.mods_search_query.trim().is_empty();
+                        let newer_files_by_mod: HashMap<String, bool> = cards
+                            .iter()
+                            .filter_map(|card| {
+                                self.library_card_cache
+                                    .evidence
+                                    .get(&card.0)
+                                    .map(|evidence| {
+                                        let mod_entry = self
+                                            .state
+                                            .mods
+                                            .iter()
+                                            .find(|item| item.id == card.0)
+                                            .expect("library card must have a mod");
+                                        (
+                                            card.0.clone(),
+                                            Self::has_newer_files_notice_from_evidence(
+                                                mod_entry,
+                                                evidence,
+                                                self.state.static_prefs.update_check_statuses,
+                                            ),
+                                        )
+                                    })
+                            })
+                            .collect();
+                        let newer_file_ids_by_mod: HashMap<String, Vec<u64>> = cards
+                            .iter()
+                            .filter_map(|card| {
+                                let evidence = self.library_card_cache.evidence.get(&card.0)?;
+                                if !newer_files_by_mod.get(&card.0).copied().unwrap_or(false) {
+                                    return None;
+                                }
+                                Some((
+                                    card.0.clone(),
+                                    evidence.newer_files.iter().map(|file| file.id).collect(),
+                                ))
+                            })
+                            .collect();
                         let folder_tiles: Vec<CategoryFolderTile> = if matches!(
                             category_display_mode,
                             LibraryCategoryDisplayMode::Folders
@@ -6692,6 +6936,16 @@ impl HestiaApp {
                                                 != ModifiedUpdateBehavior::HideButton
                                                 && card.10)
                                     });
+                                    let new_files_count = section_cards
+                                        .iter()
+                                        .filter(|card| {
+                                            newer_files_by_mod
+                                                .get(&card.0)
+                                                .copied()
+                                                .unwrap_or(false)
+                                        })
+                                        .count();
+                                    let has_new_files = new_files_count > 0;
                                     let representative_card = section_cards
                                         .iter()
                                         .find(|card| {
@@ -6756,6 +7010,8 @@ impl HestiaApp {
                                         disabled_count,
                                         archived_count,
                                         has_update,
+                                        has_new_files,
+                                        new_files_count,
                                         representative_mod_id,
                                         representative_unsafe_content,
                                     })
@@ -6949,6 +7205,8 @@ impl HestiaApp {
                             std::cell::RefCell::new(Vec::<(String, bool, bool)>::new());
                         let pending_clear_folder_selection = std::cell::Cell::new(false);
                         let mut pending_begin_mod_selection = false;
+                        let mut pending_file_review_mod_id: Option<String> = None;
+                        let mut pending_dismiss_newer_files: Option<(String, Vec<u64>)> = None;
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<&LibraryCardRow>| {
                             // Get viewport for culling
@@ -6992,6 +7250,14 @@ impl HestiaApp {
                                             category_id,
                                             category_label,
                                         ) = card;
+                                        let has_new_files = newer_files_by_mod
+                                            .get(mod_id)
+                                            .copied()
+                                            .unwrap_or(false);
+                                        let newer_file_ids = newer_file_ids_by_mod
+                                            .get(mod_id)
+                                            .cloned()
+                                            .unwrap_or_default();
                                         
                                         let age_label =
                                             relative_time_label_at(*updated_at, age_now, false, text);
@@ -7351,7 +7617,46 @@ impl HestiaApp {
                                                                                     paint_modified_update_badge(ui, text, resp.rect);
                                                                                 }
                                                                             } else {
-                                                                                if *modified_locally {
+                                                                                if has_new_files {
+                                                                                    ui.spacing_mut().button_padding.y = 4.0;
+                                                                                    let response = ui
+                                                                                        .add(
+                                                                                            egui::Button::new(
+                                                                                                RichText::new(text.new_files())
+                                                                                                    .color(Color32::from_rgb(224, 240, 255)),
+                                                                                            )
+                                                                                            .fill(Color32::from_rgb(55, 95, 135))
+                                                                                            .corner_radius(egui::CornerRadius::same(3))
+                                                                                            .min_size(Vec2::new(64.0, 4.0)),
+                                                                                        )
+                                                                                        .on_hover_text(text.newer_files_tooltip())
+                                                                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                                                    if response.clicked() {
+                                                                                        pending_file_review_mod_id = Some(mod_id.clone());
+                                                                                    }
+                                                                                    if *modified_locally {
+                                                                                        paint_modified_new_files_badge(ui, text, response.rect);
+                                                                                    }
+                                                                                    if let Some(ignoring_kind) = ignoring_update_label {
+                                                                                        let ignoring_label = match ignoring_kind {
+                                                                                            IgnoredUpdateKind::Once => text.ignoring_once(),
+                                                                                            IgnoredUpdateKind::Always => text.ignoring_always(),
+                                                                                        };
+                                                                                        ui.add(
+                                                                                            egui::Label::new(
+                                                                                                RichText::new(ignoring_label)
+                                                                                                    .size(11.0)
+                                                                                                    .color(Color32::from_rgb(181, 153, 196)),
+                                                                                            )
+                                                                                            .selectable(false),
+                                                                                        )
+                                                                                        .on_hover_text(match ignoring_kind {
+                                                                                            IgnoredUpdateKind::Once => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateOnce),
+                                                                                            IgnoredUpdateKind::Always => mod_update_state_tooltip(ModUpdateState::IgnoringUpdateAlways),
+                                                                                        })
+                                                                                        .on_hover_cursor(egui::CursorIcon::Default);
+                                                                                    }
+                                                                                } else if *modified_locally {
                                                                                     if let Some(ignoring_kind) = ignoring_update_label {
                                                                                         let ignoring_label = match ignoring_kind {
                                                                                             IgnoredUpdateKind::Once => text.ignoring_once(),
@@ -7761,6 +8066,37 @@ impl HestiaApp {
                                                     ui.close();
                                                 }
                                             }
+                                            if *linked
+                                                && ui
+                                                    .button(icon_text_sized(
+                                                        Icon::Files,
+                                                        text.view_files(),
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                pending_file_review_mod_id = Some(mod_id.clone());
+                                                ui.close();
+                                            }
+                                            if *linked
+                                                && has_new_files
+                                                && !newer_file_ids.is_empty()
+                                                && ui
+                                                    .button(icon_text_sized(
+                                                        Icon::X,
+                                                        text.dismiss_file_notice(),
+                                                        12.0,
+                                                        12.0,
+                                                    ))
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                            {
+                                                pending_dismiss_newer_files =
+                                                    Some((mod_id.clone(), newer_file_ids.clone()));
+                                                ui.close();
+                                            }
                                             match status {
                                                 ModStatus::Active => {
                                                     let locked = self
@@ -8039,32 +8375,19 @@ impl HestiaApp {
                                         },
                                     );
                                 }
-
-                                if tile.has_update {
+                                if tile.has_update || tile.has_new_files {
                                     let badge_rect = egui::Rect::from_min_size(
                                         thumb_rect.right_top() + egui::vec2(-34.0, 8.0),
                                         Vec2::new(24.0, 18.0),
                                     );
-                                    ui.painter().rect_filled(
+                                    paint_folder_update_badge(
+                                        ui,
+                                        ui.id().with(("folder_update_badge", &tile.id)),
                                         badge_rect,
-                                        5.0,
-                                        Color32::from_rgba_premultiplied(186, 84, 43, 235),
-                                    );
-                                    ui.painter().rect_stroke(
-                                        badge_rect,
-                                        5.0,
-                                        egui::Stroke::new(
-                                            1.0,
-                                            Color32::from_rgba_premultiplied(122, 74, 54, 225),
-                                        ),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                    ui.painter().text(
-                                        badge_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "!",
-                                        egui::FontId::proportional(13.0),
-                                        Color32::WHITE,
+                                        tile.has_update,
+                                        tile.has_new_files,
+                                        text,
+                                        tile.new_files_count,
                                     );
                                 }
 
@@ -9280,6 +9603,12 @@ impl HestiaApp {
                                 }
                             }
                         }
+                        if let Some(mod_id) = pending_file_review_mod_id {
+                            self.open_mod_file_review(&mod_id);
+                        }
+                        if let Some((mod_id, file_ids)) = pending_dismiss_newer_files {
+                            self.dismiss_newer_files_notice(&mod_id, &file_ids);
+                        }
                         if let (Some(targets), Some(action)) =
                             (folder_batch_targets_snapshot, pending_folder_batch_delete_action)
                         {
@@ -10091,11 +10420,19 @@ impl HestiaApp {
                         if Self::local_changes_action_button(ui, text, 13.0, mark_as_not_modified)
                             .clicked()
                         {
-                            if let Some(mod_entry) = self.selected_mod_mut() {
-                                if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                            if self.set_mod_ignore_local_changes_grouped(
+                                &selected.id,
+                                mark_as_not_modified,
+                            ) {
+                                if let Some(mod_entry) = self
+                                    .state
+                                    .mods
+                                    .iter_mut()
+                                    .find(|mod_entry| mod_entry.id == selected.id)
+                                {
                                     let _ = xxmi::save_mod_metadata(mod_entry);
-                                    self.save_state();
                                 }
+                                self.save_state();
                             }
                             ui.close();
                         }
@@ -10113,7 +10450,7 @@ impl HestiaApp {
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
-                            if let Some(mod_entry) = self.selected_mod_mut() {
+                                     if let Some(mod_entry) = self.selected_mod_mut() {
                                 let source = mod_entry
                                     .source
                                     .get_or_insert_with(ModSourceData::default);
@@ -10619,12 +10956,12 @@ impl HestiaApp {
                         ui.add_space(-4.0);
                         if let Some(job) = Self::modified_ignoring_detail_job(text, &selected, 12.0) {
                             ui.add(egui::Label::new(job).selectable(false))
-                                .on_hover_text(Self::mod_update_badge_tooltip(&selected))
+                                .on_hover_text(self.mod_update_badge_tooltip(&selected))
                                 .on_hover_cursor(egui::CursorIcon::Default);
                         } else {
-                            let (update_text, update_color) = Self::mod_update_badge(text, &selected);
+                            let (update_text, update_color) = self.mod_update_badge(text, &selected);
                             static_label(ui, RichText::new(update_text).size(12.0).color(update_color))
-                                .on_hover_text(Self::mod_update_badge_tooltip(&selected));
+                                .on_hover_text(self.mod_update_badge_tooltip(&selected));
                         }
                     } else {
                         // Unlinked mods still get a status segment here, and clicking it
@@ -10670,7 +11007,26 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 ui.horizontal(|ui| {
                     ui.horizontal_wrapped(|ui| {
-                        let modified_update_available = Self::has_modified_update_available(&selected);
+                        let modified_update_available = self.has_modified_update_available(&selected);
+                        let has_new_files = self.has_newer_files_notice(&selected);
+                        if has_new_files {
+                            let response = ui
+                                .add(
+                                    egui::Button::new(icon_text_sized(
+                                        Icon::Files,
+                                        text.view_files(),
+                                        12.0,
+                                        12.0,
+                                    ))
+                                    .fill(Color32::from_rgb(55, 95, 135))
+                                    .corner_radius(egui::CornerRadius::same(6)),
+                                )
+                                .on_hover_text(text.newer_files_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if response.clicked() {
+                                self.open_mod_file_review(&selected.id);
+                            }
+                        }
                         if matches!(selected.update_state, ModUpdateState::UpdateAvailable)
                             || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                 && modified_update_available)
@@ -11023,13 +11379,27 @@ impl HestiaApp {
                                     {
                                         ui.add_space(4.0);
                                         ui.horizontal_centered(|ui| {
-                                            if Self::local_changes_action_button(ui, text, 12.0,mark_as_not_modified).clicked() {
-                                                let selected_id = selected.id.clone();
-                                                if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                    if set_mod_ignore_local_changes(mod_entry, mark_as_not_modified) {
+                                            if Self::local_changes_action_button(
+                                                ui,
+                                                text,
+                                                12.0,
+                                                mark_as_not_modified,
+                                            )
+                                            .clicked()
+                                            {
+                                                if self.set_mod_ignore_local_changes_grouped(
+                                                    &selected.id,
+                                                    mark_as_not_modified,
+                                                ) {
+                                                    if let Some(mod_entry) = self
+                                                        .state
+                                                        .mods
+                                                        .iter_mut()
+                                                        .find(|mod_entry| mod_entry.id == selected.id)
+                                                    {
                                                         let _ = xxmi::save_mod_metadata(mod_entry);
-                                                        self.save_state();
                                                     }
+                                                    self.save_state();
                                                 }
                                             }
                                         });
@@ -11050,6 +11420,9 @@ impl HestiaApp {
                                     let mut unlink_requested = false;
                                     let mut open_in_browse_id: Option<(u64, bool)> = None;
                                     let mut copy_gb_id: Option<u64> = None;
+                                     let selected_cached_evidence = self
+                                         .selected_mod()
+                                         .and_then(|selected| self.cached_grouped_evidence_for_mod(selected));
                                     if let Some(mod_entry) = self.selected_mod_mut() {
                                         let input_id = ui.make_persistent_id(("gb_link_input", &mod_entry.id));
                                         let mut input_str = ui.data_mut(|d| d.get_temp::<String>(input_id).unwrap_or_default());
@@ -11193,7 +11566,10 @@ impl HestiaApp {
                                                 changed = true;
                                             }
                                             let can_use_ignore_once = ignore_current_update
-                                                || ignore_once_signature_for_mod(&selected).is_some();
+                                                || selected_cached_evidence
+                                                    .as_ref()
+                                                    .and_then(|evidence| evidence.signature.as_ref())
+                                                    .is_some();
                                             ui.add_space(-6.0);
                                             let ignore_once_response = ui.add_enabled(
                                                 can_use_ignore_once,
@@ -11219,8 +11595,10 @@ impl HestiaApp {
                                                     let _ = xxmi::save_mod_metadata(mod_entry);
                                                     self.cancel_update_process_for_mod(&cloned);
                                                 } else if ignore_current_update {
+                                                    let current_signature = selected_cached_evidence
+                                                        .as_ref()
+                                                        .and_then(|evidence| evidence.signature.clone());
                                                     if let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == selected_id) {
-                                                        let current_signature = ignore_once_signature_for_mod(mod_entry);
                                                         if let Some(signature) = current_signature {
                                                             let prearmed_next_update = signature.prearmed_next_update;
                                                             if let Some(source) = mod_entry.source.as_mut() {
@@ -11228,7 +11606,10 @@ impl HestiaApp {
                                                                 source.ignored_update_signature = Some(signature);
                                                             }
                                                             if prearmed_next_update {
-                                                                if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                                if let Some(raw_state) = selected_cached_evidence
+                                                                    .as_ref()
+                                                                    .map(|evidence| evidence.state)
+                                                                {
                                                                     mod_entry.update_state = raw_state;
                                                                 }
                                                             } else {
@@ -11239,7 +11620,10 @@ impl HestiaApp {
                                                                 source.ignore_update_always = false;
                                                                 source.ignored_update_signature = None;
                                                             }
-                                                            if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                            if let Some(raw_state) = selected_cached_evidence
+                                                                .as_ref()
+                                                                .map(|evidence| evidence.state)
+                                                            {
                                                                 mod_entry.update_state = raw_state;
                                                             }
                                                         }
@@ -11252,7 +11636,10 @@ impl HestiaApp {
                                                         source.ignore_update_always = false;
                                                         source.ignored_update_signature = None;
                                                     }
-                                                    if let Some(raw_state) = compute_raw_update_state(mod_entry) {
+                                                    if let Some(raw_state) = selected_cached_evidence
+                                                        .as_ref()
+                                                        .map(|evidence| evidence.state)
+                                                    {
                                                         mod_entry.update_state = raw_state;
                                                     }
                                                     let _ = xxmi::save_mod_metadata(mod_entry);

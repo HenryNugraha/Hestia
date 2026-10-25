@@ -246,6 +246,7 @@ impl HestiaApp {
         self.browse_image_queue.clear();
         self.browse_image_inflight.clear();
         self.browse_state.details.clear();
+        self.browse_state.detail_request_attempts.clear();
         self.browse_state.screenshot_overlay = None;
         self.clear_translation_caches();
         self.rebuild_texture_tracking();

@@ -1,3 +1,60 @@
+/// Keep the current GameBanana catalog authoritative when applying a translated
+/// profile. Translation responses are presentation data and may have been
+/// generated from an older snapshot, so copying the whole response can hide a
+/// newly uploaded file (or replace a current download URL with stale metadata).
+fn overlay_translated_profile(
+    authoritative: &gamebanana::ProfileResponse,
+    translated: &gamebanana::ProfileResponse,
+) -> Option<gamebanana::ProfileResponse> {
+    if authoritative.id == 0 || translated.id != authoritative.id {
+        return None;
+    }
+
+    let mut merged = authoritative.clone();
+    if !translated.name.trim().is_empty() {
+        merged.name = translated.name.clone();
+    }
+    if translated.short_description.is_some() {
+        merged.short_description = translated.short_description.clone();
+    }
+    if translated.html_text.is_some() {
+        merged.html_text = translated.html_text.clone();
+    }
+
+    // File labels can be translated too, but file identity and catalog
+    // structure always come from the current GameBanana profile. Match by the
+    // stable nonzero file ID across both active and archived arrays; never use
+    // position or a translated filename as identity.
+    let translated_files = translated
+        .files
+        .iter()
+        .chain(translated.archived_files.iter());
+    for file in merged
+        .files
+        .iter_mut()
+        .chain(merged.archived_files.iter_mut())
+    {
+        if file.id == 0 {
+            continue;
+        }
+        let Some(translated_file) = translated_files.clone().find(|candidate| candidate.id == file.id)
+        else {
+            continue;
+        };
+        if !translated_file.file_name.trim().is_empty() {
+            file.file_name = translated_file.file_name.clone();
+        }
+        if translated_file
+            .description
+            .as_deref()
+            .is_some_and(|description| !description.trim().is_empty())
+        {
+            file.description = translated_file.description.clone();
+        }
+    }
+    Some(merged)
+}
+
 impl HestiaApp {
     fn restart_active_translations_for_proxy_change(&mut self) {
         let gamebanana: Vec<(u64, String)> = self
@@ -402,6 +459,29 @@ impl HestiaApp {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
+    /// Resolve the best current profile available for a linked mod. Browse's
+    /// detail is preferred; a persisted raw profile or snapshot is only an
+    /// offline fallback for the Library detail.
+    fn current_profile_for_gamebanana_mod(
+        &self,
+        mod_id: u64,
+    ) -> Option<gamebanana::ProfileResponse> {
+        if let Some(detail) = self.browse_state.details.get(&mod_id) {
+            if detail.profile.id == mod_id && !detail.is_tool {
+                return Some(detail.profile.clone());
+            }
+        }
+
+        self.state.mods.iter().find_map(|mod_entry| {
+            let source = mod_entry.source.as_ref()?;
+            let link = source.gamebanana.as_ref()?;
+            if link.mod_id != mod_id || gamebanana::is_tool_url(&link.url) {
+                return None;
+            }
+            source_profile_for_compare(source).filter(|profile| profile.id == mod_id)
+        })
+    }
+
     fn apply_translated_profile(
         &mut self,
         mod_id: u64,
@@ -409,7 +489,24 @@ impl HestiaApp {
         source_hash: &str,
         profile: gamebanana::ProfileResponse,
     ) {
-        if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
+        let Some(authoritative) = self.current_profile_for_gamebanana_mod(mod_id) else {
+            self.set_translation_loading_for_gamebanana_mod(mod_id, false);
+            return;
+        };
+        let Some(profile) = overlay_translated_profile(&authoritative, &profile) else {
+            self.set_translation_loading_for_gamebanana_mod(mod_id, false);
+            self.log_warn(format!(
+                "ignored translated GameBanana profile {mod_id}: profile identity did not match"
+            ));
+            return;
+        };
+
+        if let Some(detail) = self
+            .browse_state
+            .details
+            .get_mut(&mod_id)
+            .filter(|detail| !detail.is_tool)
+        {
             let detail = Arc::make_mut(detail);
             let markdown = prepare_markdown_for_display(
                 profile.html_text.as_deref().unwrap_or_default(),
@@ -432,8 +529,9 @@ impl HestiaApp {
                 m.source
                     .as_ref()
                     .and_then(|s| s.gamebanana.as_ref())
-                    .map(|l| l.mod_id == mod_id)
-                    .unwrap_or(false)
+                    .is_some_and(|l| {
+                        l.mod_id == mod_id && !gamebanana::is_tool_url(&l.url)
+                    })
             })
             .map(|m| m.id.clone())
             .collect();
@@ -897,5 +995,131 @@ impl HestiaApp {
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod translation_tests {
+    use super::*;
+
+    fn file(id: u64, name: &str, url: &str) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id,
+            file_name: name.to_string(),
+            file_size: 10,
+            date_added: id as i64,
+            download_count: id,
+            description: None,
+            version: None,
+            download_url: Some(url.to_string()),
+            is_archived: false,
+        }
+    }
+
+    #[test]
+    fn translated_profile_overlays_text_without_replacing_current_catalog() {
+        let mut current_old = file(
+            1852109,
+            "si_sorceress.7z",
+            "https://gamebanana.com/dl/1852109",
+        );
+        current_old.description = Some("Old current label".to_string());
+        let mut current_v2 = file(
+            1858161,
+            "si_sorceressv2.7z",
+            "https://gamebanana.com/dl/1858161",
+        );
+        current_v2.description = Some("V2 current label".to_string());
+        let mut current_archived = file(
+            1850000,
+            "si_sorceress_old.7z",
+            "https://gamebanana.com/dl/1850000",
+        );
+        current_archived.is_archived = true;
+        current_archived.description = Some("Archive current label".to_string());
+        let current = gamebanana::ProfileResponse {
+            id: 728699,
+            name: "Si Sorceress".to_string(),
+            html_text: Some("current description".to_string()),
+            download_count: 1371,
+            is_withheld: true,
+            files: vec![current_old.clone(), current_v2.clone()],
+            archived_files: vec![current_archived.clone()],
+            ..Default::default()
+        };
+        let mut translated_v2 = current_v2.clone();
+        translated_v2.file_name = "si_sorceress_v2_traduit.7z".to_string();
+        translated_v2.description = Some("V2 translated label".to_string());
+        let mut translated_old = current_old.clone();
+        translated_old.file_name = "si_sorceress_traduit.7z".to_string();
+        translated_old.description = Some("Old translated label".to_string());
+        let translated = gamebanana::ProfileResponse {
+            id: 728699,
+            name: "Si Sorceress (translated)".to_string(),
+            html_text: Some("translated description".to_string()),
+            download_count: 1,
+            is_withheld: false,
+            // Deliberately reorder and put the old active file in the archived
+            // translation array; stable IDs, not position or archive grouping,
+            // determine the text overlay.
+            files: vec![translated_v2],
+            archived_files: vec![translated_old],
+            ..Default::default()
+        };
+
+        let merged = overlay_translated_profile(&current, &translated).unwrap();
+
+        assert_eq!(merged.name, "Si Sorceress (translated)");
+        assert_eq!(merged.html_text.as_deref(), Some("translated description"));
+        assert_eq!(
+            merged.files.iter().map(|file| file.id).collect::<Vec<_>>(),
+            vec![1852109, 1858161]
+        );
+        assert_eq!(
+            merged.files[1].download_url.as_deref(),
+            Some("https://gamebanana.com/dl/1858161")
+        );
+        assert_eq!(merged.files[0].file_name, "si_sorceress_traduit.7z");
+        assert_eq!(
+            merged.files[0].description.as_deref(),
+            Some("Old translated label")
+        );
+        assert_eq!(merged.files[1].file_name, "si_sorceress_v2_traduit.7z");
+        assert_eq!(
+            merged.files[1].description.as_deref(),
+            Some("V2 translated label")
+        );
+        assert_eq!(merged.archived_files.len(), 1);
+        assert_eq!(merged.archived_files[0].id, 1850000);
+        assert_eq!(merged.archived_files[0].file_name, current_archived.file_name);
+        assert_eq!(
+            merged.archived_files[0].description.as_deref(),
+            Some("Archive current label")
+        );
+        assert_eq!(merged.download_count, 1371);
+        assert!(merged.is_withheld);
+
+        let mut translated_without_v2 = translated.clone();
+        translated_without_v2.files.clear();
+        let merged_without_v2 = overlay_translated_profile(&current, &translated_without_v2).unwrap();
+        assert_eq!(merged_without_v2.files[1].file_name, current_v2.file_name);
+        assert_eq!(
+            merged_without_v2.files[1].description.as_deref(),
+            Some("V2 current label")
+        );
+    }
+
+    #[test]
+    fn translated_profile_with_wrong_identity_is_rejected() {
+        let current = gamebanana::ProfileResponse {
+            id: 728699,
+            ..Default::default()
+        };
+        let translated = gamebanana::ProfileResponse {
+            id: 728107,
+            ..Default::default()
+        };
+
+        assert!(overlay_translated_profile(&current, &translated).is_none());
     }
 }

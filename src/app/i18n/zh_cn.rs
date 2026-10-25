@@ -987,4 +987,30 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "按键没有传到游戏。请松开所有按键后重试。", // GameOverlayHotkeyNotSent
     "在 Hestia 设置中开启“允许 Hestia 修改 d3dx.ini 配置”后，才能在这里按下模组快捷键。", // GameOverlayHotkeyNotAllowed
     "按下此键", // GameOverlayHintPressHotkey
+
+    // Newer mod files
+    "新文件", // NewFiles
+    "此模组有新文件可用。", // NewerFilesTooltip
+    "查看文件", // ViewFiles
+    "忽略", // DismissFileNotice
+    "新文件", // NewerFile
+    "选择文件", // ChooseUpdateFiles
+    "更多安装选项", // FileReviewInstallMenu
+    "作为单独模组安装", // FileReviewInstallSeparate
+    "与已安装模组合并", // FileReviewInstallMerge
+    "有新文件可用，但 Hestia 不清楚它们与已安装版本的关系。请选择处理方式：", // FileReviewIntroNew
+    "有一个新文件可用，但 Hestia 不清楚它与已安装版本的关系。请选择处理方式：", // FileReviewIntroNewSingular
+    "请选择文件来更新此模组、单独安装或合并。", // FileReviewIntroAll
+    "已安装：{files}", // FileReviewInstalledSummary
+    "用所选文件替换此模组。", // FileReviewUpdateTooltip
+    "选择如何安装所选文件。", // FileReviewInstallTooltip
+    "单独安装，不更改此模组。", // FileReviewSeparateTooltip
+    "添加到此模组，并替换同名文件。", // FileReviewMergeTooltip
+    "隐藏当前新文件的提示。之后的新文件仍会显示。", // FileReviewIgnoreTooltip
+    "关闭，不安装任何内容。", // FileReviewCloseTooltip
+    "请先选择至少一个文件。", // FileReviewSelectFilesTooltip
+    "安装所选文件。", // FilePromptInstallTooltip
+    "关闭，不安装任何内容。", // FilePromptCancelTooltip
+    "此模组已更改。请重新打开文件列表。", // FileReviewTargetChanged
+    "有新文件的模组：{count}", // NewFilesInFolder
 ];

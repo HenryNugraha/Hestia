@@ -509,7 +509,9 @@ pub fn restore_mod(
             );
         }
         if let Err(rollback_err) = rollback_move {
-            tracing::error!("could not roll back restored mod move after metadata failure: {rollback_err}");
+            tracing::error!(
+                "could not roll back restored mod move after metadata failure: {rollback_err}"
+            );
         }
         return Err(err);
     }
@@ -538,7 +540,10 @@ fn move_disabled_contents_to_active(root: &Path) -> Result<()> {
     for entry in &entries {
         let destination = root.join(entry.file_name());
         if destination.exists() || entry.file_name() == OsStr::new(MOD_META_DIR) {
-            bail!("cannot enable mod because destination already exists: {}", destination.display());
+            bail!(
+                "cannot enable mod because destination already exists: {}",
+                destination.display()
+            );
         }
     }
 
@@ -611,7 +616,10 @@ fn move_active_contents_to_disabled(root: &Path) -> Result<()> {
             .ok_or_else(|| anyhow!("mod entry missing file name"))?;
         let destination = disabled_root.join(name);
         if destination.exists() {
-            bail!("cannot roll back enabled mod because destination already exists: {}", destination.display());
+            bail!(
+                "cannot roll back enabled mod because destination already exists: {}",
+                destination.display()
+            );
         }
     }
     let mut moved = Vec::with_capacity(entries.len());
@@ -1072,8 +1080,7 @@ fn retired_stage_sibling(path: &Path) -> Option<PathBuf> {
 }
 
 fn retired_install_has_live_stage(path: &Path) -> bool {
-    retired_stage_sibling(path)
-        .is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
+    retired_stage_sibling(path).is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
 }
 
 fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
@@ -1989,18 +1996,12 @@ mod tests {
         fs::create_dir_all(mods_root.join("Ardelia").join("Outfit 1")).unwrap();
         fs::create_dir_all(mods_root.join("Ardelia").join("Outfit 2")).unwrap();
         fs::write(
-            mods_root
-                .join("Ardelia")
-                .join("Outfit 1")
-                .join("mod.INI"),
+            mods_root.join("Ardelia").join("Outfit 1").join("mod.INI"),
             "[TextureOverride]\n",
         )
         .unwrap();
         fs::write(
-            mods_root
-                .join("Ardelia")
-                .join("Outfit 2")
-                .join("mod.ini"),
+            mods_root.join("Ardelia").join("Outfit 2").join("mod.ini"),
             "[TextureOverride]\n",
         )
         .unwrap();
@@ -2029,7 +2030,11 @@ mod tests {
         let root = temp.path().join("Multipart");
         fs::create_dir_all(root.join("components")).unwrap();
         fs::write(root.join("main.ini"), "[TextureOverride]\n").unwrap();
-        fs::write(root.join("components").join("part.ini"), "[TextureOverride]\n").unwrap();
+        fs::write(
+            root.join("components").join("part.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
 
         assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![root]);
     }
@@ -2079,7 +2084,11 @@ mod tests {
         )
         .unwrap();
         fs::create_dir_all(root.join("components")).unwrap();
-        fs::write(root.join("components").join("part.ini"), "[TextureOverride]\n").unwrap();
+        fs::write(
+            root.join("components").join("part.ini"),
+            "[TextureOverride]\n",
+        )
+        .unwrap();
         fs::create_dir_all(root.join(".hestia-install-live")).unwrap();
         fs::write(
             root.join(".hestia-install-live").join("scratch.ini"),
@@ -2148,7 +2157,10 @@ mod tests {
         fs::create_dir_all(&child).unwrap();
         fs::write(child.join("mod.ini"), "[TextureOverride]\n").unwrap();
 
-        assert_eq!(collect_scannable_mod_dirs(temp.path()).unwrap(), vec![child]);
+        assert_eq!(
+            collect_scannable_mod_dirs(temp.path()).unwrap(),
+            vec![child]
+        );
     }
 
     #[test]
@@ -2308,10 +2320,7 @@ mod tests {
 
         let mut rescanned = scan_archived_mods(&game, false, false).unwrap();
         assert_eq!(rescanned.len(), 1);
-        assert_eq!(
-            rescanned[0].archive_original_path,
-            Some(root.clone())
-        );
+        assert_eq!(rescanned[0].archive_original_path, Some(root.clone()));
         rescanned[0].archive_original_path = None;
         let restored = restore_mod(&mut rescanned.remove(0), &game, false).unwrap();
 
@@ -2327,8 +2336,16 @@ mod tests {
         let second_root = mods.join("Beatrice").join("Same");
         fs::create_dir_all(&first_root).unwrap();
         fs::create_dir_all(&second_root).unwrap();
-        fs::write(first_root.join("mod.ini"), "[TextureOverride]\nhash = first").unwrap();
-        fs::write(second_root.join("mod.ini"), "[TextureOverride]\nhash = second").unwrap();
+        fs::write(
+            first_root.join("mod.ini"),
+            "[TextureOverride]\nhash = first",
+        )
+        .unwrap();
+        fs::write(
+            second_root.join("mod.ini"),
+            "[TextureOverride]\nhash = second",
+        )
+        .unwrap();
         let game = archive_test_game(&mods);
         let mut first = archive_test_entry(&first_root, ModStatus::Active);
         let mut second = archive_test_entry(&second_root, ModStatus::Active);
@@ -2383,7 +2400,12 @@ mod tests {
         assert_eq!(entry.status, ModStatus::Archived);
         assert_eq!(entry.root_path, archived_path);
         assert_eq!(entry.archive_original_path, original_path);
-        assert!(archived_path.join(DISABLED_CONTAINER).join("mod.ini").is_file());
+        assert!(
+            archived_path
+                .join(DISABLED_CONTAINER)
+                .join("mod.ini")
+                .is_file()
+        );
         assert!(archived_path.join("mod.ini").is_file());
     }
 }

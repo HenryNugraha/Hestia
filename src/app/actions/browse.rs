@@ -1,6 +1,20 @@
 const BROWSE_DOWNLOAD_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const BROWSE_DOWNLOAD_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const BROWSE_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
+const BROWSE_PROFILE_FRESH_TTL: Duration = Duration::from_secs(15 * 60);
+const BROWSE_PROFILE_RETRY_COOLDOWN: Duration = Duration::from_secs(30);
+
+fn browse_profile_is_fresh(cached_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    cached_at
+        .and_then(|cached_at| (now - cached_at).to_std().ok())
+        .is_some_and(|age| age < BROWSE_PROFILE_FRESH_TTL)
+}
+
+fn browse_detail_attempt_is_recent(attempted_at: Option<Instant>, now: Instant) -> bool {
+    attempted_at
+        .and_then(|attempted_at| now.checked_duration_since(attempted_at))
+        .is_some_and(|age| age < BROWSE_PROFILE_RETRY_COOLDOWN)
+}
 
 fn browse_selected_files_for_queued_download(
     file: &gamebanana::ModFile,
@@ -12,6 +26,73 @@ fn browse_selected_files_for_queued_download(
     } else {
         vec![file.clone()]
     }
+}
+
+fn browse_exact_source_matches(
+    file_set: &FileSetRecipe,
+    selectable: &[gamebanana::ModFile],
+) -> Vec<gamebanana::ModFile> {
+    let mut matches = Vec::new();
+    let mut add_match = |candidate: &gamebanana::ModFile| {
+        if !matches
+            .iter()
+            .any(|matched: &gamebanana::ModFile| matched.id == candidate.id)
+        {
+            matches.push(candidate.clone());
+        }
+    };
+
+    // Metadata is the newest persisted representation and may be the only identity available
+    // for installs created before the legacy id/name fields were written.
+    for tracked in &file_set.selected_files_meta {
+        if let Some(found) = selectable
+            .iter()
+            .find(|file| remote_file_matches_tracked(file, tracked))
+        {
+            add_match(found);
+        }
+    }
+    for old_id in &file_set.selected_file_ids {
+        if let Some(found) = selectable.iter().find(|file| file.id == *old_id) {
+            add_match(found);
+        }
+    }
+    for old_name in &file_set.selected_file_names {
+        if let Some(found) = selectable.iter().find(|file| file.file_name == *old_name) {
+            add_match(found);
+        }
+    }
+    matches
+}
+
+/// Returns whether a file is already part of the installed recipe for the
+/// review picker. Nonzero IDs are authoritative; legacy names are consulted
+/// only when the recipe has no authoritative IDs at all, so a new upload that
+/// reuses an old filename remains visible.
+fn browse_review_file_is_installed(file: &gamebanana::ModFile, file_set: &FileSetRecipe) -> bool {
+    if file.id != 0
+        && (file_set.selected_file_ids.contains(&file.id)
+            || file_set
+                .selected_files_meta
+                .iter()
+                .any(|installed| installed.file_id != 0 && installed.file_id == file.id))
+    {
+        return true;
+    }
+    let has_authoritative_ids = file_set.selected_file_ids.iter().any(|id| *id != 0)
+        || file_set
+            .selected_files_meta
+            .iter()
+            .any(|installed| installed.file_id != 0);
+    !has_authoritative_ids
+        && (!file.file_name.is_empty()
+            && (file_set.selected_file_names.contains(&file.file_name)
+                || file_set
+                    .selected_files_meta
+                    .iter()
+                    .any(|installed| {
+                        installed.file_id == 0 && installed.file_name == file.file_name
+                    })))
 }
 
 fn browse_card_indices_for_display(
@@ -191,12 +272,15 @@ impl HestiaApp {
         self.browse_state.page_error = None;
         self.browse_state.refresh_page_cache_for_session = false;
         self.browse_state.selected_mod_id = None;
+        self.browse_state.details.clear();
+        self.browse_state.detail_request_attempts.clear();
         self.browse_state.character_categories_game_id = None;
         self.browse_state.character_categories.clear();
         self.browse_state.character_categories_loading = false;
         self.browse_state.selected_character_category = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
+        self.browse_state.pending_file_review = None;
         self.cancel_browse_full_image_requests();
     }
 
@@ -254,6 +338,35 @@ impl HestiaApp {
         preserve_existing_state: bool,
         post_install_rename_to: Option<String>,
     ) -> BrowseDownloadTaskPayload {
+        self.browse_download_retry_payload_with_resolution(
+            game_id,
+            mod_id,
+            file,
+            selected_files,
+            unsafe_content,
+            update_folder_name,
+            update_target_mod_id,
+            install_state,
+            preserve_existing_state,
+            post_install_rename_to,
+            None,
+        )
+    }
+
+    fn browse_download_retry_payload_with_resolution(
+        &self,
+        game_id: String,
+        mod_id: u64,
+        file: &gamebanana::ModFile,
+        selected_files: &[gamebanana::ModFile],
+        unsafe_content: bool,
+        update_folder_name: Option<String>,
+        update_target_mod_id: Option<String>,
+        install_state: ModInstallState,
+        preserve_existing_state: bool,
+        post_install_rename_to: Option<String>,
+        explicit_resolution: Option<ImportResolution>,
+    ) -> BrowseDownloadTaskPayload {
         let selected_files = if selected_files.is_empty() {
             vec![Self::browse_download_task_file_from_mod_file(file)]
         } else {
@@ -279,6 +392,17 @@ impl HestiaApp {
                 .details
                 .get(&mod_id)
                 .and_then(|detail| serde_json::to_string(&detail.profile).ok()),
+            profile_cached_at: self
+                .browse_state
+                .details
+                .get(&mod_id)
+                .and_then(|detail| detail.profile_cached_at),
+            is_tool: self
+                .browse_state
+                .details
+                .get(&mod_id)
+                .is_some_and(|detail| detail.is_tool),
+            explicit_resolution,
         }
     }
 
@@ -325,6 +449,9 @@ impl HestiaApp {
             install_state: payload.effective_install_state(),
             preserve_existing_state: payload.preserve_existing_state,
             post_install_rename_to: payload.post_install_rename_to.clone(),
+            profile_cached_at: payload.profile_cached_at,
+            is_tool: payload.is_tool,
+            explicit_resolution: payload.explicit_resolution,
         }
     }
 
@@ -526,8 +653,11 @@ impl HestiaApp {
         self.browse_state.page_request_started_at = None;
         self.browse_state.page_error = None;
         self.browse_state.selected_mod_id = None;
+        self.browse_state.details.clear();
+        self.browse_state.detail_request_attempts.clear();
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
+        self.browse_state.pending_file_review = None;
         self.cancel_browse_full_image_requests();
         self.clear_translation_caches();
         self.request_browse_page_with_mode(1, true);
@@ -581,6 +711,18 @@ impl HestiaApp {
                 } else {
                     i += 1;
                 }
+            }
+            if self
+                .browse_state
+                .pending_file_review
+                .as_ref()
+                .is_some_and(|pending| pending.gb_id == mod_id)
+            {
+                self.browse_state.pending_file_review = None;
+                self.report_error_message(
+                    self.text().browse_detail_failed_message(mod_id, "request timed out"),
+                    Some(self.text().browse_detail_failed()),
+                );
             }
             self.log_warn(format!(
                 "detail request timed out without a worker response; dropping it: mod {mod_id}"
@@ -687,6 +829,7 @@ impl HestiaApp {
         self.browse_state.selected_mod_id = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
+        self.browse_state.pending_file_review = None;
         self.browse_state.refresh_page_cache_for_session = true;
         self.cancel_browse_full_image_requests();
         self.request_browse_page_with_mode(1, true);
@@ -709,16 +852,100 @@ impl HestiaApp {
         self.browse_state.selected_mod_id = None;
         self.browse_detail_open = false;
         self.browse_state.file_prompt = None;
+        self.browse_state.pending_file_review = None;
         self.browse_state.refresh_page_cache_for_session = true;
         self.cancel_browse_full_image_requests();
         self.request_browse_page_with_mode(1, true);
     }
 
     fn request_browse_detail(&mut self, mod_id: u64) {
-        if self.browse_state.details.contains_key(&mod_id)
+        self.request_browse_detail_with_mode(mod_id, false);
+    }
+
+    /// Revalidate an already-open (or immediately opening) detail profile in
+    /// the background. Keep the current profile visible while the request is
+    /// in flight; the worker still uses it as the first fallback if the
+    /// network request fails.
+    fn request_browse_detail_revalidate(&mut self, mod_id: u64) {
+        let now = Utc::now();
+        if self.browse_state.details.get(&mod_id).is_some_and(|detail| {
+            !detail.is_tool && browse_profile_is_fresh(detail.profile_cached_at, now)
+        }) {
+            return;
+        }
+        let has_usable_detail = self.browse_state.details.get(&mod_id).is_some_and(|detail| {
+            !detail.is_tool && detail.profile.id == mod_id
+        });
+        if has_usable_detail && self.detail_request_attempt_is_recent(mod_id) {
+            return;
+        }
+        self.request_browse_detail_with_mode_internal(mod_id, true, true);
+    }
+
+    fn detail_request_attempt_is_recent(&mut self, mod_id: u64) -> bool {
+        let now = Instant::now();
+        self.browse_state
+            .detail_request_attempts
+            .retain(|_, attempted_at| !now
+                .checked_duration_since(*attempted_at)
+                .is_some_and(|age| age >= BROWSE_PROFILE_RETRY_COOLDOWN));
+        let is_recent = self
+            .browse_state
+            .detail_request_attempts
+            .get(&mod_id)
+            .copied()
+            .is_some_and(|attempted_at| browse_detail_attempt_is_recent(Some(attempted_at), now));
+        if self.browse_state.detail_request_attempts.len() > 256 {
+            if let Some(oldest_id) = self
+                .browse_state
+                .detail_request_attempts
+                .iter()
+                .min_by_key(|(_, attempted_at)| *attempted_at)
+                .map(|(id, _)| *id)
+            {
+                self.browse_state.detail_request_attempts.remove(&oldest_id);
+            }
+        }
+        is_recent
+    }
+
+    /// Request a detail profile while preserving the cache for ordinary Browse navigation.
+    /// Update actions use the refresh form below so a stale cached profile cannot be mistaken
+    /// for the current file list.
+    fn request_browse_detail_with_mode(&mut self, mod_id: u64, force_refresh: bool) {
+        self.request_browse_detail_with_mode_internal(mod_id, force_refresh, false);
+    }
+
+    fn request_browse_detail_with_mode_internal(
+        &mut self,
+        mod_id: u64,
+        force_refresh: bool,
+        preserve_existing_detail: bool,
+    ) {
+        if force_refresh {
+            // Replacing the nonce is enough to invalidate responses already in flight. Normal
+            // forced requests clear the detail so the next response owns the state; an explicit
+            // Browse open keeps the current detail visible while it revalidates in the worker.
+            if !preserve_existing_detail {
+                self.browse_state.details.remove(&mod_id);
+                self.browse_state.loading_details.remove(&mod_id);
+            } else if self.browse_state.loading_details.contains_key(&mod_id) {
+                return;
+            }
+        } else if self.browse_state.details.contains_key(&mod_id)
             || self.browse_state.loading_details.contains_key(&mod_id)
         {
             return;
+        }
+        if !force_refresh && self.detail_request_attempt_is_recent(mod_id) {
+            return;
+        }
+        // A cache-only lookup is not a network attempt and must not delay
+        // revalidation when the detail is subsequently opened.
+        if force_refresh || self.browse_state.refresh_page_cache_for_session {
+            self.browse_state
+                .detail_request_attempts
+                .insert(mod_id, Instant::now());
         }
         self.browse_request_nonce = self.browse_request_nonce.wrapping_add(1);
         self.browse_detail_request_nonces
@@ -726,23 +953,78 @@ impl HestiaApp {
         self.browse_state
             .loading_details
             .insert(mod_id, Instant::now());
-        let cached_profile_json = if self.browse_state.refresh_page_cache_for_session {
-            None
-        } else {
-            self.state.mods.iter().find_map(|mod_entry| {
-                let source = mod_entry.source.as_ref()?;
-                let link = source.gamebanana.as_ref()?;
-                (link.mod_id == mod_id)
-                    .then(|| source.raw_profile_json.clone())
-                    .flatten()
+        let update_source = self.browse_state.pending_installs.iter().find_map(|pending| {
+            if pending.mod_id != mod_id {
+                return None;
+            }
+            let target = pending.update_target_id.as_deref()?;
+            self.state.mods.iter().find(|entry| entry.id == target)?.source.as_ref()
+        }).or_else(|| {
+            let pending = self.browse_state.pending_file_review.as_ref()?;
+            if pending.gb_id != mod_id {
+                return None;
+            }
+            self.state
+                .mods
+                .iter()
+                .find(|entry| entry.id == pending.mod_entry_id)
+                .and_then(|entry| entry.source.as_ref())
+        });
+        let is_tool = self
+            .browse_state
+            .pending_file_review
+            .as_ref()
+            .filter(|pending| pending.gb_id == mod_id)
+            .map(|pending| pending.is_tool)
+            .or_else(|| {
+                update_source
+                    .and_then(|source| source.gamebanana.as_ref())
+                    .map(|link| gamebanana::is_tool_url(&link.url))
             })
-        };
+            .unwrap_or(false);
+        let include_update_history = update_source.is_some() && !is_tool;
+        let existing_profile_json = preserve_existing_detail.then(|| {
+            self.browse_state
+                .details
+                .get(&mod_id)
+                .filter(|detail| detail.is_tool == is_tool)
+                .and_then(|detail| serde_json::to_string(&detail.profile).ok())
+        }).flatten();
+        let cached_profile_json =
+            if let Some(source) = update_source {
+                // A forced refresh still goes to the network first. Keep the
+                // last checked profile as fallback if that request fails.
+                source_profile_for_compare(source)
+                    .and_then(|profile| serde_json::to_string(&profile).ok())
+            } else if force_refresh {
+                existing_profile_json.or_else(|| {
+                    self.state.mods.iter().find_map(|mod_entry| {
+                        let source = mod_entry.source.as_ref()?;
+                        let link = source.gamebanana.as_ref()?;
+                        (link.mod_id == mod_id && gamebanana::is_tool_url(&link.url) == is_tool)
+                            .then(|| source.raw_profile_json.clone())
+                            .flatten()
+                    })
+                })
+            } else if self.browse_state.refresh_page_cache_for_session {
+                None
+            } else {
+                self.state.mods.iter().find_map(|mod_entry| {
+                    let source = mod_entry.source.as_ref()?;
+                    let link = source.gamebanana.as_ref()?;
+                    (link.mod_id == mod_id)
+                        .then(|| source.raw_profile_json.clone())
+                        .flatten()
+                })
+            };
         if self
             .browse_request_tx
             .send(BrowseRequest::FetchDetail {
                 nonce: self.browse_request_nonce,
                 mod_id,
-                force_refresh: self.browse_state.refresh_page_cache_for_session,
+                is_tool,
+                force_refresh: force_refresh || self.browse_state.refresh_page_cache_for_session,
+                include_update_history,
                 cached_profile_json,
             })
             .is_err()
@@ -758,7 +1040,23 @@ impl HestiaApp {
                     i += 1;
                 }
             }
+            if self
+                .browse_state
+                .pending_file_review
+                .as_ref()
+                .is_some_and(|pending| pending.gb_id == mod_id)
+            {
+                self.browse_state.pending_file_review = None;
+                self.report_error_message(
+                    self.text().browse_detail_failed_message(mod_id, "request unavailable"),
+                    Some(self.text().browse_detail_failed()),
+                );
+            }
         }
+    }
+
+    fn request_browse_detail_refresh(&mut self, mod_id: u64) {
+        self.request_browse_detail_with_mode(mod_id, true);
     }
 
     fn request_browse_updates(&mut self, mod_id: u64) {
@@ -768,6 +1066,7 @@ impl HestiaApp {
         if !matches!(detail.updates, BrowseUpdatesState::Unrequested) {
             return;
         }
+        let is_tool = detail.is_tool;
         if let Some(detail) = self.browse_state.details.get_mut(&mod_id) {
             Arc::make_mut(detail).updates = BrowseUpdatesState::Loading;
         }
@@ -777,6 +1076,7 @@ impl HestiaApp {
             .send(BrowseRequest::FetchUpdates {
                 nonce: self.browse_request_nonce,
                 mod_id,
+                is_tool,
                 force_refresh: self.browse_state.refresh_page_cache_for_session,
             })
             .is_err()
@@ -904,6 +1204,11 @@ impl HestiaApp {
             .iter()
             .map(|pending| pending.mod_id)
             .collect();
+        let pending_file_review = self
+            .browse_state
+            .pending_file_review
+            .as_ref()
+            .map(|pending| pending.gb_id);
         let mut removable = self
             .browse_state
             .details
@@ -912,6 +1217,7 @@ impl HestiaApp {
             .filter(|mod_id| Some(*mod_id) != selected)
             .filter(|mod_id| !loading.contains_key(mod_id))
             .filter(|mod_id| !pending_installs.contains(mod_id))
+            .filter(|mod_id| Some(*mod_id) != pending_file_review)
             .collect::<Vec<_>>();
         while self.browse_state.details.len() > BROWSE_DETAIL_CACHE_LIMIT {
             let Some(mod_id) = removable.pop() else {
@@ -929,7 +1235,7 @@ impl HestiaApp {
         self.browse_state.selected_mod_id = Some(mod_id);
         self.browse_detail_open = true;
         self.browse_detail_focus_requested = true;
-        self.request_browse_detail(mod_id);
+        self.request_browse_detail_revalidate(mod_id);
         self.request_browse_updates(mod_id);
         if self.browse_state.details.contains_key(&mod_id) {
             self.maybe_translate_gamebanana_mod_details(mod_id);
@@ -943,6 +1249,260 @@ impl HestiaApp {
         self.current_view = ViewMode::Browse;
         self.clear_mod_detail_rename();
         self.pending_browse_open_mod_id = Some(mod_id);
+    }
+
+    /// Open the passive "new files" notice's picker for an installed mod.
+    ///
+    /// This path intentionally does not go through the ordinary Browse install
+    /// resolver: that resolver creates a fresh install unless it is given an
+    /// update target, and it also applies the smart matcher.  A file review is
+    /// an explicit replacement of this exact installed source instead.
+    fn open_mod_file_review(&mut self, mod_entry_id: &str) {
+        let Some(mod_entry) = self
+            .state
+            .mods
+            .iter()
+            .find(|entry| entry.id == mod_entry_id)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(source) = mod_entry.source.as_ref() else {
+            return;
+        };
+        let Some(link) = source.gamebanana.as_ref() else {
+            return;
+        };
+        if link.mod_id == 0 || mod_entry.game_id.is_empty() {
+            return;
+        }
+
+        self.browse_state.file_prompt = None;
+        self.browse_state.pending_file_review = None;
+
+        // The grouped update cache owns the canonical profile used by the smart
+        // check. Reuse it, including its observation timestamp, so opening the
+        // picker never manufactures a newer profile observation.
+        if let Some(evidence) = self.cached_grouped_evidence_for_mod(&mod_entry) {
+            if let Some(profile) = evidence.profile {
+                self.seed_browse_detail_profile(
+                    link.mod_id,
+                    (*profile).clone(),
+                    evidence.profile_cached_at,
+                    gamebanana::is_tool_url(&link.url),
+                );
+                self.resolve_mod_file_review(PendingModFileReview {
+                    mod_entry_id: mod_entry.id,
+                    game_id: mod_entry.game_id,
+                    gb_id: link.mod_id,
+                    is_tool: gamebanana::is_tool_url(&link.url),
+                    source_url: link.url.clone(),
+                });
+                return;
+            }
+        }
+
+        // A detail already loaded for the Browse window is still safe to reuse.
+        // Otherwise fetch it and resume only the review after the response; no
+        // download task is created while metadata is loading.
+        let is_tool = gamebanana::is_tool_url(&link.url);
+        let detail_kind_matches = self
+            .browse_state
+            .details
+            .get(&link.mod_id)
+            .is_some_and(|detail| detail.is_tool == is_tool);
+        if detail_kind_matches {
+            self.resolve_mod_file_review(PendingModFileReview {
+                mod_entry_id: mod_entry.id,
+                game_id: mod_entry.game_id,
+                gb_id: link.mod_id,
+                is_tool,
+                source_url: link.url.clone(),
+            });
+        } else {
+            self.browse_state.pending_file_review = Some(PendingModFileReview {
+                mod_entry_id: mod_entry.id,
+                game_id: mod_entry.game_id,
+                gb_id: link.mod_id,
+                is_tool,
+                source_url: link.url.clone(),
+            });
+            if is_tool
+                || self.browse_state.details.contains_key(&link.mod_id)
+                || self.browse_state.loading_details.contains_key(&link.mod_id)
+            {
+                // A Mod and Tool may share a numeric ID. Invalidate any
+                // in-flight/default-kind detail before requesting the typed
+                // profile.
+                self.request_browse_detail_refresh(link.mod_id);
+            } else {
+                self.request_browse_detail(link.mod_id);
+            }
+        }
+    }
+
+    fn seed_browse_detail_profile(
+        &mut self,
+        mod_id: u64,
+        profile: gamebanana::ProfileResponse,
+        profile_cached_at: Option<DateTime<Utc>>,
+        is_tool: bool,
+    ) {
+        let markdown = prepare_markdown_for_display(
+            profile.html_text.as_deref().unwrap_or_default(),
+            None,
+            Some(mod_id),
+            &self.portable,
+        );
+        self.browse_state.details.insert(
+            mod_id,
+            Arc::new(BrowseDetailCache {
+                unsafe_content: !profile.content_ratings.is_empty(),
+                profile,
+                is_tool,
+                profile_cached_at,
+                markdown,
+                updates: BrowseUpdatesState::Unrequested,
+                translated_profile: None,
+                translation_lang: None,
+                translation_loading: false,
+            }),
+        );
+    }
+
+    fn resolve_mod_file_review(&mut self, pending: PendingModFileReview) {
+        let Some(target) = self
+            .state
+            .mods
+            .iter()
+            .find(|entry| entry.id == pending.mod_entry_id)
+            .cloned()
+        else {
+            self.browse_state.pending_file_review = None;
+            return;
+        };
+        let Some(source) = target.source.as_ref() else {
+            self.browse_state.pending_file_review = None;
+            return;
+        };
+        let source_matches = source
+            .gamebanana
+            .as_ref()
+            .is_some_and(|link| {
+                link.mod_id == pending.gb_id
+                    && link.url == pending.source_url
+                    && gamebanana::is_tool_url(&link.url) == pending.is_tool
+            });
+        if target.game_id != pending.game_id || !source_matches {
+            self.browse_state.pending_file_review = None;
+            self.report_warn(
+                self.text().file_review_target_changed(),
+                Some(self.text().update_unavailable()),
+            );
+            return;
+        }
+        let Some(detail) = self.browse_state.details.get(&pending.gb_id).cloned() else {
+            let gb_id = pending.gb_id;
+            self.browse_state.pending_file_review = Some(pending);
+            self.request_browse_detail(gb_id);
+            return;
+        };
+        if detail.is_tool != pending.is_tool {
+            self.browse_state.pending_file_review = None;
+            self.report_warn(
+                self.text().file_review_target_changed(),
+                Some(self.text().update_unavailable()),
+            );
+            return;
+        }
+
+        let canonical_profile = matcher_adapter::canonicalize_profile(&detail.profile).profile;
+        let factual_newer_files = available_newer_files(&source.file_set, &canonical_profile);
+        let newer_file_ids: HashSet<u64> = factual_newer_files.iter().map(|file| file.id).collect();
+        let mut review_files: Vec<_> = canonical_profile
+            .files
+            .iter()
+            .filter(|file| {
+                file.id != 0
+                    && !browse_review_file_is_installed(file, &source.file_set)
+                    && profile_file_is_active_downloadable(&canonical_profile, file)
+            })
+            .cloned()
+            .collect();
+        review_files.sort_by(|left, right| {
+            newer_file_ids
+                .contains(&right.id)
+                .cmp(&newer_file_ids.contains(&left.id))
+                .then_with(|| right.date_added.cmp(&left.date_added))
+                .then_with(|| right.id.cmp(&left.id))
+        });
+
+        let evidence = self.cached_grouped_evidence_for_mod(&target);
+        let dismissible_file_ids = evidence
+            .as_ref()
+            .filter(|evidence| {
+                Self::has_newer_files_notice_from_evidence(
+                    &target,
+                    evidence,
+                    self.state.static_prefs.update_check_statuses,
+                )
+            })
+            .map(|evidence| {
+                let ignored_once: HashSet<u64> = source
+                    .ignored_update_signature
+                    .as_ref()
+                    .map(|signature| {
+                        signature
+                            .files
+                            .iter()
+                            .filter_map(|file| (file.file_id != 0).then_some(file.file_id))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                evidence
+                    .newer_files
+                    .iter()
+                    .filter_map(|file| {
+                        (file.id != 0 && !ignored_once.contains(&file.id)).then_some(file.id)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let installed_files = evidence
+            .map(|evidence| evidence.installed_files)
+            .filter(|files| !files.is_empty())
+            .unwrap_or_else(|| source.file_set.selected_files_meta.clone());
+        self.browse_state.pending_file_review = None;
+        self.browse_state.file_prompt = Some(BrowseFilePrompt {
+            mod_id: pending.gb_id,
+            game_id: target.game_id,
+            files: review_files
+                .into_iter()
+                .map(|file| BrowseSelectableFile {
+                    file,
+                    selected: false,
+                })
+                .collect(),
+            update_folder_name: Some(target.folder_name.clone()),
+            update_target_mod_id: Some(target.id.clone()),
+            post_install_rename_to: None,
+            // Auto plus preserve_existing_state makes finalization retain the
+            // target's current enabled/disabled state.
+            install_state: ModInstallState::Auto,
+            preserve_existing_state: true,
+            file_review: Some(FileReviewContext {
+                installed_files,
+                newer_file_ids: newer_file_ids.into_iter().collect(),
+                dismissible_file_ids,
+                expected_file_set: source.file_set.clone(),
+                target_root_path: target.root_path,
+                expected_source_url: pending.source_url,
+                expected_is_tool: pending.is_tool,
+            }),
+        });
+        if !pending.is_tool {
+            self.maybe_translate_gamebanana_mod_details(pending.gb_id);
+        }
     }
 
     fn process_pending_browse_open(&mut self, ctx: &egui::Context) {
@@ -1415,7 +1975,9 @@ impl HestiaApp {
                 BrowseEvent::DetailLoaded {
                     _nonce,
                     mod_id,
+                    is_tool,
                     profile,
+                    profile_cached_at,
                 } => {
                     if self.browse_detail_request_nonces.get(&mod_id) != Some(&_nonce) {
                         continue;
@@ -1458,6 +2020,8 @@ impl HestiaApp {
 
                     let cache = BrowseDetailCache {
                         profile: profile.clone(),
+                        is_tool,
+                        profile_cached_at,
                         markdown,
                         unsafe_content: !profile.content_ratings.is_empty(),
                         updates: BrowseUpdatesState::Unrequested,
@@ -1492,6 +2056,16 @@ impl HestiaApp {
                             self.resolve_browse_install_after_detail(pending);
                         } else {
                             i += 1;
+                        }
+                    }
+                    if self
+                        .browse_state
+                        .pending_file_review
+                        .as_ref()
+                        .is_some_and(|pending| pending.gb_id == mod_id)
+                    {
+                        if let Some(pending) = self.browse_state.pending_file_review.take() {
+                            self.resolve_mod_file_review(pending);
                         }
                     }
                 }
@@ -1530,6 +2104,14 @@ impl HestiaApp {
                         } else {
                             i += 1;
                         }
+                    }
+                    if self
+                        .browse_state
+                        .pending_file_review
+                        .as_ref()
+                        .is_some_and(|pending| pending.gb_id == mod_id)
+                    {
+                        self.browse_state.pending_file_review = None;
                     }
                     self.report_error_message(
                         self.text().browse_detail_failed_message(mod_id, &error),
@@ -1809,6 +2391,37 @@ impl HestiaApp {
         preserve_existing_state: bool,
         post_install_rename_to: Option<String>,
     ) {
+        self.queue_browse_download_with_resolution(
+            game_id,
+            mod_id,
+            file,
+            selected_files,
+            task_id,
+            unsafe_content,
+            update_folder_name,
+            update_target_mod_id,
+            install_state,
+            preserve_existing_state,
+            post_install_rename_to,
+            None,
+        );
+    }
+
+    fn queue_browse_download_with_resolution(
+        &mut self,
+        game_id: String,
+        mod_id: u64,
+        file: gamebanana::ModFile,
+        selected_files: Vec<gamebanana::ModFile>,
+        task_id: Option<u64>,
+        unsafe_content: bool,
+        update_folder_name: Option<String>,
+        update_target_mod_id: Option<String>,
+        install_state: ModInstallState,
+        preserve_existing_state: bool,
+        post_install_rename_to: Option<String>,
+        explicit_resolution: Option<ImportResolution>,
+    ) {
         if !self.game_can_download_mods(&game_id) {
             if let Some(task_id) = task_id {
                 self.update_task_status(task_id, TaskStatus::Failed);
@@ -1822,18 +2435,33 @@ impl HestiaApp {
         let task_id = task_id.unwrap_or_else(|| self.next_background_job_id());
         let title = file.file_name.clone();
         let size = Some(file.file_size);
-        let retry_payload = self.browse_download_retry_payload(
-            game_id.clone(),
-            mod_id,
-            &file,
-            &selected_files,
-            unsafe_content,
-            update_folder_name,
-            update_target_mod_id,
-            install_state,
-            preserve_existing_state,
-            post_install_rename_to,
-        );
+        let retry_payload = match explicit_resolution {
+            Some(explicit_resolution) => self.browse_download_retry_payload_with_resolution(
+                game_id.clone(),
+                mod_id,
+                &file,
+                &selected_files,
+                unsafe_content,
+                update_folder_name,
+                update_target_mod_id,
+                install_state,
+                preserve_existing_state,
+                post_install_rename_to,
+                Some(explicit_resolution),
+            ),
+            None => self.browse_download_retry_payload(
+                game_id.clone(),
+                mod_id,
+                &file,
+                &selected_files,
+                unsafe_content,
+                update_folder_name,
+                update_target_mod_id,
+                install_state,
+                preserve_existing_state,
+                post_install_rename_to,
+            ),
+        };
         if task_id == self.install_next_job_id {
             self.install_next_job_id = self.install_next_job_id.wrapping_add(1);
         }
@@ -2050,6 +2678,30 @@ impl HestiaApp {
         }
     }
 
+    fn fail_browse_update(&mut self, task_id: u64) {
+        self.update_task_status(task_id, TaskStatus::Failed);
+        let message = self.text().update_unavailable().to_string();
+        self.report_warn(message, Some(self.text().update_unavailable()));
+    }
+
+    fn prepare_browse_update_folder_name(
+        &mut self,
+        target_id: Option<&str>,
+        current_name: Option<String>,
+        preferred_name: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
+        let (Some(target_id), Some(preferred_name)) = (target_id, preferred_name) else {
+            return (current_name, None);
+        };
+        match self.rename_mod_folder(target_id, preferred_name) {
+            Ok(()) => {
+                self.save_state();
+                (Some(preferred_name.to_string()), None)
+            }
+            Err(_) => (current_name, Some(preferred_name.to_string())),
+        }
+    }
+
     fn resolve_browse_install_after_detail(&mut self, pending: PendingBrowseInstall) {
         if !self.game_can_install_mods(&pending.game_id) {
             self.update_task_status(pending.task_id, TaskStatus::Failed);
@@ -2063,34 +2715,27 @@ impl HestiaApp {
             self.browse_state.pending_installs.push(pending);
             return;
         };
-        let mut update_folder_name = pending.update_target_id.as_ref().and_then(|id| {
+        let update_folder_name = pending.update_target_id.as_ref().and_then(|id| {
             self.state
                 .mods
                 .iter()
                 .find(|m| &m.id == id)
                 .map(|m| m.folder_name.clone())
         });
-        let mut post_install_rename_to = None;
-        if let Some(target_id) = pending.update_target_id.as_deref() {
-            let preferred_name = self.preferred_browse_folder_name(
-                self.browse_mod_title_for_install(pending.mod_id, Some(target_id))
-                    .as_deref(),
-                update_folder_name
-                    .as_deref()
-                    .unwrap_or(self.text().imported_mod()),
-            );
-            if update_folder_name.as_deref() != Some(preferred_name.as_str()) {
-                match self.rename_mod_folder(target_id, &preferred_name) {
-                    Ok(()) => {
-                        update_folder_name = Some(preferred_name);
-                        self.save_state();
-                    }
-                    Err(_) => {
-                        post_install_rename_to = Some(preferred_name);
-                    }
-                }
-            }
-        }
+        let preferred_update_folder_name =
+            if let Some(target_id) = pending.update_target_id.as_deref() {
+                let preferred_name = self.preferred_browse_folder_name(
+                    self.browse_mod_title_for_install(pending.mod_id, Some(target_id))
+                        .as_deref(),
+                    update_folder_name
+                        .as_deref()
+                        .unwrap_or(self.text().imported_mod()),
+                );
+                (update_folder_name.as_deref() != Some(preferred_name.as_str()))
+                    .then_some(preferred_name)
+            } else {
+                None
+            };
 
         let selectable: Vec<_> = detail
             .profile
@@ -2116,7 +2761,16 @@ impl HestiaApp {
                 })
                 .cloned()
         });
+        if pending.update_target_id.is_some() && existing_mod.is_none() {
+            self.fail_browse_update(pending.task_id);
+            return;
+        }
         if let Some(existing_mod) = existing_mod {
+            let existing_is_tool = existing_mod
+                .source
+                .as_ref()
+                .and_then(|source| source.gamebanana.as_ref())
+                .is_some_and(|link| gamebanana::is_tool_url(&link.url));
             let file_set = existing_mod.source.as_ref().map(|source| &source.file_set);
             if let Some(file_set) = file_set {
                 let mut group_items = Vec::new();
@@ -2126,7 +2780,10 @@ impl HestiaApp {
                         && m.source
                             .as_ref()
                             .and_then(|s| s.gamebanana.as_ref())
-                            .is_some_and(|l| l.mod_id == pending.mod_id)
+                            .is_some_and(|l| {
+                                l.mod_id == pending.mod_id
+                                    && gamebanana::is_tool_url(&l.url) == existing_is_tool
+                            })
                 }) {
                     let Some(source) = mod_entry.source.as_ref() else {
                         continue;
@@ -2149,7 +2806,24 @@ impl HestiaApp {
                         )
                     })
                     .unwrap_or_default();
+                let tracked_update = file_set_tracks_remote_files(file_set);
+                let evaluation_state = target_index
+                    .and_then(|idx| evaluations.get(idx))
+                    .map(|evaluation| evaluation.state);
+                if tracked_update
+                    && evaluation_state == Some(ModUpdateState::UpdateAvailable)
+                    && update_files.is_empty()
+                {
+                    self.fail_browse_update(pending.task_id);
+                    return;
+                }
                 if !update_files.is_empty() {
+                    let (update_folder_name, post_install_rename_to) =
+                        self.prepare_browse_update_folder_name(
+                            pending.update_target_id.as_deref(),
+                            update_folder_name.clone(),
+                            preferred_update_folder_name.as_deref(),
+                        );
                     if !Self::should_show_local_change_update_prefs(&existing_mod) {
                         for (i, file) in update_files.iter().cloned().enumerate() {
                             let tid = if i == 0 { Some(pending.task_id) } else { None };
@@ -2186,32 +2860,22 @@ impl HestiaApp {
                             post_install_rename_to: post_install_rename_to.clone(),
                             install_state: pending.install_state,
                             preserve_existing_state: pending.preserve_existing_state,
+                            file_review: None,
                         });
                     }
                     return;
                 }
-                if !file_set.selected_file_ids.is_empty()
-                    || !file_set.selected_file_names.is_empty()
+                if tracked_update
+                    && existing_mod.update_state != ModUpdateState::UpdateAvailable
                 {
-                    let mut matches = Vec::new();
-                    // 1. Try matching by ID (strongest match)
-                    for old_id in &file_set.selected_file_ids {
-                        if let Some(found) = selectable.iter().find(|f| f.id == *old_id) {
-                            matches.push(found.clone());
-                        }
-                    }
-                    // 2. For remaining names, try exact string match
-                    for old_name in &file_set.selected_file_names {
-                        if !matches.iter().any(|m| &m.file_name == old_name) {
-                            if let Some(found) =
-                                selectable.iter().find(|f| &f.file_name == old_name)
-                            {
-                                matches.push(found.clone());
-                            }
-                        }
-                    }
-
+                    let matches = browse_exact_source_matches(file_set, &selectable);
                     if !matches.is_empty() {
+                        let (update_folder_name, post_install_rename_to) =
+                            self.prepare_browse_update_folder_name(
+                                pending.update_target_id.as_deref(),
+                                update_folder_name.clone(),
+                                preferred_update_folder_name.as_deref(),
+                            );
                         if !Self::should_show_local_change_update_prefs(&existing_mod) {
                             let selected_set = matches.clone();
                             for (i, file) in matches.into_iter().enumerate() {
@@ -2249,13 +2913,24 @@ impl HestiaApp {
                                 post_install_rename_to: post_install_rename_to.clone(),
                                 install_state: pending.install_state,
                                 preserve_existing_state: pending.preserve_existing_state,
+                                file_review: None,
                             });
                         }
                         return;
                     }
                 }
+                if tracked_update {
+                    self.fail_browse_update(pending.task_id);
+                    return;
+                }
             }
         }
+        let (update_folder_name, post_install_rename_to) =
+            self.prepare_browse_update_folder_name(
+                pending.update_target_id.as_deref(),
+                update_folder_name,
+                preferred_update_folder_name.as_deref(),
+            );
         match selectable.len() {
             0 => {
                 self.update_task_status(pending.task_id, TaskStatus::Failed);
@@ -2304,6 +2979,7 @@ impl HestiaApp {
                     post_install_rename_to,
                     install_state: pending.install_state,
                     preserve_existing_state: pending.preserve_existing_state,
+                    file_review: None,
                 });
             }
         }
@@ -2371,9 +3047,124 @@ impl HestiaApp {
     }
 
     fn confirm_browse_file_prompt(&mut self) {
+        let action = self
+            .browse_state
+            .file_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.file_review.as_ref())
+            .map(|_| FileReviewAction::Update);
+        self.confirm_browse_file_prompt_action(action);
+    }
+
+    fn confirm_browse_file_prompt_with_action(&mut self, action: FileReviewAction) {
+        self.confirm_browse_file_prompt_action(Some(action));
+    }
+
+    fn confirm_browse_file_prompt_action(&mut self, review_action: Option<FileReviewAction>) {
         let Some(prompt) = self.browse_state.file_prompt.take() else {
             return;
         };
+        let review_action = review_action.filter(|_| prompt.file_review.is_some());
+        if let Some(review) = prompt.file_review.as_ref() {
+            let detail_matches_review = self
+                .browse_state
+                .details
+                .get(&prompt.mod_id)
+                .is_some_and(|detail| {
+                    detail.profile.id == prompt.mod_id
+                        && detail.is_tool == review.expected_is_tool
+                });
+            if !detail_matches_review {
+                self.report_warn(
+                    self.text().file_review_target_changed(),
+                    Some(self.text().update_unavailable()),
+                );
+                self.browse_state.file_prompt = Some(prompt);
+                return;
+            }
+            if !self.game_can_download_mods(&prompt.game_id) {
+                self.report_warn(
+                    self.game_mod_setup_message(&prompt.game_id),
+                    Some(self.text().install_unavailable()),
+                );
+                self.browse_state.file_prompt = Some(prompt);
+                return;
+            }
+            if review_action != Some(FileReviewAction::InstallSeparate)
+                && let Some(target_id) = prompt.update_target_mod_id.as_deref()
+            {
+                if let Some(lock_reason) =
+                    self.mod_action_lock_reason_by_id(target_id, ModMutationKind::UpdateExisting)
+                {
+                    self.report_warn(lock_reason, Some(self.text().update_unavailable()));
+                    self.browse_state.file_prompt = Some(prompt);
+                    return;
+                }
+            }
+            let valid_target = prompt
+                .update_target_mod_id
+                .as_deref()
+                .and_then(|target_id| self.state.mods.iter().find(|entry| entry.id == target_id))
+                .is_some_and(|target| {
+                    target.game_id == prompt.game_id
+                        && target.root_path == review.target_root_path
+                        && target
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some_and(|link| {
+                                link.mod_id == prompt.mod_id
+                                    && link.url == review.expected_source_url
+                                    && gamebanana::is_tool_url(&link.url) == review.expected_is_tool
+                            })
+                        && target
+                            .source
+                            .as_ref()
+                            .is_some_and(|source| source.file_set == review.expected_file_set)
+                });
+            if !valid_target {
+                self.report_warn(
+                    self.text().file_review_target_changed(),
+                    Some(self.text().update_unavailable()),
+                );
+                return;
+            }
+        }
+        let (update_folder_name, update_target_mod_id, install_state, preserve_existing_state, post_install_rename_to, explicit_resolution) =
+            match review_action {
+                Some(FileReviewAction::Update) => (
+                    prompt.update_folder_name.clone(),
+                    prompt.update_target_mod_id.clone(),
+                    prompt.install_state,
+                    prompt.preserve_existing_state,
+                    prompt.post_install_rename_to.clone(),
+                    Some(ImportResolution::Replace),
+                ),
+                Some(FileReviewAction::InstallSeparate) => (
+                    None,
+                    None,
+                    self.state.static_prefs.mod_install_state,
+                    false,
+                    None,
+                    Some(ImportResolution::KeepBoth),
+                ),
+                Some(FileReviewAction::InstallMerge) => (
+                    prompt.update_folder_name.clone(),
+                    prompt.update_target_mod_id.clone(),
+                    prompt.install_state,
+                    prompt.preserve_existing_state,
+                    prompt.post_install_rename_to.clone(),
+                    Some(ImportResolution::Merge),
+                ),
+                None => (
+                    prompt.update_folder_name.clone(),
+                    prompt.update_target_mod_id.clone(),
+                    prompt.install_state,
+                    prompt.preserve_existing_state,
+                    prompt.post_install_rename_to.clone(),
+                    None,
+                ),
+            };
         let selected_files: Vec<_> = prompt
             .files
             .into_iter()
@@ -2391,23 +3182,31 @@ impl HestiaApp {
                 .get(&prompt.mod_id)
                 .map(|detail| detail.unsafe_content)
                 .unwrap_or(false);
-            let selected_set = browse_selected_files_for_queued_download(
-                &file,
-                &selected_files,
-                prompt.update_target_mod_id.as_deref(),
-            );
-            self.queue_browse_download(
+            let selected_set = if explicit_resolution == Some(ImportResolution::Merge) {
+                // Each archive gets its own retry payload so a partial merge
+                // records only the archive that actually finished.  Ordinary
+                // updates retain their existing all-selected-files behavior.
+                vec![file.clone()]
+            } else {
+                browse_selected_files_for_queued_download(
+                    &file,
+                    &selected_files,
+                    update_target_mod_id.as_deref(),
+                )
+            };
+            self.queue_browse_download_with_resolution(
                 prompt.game_id.clone(),
                 prompt.mod_id,
                 file,
                 selected_set.clone(),
                 None,
                 unsafe_content,
-                prompt.update_folder_name.clone(),
-                prompt.update_target_mod_id.clone(),
-                prompt.install_state,
-                prompt.preserve_existing_state,
-                prompt.post_install_rename_to.clone(),
+                update_folder_name.clone(),
+                update_target_mod_id.clone(),
+                install_state,
+                preserve_existing_state,
+                post_install_rename_to.clone(),
+                explicit_resolution,
             );
         }
         self.set_message_ok(self.text().download_queued());
@@ -2417,6 +3216,38 @@ impl HestiaApp {
 #[cfg(test)]
 mod browse_file_prompt_tests {
     use super::*;
+
+    #[test]
+    fn browse_profile_freshness_requires_recent_past_observation() {
+        let now = Utc::now();
+        assert!(browse_profile_is_fresh(
+            Some(now - chrono::Duration::seconds(899)),
+            now,
+        ));
+        assert!(!browse_profile_is_fresh(
+            Some(now - chrono::Duration::seconds(900)),
+            now,
+        ));
+        assert!(!browse_profile_is_fresh(None, now));
+        assert!(!browse_profile_is_fresh(
+            Some(now + chrono::Duration::seconds(1)),
+            now,
+        ));
+    }
+
+    #[test]
+    fn browse_detail_retry_cooldown_only_allows_attempts_after_thirty_seconds() {
+        let now = Instant::now();
+        assert!(browse_detail_attempt_is_recent(
+            Some(now.checked_sub(Duration::from_secs(29)).unwrap()),
+            now,
+        ));
+        assert!(!browse_detail_attempt_is_recent(
+            Some(now.checked_sub(BROWSE_PROFILE_RETRY_COOLDOWN).unwrap()),
+            now,
+        ));
+        assert!(!browse_detail_attempt_is_recent(None, now));
+    }
 
     fn browse_card(id: u64, unsafe_content: bool) -> BrowseCard {
         BrowseCard {
@@ -2445,6 +3276,21 @@ mod browse_file_prompt_tests {
             download_url: Some(format!("https://example.com/{file_name}")),
             is_archived: false,
         }
+    }
+
+    #[test]
+    fn review_file_identity_prefers_ids_over_reused_names() {
+        let installed = mod_file(7, "same-name.zip");
+        let replacement = mod_file(8, "same-name.zip");
+        let file_set = FileSetRecipe {
+            selected_file_ids: vec![installed.id],
+            selected_file_names: vec![installed.file_name.clone()],
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&installed)],
+            ..Default::default()
+        };
+
+        assert!(browse_review_file_is_installed(&installed, &file_set));
+        assert!(!browse_review_file_is_installed(&replacement, &file_set));
     }
 
     #[test]
@@ -2483,6 +3329,34 @@ mod browse_file_prompt_tests {
                 .map(|file| (file.id, file.file_name.as_str()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn exact_source_matching_supports_metadata_only_file_sets() {
+        let source = mod_file(7, "author_hash_v1.zip");
+        let unrelated = mod_file(8, "different_mod.zip");
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&source)],
+            ..Default::default()
+        };
+
+        let matches = browse_exact_source_matches(&file_set, &[unrelated, source.clone()]);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, source.id);
+        assert_eq!(matches[0].file_name, source.file_name);
+    }
+
+    #[test]
+    fn exact_source_matching_does_not_accept_an_unrelated_sole_file() {
+        let source = mod_file(7, "author_hash_v1.zip");
+        let unrelated = mod_file(8, "different_mod.zip");
+        let file_set = FileSetRecipe {
+            selected_files_meta: vec![tracked_file_meta_from_mod_file(&source)],
+            ..Default::default()
+        };
+
+        assert!(browse_exact_source_matches(&file_set, &[unrelated]).is_empty());
     }
 
     #[test]
@@ -2604,6 +3478,8 @@ mod browse_file_prompt_tests {
                 html_text: Some("long original description".to_string()),
                 ..Default::default()
             },
+            is_tool: false,
+            profile_cached_at: None,
             markdown: "long original description".to_string(),
             unsafe_content: false,
             updates: BrowseUpdatesState::Unrequested,
@@ -2747,6 +3623,8 @@ mod browse_file_prompt_tests {
                 html_text: Some("description ".repeat(1_000)),
                 ..Default::default()
             },
+            is_tool: false,
+            profile_cached_at: None,
             markdown: "markdown ".repeat(1_000),
             unsafe_content: false,
             updates: BrowseUpdatesState::Unrequested,

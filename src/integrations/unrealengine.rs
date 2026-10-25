@@ -187,8 +187,7 @@ fn retired_stage_sibling(path: &Path) -> Option<PathBuf> {
 }
 
 fn retired_install_has_live_stage(path: &Path) -> bool {
-    retired_stage_sibling(path)
-        .is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
+    retired_stage_sibling(path).is_some_and(|stage| stage.is_dir() && !path_is_link(&stage))
 }
 
 fn is_retired_install_scratch(path: &Path) -> bool {
@@ -441,8 +440,7 @@ pub fn write_portable_metadata(mod_entry: &ModEntry) -> Result<()> {
         updated_at: Some(mod_entry.updated_at),
     };
     persistence::save_portable_mod_state(&mod_entry.root_path, &portable)?;
-    if managed_mod_root(&mod_entry.root_path)
-        || directory_has_direct_package(&mod_entry.root_path)?
+    if managed_mod_root(&mod_entry.root_path) || directory_has_direct_package(&mod_entry.root_path)?
     {
         mark_mod_root(&mod_entry.root_path)?;
     }
@@ -747,14 +745,16 @@ fn compute_mod_fingerprint(root: &Path) -> Result<(Option<DateTime<Utc>>, Option
     let mut content_size_bytes = 0_u64;
     let mut found_payload = false;
 
-    let walker = walkdir::WalkDir::new(root).into_iter().filter_entry(|entry| {
-        if entry.depth() == 0 || entry.file_type().is_symlink() {
-            return entry.depth() == 0;
-        }
-        let path = entry.path();
-        !(entry.file_type().is_dir()
-            && (is_scan_helper_dir(path) || install_scratch_kind(path)))
-    });
+    let walker = walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 || entry.file_type().is_symlink() {
+                return entry.depth() == 0;
+            }
+            let path = entry.path();
+            !(entry.file_type().is_dir()
+                && (is_scan_helper_dir(path) || install_scratch_kind(path)))
+        });
     for entry in walker {
         let entry = entry?;
         if !entry.file_type().is_file() {
@@ -855,7 +855,10 @@ fn reject_mod_root_ancestors(base: &Path, relative: &Path) -> Result<()> {
             break;
         }
         if path_is_link(&current) {
-            bail!("cannot place mod below linked directory: {}", current.display());
+            bail!(
+                "cannot place mod below linked directory: {}",
+                current.display()
+            );
         }
         if managed_mod_root(&current) || directory_has_direct_package(&current)? {
             bail!(
@@ -965,11 +968,7 @@ mod tests {
         let first = grouping.join("Outfit A");
         let second = grouping.join("Outfit B");
         fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
-        fs::write(
-            grouping.join(MOD_META_DIR).join("metadata.json"),
-            "{}",
-        )
-        .unwrap();
+        fs::write(grouping.join(MOD_META_DIR).join("metadata.json"), "{}").unwrap();
         fs::create_dir_all(&first).unwrap();
         fs::create_dir_all(&second).unwrap();
         fs::write(first.join("outfit.pak"), "first").unwrap();
@@ -1044,11 +1043,7 @@ mod tests {
         fs::create_dir_all(&orphan_retired).unwrap();
         fs::write(orphan_retired.join("retired.pak"), "retired").unwrap();
         fs::create_dir_all(grouping.join(MOD_META_DIR)).unwrap();
-        fs::write(
-            grouping.join(MOD_META_DIR).join("helper.pak"),
-            "helper",
-        )
-        .unwrap();
+        fs::write(grouping.join(MOD_META_DIR).join("helper.pak"), "helper").unwrap();
 
         let scanned = scan_game_mods(&game, false).unwrap();
 
@@ -1185,11 +1180,7 @@ mod tests {
                 .map(|entry| entry.root_path.clone()),
             Some(expected)
         );
-        assert!(
-            rescanned
-                .iter()
-                .any(|entry| entry.root_path == beatrice)
-        );
+        assert!(rescanned.iter().any(|entry| entry.root_path == beatrice));
     }
 
     #[test]
@@ -1228,9 +1219,11 @@ mod tests {
 
         let error = disable_mod(&mut entry, &game, false).unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("mod relative path escapes its storage root"));
+        assert!(
+            error
+                .to_string()
+                .contains("mod relative path escapes its storage root")
+        );
         assert!(source.join("mod.pak").is_file());
         assert!(!temp.path().join("outside").exists());
     }

@@ -392,6 +392,23 @@ impl HestiaApp {
                     }
                     return;
                 }
+                if pending_meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.explicit_resolution.is_some())
+                {
+                    self.pending_imports.pop_front();
+                    if let Some(choice) = self.resolve_update_existing_target_choice(job_id) {
+                        self.commit_import(
+                            job_id,
+                            vec![0],
+                            choice,
+                            target_root,
+                            pending.gb_profile.clone(),
+                            vec![preferred],
+                        );
+                    }
+                    return;
+                }
                 let gb_profile = pending.gb_profile.clone();
                 self.pending_conflicts.push_back(PendingConflict {
                     job_id,
@@ -671,6 +688,25 @@ impl HestiaApp {
                 };
                 let existing_target = self.existing_install_target(&game, &preferred, job_id);
                 if existing_target.is_some() && update_folder_name.is_none() {
+                    if pending_meta
+                        .as_ref()
+                        .is_some_and(|meta| meta.explicit_resolution.is_some())
+                    {
+                        self.pending_imports.pop_front();
+                        let choice = self
+                            .resolve_update_existing_target_choice(job_id)
+                            .unwrap_or(ConflictChoice::KeepBoth);
+                        let preferred_names = vec![preferred.clone(); candidate_indices.len()];
+                        self.commit_import(
+                            job_id,
+                            candidate_indices,
+                            choice,
+                            target_root,
+                            gb_profile,
+                            preferred_names,
+                        );
+                        return;
+                    }
                     let existing_target = existing_target.expect("checked above");
                     self.pending_conflicts.push_back(PendingConflict {
                         job_id,

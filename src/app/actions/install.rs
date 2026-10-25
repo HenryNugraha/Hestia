@@ -278,9 +278,15 @@ impl HestiaApp {
                     mod_entry_id,
                     profile,
                     rel_paths,
+                    profile_cached_at,
                 } => {
                     self.mod_image_sync_inflight.remove(&job_id);
-                    self.apply_mod_sync_result(&mod_entry_id, *profile, rel_paths);
+                    self.apply_mod_sync_result(
+                        &mod_entry_id,
+                        *profile,
+                        rel_paths,
+                        profile_cached_at,
+                    );
                 }
                 InstallEvent::SyncImagesCover {
                     mod_entry_id,
@@ -362,6 +368,65 @@ impl HestiaApp {
             .pending_browse_install_meta
             .get(&job_id)
             .and_then(|meta| meta.update_target_mod_id.clone());
+        let explicit_resolution = self
+            .pending_browse_install_meta
+            .get(&job_id)
+            .and_then(|meta| meta.explicit_resolution);
+        let explicit_source = self
+            .pending_browse_install_meta
+            .get(&job_id)
+            .map(|meta| (meta.mod_id, meta.is_tool));
+        let explicit_target_folder_name = self
+            .pending_browse_install_meta
+            .get(&job_id)
+            .and_then(|meta| meta.update_folder_name.as_deref());
+        // An explicit review action targets an existing identity.  If that
+        // identity disappeared while its archive was downloading, never fall
+        // back to a fresh install or silently create a new mod.
+        let explicit_target_valid = update_target_mod_id.as_deref().is_some_and(|target_id| {
+            self.state.mods.iter().any(|mod_entry| {
+                mod_entry.id == target_id
+                    && mod_entry.game_id == job.game_id
+                    && (mod_entry.status == ModStatus::Archived || mod_entry.root_path.exists())
+                    && explicit_target_folder_name
+                        .is_none_or(|folder_name| mod_entry.folder_name == folder_name)
+                    && explicit_source.is_some_and(|(mod_id, is_tool)| {
+                        mod_entry
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.gamebanana.as_ref())
+                            .is_some_and(|link| {
+                                link.mod_id == mod_id
+                                    && gamebanana::is_tool_url(&link.url) == is_tool
+                            })
+                    })
+            })
+        });
+        if matches!(
+            explicit_resolution,
+            Some(ImportResolution::Replace | ImportResolution::Merge)
+        ) && !explicit_target_valid
+        {
+            let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+            self.pending_imports.retain(|pending| pending.job_id != job_id);
+            self.pending_conflicts
+                .retain(|conflict| conflict.job_id != job_id);
+            self.pending_browse_install_meta.remove(&job_id);
+            self.pending_browse_install_safety.remove(&job_id);
+            if let Some(current) = self.install_inflight.remove(&job_id) {
+                Self::cleanup_runtime_temp_for_source(&current.source);
+                self.mark_usage_counters_dirty();
+            }
+            if self.install_batch_active {
+                self.install_batch_stats.failed += 1;
+            }
+            self.report_warn(
+                self.text().file_review_target_changed(),
+                Some(self.text().update_unavailable()),
+            );
+            self.update_task_status(job_id, TaskStatus::Failed);
+            return;
+        }
         if self.install_commit_touches_locked_active_mod(
             job_id,
             choice,
@@ -792,6 +857,8 @@ impl HestiaApp {
             return;
         }
         let max_parallel = self.max_parallel_installs();
+        let initial_queue_len = self.install_queue.len();
+        let mut blocked_review_jobs = 0;
         while self.install_inflight.len() < max_parallel {
             let Some(job) = self.install_queue.pop_front() else { break; };
             if self.folder_batch_game_busy(&job.game_id) {
@@ -800,6 +867,18 @@ impl HestiaApp {
                 self.install_queue.push_front(job);
                 break;
             }
+            if self.explicit_review_group_is_inflight(&job) {
+                // Multiple archives selected in one file-review action target
+                // the same identity. Keep them serial so Merge cannot inspect
+                // or publish against a stale/incomplete copy of its sibling.
+                self.install_queue.push_back(job);
+                blocked_review_jobs += 1;
+                if blocked_review_jobs >= initial_queue_len {
+                    break;
+                }
+                continue;
+            }
+            blocked_review_jobs = 0;
             let path_label = Self::import_source_path(&job.source).display().to_string();
             self.install_inflight.insert(job.id, job.clone());
             self.update_task_status(job.id, TaskStatus::Installing);
@@ -823,6 +902,25 @@ impl HestiaApp {
             self.install_batch_active = false;
             self.install_batch_stats = InstallBatchStats::default();
         }
+    }
+
+    fn explicit_review_group_is_inflight(&self, job: &InstallJob) -> bool {
+        let Some(meta) = self.pending_browse_install_meta.get(&job.id) else {
+            return false;
+        };
+        if meta.explicit_resolution.is_none() {
+            return false;
+        }
+        self.install_inflight.values().any(|inflight| {
+            self.pending_browse_install_meta
+                .get(&inflight.id)
+                .is_some_and(|other| {
+                    other.explicit_resolution.is_some()
+                        && other.game_id == meta.game_id
+                        && other.mod_id == meta.mod_id
+                        && other.is_tool == meta.is_tool
+                })
+        })
     }
 
     fn max_parallel_installs(&self) -> usize {

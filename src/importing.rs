@@ -16,12 +16,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tempfile::TempDir;
-use walkdir::WalkDir;
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 use crate::model::{
-    ConflictChoice, GameBackend, ImportCandidate, ImportInspection, ImportSource, ModStatus,
-    DISABLED_CONTAINER, MOD_META_DIR,
+    ConflictChoice, DISABLED_CONTAINER, GameBackend, ImportCandidate, ImportInspection,
+    ImportSource, MOD_META_DIR, ModStatus,
 };
 use crate::persistence;
 
@@ -1397,12 +1397,7 @@ pub fn install_candidate_with_state_cancelable(
         .tempdir_in(stage_parent)
         .context("failed to create install staging directory")?;
     let staged_candidate = stage.path().join("candidate");
-    stage_candidate_payload(
-        candidate_path,
-        &staged_candidate,
-        source_is_archive,
-        cancel,
-    )?;
+    stage_candidate_payload(candidate_path, &staged_candidate, source_is_archive, cancel)?;
 
     let existing_destination = destination.is_dir().then_some(destination.as_path());
     let existing_alternate = alternate.as_deref().filter(|path| path.is_dir());
@@ -1411,13 +1406,7 @@ pub fn install_candidate_with_state_cancelable(
     let actual_destination = match choice {
         ConflictChoice::Replace => {
             let staged_final = stage.path().join("final");
-            prepare_candidate_stage(
-                &staged_candidate,
-                &staged_final,
-                backend,
-                &status,
-                cancel,
-            )?;
+            prepare_candidate_stage(&staged_candidate, &staged_final, backend, &status, cancel)?;
             check_cancel(cancel)?;
             let stash = (backend == GameBackend::Xxmi)
                 .then(|| existing.and_then(crate::integrations::xxmi_persist::read_stash_bytes))
@@ -1479,13 +1468,7 @@ pub fn install_candidate_with_state_cancelable(
             } else if let Some(existing) = existing_alternate {
                 let staged_final = stage.path().join("final");
                 copy_dir_cancelable(existing, &staged_final, false, cancel)?;
-                merge_candidate_stage(
-                    &staged_candidate,
-                    &staged_final,
-                    backend,
-                    &status,
-                    cancel,
-                )?;
+                merge_candidate_stage(&staged_candidate, &staged_final, backend, &status, cancel)?;
                 check_cancel(cancel)?;
                 let stash = (backend == GameBackend::Xxmi)
                     .then(|| crate::integrations::xxmi_persist::read_stash_bytes(existing))
@@ -1514,24 +1497,17 @@ pub fn install_candidate_with_state_cancelable(
             }
         }
         ConflictChoice::KeepBoth => {
-            let destination = next_available_name_across_roots(
-                destination_root,
-                alternate_root,
-                preferred_name,
-            );
+            let destination =
+                next_available_name_across_roots(destination_root, alternate_root, preferred_name);
             let staged_final = stage.path().join("final");
-            prepare_candidate_stage(
-                &staged_candidate,
-                &staged_final,
-                backend,
-                &status,
-                cancel,
-            )?;
+            prepare_candidate_stage(&staged_candidate, &staged_final, backend, &status, cancel)?;
             check_cancel(cancel)?;
             // A KeepBoth clone must be a new library identity. Preserve the
             // candidate's metadata and source information, changing only the
             // UUID that identifies the cloned library entry.
-            let portable_state = staged_final.join(MOD_META_DIR).join(crate::model::MOD_META_FILE);
+            let portable_state = staged_final
+                .join(MOD_META_DIR)
+                .join(crate::model::MOD_META_FILE);
             if portable_state.exists() {
                 match crate::persistence::load_portable_mod_state(&staged_final) {
                     Ok(Some(mut state)) => {
@@ -1577,9 +1553,7 @@ fn next_available_name_across_roots(
     base_name: &str,
 ) -> PathBuf {
     let occupied = |name: &str| {
-        primary.join(name).exists()
-            || alternate
-                .is_some_and(|root| root.join(name).exists())
+        primary.join(name).exists() || alternate.is_some_and(|root| root.join(name).exists())
     };
     if !occupied(base_name) {
         return primary.join(base_name);
@@ -1733,12 +1707,7 @@ fn merge_candidate_stage(
     if backend == GameBackend::Xxmi && *status == ModStatus::Disabled {
         let disabled_root = destination.join(DISABLED_CONTAINER);
         fs::create_dir_all(&disabled_root)?;
-        copy_candidate_into_xxmi_disabled_container(
-            source,
-            destination,
-            &disabled_root,
-            cancel,
-        )?;
+        copy_candidate_into_xxmi_disabled_container(source, destination, &disabled_root, cancel)?;
     } else if backend == GameBackend::Xxmi && *status == ModStatus::Active {
         normalize_existing_xxmi_stage(destination, &ModStatus::Active, cancel)?;
         copy_candidate_into_xxmi_active_root(source, destination, cancel)?;
@@ -1765,7 +1734,10 @@ fn atomic_publish_staged_dir(
     crate::integrations::xxmi_persist::restore_stash_bytes(staged, &preserved_stash);
     if let Some(state) = &preserved_state {
         crate::persistence::save_portable_mod_state(staged, state).with_context(|| {
-            format!("could not preserve portable mod state at {}", staged.display())
+            format!(
+                "could not preserve portable mod state at {}",
+                staged.display()
+            )
         })?;
     }
     let staging_parent = staged
@@ -2518,7 +2490,12 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert!(!second.join(DISABLED_CONTAINER).join(DISABLED_CONTAINER).exists());
+        assert!(
+            !second
+                .join(DISABLED_CONTAINER)
+                .join(DISABLED_CONTAINER)
+                .exists()
+        );
         assert_eq!(
             fs::read_to_string(second.join(DISABLED_CONTAINER).join("mod.ini")).unwrap(),
             "disabled"
@@ -2571,26 +2548,29 @@ mod tests {
             enabled: true,
         };
         let scan = |mods_path: &Path| {
-            crate::integrations::xxmi::scan_live_mods(&test_game(mods_path), false, false)
-                .unwrap()
+            crate::integrations::xxmi::scan_live_mods(&test_game(mods_path), false, false).unwrap()
         };
         let assert_single_wrapper = |mods_path: &Path, expected_root: &Path| {
             let scanned = scan(mods_path);
             assert_eq!(scanned.len(), 1);
             assert_eq!(scanned[0].root_path.as_path(), expected_root);
             assert_eq!(scanned[0].folder_name, "Nested Wrapper");
-            assert!(scanned[0].root_path.join("Part A").is_dir()
-                || scanned[0]
-                    .root_path
-                    .join(DISABLED_CONTAINER)
-                    .join("Part A")
-                    .is_dir());
-            assert!(scanned[0].root_path.join("Part B").is_dir()
-                || scanned[0]
-                    .root_path
-                    .join(DISABLED_CONTAINER)
-                    .join("Part B")
-                    .is_dir());
+            assert!(
+                scanned[0].root_path.join("Part A").is_dir()
+                    || scanned[0]
+                        .root_path
+                        .join(DISABLED_CONTAINER)
+                        .join("Part A")
+                        .is_dir()
+            );
+            assert!(
+                scanned[0].root_path.join("Part B").is_dir()
+                    || scanned[0]
+                        .root_path
+                        .join(DISABLED_CONTAINER)
+                        .join("Part B")
+                        .is_dir()
+            );
             scanned
         };
 
@@ -2685,12 +2665,16 @@ mod tests {
         assert!(kept_both_scan.iter().all(|entry| {
             entry.root_path == keep_both_existing || entry.root_path == kept_both
         }));
-        assert!(kept_both_scan
-            .iter()
-            .all(|entry| entry.root_path.join("Part A").is_dir()));
-        assert!(kept_both_scan
-            .iter()
-            .all(|entry| entry.root_path.join("Part B").is_dir()));
+        assert!(
+            kept_both_scan
+                .iter()
+                .all(|entry| entry.root_path.join("Part A").is_dir())
+        );
+        assert!(
+            kept_both_scan
+                .iter()
+                .all(|entry| entry.root_path.join("Part B").is_dir())
+        );
     }
 
     #[test]
@@ -2717,13 +2701,18 @@ mod tests {
             updated_at: None,
         };
         fs::write(
-            existing.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+            existing
+                .join(MOD_META_DIR)
+                .join(crate::model::MOD_META_FILE),
             serde_json::to_vec(&old_state).unwrap(),
         )
         .unwrap();
         fs::create_dir_all(existing.join(DISABLED_CONTAINER)).unwrap();
-        fs::rename(existing.join("old.ini"), existing.join(DISABLED_CONTAINER).join("old.ini"))
-            .unwrap();
+        fs::rename(
+            existing.join("old.ini"),
+            existing.join(DISABLED_CONTAINER).join("old.ini"),
+        )
+        .unwrap();
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("new.ini"), "new").unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -2914,18 +2903,22 @@ mod tests {
                     Some("ardelia-id")
                 );
                 assert_eq!(entry.metadata.user.category, category);
-                assert!(entry
-                    .root_path
-                    .join("Packages")
-                    .join("Main")
-                    .join("main.pak")
-                    .is_file());
-                assert!(entry
-                    .root_path
-                    .join("Packages")
-                    .join("Companion")
-                    .join("companion.ucas")
-                    .is_file());
+                assert!(
+                    entry
+                        .root_path
+                        .join("Packages")
+                        .join("Main")
+                        .join("main.pak")
+                        .is_file()
+                );
+                assert!(
+                    entry
+                        .root_path
+                        .join("Packages")
+                        .join("Companion")
+                        .join("companion.ucas")
+                        .is_file()
+                );
             };
 
         let active_existing = active_category.join("Nested Wrapper");
@@ -2946,7 +2939,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(active_installed, active_existing);
-        assert!(active_installed.join(MOD_META_DIR).join("mod-root").is_file());
+        assert!(
+            active_installed
+                .join(MOD_META_DIR)
+                .join("mod-root")
+                .is_file()
+        );
         let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
         assert_eq!(scanned.len(), 1);
         assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
@@ -2976,11 +2974,13 @@ mod tests {
         let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
         assert_eq!(scanned.len(), 1);
         assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
-        assert!(active_existing
-            .join("Packages")
-            .join("Companion")
-            .join("companion.utoc")
-            .is_file());
+        assert!(
+            active_existing
+                .join("Packages")
+                .join("Companion")
+                .join("companion.utoc")
+                .is_file()
+        );
 
         let disabled_existing = disabled_category.join("Nested Wrapper");
         fs::create_dir_all(&disabled_existing).unwrap();
@@ -3000,10 +3000,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(disabled_installed, disabled_existing);
-        assert!(disabled_installed
-            .join(MOD_META_DIR)
-            .join("mod-root")
-            .is_file());
+        assert!(
+            disabled_installed
+                .join(MOD_META_DIR)
+                .join("mod-root")
+                .is_file()
+        );
         let scanned = crate::integrations::unrealengine::scan_game_mods(&game, false).unwrap();
         assert_eq!(scanned.len(), 2);
         assert_entry(&scanned, &active_existing, "active-id", ModStatus::Active);
@@ -3059,7 +3061,9 @@ mod tests {
             updated_at: None,
         };
         fs::write(
-            existing.join(MOD_META_DIR).join(crate::model::MOD_META_FILE),
+            existing
+                .join(MOD_META_DIR)
+                .join(crate::model::MOD_META_FILE),
             serde_json::to_vec(&old_state).unwrap(),
         )
         .unwrap();
@@ -3080,7 +3084,10 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(fs::read_to_string(installed.join("new.ini")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(installed.join("new.ini")).unwrap(),
+            "new"
+        );
         assert_eq!(
             fs::read_to_string(installed.join(MOD_META_DIR).join("mod.cfg")).unwrap(),
             "stash"
@@ -3108,7 +3115,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.to_string(), CANCELLED_ERROR);
-        assert_eq!(fs::read_to_string(installed.join("new.ini")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(installed.join("new.ini")).unwrap(),
+            "new"
+        );
     }
 
     #[test]
@@ -3134,13 +3144,7 @@ mod tests {
             let staged = stage.path().join("final");
             fs::create_dir_all(&staged).unwrap();
             fs::write(staged.join("new.ini"), b"new payload").unwrap();
-            result = atomic_publish_staged_dir(
-                &staged,
-                &destination,
-                Some(&existing),
-                None,
-                None,
-            );
+            result = atomic_publish_staged_dir(&staged, &destination, Some(&existing), None, None);
             assert!(result.is_err());
             assert!(existing.join("nested").join("old.ini").is_file());
             assert_eq!(
@@ -3151,10 +3155,12 @@ mod tests {
         }
 
         assert!(existing.join("nested").join("old.ini").is_file());
-        assert!(!temp
-            .path()
-            .read_dir()
-            .unwrap()
-            .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".hestia-retired-")));
+        assert!(!temp.path().read_dir().unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".hestia-retired-")
+        }));
     }
 }

@@ -722,11 +722,7 @@ impl eframe::App for OverlayPreview {
         }
         platform::set_click_takes_keyboard(self.pinned);
         if self.focus_return_pending {
-            if self
-                .keyboard
-                .as_ref()
-                .is_some_and(keyboard::Keyboard::busy)
-            {
+            if self.keyboard.as_ref().is_some_and(keyboard::Keyboard::busy) {
                 // Key releases ask for a frame themselves.  This also covers
                 // a release that never arrived.
                 ctx.request_repaint_after(Duration::from_millis(50));
@@ -1016,13 +1012,11 @@ impl eframe::App for OverlayPreview {
 fn register_hotkey(hotkey: OverlayHotkey) -> Option<TextKey> {
     let error = platform::register_hotkey(hotkey).err()?;
     tracing::warn!(%error, "Could not register the overlay hotkey");
-    Some(
-        if error.raw_os_error() == Some(HOTKEY_ALREADY_REGISTERED) {
-            TextKey::GameOverlayHotkeyTaken
-        } else {
-            TextKey::GameOverlayHotkeyFailed
-        },
-    )
+    Some(if error.raw_os_error() == Some(HOTKEY_ALREADY_REGISTERED) {
+        TextKey::GameOverlayHotkeyTaken
+    } else {
+        TextKey::GameOverlayHotkeyFailed
+    })
 }
 
 /// Defer collapsing through the release frame of a gesture begun on the overlay.

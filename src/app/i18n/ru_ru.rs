@@ -986,4 +986,30 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Клавиша не дошла до игры. Отпустите все клавиши и попробуйте снова.", // GameOverlayHotkeyNotSent
     "Включите «Разрешить Hestia изменять конфигурацию d3dx.ini» в настройках Hestia, чтобы нажимать здесь горячие клавиши модов.", // GameOverlayHotkeyNotAllowed
     "Нажать эту клавишу", // GameOverlayHintPressHotkey
+
+    // Newer mod files
+    "Новые файлы", // NewFiles
+    "Для этого мода доступны новые файлы.", // NewerFilesTooltip
+    "Просмотреть файлы", // ViewFiles
+    "Игнорировать", // DismissFileNotice
+    "Новый файл", // NewerFile
+    "Выбрать файлы", // ChooseUpdateFiles
+    "Дополнительные варианты установки", // FileReviewInstallMenu
+    "Установить как отдельный мод", // FileReviewInstallSeparate
+    "Объединить с установленным модом", // FileReviewInstallMerge
+    "Доступны новые файлы, но Hestia не знает, как они связаны с установленной версией. Выберите, как с ними поступить:", // FileReviewIntroNew
+    "Доступен новый файл, но Hestia не знает, как он связан с установленной версией. Выберите, как с ним поступить:", // FileReviewIntroNewSingular
+    "Выберите файлы, чтобы обновить этот мод, установить их отдельно или объединить с ним.", // FileReviewIntroAll
+    "Установлено: {files}", // FileReviewInstalledSummary
+    "Заменить этот мод выбранными файлами.", // FileReviewUpdateTooltip
+    "Выберите способ установки выбранных файлов.", // FileReviewInstallTooltip
+    "Установить отдельно, не меняя этот мод.", // FileReviewSeparateTooltip
+    "Добавить в этот мод, заменив файлы с теми же именами.", // FileReviewMergeTooltip
+    "Скрыть уведомление для текущих новых файлов. Будущие файлы по-прежнему будут отображаться.", // FileReviewIgnoreTooltip
+    "Закрыть без установки.", // FileReviewCloseTooltip
+    "Сначала выберите хотя бы один файл.", // FileReviewSelectFilesTooltip
+    "Установить выбранные файлы.", // FilePromptInstallTooltip
+    "Закрыть без установки.", // FilePromptCancelTooltip
+    "Мод изменился. Откройте список файлов снова.", // FileReviewTargetChanged
+    "Моды с новыми файлами: {count}", // NewFilesInFolder
 ];

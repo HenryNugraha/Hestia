@@ -980,10 +980,36 @@ pub(crate) enum TextKey {
     GameOverlayHotkeyNotSent,
     GameOverlayHotkeyNotAllowed,
     GameOverlayHintPressHotkey,
+
+    // Newer mod files
+    NewFiles,
+    NewerFilesTooltip,
+    ViewFiles,
+    DismissFileNotice,
+    NewerFile,
+    ChooseUpdateFiles,
+    FileReviewInstallMenu,
+    FileReviewInstallSeparate,
+    FileReviewInstallMerge,
+    FileReviewIntroNew,
+    FileReviewIntroNewSingular,
+    FileReviewIntroAll,
+    FileReviewInstalledSummary,
+    FileReviewUpdateTooltip,
+    FileReviewInstallTooltip,
+    FileReviewSeparateTooltip,
+    FileReviewMergeTooltip,
+    FileReviewIgnoreTooltip,
+    FileReviewCloseTooltip,
+    FileReviewSelectFilesTooltip,
+    FilePromptInstallTooltip,
+    FilePromptCancelTooltip,
+    FileReviewTargetChanged,
+    NewFilesInFolder,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::GameOverlayHintPressHotkey as usize + 1;
+    const COUNT: usize = Self::NewFilesInFolder as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2073,6 +2099,103 @@ impl TextCatalog {
 
     fn browse_multiple_files_prompt(self) -> &'static str {
         self.get(TextKey::BrowseMultipleFilesPrompt)
+    }
+
+    fn new_files(self) -> &'static str {
+        self.get(TextKey::NewFiles)
+    }
+
+    fn newer_files_tooltip(self) -> &'static str {
+        self.get(TextKey::NewerFilesTooltip)
+    }
+
+    fn view_files(self) -> &'static str {
+        self.get(TextKey::ViewFiles)
+    }
+
+    fn dismiss_file_notice(self) -> &'static str {
+        self.get(TextKey::DismissFileNotice)
+    }
+
+    fn newer_file(self) -> &'static str {
+        self.get(TextKey::NewerFile)
+    }
+
+    fn choose_update_files(self) -> &'static str {
+        self.get(TextKey::ChooseUpdateFiles)
+    }
+
+    fn file_review_install_menu(self) -> &'static str {
+        self.get(TextKey::FileReviewInstallMenu)
+    }
+
+    fn file_review_install_separate(self) -> &'static str {
+        self.get(TextKey::FileReviewInstallSeparate)
+    }
+
+    fn file_review_install_merge(self) -> &'static str {
+        self.get(TextKey::FileReviewInstallMerge)
+    }
+
+    fn file_review_intro_new(self, count: usize) -> &'static str {
+        if count == 1 {
+            self.get(TextKey::FileReviewIntroNewSingular)
+        } else {
+            self.get(TextKey::FileReviewIntroNew)
+        }
+    }
+
+    fn file_review_intro_all(self) -> &'static str {
+        self.get(TextKey::FileReviewIntroAll)
+    }
+
+    fn file_review_installed_summary(self, files: &str) -> String {
+        self.get(TextKey::FileReviewInstalledSummary)
+            .replace("{files}", files)
+    }
+
+    fn file_review_update_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewUpdateTooltip)
+    }
+
+    fn file_review_install_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewInstallTooltip)
+    }
+
+    fn file_review_separate_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewSeparateTooltip)
+    }
+
+    fn file_review_merge_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewMergeTooltip)
+    }
+
+    fn file_review_ignore_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewIgnoreTooltip)
+    }
+
+    fn file_review_close_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewCloseTooltip)
+    }
+
+    fn file_review_select_files_tooltip(self) -> &'static str {
+        self.get(TextKey::FileReviewSelectFilesTooltip)
+    }
+
+    fn file_prompt_install_tooltip(self) -> &'static str {
+        self.get(TextKey::FilePromptInstallTooltip)
+    }
+
+    fn file_prompt_cancel_tooltip(self) -> &'static str {
+        self.get(TextKey::FilePromptCancelTooltip)
+    }
+
+    fn file_review_target_changed(self) -> &'static str {
+        self.get(TextKey::FileReviewTargetChanged)
+    }
+
+    fn new_files_in_folder(self, count: usize) -> String {
+        self.count_label(TextKey::NewFilesInFolder, count)
     }
 
     fn no_configured_character_category_list(self) -> &'static str {

@@ -200,8 +200,7 @@ impl eframe::App for HestiaApp {
         // also fire on the same key press.
         let popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
         let profile_operation_locks_app = self.profile_operation_locks_app();
-        if self.folder_batch_job.is_some()
-            && ctx.input(|input| input.viewport().close_requested())
+        if self.folder_batch_job.is_some() && ctx.input(|input| input.viewport().close_requested())
         {
             self.cancel_folder_batch();
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);

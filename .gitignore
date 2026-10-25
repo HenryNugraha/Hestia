@@ -28,3 +28,6 @@ installer.iss
 
 # My personal note
 TO.DO
+
+# Local matcher fixtures
+/src/integrations/gamebanana_matcher/tests/

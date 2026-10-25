@@ -1783,15 +1783,36 @@ impl HestiaApp {
     }
 
     fn batch_update_selected(&mut self) {
-        // Single iteration: collect IDs in one pass
-        let update_ids: Vec<String> = self.state.mods.iter()
-            .filter(|m| {
-                self.selected_mods.contains(&m.id)
-                    && (matches!(m.update_state, ModUpdateState::UpdateAvailable)
-                        || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
-                            && Self::has_modified_update_available(m)))
+        self.ensure_cached_grouped_update_evidence();
+        let grouped_evidence = self.library_card_cache.evidence.clone();
+        let update_check_statuses = self.state.static_prefs.update_check_statuses;
+        let show_modified_updates =
+            self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton;
+        let update_ids: Vec<String> = self
+            .state
+            .mods
+            .iter()
+            .filter_map(|mod_entry| {
+                if !self.selected_mods.contains(&mod_entry.id) {
+                    return None;
+                }
+                let evidence = grouped_evidence.get(&mod_entry.id);
+                let effective_state = Self::effective_grouped_update_state(
+                    mod_entry,
+                    evidence,
+                    update_check_statuses,
+                );
+                let has_modified_update = show_modified_updates
+                    && evidence.is_some_and(|evidence| {
+                        Self::has_modified_update_available_from_effective_state(
+                            mod_entry,
+                            effective_state,
+                            evidence,
+                        )
+                    });
+                (effective_state == ModUpdateState::UpdateAvailable || has_modified_update)
+                    .then(|| mod_entry.id.clone())
             })
-            .map(|m| m.id.clone())
             .collect();
 
         let mut count = 0;

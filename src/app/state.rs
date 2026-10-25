@@ -229,6 +229,29 @@ type LibraryCardRow = (
 struct LibraryCardCache {
     key: Option<u64>,
     rows: Arc<Vec<LibraryCardRow>>,
+    /// Last immutable grouped matching evidence used while rebuilding cards.
+    /// This is transient UI state; the persisted source metadata remains the
+    /// authority for the next refresh.
+    evidence: HashMap<String, CachedUpdateEvidence>,
+    /// Cache key for `evidence`. It may be populated before the card rows when
+    /// folder selection needs the same grouped matching result.
+    evidence_key: Option<u64>,
+}
+
+#[derive(Clone)]
+struct CachedUpdateEvidence {
+    state: ModUpdateState,
+    signature: Option<IgnoredUpdateSignature>,
+    prearmed_signature: Option<IgnoredUpdateSignature>,
+    /// Active, downloadable GameBanana files that are newer than this mod's
+    /// known installed archive baseline.  This is deliberately separate from
+    /// the smart matcher result: it is a passive availability signal only.
+    newer_files: Vec<gamebanana::ModFile>,
+    installed_files: Vec<TrackedFileMeta>,
+    /// One immutable profile is shared by all cached peers in a GameBanana
+    /// group so file review and matching inspect the same catalog.
+    profile: Option<Arc<gamebanana::ProfileResponse>>,
+    profile_cached_at: Option<DateTime<Utc>>,
 }
 
 enum LogDisplayRow {
@@ -247,6 +270,8 @@ impl Default for LibraryCardCache {
         Self {
             key: None,
             rows: Arc::new(Vec::new()),
+            evidence: HashMap::new(),
+            evidence_key: None,
         }
     }
 }
@@ -331,6 +356,7 @@ pub struct HestiaApp {
     show_unlinked_mods: bool,
     show_up_to_date_mods: bool,
     show_update_available_mods: bool,
+    show_new_files_mods: bool,
     show_check_skipped_mods: bool,
     show_missing_source_mods: bool,
     show_modified_locally_mods: bool,
@@ -612,7 +638,7 @@ pub struct HestiaApp {
     update_check_rx: WorkerRx<UpdateCheckResult>,
     update_check_inflight: bool,
     update_check_generation: u64,
-    update_check_active_items: Vec<(String, String, u64, Option<i64>, FileSetRecipe, bool)>,
+    update_check_active_items: Vec<UpdateCheckItem>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
     refresh_request_tx: WorkerTx<RefreshRequest>,
@@ -785,7 +811,11 @@ struct BrowseState {
     selected_character_category: Option<BrowseCharacterCategory>,
     details: HashMap<u64, Arc<BrowseDetailCache>>,
     loading_details: HashMap<u64, Instant>,
+    /// Last detail request attempt per mod. This transient cooldown prevents a
+    /// failed profile request from being retried on every Browse repaint.
+    detail_request_attempts: HashMap<u64, Instant>,
     pending_installs: Vec<PendingBrowseInstall>,
+    pending_file_review: Option<PendingModFileReview>,
     file_prompt: Option<BrowseFilePrompt>,
     screenshot_overlay: Option<BrowseOverlayImage>,
     overlay_scroll_accum: f32,
@@ -818,6 +848,11 @@ struct BrowseCard {
 #[derive(Clone)]
 struct BrowseDetailCache {
     profile: gamebanana::ProfileResponse,
+    /// Profile namespace (Mod vs Tool), because their numeric IDs can collide.
+    is_tool: bool,
+    /// Set only when the profile was fetched from the network. Cached and
+    /// fallback profiles have no reliable observation time.
+    profile_cached_at: Option<DateTime<Utc>>,
     markdown: String,
     unsafe_content: bool,
     updates: BrowseUpdatesState,
@@ -885,6 +920,33 @@ struct PendingBrowseInstall {
 }
 
 #[derive(Clone)]
+struct PendingModFileReview {
+    mod_entry_id: String,
+    game_id: String,
+    gb_id: u64,
+    is_tool: bool,
+    source_url: String,
+}
+
+#[derive(Clone)]
+struct FileReviewContext {
+    installed_files: Vec<TrackedFileMeta>,
+    newer_file_ids: Vec<u64>,
+    dismissible_file_ids: Vec<u64>,
+    expected_file_set: FileSetRecipe,
+    target_root_path: PathBuf,
+    expected_source_url: String,
+    expected_is_tool: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileReviewAction {
+    Update,
+    InstallSeparate,
+    InstallMerge,
+}
+
+#[derive(Clone)]
 struct PendingBrowseInstallMeta {
     mod_id: u64,
     game_id: String,
@@ -895,23 +957,79 @@ struct PendingBrowseInstallMeta {
     install_state: ModInstallState,
     preserve_existing_state: bool,
     post_install_rename_to: Option<String>,
+    /// Provenance of the profile used for this install. `None` means a cache
+    /// hit/fallback (or a legacy retry task) and must not replace a known
+    /// source observation time with `Utc::now()`.
+    profile_cached_at: Option<DateTime<Utc>>,
+    is_tool: bool,
+    /// Explicit resolution selected in the file-review prompt.  `None` keeps
+    /// ordinary browse installs on the user's configured conflict policy.
+    explicit_resolution: Option<ImportResolution>,
+}
+
+type UpdateCheckItem = (String, String, u64, Option<i64>, FileSetRecipe, bool);
+
+/// Stable identity of the complete matching group used by one remote check.
+/// Status, ignore, and local-change overlays are intentionally absent: they
+/// affect which result is applied, while the worker's collision evidence must
+/// remain tied only to the peer recipes and links it actually evaluated.
+fn update_check_group_fingerprint(items: &[UpdateCheckItem]) -> u64 {
+    let mut entries: Vec<_> = items
+        .iter()
+        .map(|item| {
+            serde_json::to_string(&(
+                &item.0, &item.1, item.2, item.3, &item.4, item.5,
+            ))
+            .unwrap_or_default()
+        })
+        .collect();
+    entries.sort_unstable();
+    let mut hasher = DefaultHasher::new();
+    entries.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn update_check_group_fingerprint_for_group(
+    items: &[UpdateCheckItem],
+    game_id: &str,
+    gb_id: u64,
+    gb_is_tool: bool,
+) -> u64 {
+    let group: Vec<_> = items
+        .iter()
+        .filter(|item| item.1 == game_id && item.2 == gb_id && item.5 == gb_is_tool)
+        .cloned()
+        .collect();
+    update_check_group_fingerprint(&group)
 }
 
 struct UpdateCheckRequest {
     generation: u64,
-    items: Vec<(String, String, u64, Option<i64>, FileSetRecipe, bool)>, // mod_id, game_id, gb_id, old_update_ts, file_set, gb_is_tool
+    /// Targets eligible for this check. Peer context is separate so ignored,
+    /// skipped, and locally modified siblings still participate in matching.
+    items: Vec<UpdateCheckItem>,
+    peer_items: Vec<UpdateCheckItem>,
+}
+
+struct UpdateCheckOutcome {
+    mod_id: String,
+    game_id: String,
+    gb_id: u64,
+    gb_is_tool: bool,
+    file_set: FileSetRecipe,
+    state: ModUpdateState,
+    signature: Option<IgnoredUpdateSignature>,
+    snapshot: Option<GameBananaSnapshot>,
+    error: Option<String>,
+    raw_json: Option<String>,
+    profile: Option<Box<gamebanana::ProfileResponse>>,
+    profile_cached_at: Option<DateTime<Utc>>,
+    peer_fingerprint: u64,
 }
 
 struct UpdateCheckResult {
     generation: u64,
-    states: Vec<(
-        String,
-        ModUpdateState,
-        Option<GameBananaSnapshot>,
-        Option<String>,
-        Option<String>,
-        Option<Box<gamebanana::ProfileResponse>>,
-    )>,
+    states: Vec<UpdateCheckOutcome>,
 }
 
 struct BrowseFilePrompt {
@@ -923,6 +1041,7 @@ struct BrowseFilePrompt {
     post_install_rename_to: Option<String>,
     install_state: ModInstallState,
     preserve_existing_state: bool,
+    file_review: Option<FileReviewContext>,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -1061,12 +1180,16 @@ enum BrowseRequest {
     FetchDetail {
         nonce: u64,
         mod_id: u64,
+        /// GameBanana keeps Tool and Mod IDs in separate namespaces.
+        is_tool: bool,
         force_refresh: bool,
+        include_update_history: bool,
         cached_profile_json: Option<String>,
     },
     FetchUpdates {
         nonce: u64,
         mod_id: u64,
+        is_tool: bool,
         force_refresh: bool,
     },
     /// MY MODS update log fetch. The worker owns the 30-minute freshness window and
@@ -1200,7 +1323,9 @@ enum BrowseEvent {
     DetailLoaded {
         _nonce: u64,
         mod_id: u64,
+        is_tool: bool,
         profile: gamebanana::ProfileResponse,
+        profile_cached_at: Option<DateTime<Utc>>,
     },
     DetailWarning {
         _nonce: u64,
@@ -1349,6 +1474,10 @@ enum InstallRequest {
         mod_entry_id: String,
         mod_root_path: PathBuf,
         profile: Box<gamebanana::ProfileResponse>,
+        /// `Some` only when the profile came from a real remote fetch. A
+        /// snapshot reconstructed for image-only backfill must not refresh
+        /// matching freshness or replace the cached catalog.
+        profile_cached_at: Option<DateTime<Utc>>,
     },
     Cancel {
         job_id: u64,
@@ -1388,6 +1517,7 @@ enum InstallEvent {
         mod_entry_id: String,
         profile: Box<gamebanana::ProfileResponse>,
         rel_paths: Vec<String>,
+        profile_cached_at: Option<DateTime<Utc>>,
     },
     /// The first preview image of a sync job is on disk while the rest of the
     /// gallery is still downloading, so the cover can be published early.

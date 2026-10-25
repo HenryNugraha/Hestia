@@ -1,4 +1,23 @@
 impl HestiaApp {
+    /// Resolve the download/install payload from the authoritative GameBanana
+    /// profile. A translated profile may change presentation fields such as a
+    /// file name, but it must never change the archive identity or URL used by
+    /// the download queue.
+    fn authoritative_browse_file<'a>(
+        detail: &'a BrowseDetailCache,
+        display_file: &gamebanana::ModFile,
+    ) -> Option<&'a gamebanana::ModFile> {
+        if display_file.id == 0 {
+            return None;
+        }
+        detail
+            .profile
+            .files
+            .iter()
+            .chain(detail.profile.archived_files.iter())
+            .find(|file| file.id == display_file.id)
+    }
+
     fn browse_card_install_context_menu_row(
         ui: &mut Ui,
         enabled: bool,
@@ -2411,14 +2430,30 @@ impl HestiaApp {
                             ui.add_space(12.0);
                             render_file_section_label(ui, text.browse_files(), profile.files.len());
                             for file in &profile.files {
-                                self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
+                                let canonical_file =
+                                    Self::authoritative_browse_file(&detail, file).cloned();
+                                self.render_browse_file_row(
+                                    ui,
+                                    &browse_game_id,
+                                    mod_id,
+                                    file,
+                                    canonical_file,
+                                );
                             }
                         }
                         if !install_blocked && !profile.archived_files.is_empty() {
                             ui.add_space(12.0);
                             render_file_section_label(ui, text.browse_archived_files(), profile.archived_files.len());
                             for file in &profile.archived_files {
-                                self.render_browse_file_row(ui, &browse_game_id, mod_id, file);
+                                let canonical_file =
+                                    Self::authoritative_browse_file(&detail, file).cloned();
+                                self.render_browse_file_row(
+                                    ui,
+                                    &browse_game_id,
+                                    mod_id,
+                                    file,
+                                    canonical_file,
+                                );
                             }
                         }
                         apply_vertical_scroll_navigation(ui, scroll_navigation, true);
@@ -2475,27 +2510,30 @@ impl HestiaApp {
         ui: &mut Ui,
         game_id: &str,
         mod_id: u64,
-        file: &gamebanana::ModFile,
+        display_file: &gamebanana::ModFile,
+        canonical_file: Option<gamebanana::ModFile>,
     ) {
         let text = self.text();
+        let metadata_file = canonical_file.as_ref().unwrap_or(display_file);
+        let install_file = canonical_file.as_ref();
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        static_label(ui, bold(&file.file_name, None));
+                        static_label(ui, bold(&display_file.file_name, None));
                         ui.add_space(-4.0);
                         static_label(
                             ui,
                             RichText::new(text.browse_file_metadata(
-                                format_file_size(file.file_size),
-                                format_exact_local_timestamp(file.date_added),
-                                file.download_count,
+                                format_file_size(metadata_file.file_size),
+                                format_exact_local_timestamp(metadata_file.date_added),
+                                metadata_file.download_count,
                             ))
                             .size(11.5)
                             .color(Color32::from_gray(155)),
                         );
-                        if let Some(description) = &file.description {
+                        if let Some(description) = &display_file.description {
                             static_label(
                                 ui,
                                 RichText::new(gamebanana::sanitize_inline(description))
@@ -2508,7 +2546,8 @@ impl HestiaApp {
                         let selected_game_ready = self.game_can_download_mods(&game_id);
                         let game_setup_message = self.game_mod_setup_message(&game_id);
                         let install_response = ui.add_enabled(
-                            selected_game_ready && file.download_url.is_some(),
+                            selected_game_ready
+                                && install_file.is_some_and(|file| file.download_url.is_some()),
                             egui::Button::new(text.install()),
                         );
                         if !selected_game_ready {
@@ -2516,29 +2555,31 @@ impl HestiaApp {
                                 .clone()
                                 .on_hover_text(&game_setup_message)
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                        } else if file.download_url.is_some() {
+                        } else if install_file.is_some_and(|file| file.download_url.is_some()) {
                             install_response
                                 .clone()
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
                         }
                         if install_response.clicked() {
-                            self.queue_browse_download(
-                                game_id.to_string(),
-                                mod_id,
-                                file.clone(),
-                                vec![file.clone()],
-                                None,
-                                self.browse_state
-                                    .details
-                                    .get(&mod_id)
-                                    .map(|detail| detail.unsafe_content)
-                                    .unwrap_or(false),
-                                None,
-                                None,
-                                self.state.static_prefs.mod_install_state,
-                                true,
-                                None,
-                            );
+                            if let Some(file) = install_file {
+                                self.queue_browse_download(
+                                    game_id.to_string(),
+                                    mod_id,
+                                    file.clone(),
+                                    vec![file.clone()],
+                                    None,
+                                    self.browse_state
+                                        .details
+                                        .get(&mod_id)
+                                        .map(|detail| detail.unsafe_content)
+                                        .unwrap_or(false),
+                                    None,
+                                    None,
+                                    self.state.static_prefs.mod_install_state,
+                                    true,
+                                    None,
+                                );
+                            }
                         }
                     });
                 });
@@ -2557,9 +2598,55 @@ impl HestiaApp {
         };
         let prompt_game_ready = self.game_can_install_mods(&prompt_game_id);
         let prompt_game_setup_message = self.game_mod_setup_message(&prompt_game_id);
+        let translated_files_by_id: HashMap<u64, gamebanana::ModFile> = self
+            .browse_state
+            .file_prompt
+            .as_ref()
+            .and_then(|prompt| self.browse_state.details.get(&prompt.mod_id))
+            .and_then(|detail| detail.translated_profile.as_ref())
+            .map(|profile| {
+                profile
+                    .files
+                    .iter()
+                    .chain(profile.archived_files.iter())
+                    .filter(|file| file.id != 0)
+                    .map(|file| (file.id, file.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let prompt_target_id = self
+            .browse_state
+            .file_prompt
+            .as_ref()
+            .and_then(|prompt| prompt.update_target_mod_id.clone());
+        let prompt_lock_reason = prompt_target_id.as_deref().and_then(|target_id| {
+            self.mod_action_lock_reason_by_id(target_id, ModMutationKind::UpdateExisting)
+        });
         let Some(prompt) = self.browse_state.file_prompt.as_mut() else {
             return;
         };
+        let review_mode = prompt.file_review.is_some();
+        let installed_files = prompt
+            .file_review
+            .as_ref()
+            .map(|review| review.installed_files.clone())
+            .unwrap_or_default();
+        let newer_file_ids = prompt
+            .file_review
+            .as_ref()
+            .map(|review| review.newer_file_ids.clone())
+            .unwrap_or_default();
+        let dismissible_file_ids = prompt
+            .file_review
+            .as_ref()
+            .map(|review| review.dismissible_file_ids.clone())
+            .unwrap_or_default();
+        let new_file_count = prompt
+            .files
+            .iter()
+            .filter(|file| newer_file_ids.contains(&file.file.id))
+            .count();
+        let review_target_id = prompt.update_target_mod_id.clone();
         let mod_name = self
             .browse_state
             .cards
@@ -2577,9 +2664,16 @@ impl HestiaApp {
         let mut open = true;
         let mut should_cancel = false;
         let mut should_confirm = false;
+        let mut should_dismiss = false;
+        let mut should_open_mod_page = false;
+        let mut review_action = None;
         egui::Window::new(icon_text_sized(
             Icon::Files,
-            text.browse_choose_files(),
+            if review_mode {
+                text.choose_update_files()
+            } else {
+                text.browse_choose_files()
+            },
             14.0,
             14.0,
         ))
@@ -2597,21 +2691,92 @@ impl HestiaApp {
                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(82, 134, 186))),
         )
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                static_label(
-                    ui,
-                    icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)),
-                );
+            if review_mode {
                 ui.vertical(|ui| {
-                    static_label(ui, bold(&mod_name, Some(16.0)).underline());
-                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        static_label(ui, bold(&mod_name, Some(16.0)).underline());
+                        let browser_response = ui
+                            .add(
+                                egui::Button::new(icon_rich(
+                                    Icon::ExternalLink,
+                                    13.0,
+                                    Color32::from_gray(160),
+                                ))
+                                .frame(false),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(text.open_in_browser());
+                        if browser_response.clicked() {
+                            should_open_mod_page = true;
+                        }
+                    });
+                    if !installed_files.is_empty() {
+                        let installed_names = installed_files
+                            .iter()
+                            .map(|file| file.file_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let installed_summary = text.file_review_installed_summary(&installed_names);
+                        let installed_details = installed_files
+                            .iter()
+                            .map(|file| {
+                                let mut detail = file.file_name.clone();
+                                if file.date_added > 0 {
+                                    detail.push_str(" · ");
+                                    detail.push_str(&format_exact_local_timestamp(file.date_added));
+                                }
+                                if let Some(version) = file
+                                    .version
+                                    .as_deref()
+                                    .filter(|version| !version.trim().is_empty())
+                                {
+                                    detail.push_str(" · ");
+                                    detail.push_str(version);
+                                }
+                                detail
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let summary_response = ui.add(
+                            egui::Label::new(
+                                RichText::new(installed_summary)
+                                    .size(11.5)
+                                    .color(Color32::from_gray(150)),
+                            )
+                            .halign(egui::Align::Min)
+                            .truncate(),
+                        );
+                        summary_response.on_hover_text(installed_details);
+                    }
+                    ui.add_space(8.0);
                     static_label(
                         ui,
-                        RichText::new(text.browse_multiple_files_prompt()).size(14.0),
+                        RichText::new(if new_file_count > 0 {
+                            text.file_review_intro_new(new_file_count)
+                        } else {
+                            text.file_review_intro_all()
+                        })
+                        .size(12.0)
+                        .color(Color32::from_gray(175)),
                     );
                 });
-            });
-            ui.add_space(-8.0);
+            } else {
+                ui.horizontal(|ui| {
+                    static_label(
+                        ui,
+                        icon_rich(Icon::Info, 96.0, Color32::from_rgb(148, 192, 232)),
+                    );
+                    ui.vertical(|ui| {
+                        static_label(ui, bold(&mod_name, Some(16.0)).underline());
+                        ui.add_space(4.0);
+                        static_label(
+                            ui,
+                            RichText::new(text.browse_multiple_files_prompt()).size(14.0),
+                        );
+                    });
+                });
+            }
+            ui.add_space(if review_mode { 4.0 } else { -8.0 });
             ui.vertical_centered(|ui| {
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(180, 180, 180, 48))
@@ -2643,17 +2808,43 @@ impl HestiaApp {
                             style.spacing.icon_spacing = 4.0;
                             ui.set_style(style);
                             ui.spacing_mut().item_spacing.y = 6.0;
+                            if prompt.files.is_empty() {
+                                static_label(
+                                    ui,
+                                    RichText::new(text.no_downloadable_files_found())
+                                        .size(12.0)
+                                        .color(Color32::from_gray(165)),
+                                );
+                            }
                             for file_entry in &mut prompt.files {
+                                let display_file = translated_files_by_id
+                                    .get(&file_entry.file.id)
+                                    .unwrap_or(&file_entry.file);
                                 let row_response = egui::Frame::group(ui.style())
                                     .inner_margin(egui::Margin::symmetric(10, 8))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             larger_checkbox(ui, file_entry.selected);
                                             ui.vertical(|ui| {
-                                                static_label(
-                                                    ui,
-                                                    bold(&file_entry.file.file_name, None),
-                                                );
+                                                ui.horizontal(|ui| {
+                                                    static_label(
+                                                        ui,
+                                                        bold(&display_file.file_name, None),
+                                                    );
+                                                    if review_mode
+                                                        && newer_file_ids
+                                                            .contains(&file_entry.file.id)
+                                                    {
+                                                        static_label(
+                                                            ui,
+                                                            RichText::new(text.newer_file())
+                                                                .size(10.5)
+                                                                .color(Color32::from_rgb(
+                                                                    116, 178, 235,
+                                                                )),
+                                                        );
+                                                    }
+                                                });
                                                 ui.add_space(-4.0);
                                                 static_label(
                                                     ui,
@@ -2667,8 +2858,19 @@ impl HestiaApp {
                                                     .size(11.5)
                                                     .color(Color32::from_gray(155)),
                                                 );
-                                                if let Some(description) =
-                                                    &file_entry.file.description
+                                                if let Some(version) =
+                                                    file_entry.file.version.as_deref().filter(
+                                                        |version| !version.trim().is_empty(),
+                                                    )
+                                                {
+                                                    static_label(
+                                                        ui,
+                                                        RichText::new(version)
+                                                            .size(11.0)
+                                                            .color(Color32::from_gray(170)),
+                                                    );
+                                                }
+                                                if let Some(description) = &display_file.description
                                                 {
                                                     if !description.trim().is_empty() {
                                                         static_label(
@@ -2687,38 +2889,225 @@ impl HestiaApp {
                                         });
                                     })
                                     .response;
-                                if row_response
+                                let row_response = row_response
                                     .interact(Sense::click())
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if row_response.clicked() {
                                     file_entry.selected = !file_entry.selected;
                                 }
                             }
                         });
                     });
                 ui.horizontal(|ui| {
-                    let install_response = ui.add_enabled(
-                        prompt_game_ready,
-                        egui::Button::new(text.install()).fill(Color32::from_rgb(180, 78, 35)),
-                    );
-                    if !prompt_game_ready {
-                        install_response
+                    if review_mode {
+                        let selected = prompt.files.iter().any(|file| file.selected);
+                        let update_enabled =
+                            prompt_game_ready && prompt_lock_reason.is_none() && selected;
+                        let action_fill = Color32::from_rgb(180, 78, 35);
+                        let action_corner_radius = egui::CornerRadius {
+                            nw: 4,
+                            ne: 0,
+                            sw: 4,
+                            se: 0,
+                        };
+                        let menu_corner_radius = egui::CornerRadius {
+                            nw: 0,
+                            ne: 4,
+                            sw: 0,
+                            se: 4,
+                        };
+                        let previous_item_spacing = ui.spacing().item_spacing.x;
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let update_response = ui.add_enabled(
+                            update_enabled,
+                            egui::Button::new(text.update_button())
+                                .fill(action_fill)
+                                .corner_radius(action_corner_radius),
+                        );
+                        if update_enabled {
+                            update_response
+                                .clone()
+                                .on_hover_text(text.file_review_update_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        } else if let Some(lock_reason) = prompt_lock_reason.as_deref() {
+                            update_response
+                                .clone()
+                                .on_disabled_hover_text(lock_reason)
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        } else if !prompt_game_ready {
+                            update_response
+                                .clone()
+                                .on_disabled_hover_text(&prompt_game_setup_message)
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        } else {
+                            update_response
+                                .clone()
+                                .on_disabled_hover_text(text.file_review_select_files_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        }
+                        if update_response.clicked() {
+                            should_confirm = true;
+                        }
+
+                        let install_menu_enabled = prompt_game_ready && selected;
+                        let merge_enabled = install_menu_enabled && prompt_lock_reason.is_none();
+                        let install_menu_disabled_reason = if !prompt_game_ready {
+                            prompt_game_setup_message.as_str()
+                        } else {
+                            text.file_review_select_files_tooltip()
+                        };
+                        let arrow_response = ui.add_enabled(
+                            install_menu_enabled,
+                            egui::Button::new(egui::RichText::new(icon_char(Icon::ChevronDown)).font(
+                                egui::FontId::new(12.0, FontFamily::Name(LUCIDE_FAMILY.into())),
+                            ))
+                            .fill(action_fill)
+                            .corner_radius(menu_corner_radius)
+                            .min_size(egui::vec2(28.0, update_response.rect.height())),
+                        );
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(
+                                    arrow_response.rect.left(),
+                                    arrow_response.rect.top() + 4.0,
+                                ),
+                                egui::pos2(
+                                    arrow_response.rect.left(),
+                                    arrow_response.rect.bottom() - 4.0,
+                                ),
+                            ],
+                            egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(92, 45, 28, 180)),
+                        );
+                        arrow_response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                install_menu_enabled,
+                                text.file_review_install_menu(),
+                            )
+                        });
+                        if install_menu_enabled {
+                            arrow_response
+                                .clone()
+                                .on_hover_text(text.file_review_install_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        } else {
+                            arrow_response
+                                .clone()
+                                .on_disabled_hover_text(install_menu_disabled_reason)
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        }
+                        if install_menu_enabled {
+                            egui::Popup::menu(&arrow_response)
+                                .id(ui.id().with("file_review_install_menu"))
+                                .show(|ui| {
+                                    let merge_response = ui.add_enabled(
+                                        merge_enabled,
+                                        egui::Button::new(text.file_review_install_merge()),
+                                    );
+                                    if let Some(lock_reason) = prompt_lock_reason.as_deref()
+                                        && !merge_enabled
+                                    {
+                                        merge_response
+                                            .clone()
+                                            .on_disabled_hover_text(lock_reason)
+                                            .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                                    } else if merge_enabled {
+                                        merge_response
+                                            .clone()
+                                            .on_hover_text(text.file_review_merge_tooltip())
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    }
+                                    if merge_response.clicked() {
+                                        review_action = Some(FileReviewAction::InstallMerge);
+                                        ui.close();
+                                    }
+
+                                    let separate_response =
+                                        ui.button(text.file_review_install_separate());
+                                    separate_response
+                                        .clone()
+                                        .on_hover_text(text.file_review_separate_tooltip())
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if separate_response.clicked() {
+                                        review_action = Some(FileReviewAction::InstallSeparate);
+                                        ui.close();
+                                    }
+                                });
+                        }
+                        ui.spacing_mut().item_spacing.x = previous_item_spacing;
+                        ui.add_space(previous_item_spacing);
+                        if !dismissible_file_ids.is_empty() {
+                            let dismiss_response = ui.button(text.dismiss_file_notice());
+                            dismiss_response
+                                .clone()
+                                .on_hover_text(text.file_review_ignore_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if dismiss_response.clicked() {
+                                should_dismiss = true;
+                            }
+                        }
+                        let close_response = ui.button(text.close());
+                        close_response
                             .clone()
-                            .on_hover_text(&prompt_game_setup_message)
-                            .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                    }
-                    if install_response.clicked() {
-                        should_confirm = true;
-                    }
-                    if ui.button(text.cancel()).clicked() {
-                        should_cancel = true;
+                            .on_hover_text(text.file_review_close_tooltip())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if close_response.clicked() {
+                            should_cancel = true;
+                        }
+                    } else {
+                        let install_response = ui.add_enabled(
+                            prompt_game_ready,
+                            egui::Button::new(text.install()).fill(Color32::from_rgb(180, 78, 35)),
+                        );
+                        if !prompt_game_ready {
+                            install_response
+                                .clone()
+                                .on_disabled_hover_text(&prompt_game_setup_message)
+                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                        } else {
+                            install_response
+                                .clone()
+                                .on_hover_text(text.file_prompt_install_tooltip())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        }
+                        if install_response.clicked() {
+                            should_confirm = true;
+                        }
+                        let cancel_response = ui.button(text.cancel());
+                        cancel_response
+                            .clone()
+                            .on_hover_text(text.file_prompt_cancel_tooltip())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if cancel_response.clicked() {
+                            should_cancel = true;
+                        }
                     }
                 });
             });
         });
-        if should_confirm {
+        if let Some(action) = review_action {
+            self.confirm_browse_file_prompt_with_action(action);
+        } else if should_confirm {
             self.confirm_browse_file_prompt();
+        } else if should_dismiss {
+            if let Some(target_id) = review_target_id.as_deref() {
+                self.dismiss_newer_files_notice(target_id, &dismissible_file_ids);
+            }
+            self.browse_state.file_prompt = None;
+        } else if should_open_mod_page {
+            if let Some(target_id) = review_target_id.as_deref() {
+                if let Some(target) = self.state.mods.iter().find(|entry| entry.id == target_id) {
+                    if let Some(link) = target
+                        .source
+                        .as_ref()
+                        .and_then(|source| source.gamebanana.as_ref())
+                    {
+                        if let Err(err) = open_external_url(&link.url) {
+                            self.report_error(err, Some(text.could_not_open_browser()));
+                        }
+                    }
+                }
+            }
         } else if should_cancel || !open {
             self.browse_state.file_prompt = None;
         }
@@ -3195,5 +3584,60 @@ impl HestiaApp {
             }
             None => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod browse_file_ui_tests {
+    use super::*;
+
+    fn file(id: u64, name: &str, url: Option<&str>) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id,
+            file_name: name.to_string(),
+            file_size: 1,
+            date_added: 1,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: url.map(str::to_string),
+            is_archived: false,
+        }
+    }
+
+    #[test]
+    fn translated_file_display_resolves_download_from_authoritative_id() {
+        let canonical = file(42, "original.7z", Some("https://gamebanana.com/dl/42"));
+        let detail = BrowseDetailCache {
+            profile: gamebanana::ProfileResponse {
+                id: 728699,
+                files: vec![canonical],
+                ..Default::default()
+            },
+            is_tool: false,
+            profile_cached_at: None,
+            markdown: String::new(),
+            unsafe_content: false,
+            updates: BrowseUpdatesState::Unrequested,
+            translated_profile: None,
+            translation_lang: None,
+            translation_loading: false,
+        };
+        let translated_display = file(42, "translated.7z", Some("https://stale.example/wrong.7z"));
+
+        let resolved = HestiaApp::authoritative_browse_file(&detail, &translated_display)
+            .expect("matching file ID should resolve");
+        assert_eq!(resolved.file_name, "original.7z");
+        assert_eq!(
+            resolved.download_url.as_deref(),
+            Some("https://gamebanana.com/dl/42")
+        );
+        assert!(
+            HestiaApp::authoritative_browse_file(
+                &detail,
+                &file(0, "translated-without-id.7z", None)
+            )
+            .is_none()
+        );
     }
 }

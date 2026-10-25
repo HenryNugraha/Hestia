@@ -1,6 +1,6 @@
 [package]
 name = "hestia"
-version = "1.10.0"
+version = "1.10.1-alpha"
 authors = ["Henry Nugraha"]
 edition = "2024"
 
@@ -43,7 +43,7 @@ rfd = "0.17"
 regex = "1.13"
 rpassword = "7.5"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 semver = "1.0"
 sevenz-rust = "0.6"
 shlex = "2.0"

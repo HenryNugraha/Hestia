@@ -408,6 +408,7 @@ impl HestiaApp {
             show_unlinked_mods: true,
             show_up_to_date_mods: true,
             show_update_available_mods: true,
+            show_new_files_mods: true,
             show_check_skipped_mods: true,
             show_missing_source_mods: true,
             show_modified_locally_mods: true,
@@ -2343,10 +2344,19 @@ impl HestiaApp {
     fn library_cards_for_selected_game(&mut self) -> Arc<Vec<LibraryCardRow>> {
         let key = self.library_card_cache_key();
         if self.library_card_cache.key != Some(key) {
+            self.ensure_cached_grouped_update_evidence();
+            let evidence = self.library_card_cache.evidence.clone();
+            let evidence_key = self.grouped_update_evidence_cache_key();
+            let update_state_targets = self.state.static_prefs.update_check_statuses;
             let rows: Vec<LibraryCardRow> = self
-                .mods_for_selected_game()
+                .mods_for_selected_game_with_evidence(&evidence)
                 .into_iter()
                 .map(|mod_entry| {
+                    let effective_state = Self::effective_grouped_update_state(
+                        mod_entry,
+                        evidence.get(&mod_entry.id),
+                        update_state_targets,
+                    );
                     (
                         mod_entry.id.clone(),
                         mod_entry.folder_name.clone(),
@@ -2356,14 +2366,20 @@ impl HestiaApp {
                         mod_entry.status.clone(),
                         mod_entry.updated_at,
                         mod_entry.unsafe_content,
-                        mod_entry.update_state,
+                        effective_state,
                         mod_entry
                             .source
                             .as_ref()
                             .and_then(|source| source.gamebanana.as_ref())
                             .map(|link| link.mod_id > 0 || !link.url.trim().is_empty())
                             .unwrap_or(false),
-                        Self::has_modified_update_available(mod_entry),
+                        evidence.get(&mod_entry.id).is_some_and(|evidence| {
+                            Self::has_modified_update_available_from_effective_state(
+                                mod_entry,
+                                effective_state,
+                                evidence,
+                            )
+                        }),
                         mod_has_local_changes_for_update_check(mod_entry),
                         Self::ignored_update_kind(mod_entry),
                         self.effective_mod_category_id(mod_entry),
@@ -2374,6 +2390,8 @@ impl HestiaApp {
             self.library_card_cache = LibraryCardCache {
                 key: Some(key),
                 rows: Arc::new(rows),
+                evidence,
+                evidence_key: Some(evidence_key),
             };
         }
         Arc::clone(&self.library_card_cache.rows)
@@ -2388,6 +2406,7 @@ impl HestiaApp {
         self.show_unlinked_mods.hash(&mut hasher);
         self.show_up_to_date_mods.hash(&mut hasher);
         self.show_update_available_mods.hash(&mut hasher);
+        self.show_new_files_mods.hash(&mut hasher);
         self.show_check_skipped_mods.hash(&mut hasher);
         self.show_missing_source_mods.hash(&mut hasher);
         self.show_modified_locally_mods.hash(&mut hasher);
@@ -2396,6 +2415,9 @@ impl HestiaApp {
         let prefs = &self.state.static_prefs;
         prefs.hide_disabled.hash(&mut hasher);
         prefs.hide_archived.hash(&mut hasher);
+        prefs.update_check_statuses.active.hash(&mut hasher);
+        prefs.update_check_statuses.disabled.hash(&mut hasher);
+        prefs.update_check_statuses.archived.hash(&mut hasher);
         prefs.library_sort_status_first.hash(&mut hasher);
         prefs.library_sort_category_first.hash(&mut hasher);
         prefs.library_uncategorized_first.hash(&mut hasher);
@@ -2527,6 +2549,21 @@ impl HestiaApp {
             snapshot.update_ts.hash(hasher);
             snapshot.description.hash(hasher);
             snapshot.preview_urls.hash(hasher);
+            // Snapshot history is matching evidence even when no raw profile
+            // is available. Canonicalize record order and retain the known
+            // versus unknown distinction (`None` versus a known empty log).
+            let history = snapshot.update_history.as_ref().map(|history| {
+                let mut records: Vec<_> = history
+                    .records
+                    .iter()
+                    .map(matching_release_record_fingerprint)
+                    .collect();
+                records.sort_by_key(|record| serde_json::to_string(record).unwrap_or_default());
+                records
+            });
+            serde_json::to_string(&(snapshot.update_history.is_some(), history))
+                .unwrap_or_default()
+                .hash(hasher);
             snapshot.is_private.hash(hasher);
             snapshot.is_deleted.hash(hasher);
             snapshot.is_trashed.hash(hasher);
@@ -2540,6 +2577,7 @@ impl HestiaApp {
                 file.date_added.hash(hasher);
                 file.download_count.hash(hasher);
                 file.description.hash(hasher);
+                file.version.hash(hasher);
                 file.download_url.hash(hasher);
                 file.archived.hash(hasher);
             }
@@ -2554,6 +2592,10 @@ impl HestiaApp {
             .hash(hasher);
         Self::hash_optional_datetime_for_library_cache(
             hasher,
+            source.profile_cached_at.as_ref(),
+        );
+        Self::hash_optional_datetime_for_library_cache(
+            hasher,
             source.update_check_retry_after.as_ref(),
         );
         source.file_set.selected_file_ids.hash(hasher);
@@ -2563,9 +2605,11 @@ impl HestiaApp {
         for file in &source.file_set.selected_files_meta {
             file.file_id.hash(hasher);
             file.file_name.hash(hasher);
+            file.file_size.hash(hasher);
             file.date_added.hash(hasher);
             file.version.hash(hasher);
             file.archived.hash(hasher);
+            file.label.hash(hasher);
         }
         if let Some(signature) = source.ignored_update_signature.as_ref() {
             true.hash(hasher);
@@ -2575,14 +2619,17 @@ impl HestiaApp {
             for file in &signature.files {
                 file.file_id.hash(hasher);
                 file.file_name.hash(hasher);
+                file.file_size.hash(hasher);
                 file.date_added.hash(hasher);
                 file.version.hash(hasher);
                 file.archived.hash(hasher);
+                file.label.hash(hasher);
             }
         } else {
             false.hash(hasher);
         }
         source.ignore_update_always.hash(hasher);
+        source.dismissed_newer_file_ids.hash(hasher);
         Self::hash_optional_datetime_for_library_cache(
             hasher,
             source.baseline_content_mtime.as_ref(),
@@ -2596,12 +2643,26 @@ impl HestiaApp {
     }
 
     fn mods_for_selected_game(&self) -> Vec<&ModEntry> {
+        let cache_key = self.grouped_update_evidence_cache_key();
+        if self.library_card_cache.evidence_key == Some(cache_key) {
+            return self.mods_for_selected_game_with_evidence(&self.library_card_cache.evidence);
+        }
+        let game_id = self.selected_game().map(|game| game.definition.id.as_str());
+        let evidence = build_cached_update_evidence(&self.state.mods, game_id);
+        self.mods_for_selected_game_with_evidence(&evidence)
+    }
+
+    fn mods_for_selected_game_with_evidence(
+        &self,
+        cached_evidence: &HashMap<String, CachedUpdateEvidence>,
+    ) -> Vec<&ModEntry> {
         let Some(game) = self.selected_game() else {
             return Vec::new();
         };
         if !game.enabled {
             return Vec::new();
         }
+        let update_state_targets = self.state.static_prefs.update_check_statuses;
         let query_norm = normalize_lookup(&self.mods_search_query);
         let mut mods: Vec<_> = self
             .state
@@ -2620,45 +2681,79 @@ impl HestiaApp {
                 if self.state.static_prefs.hide_archived && item.status == ModStatus::Archived {
                     return false;
                 }
-                if !self.show_unlinked_mods && item.update_state == ModUpdateState::Unlinked {
+                let effective_update_state = Self::effective_grouped_update_state(
+                    item,
+                    cached_evidence.get(&item.id),
+                    update_state_targets,
+                );
+                let has_new_files = cached_evidence.get(&item.id).is_some_and(|evidence| {
+                    Self::has_newer_files_notice_from_evidence(
+                        item,
+                        evidence,
+                        update_state_targets,
+                    )
+                });
+                let new_files_state = has_new_files
+                    && matches!(
+                        effective_update_state,
+                        ModUpdateState::UpToDate | ModUpdateState::CheckSkipped
+                    );
+                if !self.show_unlinked_mods && effective_update_state == ModUpdateState::Unlinked {
                     return false;
                 }
-                if !self.show_up_to_date_mods && item.update_state == ModUpdateState::UpToDate {
+                if !self.show_up_to_date_mods
+                    && effective_update_state == ModUpdateState::UpToDate
+                    && !new_files_state
+                {
                     return false;
                 }
                 if !self.show_ignoring_update_mods
                     && matches!(
-                        item.update_state,
+                        effective_update_state,
                         ModUpdateState::IgnoringUpdateOnce | ModUpdateState::IgnoringUpdateAlways
                     )
                 {
                     return false;
                 }
-                let has_modified_update_available = Self::has_modified_update_available(item);
+                let has_modified_update_available = cached_evidence
+                    .get(&item.id)
+                    .is_some_and(|evidence| {
+                        Self::has_modified_update_available_from_effective_state(
+                            item,
+                            effective_update_state,
+                            evidence,
+                        )
+                    });
                 if has_modified_update_available
                     && !self.show_update_available_mods
                     && !self.show_modified_locally_mods
+                    && !(has_new_files && self.show_new_files_mods)
                 {
                     return false;
                 }
                 if !self.show_update_available_mods
-                    && item.update_state == ModUpdateState::UpdateAvailable
+                    && effective_update_state == ModUpdateState::UpdateAvailable
                 {
                     return false;
                 }
                 if !self.show_check_skipped_mods
-                    && item.update_state == ModUpdateState::CheckSkipped
+                    && effective_update_state == ModUpdateState::CheckSkipped
+                    && !new_files_state
                 {
                     return false;
                 }
+                if new_files_state && !self.show_new_files_mods {
+                    return false;
+                }
                 if !self.show_missing_source_mods
-                    && item.update_state == ModUpdateState::MissingSource
+                    && effective_update_state == ModUpdateState::MissingSource
                 {
                     return false;
                 }
                 if !self.show_modified_locally_mods
-                    && item.update_state == ModUpdateState::ModifiedLocally
+                    && effective_update_state == ModUpdateState::ModifiedLocally
                     && !has_modified_update_available
+                    && !(has_new_files && self.show_new_files_mods)
                 {
                     return false;
                 }
@@ -3635,11 +3730,17 @@ impl HestiaApp {
                 m.source.as_ref().and_then(|s| {
                     s.snapshot
                         .as_ref()
-                        .map(|snap| (m.root_path.clone(), snap.clone()))
+                        .map(|snap| {
+                            (
+                                m.root_path.clone(),
+                                snap.clone(),
+                                s.gamebanana.as_ref().map(|link| link.mod_id).unwrap_or(0),
+                            )
+                        })
                 })
             });
 
-        if let Some((root_path, snapshot)) = job_data {
+        if let Some((root_path, snapshot, gamebanana_mod_id)) = job_data {
             let job_id = self.next_background_job_id();
             if let Some(game_id) = self.state.mods.iter().find(|entry| entry.id == mod_id)
                 .map(|entry| entry.game_id.clone())
@@ -3650,7 +3751,8 @@ impl HestiaApp {
                 job_id,
                 mod_entry_id: mod_id.to_string(),
                 mod_root_path: root_path,
-                profile: Box::new(profile_to_response(Some(&snapshot))),
+                profile: Box::new(profile_to_response(Some(&snapshot), gamebanana_mod_id)),
+                profile_cached_at: None,
             }).is_err() {
                 self.mod_image_sync_inflight.remove(&job_id);
             }
@@ -4655,5 +4757,50 @@ mod readiness_tests {
         assert!(readiness.can_install_mods);
         assert!(readiness.can_download_mods);
         assert_eq!(readiness.primary_issue, None);
+    }
+}
+
+#[cfg(test)]
+mod source_cache_hash_tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+
+    fn source_with_metadata(file_size: Option<u64>, label: Option<&str>) -> ModSourceData {
+        ModSourceData {
+            file_set: FileSetRecipe {
+                selected_files_meta: vec![TrackedFileMeta {
+                    file_id: 1,
+                    file_name: "mod.zip".to_owned(),
+                    file_size,
+                    label: label.map(str::to_owned),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn hash(source: &ModSourceData) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        HestiaApp::hash_mod_source_for_library_cache(&mut hasher, Some(source));
+        hasher.finish()
+    }
+
+    #[test]
+    fn tracked_matching_metadata_invalidates_library_cache_hash() {
+        let baseline = source_with_metadata(None, None);
+        assert_ne!(hash(&baseline), hash(&source_with_metadata(Some(123), None)));
+        assert_ne!(hash(&baseline), hash(&source_with_metadata(None, Some("Main"))));
+    }
+
+    #[test]
+    fn dismissed_newer_file_ids_invalidate_library_cache_hash() {
+        let baseline = source_with_metadata(None, None);
+        let mut dismissed = baseline.clone();
+        dismissed.dismissed_newer_file_ids.push(42);
+
+        assert_ne!(hash(&baseline), hash(&dismissed));
     }
 }

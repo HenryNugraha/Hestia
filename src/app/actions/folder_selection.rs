@@ -207,6 +207,7 @@ impl HestiaApp {
         self.show_unlinked_mods.hash(&mut hasher);
         self.show_up_to_date_mods.hash(&mut hasher);
         self.show_update_available_mods.hash(&mut hasher);
+        self.show_new_files_mods.hash(&mut hasher);
         self.show_check_skipped_mods.hash(&mut hasher);
         self.show_missing_source_mods.hash(&mut hasher);
         self.show_modified_locally_mods.hash(&mut hasher);
@@ -253,6 +254,7 @@ impl HestiaApp {
             self.library_visible_folder_ids.clear();
             return;
         };
+        self.ensure_cached_grouped_update_evidence();
         let visible_categories: HashSet<&str> = self
             .mods_for_selected_game()
             .into_iter()
