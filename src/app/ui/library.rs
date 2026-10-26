@@ -2721,12 +2721,25 @@ impl HestiaApp {
             })
     }
 
+    fn effective_update_state_for_badge(&self, mod_entry: &ModEntry) -> ModUpdateState {
+        self.cached_grouped_evidence_for_mod(mod_entry)
+            .map(|evidence| {
+                Self::effective_grouped_update_state(
+                    mod_entry,
+                    Some(&evidence),
+                    self.state.static_prefs.update_check_statuses,
+                )
+            })
+            .unwrap_or(mod_entry.update_state)
+    }
+
     fn mod_update_badge(&self, text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
+        let effective_state = self.effective_update_state_for_badge(mod_entry);
         // A linked mod with no reconciled verdict yet (no cached snapshot to
         // compare against -- never successfully checked, or awaiting the
         // throttled network check) must never read as "Unlinked": the GameBanana
         // source is right there. Show a neutral pending badge instead.
-        if mod_entry.update_state == ModUpdateState::Unlinked
+        if effective_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
                 .as_ref()
@@ -2756,12 +2769,13 @@ impl HestiaApp {
         } else if self.has_newer_files_notice(mod_entry) {
             (text.new_files(), Color32::from_rgb(120, 160, 200))
         } else {
-            Self::mod_update_state_badge(text, mod_entry.update_state)
+            Self::mod_update_state_badge(text, effective_state)
         }
     }
 
     fn mod_update_badge_tooltip(&self, mod_entry: &ModEntry) -> &'static str {
-        if mod_entry.update_state == ModUpdateState::Unlinked
+        let effective_state = self.effective_update_state_for_badge(mod_entry);
+        if effective_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
                 .as_ref()
@@ -2789,7 +2803,7 @@ impl HestiaApp {
         } else if self.has_newer_files_notice(mod_entry) {
             self.text().newer_files_tooltip()
         } else {
-            mod_update_state_tooltip(mod_entry.update_state)
+            mod_update_state_tooltip(effective_state)
         }
     }
 
@@ -5734,8 +5748,9 @@ impl HestiaApp {
         self.sync_library_folder_selection_context();
         let text = self.text();
         let age_now = Local::now();
+        let current_card_cache_key = self.library_card_cache_key();
         let cards = if Self::pointer_motion_image_throttle_active(ui.ctx())
-            && self.library_card_cache.key.is_some()
+            && self.library_card_cache.key == Some(current_card_cache_key)
         {
             Arc::clone(&self.library_card_cache.rows)
         } else {
@@ -10828,6 +10843,19 @@ impl HestiaApp {
             return;
         };
         let selected = selected_snapshot.as_ref();
+        // The card cache includes transient Thalia classifications.  Keep the
+        // detail action row in sync with that effective state without mutating
+        // the selected mod's persisted status.
+        let selected_effective_update_state = self
+            .cached_grouped_evidence_for_mod(selected)
+            .map(|evidence| {
+                Self::effective_grouped_update_state(
+                    selected,
+                    Some(&evidence),
+                    self.state.static_prefs.update_check_statuses,
+                )
+            })
+            .unwrap_or(selected.update_state);
         // The expensive HTML sanitization and html2md conversion are pure. Resolve image URLs
         // later, through the existing dependency-aware render cache, so files arriving in the
         // metadata/cache directories are still observed.
@@ -11027,7 +11055,7 @@ impl HestiaApp {
                                 self.open_mod_file_review(&selected.id);
                             }
                         }
-                        if matches!(selected.update_state, ModUpdateState::UpdateAvailable)
+                        if matches!(selected_effective_update_state, ModUpdateState::UpdateAvailable)
                             || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
                                 && modified_update_available)
                         {

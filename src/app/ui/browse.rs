@@ -2626,6 +2626,10 @@ impl HestiaApp {
             return;
         };
         let review_mode = prompt.file_review.is_some();
+        let recommended_action = prompt
+            .file_review
+            .as_ref()
+            .and_then(|review| review.recommended_action);
         let installed_files = prompt
             .file_review
             .as_ref()
@@ -2751,7 +2755,9 @@ impl HestiaApp {
                     ui.add_space(8.0);
                     static_label(
                         ui,
-                        RichText::new(if new_file_count > 0 {
+                        RichText::new(if recommended_action == Some(FileReviewAction::InstallMerge) {
+                            text.file_review_intro_all()
+                        } else if new_file_count > 0 {
                             text.file_review_intro_new(new_file_count)
                         } else {
                             text.file_review_intro_all()
@@ -2918,17 +2924,31 @@ impl HestiaApp {
                         };
                         let previous_item_spacing = ui.spacing().item_spacing.x;
                         ui.spacing_mut().item_spacing.x = 0.0;
+                        let primary_is_merge =
+                            recommended_action == Some(FileReviewAction::InstallMerge);
+                        let primary_label = if primary_is_merge {
+                            text.file_review_install_merge()
+                        } else {
+                            text.update_button()
+                        };
                         let update_response = ui.add_enabled(
                             update_enabled,
-                            egui::Button::new(text.update_button())
+                            egui::Button::new(primary_label)
                                 .fill(action_fill)
                                 .corner_radius(action_corner_radius),
                         );
                         if update_enabled {
-                            update_response
-                                .clone()
-                                .on_hover_text(text.file_review_update_tooltip())
-                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if primary_is_merge {
+                                update_response
+                                    .clone()
+                                    .on_hover_text(text.file_review_merge_tooltip())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            } else {
+                                update_response
+                                    .clone()
+                                    .on_hover_text(text.file_review_update_tooltip())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            }
                         } else if let Some(lock_reason) = prompt_lock_reason.as_deref() {
                             update_response
                                 .clone()
@@ -2946,7 +2966,11 @@ impl HestiaApp {
                                 .on_hover_cursor(egui::CursorIcon::NotAllowed);
                         }
                         if update_response.clicked() {
-                            should_confirm = true;
+                            if primary_is_merge {
+                                review_action = Some(FileReviewAction::InstallMerge);
+                            } else {
+                                should_confirm = true;
+                            }
                         }
 
                         let install_menu_enabled = prompt_game_ready && selected;
@@ -3000,26 +3024,54 @@ impl HestiaApp {
                             egui::Popup::menu(&arrow_response)
                                 .id(ui.id().with("file_review_install_menu"))
                                 .show(|ui| {
-                                    let merge_response = ui.add_enabled(
-                                        merge_enabled,
-                                        egui::Button::new(text.file_review_install_merge()),
-                                    );
-                                    if let Some(lock_reason) = prompt_lock_reason.as_deref()
-                                        && !merge_enabled
-                                    {
-                                        merge_response
-                                            .clone()
-                                            .on_disabled_hover_text(lock_reason)
-                                            .on_hover_cursor(egui::CursorIcon::NotAllowed);
-                                    } else if merge_enabled {
-                                        merge_response
-                                            .clone()
-                                            .on_hover_text(text.file_review_merge_tooltip())
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    }
-                                    if merge_response.clicked() {
-                                        review_action = Some(FileReviewAction::InstallMerge);
-                                        ui.close();
+                                    // Keep Update available in the menu when a
+                                    // recommended Merge is promoted to the
+                                    // primary action. Do not show Merge twice.
+                                    if primary_is_merge {
+                                        let update_enabled = prompt_lock_reason.is_none();
+                                        let update_response = ui.add_enabled(
+                                            update_enabled,
+                                            egui::Button::new(text.update_button()),
+                                        );
+                                        if let Some(lock_reason) = prompt_lock_reason.as_deref()
+                                            && !update_enabled
+                                        {
+                                            update_response
+                                                .clone()
+                                                .on_disabled_hover_text(lock_reason)
+                                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                                        } else {
+                                            update_response
+                                                .clone()
+                                                .on_hover_text(text.file_review_update_tooltip())
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        }
+                                        if update_response.clicked() {
+                                            review_action = Some(FileReviewAction::Update);
+                                            ui.close();
+                                        }
+                                    } else {
+                                        let merge_response = ui.add_enabled(
+                                            merge_enabled,
+                                            egui::Button::new(text.file_review_install_merge()),
+                                        );
+                                        if let Some(lock_reason) = prompt_lock_reason.as_deref()
+                                            && !merge_enabled
+                                        {
+                                            merge_response
+                                                .clone()
+                                                .on_disabled_hover_text(lock_reason)
+                                                .on_hover_cursor(egui::CursorIcon::NotAllowed);
+                                        } else if merge_enabled {
+                                            merge_response
+                                                .clone()
+                                                .on_hover_text(text.file_review_merge_tooltip())
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                        }
+                                        if merge_response.clicked() {
+                                            review_action = Some(FileReviewAction::InstallMerge);
+                                            ui.close();
+                                        }
                                     }
 
                                     let separate_response =

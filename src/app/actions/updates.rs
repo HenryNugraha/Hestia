@@ -150,6 +150,26 @@ struct FileSetUpdateEvaluation {
     signature: Option<IgnoredUpdateSignature>,
 }
 
+fn update_task_targets_mod(task: &TaskEntry, target: &ModEntry, update_title: &str) -> bool {
+    if task.game_id.as_deref() != Some(target.game_id.as_str())
+        || !matches!(
+            task.status,
+            TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Installing | TaskStatus::Canceling
+        )
+    {
+        return false;
+    }
+    match task.retry_payload.as_ref() {
+        Some(TaskRetryPayload::BrowseDownload(payload)) => {
+            payload.update_target_mod_id.as_deref().map_or(
+                task.title == update_title,
+                |id| id == target.id,
+            )
+        }
+        None => task.title == update_title,
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ResolvedTrackedFiles {
     Tracked(Vec<TrackedFileMeta>),
@@ -3458,6 +3478,35 @@ fn apply_ignored_update_override(
     apply_ignored_update_override_with_signature(source, raw_state, current_signature)
 }
 
+/// Keep an exact Ignore-once acknowledgement when the conservative matcher
+/// cannot classify the update, but the cached catalog still contains the same
+/// active downloadable newer file(s). This covers an AI-only match without
+/// allowing an old acknowledgement to hide a different local update.
+fn ignored_signature_still_matches_newer_active_file(
+    source: &ModSourceData,
+    ignored: &IgnoredUpdateSignature,
+) -> bool {
+    if ignored.prearmed_next_update || ignored.files.is_empty() {
+        return false;
+    }
+    let Some(raw_profile) = source.raw_profile_json.as_deref() else {
+        return false;
+    };
+    let Ok(profile) = serde_json::from_str::<gamebanana::ProfileResponse>(raw_profile) else {
+        return false;
+    };
+    let newer_files = available_newer_files(&source.file_set, &profile);
+    !newer_files.is_empty()
+        && ignored.files.iter().all(|ignored_file| {
+            newer_files.iter().any(|file| {
+                (ignored_file.file_id == 0 || ignored_file.file_id == file.id)
+                    && ignored_file.file_name == file.file_name
+                    && ignored_file.date_added == file.date_added
+                    && ignored_file.version == file.version
+            })
+        })
+}
+
 /// Applies the ignore overlays using a signature produced by the grouped
 /// worker evaluation.  Update-check results must use this rather than
 /// rebuilding a signature from one source's profile: the worker's signature
@@ -3471,6 +3520,13 @@ fn apply_ignored_update_override_with_signature(
         source.ignored_update_signature = None;
         return ModUpdateState::IgnoringUpdateAlways;
     }
+    let preserve_unresolved_ignore = matches!(
+        raw_state,
+        ModUpdateState::UpToDate | ModUpdateState::MissingSource
+    ) && source
+        .ignored_update_signature
+        .as_ref()
+        .is_some_and(|ignored| ignored_signature_still_matches_newer_active_file(source, ignored));
     match raw_state {
         ModUpdateState::UpdateAvailable => {
             if let Some(current) = current_signature.as_ref() {
@@ -3499,16 +3555,22 @@ fn apply_ignored_update_override_with_signature(
             if !source
                 .ignored_update_signature
                 .as_ref()
-                .is_some_and(|ignored| ignored.prearmed_next_update)
+                .is_some_and(|ignored| {
+                    ignored.prearmed_next_update || preserve_unresolved_ignore
+                })
             {
                 source.ignored_update_signature = None;
             }
         }
         ModUpdateState::Unlinked
-        | ModUpdateState::MissingSource
         | ModUpdateState::IgnoringUpdateOnce
         | ModUpdateState::IgnoringUpdateAlways => {
             source.ignored_update_signature = None;
+        }
+        ModUpdateState::MissingSource => {
+            if !preserve_unresolved_ignore {
+                source.ignored_update_signature = None;
+            }
         }
         ModUpdateState::ModifiedLocally => {}
     }
@@ -3531,7 +3593,9 @@ fn apply_ignored_update_override_with_signature(
         .ignored_update_signature
         .as_ref()
         .is_some_and(|ignored| {
-            !ignored.prearmed_next_update && current_signature.as_ref() != Some(ignored)
+            !ignored.prearmed_next_update
+                && !preserve_unresolved_ignore
+                && current_signature.as_ref() != Some(ignored)
         })
     {
         source.ignored_update_signature = None;
@@ -3754,15 +3818,22 @@ impl HestiaApp {
         if self.library_card_cache.evidence_key == Some(cache_key) {
             return;
         }
-        self.library_card_cache.evidence = build_cached_update_evidence(&self.state.mods, None);
+        let mut evidence = build_cached_update_evidence(&self.state.mods, None);
+        self.overlay_thalia_update_evidence(&mut evidence);
+        self.library_card_cache.evidence = evidence;
         self.library_card_cache.evidence_key = Some(cache_key);
     }
 
     /// Matching evidence is independent of search, sorting, grouping, and
     /// other card presentation choices. Keep those inputs out of this key so
-    /// typing a search query does not rescore every peer group.
+    /// typing a search query does not rescore every peer group. The transient
+    /// Thalia result fingerprint is included so a completed recommendation
+    /// invalidates the cached card evidence without touching persisted state.
     fn grouped_update_evidence_cache_key(&self) -> u64 {
-        Self::grouped_update_evidence_cache_key_for_mods(&self.state.mods)
+        let mut hasher = DefaultHasher::new();
+        Self::grouped_update_evidence_cache_key_for_mods(&self.state.mods).hash(&mut hasher);
+        self.thalia_evidence_fingerprint().hash(&mut hasher);
+        hasher.finish()
     }
 
     fn grouped_update_evidence_cache_key_for_mods(mods: &[ModEntry]) -> u64 {
@@ -3787,8 +3858,9 @@ impl HestiaApp {
                 return Some(evidence.clone());
             }
         }
-        build_cached_update_evidence(&self.state.mods, Some(&mod_entry.game_id))
-            .remove(&mod_entry.id)
+        let mut evidence = build_cached_update_evidence(&self.state.mods, Some(&mod_entry.game_id));
+        self.overlay_thalia_update_evidence(&mut evidence);
+        evidence.remove(&mod_entry.id)
     }
 
     fn cached_grouped_signature_for_mod(
@@ -4164,6 +4236,19 @@ impl HestiaApp {
         target_game_id: Option<&str>,
         force: bool,
     ) {
+        if force {
+            let force_games = target_game_id
+                .map(|game_id| vec![game_id.to_string()])
+                .unwrap_or_else(|| {
+                    self.state
+                        .mods
+                        .iter()
+                        .map(|mod_entry| mod_entry.game_id.clone())
+                        .collect()
+                });
+            self.thalia_matching
+                .mark_force_refresh_for_games(force_games);
+        }
         if self.folder_batch_job.is_some()
             || target_game_id.is_some_and(|game_id| self.folder_batch_game_busy(game_id))
         {
@@ -4342,6 +4427,12 @@ impl HestiaApp {
             self.save_state();
         }
         self.dispatch_update_check_items(items);
+        if !allow_network {
+            let game_ids: HashSet<String> = target_game_id
+                .map(|game_id| [game_id.to_string()].into_iter().collect())
+                .unwrap_or_else(|| self.state.mods.iter().map(|mod_entry| mod_entry.game_id.clone()).collect());
+            self.schedule_thalia_matching_for_games(&game_ids);
+        }
     }
 
     fn consume_update_check_results(&mut self) {
@@ -4358,6 +4449,7 @@ impl HestiaApp {
                 .iter()
                 .map(|(_, game_id, _, _, _, _)| game_id.clone())
                 .collect();
+            let thalia_game_ids = checked_game_ids.clone();
             self.update_check_active_items.clear();
             let mut warn_lines: Vec<String> = Vec::new();
             let mut auto_update_ids: Vec<String> = Vec::new();
@@ -4599,6 +4691,12 @@ impl HestiaApp {
                     .collect();
                 self.dispatch_update_check_items(items);
             }
+            let force_games: HashSet<String> = thalia_game_ids
+                .iter()
+                .filter(|game_id| self.thalia_matching.take_force_refresh_for_game(game_id))
+                .cloned()
+                .collect();
+            self.schedule_thalia_matching_for_games_with_force(&thalia_game_ids, &force_games);
         }
     }
 
@@ -4622,6 +4720,24 @@ impl HestiaApp {
                 .and_then(|meta| meta.update_target_mod_id.as_deref())
                 == Some(mod_entry_id)
         })
+    }
+
+    fn has_active_update_for_mod(&self, mod_entry: &ModEntry) -> bool {
+        let update_title = self.text().updating_task(
+            mod_entry.metadata.user.title.as_ref().unwrap_or(&mod_entry.folder_name),
+        );
+        self.pending_update_finalization_for_mod(&mod_entry.id)
+            || self.browse_state.pending_installs.iter().any(|pending| {
+                pending.update_target_id.as_deref() == Some(mod_entry.id.as_str())
+                    && pending.game_id == mod_entry.game_id
+            })
+            || self.pending_browse_install_meta.values().any(|meta| {
+                meta.update_target_mod_id.as_deref() == Some(mod_entry.id.as_str())
+                    && meta.game_id == mod_entry.game_id
+            })
+            || self.state.tasks.iter().any(|task| {
+                update_task_targets_mod(task, mod_entry, &update_title)
+            })
     }
 
     fn should_auto_replace_update(&self, job_id: u64) -> bool {
@@ -6022,6 +6138,10 @@ impl HestiaApp {
 
     fn queue_update_apply(&mut self, mod_entry_id: &str) -> bool {
         let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == mod_entry_id).cloned() else { return false; };
+        if self.has_active_update_for_mod(&mod_entry) {
+            return false;
+        }
+        let thalia_plan = self.thalia_update_install_plan(mod_entry_id);
         if self
             .mod_action_lock_reason(&mod_entry, ModMutationKind::UpdateExisting)
             .is_some()
@@ -6059,6 +6179,7 @@ impl HestiaApp {
             mod_id,
             game_id,
             update_target_id: Some(mod_entry_id.to_string()),
+            thalia_plan,
             // Updates preserve the target state during finalization; staging
             // is still disabled so a failed refresh can never expose a new
             // active tree prematurely.
@@ -10545,6 +10666,98 @@ mod update_signature_tests {
             Some(&update_profile),
         );
 
+        assert_eq!(state, ModUpdateState::UpdateAvailable);
+        assert!(source.ignored_update_signature.is_none());
+    }
+
+    #[test]
+    fn unresolved_local_state_preserves_an_ignored_newer_file_from_catalog() {
+        let installed = mod_file(10, "installed.zip", 100);
+        let ignored = versioned_mod_file(20, "installed v2.zip", 200, "2");
+        let profile = profile(vec![installed.clone(), ignored.clone()], 200);
+        let file_set = fallback_file_set(&installed);
+        let ignored_signature = candidate_signature(vec![tracked_file_meta_from_mod_file(&ignored)]);
+        let mut source = ModSourceData {
+            file_set,
+            raw_profile_json: serde_json::to_string(&profile).ok(),
+            ignored_update_signature: ignored_signature,
+            ..Default::default()
+        };
+
+        let state = apply_ignored_update_override_with_signature(
+            &mut source,
+            ModUpdateState::UpToDate,
+            None,
+        );
+        assert_eq!(state, ModUpdateState::UpToDate);
+        assert!(source.ignored_update_signature.is_some());
+
+        let state = apply_ignored_update_override_with_signature(
+            &mut source,
+            ModUpdateState::MissingSource,
+            None,
+        );
+        assert_eq!(state, ModUpdateState::MissingSource);
+        assert!(source.ignored_update_signature.is_some());
+    }
+
+    #[test]
+    fn unresolved_local_state_clears_when_ignored_file_is_removed_or_changed() {
+        let installed = mod_file(10, "installed.zip", 100);
+        let ignored = versioned_mod_file(20, "installed v2.zip", 200, "2");
+        let file_set = fallback_file_set(&installed);
+        let ignored_signature = candidate_signature(vec![tracked_file_meta_from_mod_file(&ignored)]);
+
+        let removed_profile = profile(vec![installed.clone()], 200);
+        let mut removed_source = ModSourceData {
+            file_set: file_set.clone(),
+            raw_profile_json: serde_json::to_string(&removed_profile).ok(),
+            ignored_update_signature: ignored_signature.clone(),
+            ..Default::default()
+        };
+        apply_ignored_update_override_with_signature(
+            &mut removed_source,
+            ModUpdateState::MissingSource,
+            None,
+        );
+        assert!(removed_source.ignored_update_signature.is_none());
+
+        let changed = versioned_mod_file(20, "renamed.zip", 201, "3");
+        let changed_profile = profile(vec![installed, changed], 201);
+        let mut changed_source = ModSourceData {
+            file_set,
+            raw_profile_json: serde_json::to_string(&changed_profile).ok(),
+            ignored_update_signature: ignored_signature,
+            ..Default::default()
+        };
+        apply_ignored_update_override_with_signature(
+            &mut changed_source,
+            ModUpdateState::UpToDate,
+            None,
+        );
+        assert!(changed_source.ignored_update_signature.is_none());
+    }
+
+    #[test]
+    fn real_newer_local_signature_clears_an_ignored_ai_candidate() {
+        let installed = mod_file(10, "installed.zip", 100);
+        let ignored = versioned_mod_file(20, "installed v2.zip", 200, "2");
+        let newer = versioned_mod_file(30, "installed v3.zip", 300, "3");
+        let file_set = fallback_file_set(&installed);
+        let mut source = ModSourceData {
+            file_set,
+            ignored_update_signature: candidate_signature(vec![
+                tracked_file_meta_from_mod_file(&ignored),
+            ]),
+            ..Default::default()
+        };
+        let current = candidate_signature(vec![tracked_file_meta_from_mod_file(&newer)]);
+
+        let state = apply_ignored_update_override_with_signature(
+            &mut source,
+            ModUpdateState::UpdateAvailable,
+            current,
+        );
         assert_eq!(state, ModUpdateState::UpdateAvailable);
         assert!(source.ignored_update_signature.is_none());
     }

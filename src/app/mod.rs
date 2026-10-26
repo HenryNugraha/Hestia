@@ -34,7 +34,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     importing::{self, PreparedImport},
-    integrations::{gamebanana, profiles, unrealengine, xxmi, xxmi_persist},
+    integrations::{gamebanana, profiles, thalia, unrealengine, xxmi, xxmi_persist},
     model::{
         AcceptedLocalChanges, AfterInstallBehavior, AppFontStyle, AppLanguage, AppState,
         BrowseDownloadTaskFile, BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier,
@@ -137,6 +137,7 @@ impl eframe::App for HestiaApp {
             self.consume_proxy_apply_events();
             self.consume_feedback_survey_events();
             self.consume_update_check_results();
+            self.consume_thalia_matching_results();
             self.consume_startup_path_scan_events(ctx);
             self.consume_startup_scan_events();
             self.handle_translation_events();
@@ -351,6 +352,7 @@ impl eframe::App for HestiaApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.invalidate_thalia_matching();
         // Reload/hotkey sender threads are detached; make sure no synthetic key they
         // pressed outlives the process.
         crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();

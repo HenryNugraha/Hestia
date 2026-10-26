@@ -2198,6 +2198,7 @@ impl HestiaApp {
                     renamed_profiles,
                     warnings,
                 } => {
+                    self.invalidate_thalia_matching_for_game(&game_id);
                     self.profile_reconcile_inflight.remove(&game_id);
                     self.apply_profile_reconcile_result(
                         &game_id,
@@ -2231,6 +2232,14 @@ impl HestiaApp {
                     continue;
                 }
                 event => {
+                    let event_game_id = match &event {
+                        ProfileEvent::Completed { completed, .. } => {
+                            Some(completed.game_id.clone())
+                        }
+                        ProfileEvent::Failed { game_id, .. } => Some(game_id.clone()),
+                        ProfileEvent::Canceled { .. } => None,
+                        _ => continue,
+                    };
                     let event_id = match &event {
                         ProfileEvent::Completed { operation_id, .. }
                         | ProfileEvent::Failed { operation_id, .. }
@@ -2254,6 +2263,9 @@ impl HestiaApp {
                     let Some(inflight) = self.profile_operation_inflight.take() else {
                         continue;
                     };
+                    if let Some(game_id) = event_game_id {
+                        self.invalidate_thalia_matching_for_game(&game_id);
+                    }
                     let was_recovery = inflight.kind == ProfileOperationKind::Recover;
                     let recovery_blocked_game = match &event {
                         ProfileEvent::Failed {

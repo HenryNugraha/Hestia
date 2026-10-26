@@ -16,6 +16,16 @@ fn browse_detail_attempt_is_recent(attempted_at: Option<Instant>, now: Instant) 
         .is_some_and(|age| age < BROWSE_PROFILE_RETRY_COOLDOWN)
 }
 
+fn thalia_merge_recommendation_id(
+    recommendation: Option<&ThaliaRecommendation>,
+    review_files: &[gamebanana::ModFile],
+) -> Option<u64> {
+    let recommendation = recommendation?;
+    (recommendation.action == ThaliaRecommendationAction::Merge)
+        .then_some(recommendation.id?)
+        .filter(|id| review_files.iter().any(|file| file.id == *id))
+}
+
 fn browse_selected_files_for_queued_download(
     file: &gamebanana::ModFile,
     selected_files: &[gamebanana::ModFile],
@@ -1437,6 +1447,17 @@ impl HestiaApp {
                 .then_with(|| right.id.cmp(&left.id))
         });
 
+        // A confirmed Thalia merge is still a file-review decision. Keep the
+        // factual blue notice and the full candidate list visible, but make
+        // the recommended patch the selected file and preserve Merge as the
+        // default action. Any stale, missing, or non-merge answer is ignored;
+        // the normal blue picker remains the fallback.
+        let recommendation =
+            self.thalia_recommendation_for_profile(&pending.mod_entry_id, &canonical_profile);
+        let recommended_merge_id =
+            thalia_merge_recommendation_id(recommendation.as_ref(), &review_files);
+        let recommended_action = recommended_merge_id.map(|_| FileReviewAction::InstallMerge);
+
         let evidence = self.cached_grouped_evidence_for_mod(&target);
         let dismissible_file_ids = evidence
             .as_ref()
@@ -1478,9 +1499,9 @@ impl HestiaApp {
             game_id: target.game_id,
             files: review_files
                 .into_iter()
-                .map(|file| BrowseSelectableFile {
-                    file,
-                    selected: false,
+                .map(|file| {
+                    let selected = recommended_merge_id == Some(file.id);
+                    BrowseSelectableFile { file, selected }
                 })
                 .collect(),
             update_folder_name: Some(target.folder_name.clone()),
@@ -1491,6 +1512,7 @@ impl HestiaApp {
             install_state: ModInstallState::Auto,
             preserve_existing_state: true,
             file_review: Some(FileReviewContext {
+                recommended_action,
                 installed_files,
                 newer_file_ids: newer_file_ids.into_iter().collect(),
                 dismissible_file_ids,
@@ -2766,6 +2788,20 @@ impl HestiaApp {
             return;
         }
         if let Some(existing_mod) = existing_mod {
+            // A queued AI plan is tied to the exact mod recipe, root, source,
+            // and active profile it observed. Revalidate that identity before
+            // the local matcher can win; otherwise a target changed while
+            // the detail request was in flight could update the wrong tree.
+            if let Some(plan) = pending.thalia_plan.as_ref()
+                && !plan.matches_target(
+                    &existing_mod,
+                    self.active_profile_id(&existing_mod.game_id),
+                )
+            {
+                self.remove_task(pending.task_id);
+                self.open_mod_file_review(&existing_mod.id);
+                return;
+            }
             let existing_is_tool = existing_mod
                 .source
                 .as_ref()
@@ -2810,6 +2846,73 @@ impl HestiaApp {
                 let evaluation_state = target_index
                     .and_then(|idx| evaluations.get(idx))
                     .map(|evaluation| evaluation.state);
+
+                // The local matcher remains authoritative whenever it found
+                // a replacement. A Thalia plan is considered only for a
+                // genuinely unresolved target, and its file ID is validated
+                // against this freshly loaded active profile before any
+                // download is queued.
+                let validated_thalia_file = pending.thalia_plan.as_ref().and_then(|plan| {
+                    self.validate_thalia_install_plan(plan, &existing_mod, &detail.profile)
+                });
+                if pending.thalia_plan.is_some()
+                    && evaluation_state != Some(ModUpdateState::UpdateAvailable)
+                    && update_files.is_empty()
+                {
+                    if let Some(file) = validated_thalia_file {
+                        let (update_folder_name, post_install_rename_to) =
+                            self.prepare_browse_update_folder_name(
+                                pending.update_target_id.as_deref(),
+                                update_folder_name.clone(),
+                                preferred_update_folder_name.as_deref(),
+                            );
+                        if !Self::should_show_local_change_update_prefs(&existing_mod) {
+                            self.queue_browse_download(
+                                pending.game_id.clone(),
+                                pending.mod_id,
+                                file.clone(),
+                                vec![file],
+                                Some(pending.task_id),
+                                detail.unsafe_content,
+                                update_folder_name,
+                                pending.update_target_id.clone(),
+                                pending.install_state,
+                                pending.preserve_existing_state,
+                                post_install_rename_to,
+                            );
+                        } else {
+                            self.remove_task(pending.task_id);
+                            self.browse_state.file_prompt = Some(BrowseFilePrompt {
+                                mod_id: pending.mod_id,
+                                game_id: pending.game_id.clone(),
+                                files: selectable
+                                    .into_iter()
+                                    .map(|candidate| BrowseSelectableFile {
+                                        selected: candidate.id == file.id,
+                                        file: candidate,
+                                    })
+                                    .collect(),
+                                update_folder_name,
+                                update_target_mod_id: pending.update_target_id.clone(),
+                                post_install_rename_to,
+                                install_state: pending.install_state,
+                                preserve_existing_state: pending.preserve_existing_state,
+                                file_review: None,
+                            });
+                        }
+                        return;
+                    }
+
+                    // Do not fall through to the exact-installed-file branch:
+                    // an accepted AI plan that no longer validates must expose
+                    // the factual file picker instead of reinstalling the
+                    // currently installed archive.
+                    self.remove_task(pending.task_id);
+                    if let Some(target_id) = pending.update_target_id.as_deref() {
+                        self.open_mod_file_review(target_id);
+                    }
+                    return;
+                }
                 if tracked_update
                     && evaluation_state == Some(ModUpdateState::UpdateAvailable)
                     && update_files.is_empty()
@@ -3040,6 +3143,7 @@ impl HestiaApp {
             mod_id,
             game_id,
             update_target_id: None,
+            thalia_plan: None,
             install_state,
             preserve_existing_state,
         });
@@ -3052,7 +3156,7 @@ impl HestiaApp {
             .file_prompt
             .as_ref()
             .and_then(|prompt| prompt.file_review.as_ref())
-            .map(|_| FileReviewAction::Update);
+            .map(|review| review.recommended_action.unwrap_or(FileReviewAction::Update));
         self.confirm_browse_file_prompt_action(action);
     }
 
@@ -3247,6 +3351,30 @@ mod browse_file_prompt_tests {
             now,
         ));
         assert!(!browse_detail_attempt_is_recent(None, now));
+    }
+
+    #[test]
+    fn thalia_merge_recommendation_selects_only_a_present_candidate() {
+        let files = vec![mod_file(11, "patch.zip"), mod_file(12, "other.zip")];
+        let recommendation = ThaliaRecommendation {
+            action: ThaliaRecommendationAction::Merge,
+            id: Some(11),
+        };
+        assert_eq!(
+            thalia_merge_recommendation_id(Some(&recommendation), &files),
+            Some(11)
+        );
+
+        let stale = ThaliaRecommendation {
+            action: ThaliaRecommendationAction::Merge,
+            id: Some(99),
+        };
+        assert_eq!(thalia_merge_recommendation_id(Some(&stale), &files), None);
+        let update = ThaliaRecommendation {
+            action: ThaliaRecommendationAction::Update,
+            id: Some(11),
+        };
+        assert_eq!(thalia_merge_recommendation_id(Some(&update), &files), None);
     }
 
     fn browse_card(id: u64, unsafe_content: bool) -> BrowseCard {

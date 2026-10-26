@@ -312,6 +312,7 @@ impl HestiaApp {
             update_target_id: None,
             install_state: ModInstallState::Disabled,
             preserve_existing_state: false,
+            thalia_plan: None,
         });
         self.set_message_ok(self.text().resolving_download(&request.name));
     }

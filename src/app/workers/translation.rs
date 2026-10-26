@@ -1,5 +1,8 @@
-use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
+
+use crate::integrations::thalia::{
+    AltchaVerification, fetch_altcha_challenge, solve_altcha_challenge_foreground,
+};
 
 pub(crate) enum TranslationRequest {
     GameBanana {
@@ -37,46 +40,11 @@ pub(crate) enum TranslationEvent {
     },
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-struct AltchaChallenge {
-    parameters: AltchaParameters,
-    signature: String,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AltchaParameters {
-    algorithm: String,
-    cost: u32,
-    expires_at: i64,
-    key_length: u32,
-    key_prefix: String,
-    key_signature: String,
-    memory_cost: u32,
-    nonce: String,
-    parallelism: u32,
-    salt: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AltchaSolution {
-    counter: u32,
-    derived_key: String,
-    time: f64,
-}
-
 #[derive(Serialize)]
 struct TranslationPayload<'a> {
     text: &'a str,
     target_lang: &'a str,
     verification: AltchaVerification,
-}
-
-#[derive(Serialize)]
-struct AltchaVerification {
-    challenge: AltchaChallenge,
-    solution: AltchaSolution,
 }
 
 #[derive(Deserialize)]
@@ -207,25 +175,16 @@ async fn fetch_unlinked_text_translation(
         }
     }
 
-    let challenge = client
-        .get("https://thalia.hnawc.com/auth")
-        .send()
+    let challenge = fetch_altcha_challenge(client)
         .await
-        .context("failed to request Altcha challenge")?
-        .error_for_status()
-        .context("Altcha challenge request failed")?
-        .json::<AltchaChallenge>()
-        .await
-        .context("failed to parse Altcha challenge")?;
+        .context("failed to obtain Altcha challenge")?;
     ensure_translation_not_cancelled(&cancellation)?;
 
     let challenge_for_solver = challenge.clone();
     let cancellation_for_solver = Arc::clone(&cancellation);
-    let solution = tokio::task::spawn_blocking(move || {
-        solve_altcha_challenge(&challenge_for_solver, &cancellation_for_solver)
-    })
-    .await
-    .context("Altcha solver task failed")??;
+    let solution = solve_altcha_challenge_foreground(challenge_for_solver, cancellation_for_solver)
+        .await
+        .context("Altcha solver task failed")?;
     ensure_translation_not_cancelled(&cancellation)?;
     let response = client
         .post("https://thalia.hnawc.com/translate")
@@ -258,132 +217,11 @@ async fn fetch_unlinked_text_translation(
     Ok(response.translation)
 }
 
-fn solve_altcha_challenge(
-    challenge: &AltchaChallenge,
-    cancellation: &AtomicBool,
-) -> Result<AltchaSolution> {
-    let params = &challenge.parameters;
-    if !params.algorithm.eq_ignore_ascii_case("argon2id") {
-        bail!("unsupported Altcha algorithm: {}", params.algorithm);
-    }
-    if !(2..=8).contains(&params.cost) || params.memory_cost < 131_072 || params.parallelism == 0 {
-        bail!("Altcha challenge parameters are not acceptable");
-    }
-    let nonce = decode_hex(&params.nonce).context("invalid Altcha nonce")?;
-    let salt = decode_hex(&params.salt).context("invalid Altcha salt")?;
-    let prefix = decode_hex(&params.key_prefix).context("invalid Altcha key prefix")?;
-    let output_len = usize::try_from(params.key_length).context("invalid Altcha key length")?;
-    let argon_params = Params::new(
-        params.memory_cost,
-        params.cost,
-        params.parallelism,
-        Some(output_len),
-    )
-    .map_err(|err| anyhow!("invalid Altcha Argon2 parameters: {err}"))?;
-    let start = Instant::now();
-    let solved = Arc::new(AtomicBool::new(false));
-    let solution = Arc::new(Mutex::new(None));
-    let failure = Arc::new(Mutex::new(None));
-
-    std::thread::scope(|scope| {
-        for lane in 0..ALTCHA_POW_WORKERS {
-            let nonce = &nonce;
-            let salt = &salt;
-            let prefix = &prefix;
-            let solved = Arc::clone(&solved);
-            let solution = Arc::clone(&solution);
-            let failure = Arc::clone(&failure);
-            let argon_params = argon_params.clone();
-            scope.spawn(move || {
-                let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
-                let mut counter = 16_u32 + lane;
-                while !solved.load(Ordering::Relaxed) && !cancellation.load(Ordering::Relaxed) {
-                    if start.elapsed() > Duration::from_secs(90) {
-                        solved.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    let mut password = Vec::with_capacity(nonce.len() + 4);
-                    password.extend_from_slice(nonce);
-                    password.extend_from_slice(&counter.to_be_bytes());
-                    let mut derived_key = vec![0_u8; output_len];
-                    if let Err(err) = argon2.hash_password_into(&password, salt, &mut derived_key) {
-                        *failure.lock().expect("Altcha failure lock poisoned") =
-                            Some(anyhow!("Altcha Argon2 derivation failed: {err}"));
-                        solved.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    if derived_key.starts_with(prefix) {
-                        if !solved.swap(true, Ordering::Relaxed) {
-                            *solution.lock().expect("Altcha solution lock poisoned") =
-                                Some(AltchaSolution {
-                                    counter,
-                                    derived_key: encode_hex(&derived_key),
-                                    time: start.elapsed().as_secs_f64() * 1000.0,
-                                });
-                        }
-                        break;
-                    }
-                    let Some(next_counter) = counter.checked_add(ALTCHA_POW_WORKERS) else {
-                        *failure.lock().expect("Altcha failure lock poisoned") =
-                            Some(anyhow!("Altcha counter overflow"));
-                        solved.store(true, Ordering::Relaxed);
-                        break;
-                    };
-                    counter = next_counter;
-                }
-            });
-        }
-    });
-
-    if let Some(solution) = solution
-        .lock()
-        .expect("Altcha solution lock poisoned")
-        .take()
-    {
-        return Ok(solution);
-    }
-    if cancellation.load(Ordering::Relaxed) {
-        bail!("translation cancelled");
-    }
-    if let Some(err) = failure.lock().expect("Altcha failure lock poisoned").take() {
-        return Err(err);
-    }
-    bail!("Altcha challenge solver timed out")
-}
-
 fn ensure_translation_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
     if cancellation.load(Ordering::Relaxed) {
         bail!("translation cancelled");
     }
     Ok(())
-}
-
-fn decode_hex(value: &str) -> Result<Vec<u8>> {
-    if value.len() % 2 != 0 {
-        bail!("hex value has an odd length");
-    }
-    value
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let hi = (pair[0] as char)
-                .to_digit(16)
-                .context("invalid hex digit")?;
-            let lo = (pair[1] as char)
-                .to_digit(16)
-                .context("invalid hex digit")?;
-            Ok(((hi << 4) | lo) as u8)
-        })
-        .collect()
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }
 
 fn translation_cache_key(mod_id: u64, lang: &str, source_hash: &str) -> String {

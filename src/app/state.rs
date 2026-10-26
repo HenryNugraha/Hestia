@@ -641,6 +641,7 @@ pub struct HestiaApp {
     update_check_active_items: Vec<UpdateCheckItem>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
+    thalia_matching: ThaliaMatchingState,
     refresh_request_tx: WorkerTx<RefreshRequest>,
     refresh_result_rx: WorkerRx<RefreshEvent>,
     refresh_inflight: bool,
@@ -917,6 +918,7 @@ struct PendingBrowseInstall {
     update_target_id: Option<String>,
     install_state: ModInstallState,
     preserve_existing_state: bool,
+    thalia_plan: Option<ThaliaInstallPlan>,
 }
 
 #[derive(Clone)]
@@ -930,6 +932,7 @@ struct PendingModFileReview {
 
 #[derive(Clone)]
 struct FileReviewContext {
+    recommended_action: Option<FileReviewAction>,
     installed_files: Vec<TrackedFileMeta>,
     newer_file_ids: Vec<u64>,
     dismissible_file_ids: Vec<u64>,

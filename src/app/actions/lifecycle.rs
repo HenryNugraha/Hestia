@@ -394,6 +394,7 @@ impl HestiaApp {
             None => "OpenGL",
         };
         let boot_renderer_pref = state.static_prefs.renderer;
+        let thalia_matching = ThaliaMatchingState::new(&runtime_services);
         let mut app = Self {
             runtime_services,
             portable,
@@ -643,6 +644,7 @@ impl HestiaApp {
             update_check_active_items: Vec::new(),
             pending_update_check_game: None,
             pending_update_check_mods: HashSet::new(),
+            thalia_matching,
             refresh_request_tx,
             refresh_result_rx,
             refresh_inflight: false,
@@ -1122,6 +1124,7 @@ impl HestiaApp {
         }
 
         self.restart_active_translations_for_proxy_change();
+        self.invalidate_thalia_matching();
         self.restart_active_update_check_for_proxy_change();
         if let (Some(cancel), Some(request)) = (
             self.feedback_survey_cancellation.as_ref(),
@@ -2400,6 +2403,11 @@ impl HestiaApp {
     fn library_card_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
+        // Thalia recommendations are transient grouped evidence. Include its
+        // fingerprint so a completed or expired recommendation rebuilds the
+        // card rows and left-pane status from the same evidence used by the
+        // mod detail view.
+        self.thalia_evidence_fingerprint().hash(&mut hasher);
         self.selected_game.hash(&mut hasher);
         self.mods_search_query.hash(&mut hasher);
         self.show_enabled_mods.hash(&mut hasher);
@@ -2648,7 +2656,8 @@ impl HestiaApp {
             return self.mods_for_selected_game_with_evidence(&self.library_card_cache.evidence);
         }
         let game_id = self.selected_game().map(|game| game.definition.id.as_str());
-        let evidence = build_cached_update_evidence(&self.state.mods, game_id);
+        let mut evidence = build_cached_update_evidence(&self.state.mods, game_id);
+        self.overlay_thalia_update_evidence(&mut evidence);
         self.mods_for_selected_game_with_evidence(&evidence)
     }
 
@@ -4003,6 +4012,7 @@ impl HestiaApp {
         self.enqueue_cover_preload();
 
         if previous_game_id.as_deref() != Some(game_id.as_str()) {
+            self.invalidate_thalia_matching();
             self.clear_library_folder_selection();
             self.library_folder_selection_context = None;
             self.selected_category_folder_id = None;
@@ -4094,6 +4104,7 @@ impl HestiaApp {
             || !self.proxy_apply_rx.is_empty()
             || !self.feedback_survey_submit_rx.is_empty()
             || !self.update_check_rx.is_empty()
+            || self.thalia_matching.has_pending_results()
             || !self.startup_path_scan_rx.is_empty()
             || !self.startup_scan_rx.is_empty()
             || !self.translation_event_rx.is_empty()

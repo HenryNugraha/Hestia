@@ -11,6 +11,7 @@ include!("tasks.rs");
 include!("tools.rs");
 include!("translation.rs");
 include!("updates.rs");
+include!("thalia_matching.rs");
 include!("app_update.rs");
 include!("profiles.rs");
 include!("game_overlay.rs");
