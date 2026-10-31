@@ -1441,8 +1441,51 @@ impl HestiaApp {
         }
 
         let canonical_profile = matcher_adapter::canonicalize_profile(&detail.profile).profile;
+        let evidence = self.cached_grouped_evidence_for_mod(&target);
+        // Files other mods from this page have stay in the list, tagged with
+        // that mod's name instead of New.
+        let other_mods_files: HashSet<u64> = evidence
+            .iter()
+            .flat_map(|evidence| evidence.other_mods_files.iter().copied())
+            .collect();
+        let mut other_mod_titles: Vec<(u64, String)> = Vec::new();
+        for peer in self
+            .state
+            .mods
+            .iter()
+            .filter(|peer| peer.id != target.id && peer.game_id == target.game_id)
+        {
+            let Some(peer_source) = peer.source.as_ref() else {
+                continue;
+            };
+            let same_page = peer_source.gamebanana.as_ref().is_some_and(|link| {
+                link.mod_id == pending.gb_id
+                    && gamebanana::is_tool_url(&link.url) == pending.is_tool
+            });
+            if !same_page {
+                continue;
+            }
+            let title = peer
+                .metadata
+                .user
+                .title
+                .as_ref()
+                .unwrap_or(&peer.folder_name);
+            for id in installed_file_ids(&peer_source.file_set) {
+                if !other_mod_titles.iter().any(|(known, _)| *known == id) {
+                    other_mod_titles.push((id, title.clone()));
+                }
+            }
+        }
         let factual_newer_files = available_newer_files(&source.file_set, &canonical_profile);
-        let newer_file_ids: HashSet<u64> = factual_newer_files.iter().map(|file| file.id).collect();
+        let newer_file_ids: HashSet<u64> = factual_newer_files
+            .iter()
+            .map(|file| file.id)
+            .filter(|id| {
+                !other_mods_files.contains(id)
+                    && !other_mod_titles.iter().any(|(known, _)| known == id)
+            })
+            .collect();
         let mut review_files: Vec<_> = canonical_profile
             .files
             .iter()
@@ -1472,7 +1515,6 @@ impl HestiaApp {
             thalia_merge_recommendation_id(recommendation.as_ref(), &review_files);
         let recommended_action = recommended_merge_id.map(|_| FileReviewAction::InstallMerge);
 
-        let evidence = self.cached_grouped_evidence_for_mod(&target);
         let dismissible_file_ids = evidence
             .as_ref()
             .filter(|evidence| {
@@ -1529,6 +1571,7 @@ impl HestiaApp {
                 recommended_action,
                 installed_files,
                 newer_file_ids: newer_file_ids.into_iter().collect(),
+                other_mod_titles,
                 dismissible_file_ids,
                 expected_file_set: source.file_set.clone(),
                 target_root_path: target.root_path,
@@ -2657,16 +2700,6 @@ impl HestiaApp {
                         .pending_browse_install_meta
                         .get(&task_id)
                         .map(|meta| meta.game_id.clone());
-                    let gb_profile =
-                        if let Some(meta) = self.pending_browse_install_meta.get(&task_id) {
-                            self.browse_state
-                                .details
-                                .get(&meta.mod_id)
-                                .map(|d| Box::new(d.profile.clone()))
-                        } else {
-                            None
-                        }
-                        .or_else(|| self.retry_profile_for_task(task_id));
                     match self
                         .write_cached_download_to_temp_archive(task_id, &cache_key, &file_name)
                     {
@@ -2694,7 +2727,6 @@ impl HestiaApp {
                                 game_id,
                                 title,
                                 ImportSource::Archive(temp_archive),
-                                gb_profile,
                             );
                         }
                         Err(err) => {
@@ -3566,7 +3598,6 @@ impl HestiaApp {
                 game_id.clone(),
                 title,
                 ImportSource::Folder(folder.source),
-                None,
             );
         }
     }

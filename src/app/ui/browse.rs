@@ -2640,6 +2640,11 @@ impl HestiaApp {
             .as_ref()
             .map(|review| review.newer_file_ids.clone())
             .unwrap_or_default();
+        let other_mod_titles = prompt
+            .file_review
+            .as_ref()
+            .map(|review| review.other_mod_titles.clone())
+            .unwrap_or_default();
         let dismissible_file_ids = prompt
             .file_review
             .as_ref()
@@ -2837,7 +2842,22 @@ impl HestiaApp {
                                                         ui,
                                                         bold(&display_file.file_name, None),
                                                     );
-                                                    if review_mode
+                                                    let other_mod_title = other_mod_titles
+                                                        .iter()
+                                                        .find(|(id, _)| *id == file_entry.file.id)
+                                                        .map(|(_, title)| title.as_str());
+                                                    if let Some(title) =
+                                                        other_mod_title.filter(|_| review_mode)
+                                                    {
+                                                        static_label(
+                                                            ui,
+                                                            RichText::new(
+                                                                text.file_in_other_mod(title),
+                                                            )
+                                                            .size(10.5)
+                                                            .color(ui.visuals().weak_text_color()),
+                                                        );
+                                                    } else if review_mode
                                                         && newer_file_ids
                                                             .contains(&file_entry.file.id)
                                                     {

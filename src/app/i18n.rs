@@ -1011,10 +1011,11 @@ pub(crate) enum TextKey {
     ThaliaRequiredCopyKept,
     ThaliaBundleClash,
     ThaliaBundleTargetChanged,
+    FileInOtherMod,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::ThaliaBundleTargetChanged as usize + 1;
+    const COUNT: usize = Self::FileInOtherMod as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2219,6 +2220,10 @@ impl TextCatalog {
         self.get(TextKey::ThaliaBundleClash)
             .replace("{title}", title)
             .replace("{path}", path)
+    }
+
+    fn file_in_other_mod(self, title: &str) -> String {
+        self.get(TextKey::FileInOtherMod).replace("{title}", title)
     }
 
     fn thalia_bundle_target_changed(self, title: &str) -> String {

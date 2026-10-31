@@ -248,6 +248,9 @@ struct CachedUpdateEvidence {
     /// the smart matcher result: it is a passive availability signal only.
     newer_files: Vec<gamebanana::ModFile>,
     installed_files: Vec<TrackedFileMeta>,
+    /// Files other mods from the same page have, or will have once their
+    /// pending update installs.  They are kept out of `newer_files`.
+    other_mods_files: Vec<u64>,
     /// One immutable profile is shared by all cached peers in a GameBanana
     /// group so file review and matching inspect the same catalog.
     profile: Option<Arc<gamebanana::ProfileResponse>>,
@@ -981,6 +984,8 @@ struct FileReviewContext {
     recommended_action: Option<FileReviewAction>,
     installed_files: Vec<TrackedFileMeta>,
     newer_file_ids: Vec<u64>,
+    /// Listed files another mod from this page has, with that mod's name.
+    other_mod_titles: Vec<(u64, String)>,
     dismissible_file_ids: Vec<u64>,
     expected_file_set: FileSetRecipe,
     target_root_path: PathBuf,

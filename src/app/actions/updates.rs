@@ -371,6 +371,31 @@ fn available_newer_files(
     newer
 }
 
+/// The file ids a linked mod has installed.
+fn installed_file_ids(file_set: &FileSetRecipe) -> impl Iterator<Item = u64> + '_ {
+    file_set
+        .selected_file_ids
+        .iter()
+        .copied()
+        .chain(file_set.selected_files_meta.iter().map(|file| file.file_id))
+        .filter(|id| *id != 0)
+}
+
+/// The files a mod has, plus those its pending update would install.
+fn claimed_file_ids(
+    file_set: &FileSetRecipe,
+    pending_update: Option<&IgnoredUpdateSignature>,
+) -> HashSet<u64> {
+    installed_file_ids(file_set)
+        .chain(
+            pending_update
+                .into_iter()
+                .flat_map(|signature| signature.files.iter().map(|file| file.file_id))
+                .filter(|id| *id != 0),
+        )
+        .collect()
+}
+
 fn all_profile_files(profile: &gamebanana::ProfileResponse) -> Vec<&gamebanana::ModFile> {
     profile
         .files
@@ -3359,6 +3384,7 @@ fn build_cached_update_evidence(
                         prearmed_signature: None,
                         newer_files: Vec::new(),
                         installed_files: Vec::new(),
+                        other_mods_files: Vec::new(),
                         profile: None,
                         profile_cached_at: None,
                         thalia_pending: false,
@@ -3383,7 +3409,28 @@ fn build_cached_update_evidence(
             })
             .collect();
         let evaluations = evaluate_file_set_update_group(&group_items, &profile);
-        for (mod_entry, evaluation) in group.iter().zip(evaluations) {
+        let claims: Vec<HashSet<u64>> = group
+            .iter()
+            .zip(&evaluations)
+            .map(|(mod_entry, evaluation)| {
+                let source = mod_entry.source.as_ref().expect("group source");
+                let pending = (evaluation.state == ModUpdateState::UpdateAvailable)
+                    .then_some(evaluation.signature.as_ref())
+                    .flatten();
+                claimed_file_ids(&source.file_set, pending)
+            })
+            .collect();
+        for (index, (mod_entry, evaluation)) in group.iter().zip(evaluations).enumerate() {
+            // A file another mod of this page has, or is about to get, is not
+            // news for this one.
+            let mut other_mods_files: Vec<u64> = claims
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != index)
+                .flat_map(|(_, ids)| ids.iter().copied())
+                .collect();
+            other_mods_files.sort_unstable();
+            other_mods_files.dedup();
             evidence.insert(
                 mod_entry.id.clone(),
                 CachedUpdateEvidence {
@@ -3404,7 +3451,10 @@ fn build_cached_update_evidence(
                                 .collect();
                             available_newer_files(&source.file_set, &profile)
                                 .into_iter()
-                                .filter(|file| !dismissed.contains(&file.id))
+                                .filter(|file| {
+                                    !dismissed.contains(&file.id)
+                                        && other_mods_files.binary_search(&file.id).is_err()
+                                })
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -3415,6 +3465,7 @@ fn build_cached_update_evidence(
                             known_installed_files_for_newer_notice(&source.file_set, &profile)
                         })
                         .unwrap_or_default(),
+                    other_mods_files,
                     profile: Some(Arc::clone(&profile)),
                     profile_cached_at,
                     thalia_pending: false,
@@ -6882,6 +6933,67 @@ mod update_signature_tests {
         assert!(available_newer_files(&fallback_file_set(&ambiguous.files[0]), &ambiguous).is_empty());
     }
 
+    /// Mod 728709: the main file was installed as one mod and a small extra
+    /// as another.  The main file is newer than the extra, but it is not news
+    /// for the extra's mod, while a truly new file still is.
+    #[test]
+    fn files_other_mods_of_the_page_have_are_not_newer_files() {
+        let extra = mod_file(10, "neonrookiefx.zip", 100);
+        let between = mod_file(30, "hair_addon.zip", 150);
+        let main = mod_file(20, "inkspirit.zip", 200);
+        let page = profile(vec![main.clone(), extra.clone()], 200);
+        let mut extra_mod = cached_mod_entry("extra", &page, Utc::now());
+        extra_mod.source.as_mut().expect("source").file_set = fallback_file_set(&extra);
+        let mut main_mod = cached_mod_entry("main", &page, Utc::now());
+        main_mod.source.as_mut().expect("source").file_set = fallback_file_set(&main);
+
+        let evidence = build_cached_update_evidence(&[extra_mod.clone(), main_mod.clone()], None);
+        let for_extra = &evidence["extra"];
+        assert!(for_extra.newer_files.is_empty());
+        assert_eq!(for_extra.other_mods_files, vec![20]);
+        assert_eq!(evidence["main"].other_mods_files, vec![10]);
+
+        let page = profile(vec![main.clone(), between.clone(), extra.clone()], 200);
+        for mod_entry in [&mut extra_mod, &mut main_mod] {
+            mod_entry.source.as_mut().expect("source").raw_profile_json =
+                serde_json::to_string(&page).ok();
+        }
+        let evidence = build_cached_update_evidence(&[extra_mod, main_mod.clone()], None);
+        let newer: Vec<u64> = evidence["extra"].newer_files.iter().map(|file| file.id).collect();
+        assert_eq!(newer, vec![30]);
+
+        // Alone on the page, the main file is news again.
+        let evidence = build_cached_update_evidence(
+            &[cached_mod_entry_with_file("extra", &page, &extra)],
+            None,
+        );
+        let newer: Vec<u64> = evidence["extra"].newer_files.iter().map(|file| file.id).collect();
+        assert_eq!(newer, vec![20, 30]);
+    }
+
+    #[test]
+    fn claimed_files_include_a_pending_update() {
+        let installed = fallback_file_set(&mod_file(10, "a.zip", 100));
+        let pending = IgnoredUpdateSignature {
+            files: vec![tracked_file_meta_from_mod_file(&mod_file(20, "b.zip", 200))],
+            ..Default::default()
+        };
+        let mut claimed: Vec<u64> = claimed_file_ids(&installed, Some(&pending)).into_iter().collect();
+        claimed.sort_unstable();
+        assert_eq!(claimed, vec![10, 20]);
+        assert_eq!(claimed_file_ids(&installed, None), HashSet::from([10]));
+    }
+
+    fn cached_mod_entry_with_file(
+        id: &str,
+        page: &gamebanana::ProfileResponse,
+        file: &gamebanana::ModFile,
+    ) -> ModEntry {
+        let mut mod_entry = cached_mod_entry(id, page, Utc::now());
+        mod_entry.source.as_mut().expect("source").file_set = fallback_file_set(file);
+        mod_entry
+    }
+
     #[test]
     fn newer_file_notice_respects_smart_precedence_and_ignore_always() {
         let source = mod_file(10, "old.zip", 100);
@@ -6894,6 +7006,7 @@ mod update_signature_tests {
             prearmed_signature: None,
             newer_files: vec![candidate.clone()],
             installed_files: vec![tracked_file_meta_from_mod_file(&source)],
+            other_mods_files: Vec::new(),
             profile: Some(Arc::new(profile.clone())),
             profile_cached_at: None,
             thalia_pending: false,

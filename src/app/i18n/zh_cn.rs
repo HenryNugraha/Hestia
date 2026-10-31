@@ -1018,4 +1018,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "{folder} 已在你的模组中，因此保留了现有副本。", // ThaliaRequiredCopyKept
     "{title} 未更新：它的两个文件会写入 {path}。没有任何更改。", // ThaliaBundleClash
     "{title} 在更新准备期间发生了变化，因此未更新。", // ThaliaBundleTargetChanged
+    "已在 {title} 中", // FileInOtherMod
 ];

@@ -1535,6 +1535,11 @@ impl HestiaApp {
         }
         peers.sort_unstable();
         peers.dedup();
+        // A file another mod of this page has is not an option for this one.
+        candidate_file_ids.retain(|id| peers.binary_search(id).is_err());
+        if candidate_file_ids.is_empty() {
+            return None;
+        }
         Some(ThaliaMatchContext {
             generation: self.thalia_matching.generation,
             request_id: 0,
@@ -1986,6 +1991,7 @@ mod thalia_matching_tests {
                 date_added: 10,
                 ..Default::default()
             }],
+            other_mods_files: Vec::new(),
             profile: Some(Arc::new(profile)),
             profile_cached_at: None,
             thalia_pending: false,

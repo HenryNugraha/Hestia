@@ -1018,4 +1018,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "{folder} is already in your mods, so the existing copy was kept.", // ThaliaRequiredCopyKept
     "{title} was not updated, two of its files would write {path}. Nothing was changed.", // ThaliaBundleClash
     "{title} changed while its update was getting ready, so it was not updated.", // ThaliaBundleTargetChanged
+    "In {title}", // FileInOtherMod
 ];

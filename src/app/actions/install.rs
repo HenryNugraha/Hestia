@@ -320,8 +320,14 @@ impl HestiaApp {
     }
 
     fn begin_import(&mut self, job: InstallJob) -> Result<()> {
+        // A slow download can outlive the Browse detail (a new search clears
+        // them all), so fall back to the profile the task saved when queued.
         let gb_profile = if let Some(meta) = self.pending_browse_install_meta.get(&job.id) {
-            self.browse_state.details.get(&meta.mod_id).map(|d| Box::new(d.profile.clone()))
+            self.browse_state
+                .details
+                .get(&meta.mod_id)
+                .map(|d| Box::new(d.profile.clone()))
+                .or_else(|| self.retry_profile_for_task(job.id))
         } else {
             None
         };
@@ -919,7 +925,6 @@ impl HestiaApp {
         game_id: String,
         title: String,
         source: ImportSource,
-        _gb_profile: Option<Box<gamebanana::ProfileResponse>>,
     ) {
         if !self.install_batch_active {
             self.install_batch_stats = InstallBatchStats::default();
