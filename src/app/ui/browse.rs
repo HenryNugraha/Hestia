@@ -3654,6 +3654,7 @@ mod browse_file_ui_tests {
             version: None,
             download_url: url.map(str::to_string),
             is_archived: false,
+            md5: None,
         }
     }
 

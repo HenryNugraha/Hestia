@@ -252,6 +252,10 @@ struct CachedUpdateEvidence {
     /// group so file review and matching inspect the same catalog.
     profile: Option<Arc<gamebanana::ProfileResponse>>,
     profile_cached_at: Option<DateTime<Utc>>,
+    /// Transient: a Thalia answer for this exact context is still on its way.
+    /// `newer_files` is held back meanwhile so the blue notice does not show
+    /// and then vanish once Thalia answers `current`.
+    thalia_pending: bool,
 }
 
 enum LogDisplayRow {
@@ -610,6 +614,16 @@ pub struct HestiaApp {
     proxy_requeue_browse_downloads: HashSet<u64>,
     pending_browse_install_safety: HashMap<u64, bool>,
     pending_browse_install_meta: HashMap<u64, PendingBrowseInstallMeta>,
+    thalia_install_bundles: Vec<ThaliaInstallBundle>,
+    /// Install jobs for files Thalia said go in their own folder. They are
+    /// named after the archive's folder, and an existing copy is kept.
+    thalia_separate_install_jobs: HashSet<u64>,
+    /// Bundle downloads canceled while still running. If one finishes
+    /// anyway, its archive is dropped instead of installed on its own.
+    thalia_canceled_bundle_tasks: HashSet<u64>,
+    /// What each combined bundle folder held when it was checked, so the
+    /// install refuses files changed afterwards.
+    thalia_bundle_manifests: HashMap<u64, Arc<importing::bundle::FolderManifest>>,
     gif_rewritten_markdown_cache: HashMap<String, String>,
     markdown_dependency_signature_cache: HashMap<String, (String, Instant)>,
     render_safe_markdown_cache: HashMap<String, String>,
@@ -919,6 +933,38 @@ struct PendingBrowseInstall {
     install_state: ModInstallState,
     preserve_existing_state: bool,
     thalia_plan: Option<ThaliaInstallPlan>,
+}
+
+/// An automatic Thalia update and the extra files it needs. Every download
+/// is held until all of them finished. Then all files are checked and the
+/// mod's folder is built once in a scratch folder (the update plus every file
+/// merged into it), so the mod itself is swapped in one step. Separate
+/// folders install first, the mod last. The first failure cancels whatever
+/// has not run yet. Bundles live in memory only; a restart drops them and
+/// their tasks cannot be retried one by one.
+struct ThaliaInstallBundle {
+    /// Install worker job that checks and combines the files.
+    key: u64,
+    title: String,
+    game_id: String,
+    /// Task IDs in install order. Merged files fold into the first folder
+    /// task once the files are combined.
+    members: Vec<u64>,
+    /// Members installed as their own mod.
+    separate: HashSet<u64>,
+    /// The update itself, when Thalia named a newer file.
+    main: Option<u64>,
+    /// The mod being updated and a fingerprint of its folder when the update
+    /// was queued. A change made in between stops the update.
+    target: Option<(String, Option<u64>)>,
+    /// Thalia's answer for the mod, refused when its files do not fit.
+    answer: Option<(String, ThaliaRecommendation)>,
+    downloaded: HashMap<u64, (String, String, PathBuf)>,
+    preparing: bool,
+    prepared_root: Option<PathBuf>,
+    target_changed: bool,
+    finished: HashSet<u64>,
+    installed_any: bool,
 }
 
 #[derive(Clone)]
@@ -1414,6 +1460,8 @@ struct BrowseDownloadJob {
     file_name: String,
     cache_limit_bytes: u64,
     total_size: Option<u64>,
+    /// GameBanana's MD5 of the file, when it lists one.
+    md5: Option<String>,
 }
 
 struct DownloadProgress {
@@ -1471,6 +1519,14 @@ enum InstallRequest {
         /// is necessary for this request.
         disabled_target_root: Option<PathBuf>,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
+        /// Files the staged copy must hold exactly, for a combined bundle.
+        expected_manifest: Option<Arc<importing::bundle::FolderManifest>>,
+    },
+    /// Checks and combines the downloaded files of one Thalia bundle.
+    PrepareThaliaBundle {
+        job_id: u64,
+        game_id: String,
+        parts: Vec<importing::bundle::BundlePart>,
     },
     SyncImages {
         job_id: u64,
@@ -1514,6 +1570,15 @@ enum InstallEvent {
     },
     InstallCanceled {
         job_id: u64,
+    },
+    ThaliaBundlePrepared {
+        job_id: u64,
+        root: PathBuf,
+        folders: Vec<importing::bundle::PreparedBundleFolder>,
+    },
+    ThaliaBundlePrepareFailed {
+        job_id: u64,
+        failure: importing::bundle::BundleFailure,
     },
     SyncImagesDone {
         _job_id: u64,

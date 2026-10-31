@@ -29,12 +29,15 @@ pub(crate) const THALIA_UPDATE_MATCHING_ENABLED: bool = true;
 const THALIA_UPDATE_MATCH_BASE_URL: &str = "https://thalia.hnawc.com";
 
 const THALIA_AUTH_URL: &str = "https://thalia.hnawc.com/auth";
-const UPDATE_MATCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Thalia's worst case is about 23 s: a full queue, then GameBanana and the
+/// model. A request given up on still uses quota, so wait it out.
+const UPDATE_MATCH_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const TEST_UPDATE_MATCH_TIMEOUT: Duration = Duration::from_millis(200);
 const RESPONSE_BODY_LIMIT: usize = 4 * 1024;
 const CHALLENGE_BODY_LIMIT: usize = 64 * 1024;
 const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+const REQUIRED_FILES_LIMIT: usize = 8;
 const ALTCHA_POW_WORKERS: u32 = 4;
 
 struct AltchaProofGate {
@@ -81,10 +84,27 @@ pub(crate) enum UpdateMatchAction {
     Uncertain,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How one extra file named in `requires` is installed: into the folder of
+/// the main file (the answer's `id`, or the installed file for `current`),
+/// or as its own mod.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum UpdateMatchRequiredAction {
+    Merge,
+    Separate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct UpdateMatchRequiredFile {
+    pub(crate) id: u64,
+    pub(crate) action: UpdateMatchRequiredAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UpdateMatchResponse {
     pub(crate) action: UpdateMatchAction,
     pub(crate) id: Option<u64>,
+    /// Missing on the wire means none.
+    pub(crate) requires: Vec<UpdateMatchRequiredFile>,
 }
 
 impl UpdateMatchResponse {
@@ -102,6 +122,22 @@ impl UpdateMatchResponse {
                 if self.id.is_some() {
                     return Err("current and uncertain require a null id".to_string());
                 }
+                // `current` may still need extra files for the installed one.
+                if self.action == UpdateMatchAction::Uncertain && !self.requires.is_empty() {
+                    return Err("uncertain requires no extra files".to_string());
+                }
+            }
+        }
+        if self.requires.len() > REQUIRED_FILES_LIMIT {
+            return Err("too many required files".to_string());
+        }
+        let mut seen = HashSet::new();
+        for required in &self.requires {
+            if required.id == 0 || required.id > JSON_SAFE_INTEGER_MAX {
+                return Err("required id must be a positive JSON-safe integer".to_string());
+            }
+            if Some(required.id) == self.id || !seen.insert(required.id) {
+                return Err("required ids must be unique and differ from id".to_string());
             }
         }
         Ok(())
@@ -138,6 +174,23 @@ impl UpdateMatchError {
 
     pub(crate) fn is_cancelled(&self) -> bool {
         matches!(self, Self::Cancelled)
+    }
+
+    /// Thalia is busy or this address is over its limit; the same request
+    /// may be sent again after `retry_after`.
+    pub(crate) fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::Http { status: 429, .. })
+    }
+
+    /// Asking again gets the same refusal until the mod's page changes.
+    pub(crate) fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::Http {
+                status: 400 | 404 | 422,
+                ..
+            }
+        )
     }
 }
 
@@ -590,7 +643,9 @@ async fn wait_for_cancellation(cancellation: &AtomicBool) {
     }
 }
 
-fn parse_update_match_response(body: &[u8]) -> Result<UpdateMatchResponse, UpdateMatchError> {
+pub(crate) fn parse_update_match_response(
+    body: &[u8],
+) -> Result<UpdateMatchResponse, UpdateMatchError> {
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let response = deserializer
         .deserialize_map(StrictResponseVisitor)
@@ -610,7 +665,7 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
     type Value = UpdateMatchResponse;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("an object with exactly action and id fields")
+        formatter.write_str("an object with action, file and optional requires fields")
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -619,14 +674,16 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
     {
         let mut keys = HashSet::new();
         let mut action = None;
-        let mut id = None;
+        let mut file = None;
+        let mut requires = None;
         while let Some(key) = map.next_key::<String>()? {
             if !keys.insert(key.clone()) {
                 return Err(de::Error::custom("duplicate response key"));
             }
             match key.as_str() {
                 "action" => action = Some(map.next_value::<String>()?),
-                "id" => id = Some(map.next_value::<Option<u64>>()?),
+                "file" => file = Some(map.next_value::<Option<u64>>()?),
+                "requires" => requires = Some(map.next_value::<Vec<StrictRequiredFile>>()?),
                 _ => {
                     let _ = map.next_value::<IgnoredAny>()?;
                     return Err(de::Error::custom("unknown response key"));
@@ -634,7 +691,7 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
             }
         }
         let action = action.ok_or_else(|| de::Error::custom("missing action"))?;
-        let id = id.ok_or_else(|| de::Error::custom("missing id"))?;
+        let file = file.ok_or_else(|| de::Error::custom("missing file"))?;
         let action = match action.as_str() {
             "update" => UpdateMatchAction::Update,
             "merge" => UpdateMatchAction::Merge,
@@ -642,7 +699,73 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
             "uncertain" => UpdateMatchAction::Uncertain,
             _ => return Err(de::Error::custom("unknown action")),
         };
-        Ok(UpdateMatchResponse { action, id })
+        let requires = requires
+            .unwrap_or_default()
+            .into_iter()
+            .map(|required| required.0)
+            .collect();
+        Ok(UpdateMatchResponse {
+            action,
+            id: file,
+            requires,
+        })
+    }
+}
+
+/// One `requires` entry, held to the same exact-shape rules as the response.
+struct StrictRequiredFile(UpdateMatchRequiredFile);
+
+impl<'de> Deserialize<'de> for StrictRequiredFile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(StrictRequiredFileVisitor)
+    }
+}
+
+struct StrictRequiredFileVisitor;
+
+impl<'de> Visitor<'de> for StrictRequiredFileVisitor {
+    type Value = StrictRequiredFile;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an object with exactly action and file fields")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut keys = HashSet::new();
+        let mut action = None;
+        let mut file = None;
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key.clone()) {
+                return Err(de::Error::custom("duplicate required file key"));
+            }
+            match key.as_str() {
+                "action" => action = Some(map.next_value::<String>()?),
+                "file" => file = Some(map.next_value::<u64>()?),
+                _ => {
+                    let _ = map.next_value::<IgnoredAny>()?;
+                    return Err(de::Error::custom("unknown required file key"));
+                }
+            }
+        }
+        let file = file.ok_or_else(|| de::Error::custom("missing required file"))?;
+        let action = match action
+            .ok_or_else(|| de::Error::custom("missing required file action"))?
+            .as_str()
+        {
+            "merge" => UpdateMatchRequiredAction::Merge,
+            "separate" => UpdateMatchRequiredAction::Separate,
+            _ => return Err(de::Error::custom("unknown required file action")),
+        };
+        Ok(StrictRequiredFile(UpdateMatchRequiredFile {
+            id: file,
+            action,
+        }))
     }
 }
 
@@ -659,45 +782,126 @@ mod tests {
 
     #[test]
     fn response_requires_exact_shape_and_rejects_duplicate_or_unknown_keys() {
-        let good = parse_update_match_response(br#"{"action":"update","id":123}"#).unwrap();
+        let good = parse_update_match_response(br#"{"action":"update","file":123}"#).unwrap();
         assert_eq!(good.action, UpdateMatchAction::Update);
         assert_eq!(good.id, Some(123));
         for body in [
-            br#"{"action":"current","id":null}"#.as_slice(),
-            br#"{"action":"uncertain","id":null}"#.as_slice(),
-            br#"{"action":"merge","id":123}"#.as_slice(),
-            br#"{"id":123,"action":"update"}"#.as_slice(),
+            br#"{"action":"current","file":null}"#.as_slice(),
+            br#"{"action":"uncertain","file":null}"#.as_slice(),
+            br#"{"action":"merge","file":123}"#.as_slice(),
+            br#"{"file":123,"action":"update"}"#.as_slice(),
         ] {
             assert!(parse_update_match_response(body).is_ok(), "{body:?}");
         }
 
         for body in [
             br#"{"action":"update"}"#.as_slice(),
-            br#"{"action":"update","id":123,"extra":null}"#.as_slice(),
-            br#"{"action":"update","id":123,"id":124}"#.as_slice(),
-            br#"{"action":"update","id":"123"}"#.as_slice(),
-            br#"{"action":"update","id":1.5}"#.as_slice(),
-            br#"{"action":"update","id":true}"#.as_slice(),
-            br#"{"action":"update","id":9007199254740992}"#.as_slice(),
-            br#"{"action":"update","id":-1}"#.as_slice(),
-            br#"{"action":"current","id":1}"#.as_slice(),
-            br#"{"action":"separate","id":null}"#.as_slice(),
-            br#"{"action":"update","id":NaN}"#.as_slice(),
-            br#"{"action":"update","id":Infinity}"#.as_slice(),
-            br#"{"action":"update","id":123} {"action":"merge","id":124}"#.as_slice(),
-            br#"[{"action":"update","id":123}]"#.as_slice(),
+            br#"{"action":"update","id":123}"#.as_slice(),
+            br#"{"action":"update","file":123,"extra":null}"#.as_slice(),
+            br#"{"action":"update","file":123,"file":124}"#.as_slice(),
+            br#"{"action":"update","file":"123"}"#.as_slice(),
+            br#"{"action":"update","file":1.5}"#.as_slice(),
+            br#"{"action":"update","file":true}"#.as_slice(),
+            br#"{"action":"update","file":9007199254740992}"#.as_slice(),
+            br#"{"action":"update","file":-1}"#.as_slice(),
+            br#"{"action":"current","file":1}"#.as_slice(),
+            br#"{"action":"separate","file":null}"#.as_slice(),
+            br#"{"action":"update","file":NaN}"#.as_slice(),
+            br#"{"action":"update","file":Infinity}"#.as_slice(),
+            br#"{"action":"update","file":123} {"action":"merge","file":124}"#.as_slice(),
+            br#"[{"action":"update","file":123}]"#.as_slice(),
             br#"// note
-            {"action":"update","id":123}"#
+            {"action":"update","file":123}"#
                 .as_slice(),
             br#"```json
-            {"action":"update","id":123}
+            {"action":"update","file":123}
             ```"#
                 .as_slice(),
-            br#"{"action":"uncertain","id":null} trailing"#.as_slice(),
+            br#"{"action":"uncertain","file":null} trailing"#.as_slice(),
             br#"<!-- html -->"#.as_slice(),
         ] {
             assert!(parse_update_match_response(body).is_err(), "{body:?}");
         }
+    }
+
+    #[test]
+    fn requires_is_optional_and_strictly_shaped() {
+        let missing = parse_update_match_response(br#"{"action":"update","file":1}"#).unwrap();
+        assert!(missing.requires.is_empty());
+        let empty =
+            parse_update_match_response(br#"{"action":"current","file":null,"requires":[]}"#)
+                .unwrap();
+        assert!(empty.requires.is_empty());
+        let current = parse_update_match_response(
+            br#"{"action":"current","file":null,"requires":[{"file":1854063,"action":"separate"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(current.action, UpdateMatchAction::Current);
+        assert_eq!(
+            current.requires,
+            vec![UpdateMatchRequiredFile {
+                id: 1854063,
+                action: UpdateMatchRequiredAction::Separate,
+            }]
+        );
+        let full = parse_update_match_response(
+            br#"{"requires":[{"file":3,"action":"separate"},{"action":"merge","file":4}],"action":"update","file":2}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            full.requires,
+            vec![
+                UpdateMatchRequiredFile {
+                    id: 3,
+                    action: UpdateMatchRequiredAction::Separate,
+                },
+                UpdateMatchRequiredFile {
+                    id: 4,
+                    action: UpdateMatchRequiredAction::Merge,
+                },
+            ]
+        );
+        assert!(
+            parse_update_match_response(
+                br#"{"action":"merge","file":2,"requires":[{"file":3,"action":"merge"}]}"#
+            )
+            .is_ok()
+        );
+
+        for body in [
+            br#"{"action":"uncertain","file":null,"requires":[{"file":3,"action":"merge"}]}"#
+                .as_slice(),
+            br#"{"action":"update","file":2,"requires":null}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[3]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"action":"merge"}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3,"action":"update"}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3,"action":"replace"}]}"#
+                .as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3,"action":"merge","x":1}]}"#
+                .as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3,"file":4,"action":"merge"}]}"#
+                .as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":"3","action":"merge"}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":0,"action":"merge"}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":2,"action":"merge"}]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"file":3,"action":"merge"},{"file":3,"action":"separate"}]}"#
+                .as_slice(),
+            br#"{"action":"update","file":2,"requires":[],"requires":[]}"#.as_slice(),
+            br#"{"action":"update","file":2,"requires":[{"action":"merge","id":3}]}"#
+                .as_slice(),
+        ] {
+            assert!(parse_update_match_response(body).is_err(), "{body:?}");
+        }
+
+        let too_many = format!(
+            r#"{{"action":"update","file":2,"requires":[{}]}}"#,
+            (10..10 + REQUIRED_FILES_LIMIT as u64 + 1)
+                .map(|id| format!(r#"{{"file":{id},"action":"separate"}}"#))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert!(parse_update_match_response(too_many.as_bytes()).is_err());
     }
 
     #[test]
@@ -834,7 +1038,7 @@ mod tests {
             write_http_response(
                 &mut stream,
                 "200 OK",
-                br#"{"action":"update","id":987654302}"#,
+                br#"{"action":"update","file":987654302}"#,
             );
             sender.send(request).unwrap();
         });
@@ -994,7 +1198,7 @@ mod tests {
                 &mut stream,
                 "429 Too Many Requests",
                 &[("Retry-After", "45")],
-                br#"{"action":"uncertain","id":null}"#,
+                br#"{"action":"uncertain","file":null}"#,
             );
         });
         let result = fetch_update_match_for_test(
@@ -1033,7 +1237,7 @@ mod tests {
             write_http_response(
                 &mut stream,
                 "428 Precondition Required",
-                br#"{"action":"uncertain","id":null}"#,
+                br#"{"action":"uncertain","file":null}"#,
             );
         });
 
@@ -1075,7 +1279,7 @@ mod tests {
             write_http_response(
                 &mut stream,
                 "401 Unauthorized",
-                br#"{"action":"uncertain","id":null}"#,
+                br#"{"action":"uncertain","file":null}"#,
             );
         });
 

@@ -359,14 +359,36 @@ impl HestiaApp {
             let mod_title = pending_meta.as_ref().and_then(|m| {
                 self.browse_mod_title_for_install(m.mod_id, m.update_target_mod_id.as_deref())
             });
+            let thalia_separate = self.thalia_separate_install_jobs.contains(&job_id);
             let preferred = if let Some(target) = &update_folder_name {
                 target.clone()
+            } else if thalia_separate {
+                // A library shared between mods keeps the author's folder
+                // name, so an existing copy can be recognized.
+                sanitize_folder_name(&candidate.label)
             } else {
                 self.preferred_browse_folder_name(mod_title.as_deref(), &candidate.label)
             };
             let target_root = game
                 .mods_path(self.state.static_prefs.use_default_mods_path)
                 .unwrap_or_default();
+            if thalia_separate {
+                // Same folder name, or the same library under another name.
+                let candidate_path = candidate.path.clone();
+                let kept = if self.existing_install_target(&game, &preferred, job_id).is_some() {
+                    Some(preferred.clone())
+                } else {
+                    self.installed_folder_with_same_namespaces(
+                        &game.definition.id,
+                        &candidate_path,
+                    )
+                };
+                if let Some(folder) = kept {
+                    self.pending_imports.pop_front();
+                    self.keep_existing_thalia_separate_copy(job_id, &folder);
+                    return;
+                }
+            }
             if let Some(existing_target) = self.existing_install_target(&game, &preferred, job_id) {
                 if update_folder_name.is_some() {
                     self.pending_imports.pop_front();

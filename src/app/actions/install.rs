@@ -294,6 +294,14 @@ impl HestiaApp {
                 } => {
                     self.apply_mod_sync_cover(&mod_entry_id, &cover_rel_path);
                 }
+                InstallEvent::ThaliaBundlePrepared {
+                    job_id,
+                    root,
+                    folders,
+                } => self.thalia_bundle_prepared(job_id, root, folders),
+                InstallEvent::ThaliaBundlePrepareFailed { job_id, failure } => {
+                    self.thalia_bundle_prepare_failed(job_id, failure);
+                }
                 InstallEvent::InstallCanceled { job_id } => {
                     self.pending_browse_install_meta.remove(&job_id);
                     if self.install_batch_active {
@@ -485,6 +493,25 @@ impl HestiaApp {
         if let Some(current) = self.install_inflight.get_mut(&job_id) {
             current.preserved_states = preserved_states.clone();
         }
+        if self.thalia_bundle_target_changed_before_install(job_id) {
+            // Changed by hand while the update was getting ready. Writing over
+            // it now would lose that change, so the whole update stops.
+            let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+            self.pending_imports.retain(|pending| pending.job_id != job_id);
+            self.pending_conflicts
+                .retain(|conflict| conflict.job_id != job_id);
+            self.pending_browse_install_meta.remove(&job_id);
+            self.pending_browse_install_safety.remove(&job_id);
+            if let Some(current) = self.install_inflight.remove(&job_id) {
+                Self::cleanup_runtime_temp_for_source(&current.source);
+                self.mark_usage_counters_dirty();
+            }
+            if self.install_batch_active {
+                self.install_batch_stats.failed += 1;
+            }
+            self.update_task_status(job_id, TaskStatus::Failed);
+            return;
+        }
         if matches!(choice, ConflictChoice::Replace | ConflictChoice::Merge) {
             if let Err(err) = self.preserve_existing_install_metadata(
                 &job.game_id,
@@ -525,6 +552,7 @@ impl HestiaApp {
                 game_backend,
                 disabled_target_root,
                 gb_profile,
+                expected_manifest: self.thalia_bundle_manifests.remove(&job_id),
             })
             .is_err()
         {
@@ -541,6 +569,81 @@ impl HestiaApp {
                 Self::cleanup_runtime_temp_for_source(&current.source);
             }
         }
+    }
+
+    /// A file Thalia said goes in its own folder is already in Mods under the
+    /// same name. Installing it again would leave two copies, which such
+    /// libraries break on, so the existing one is kept.
+    fn keep_existing_thalia_separate_copy(&mut self, job_id: u64, folder_name: &str) {
+        let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
+        self.pending_browse_install_meta.remove(&job_id);
+        self.pending_browse_install_safety.remove(&job_id);
+        if let Some(current) = self.install_inflight.remove(&job_id) {
+            Self::cleanup_runtime_temp_for_source(&current.source);
+            self.mark_usage_counters_dirty();
+        }
+        if self.install_batch_active {
+            self.install_batch_stats.skipped += 1;
+        }
+        if let Some(bundle) = self
+            .thalia_install_bundles
+            .iter_mut()
+            .find(|bundle| bundle.members.contains(&job_id))
+        {
+            // Counted as done, but nothing was written.
+            bundle.finished.insert(job_id);
+        }
+        self.set_message_ok(self.text().thalia_required_copy_kept(folder_name));
+        self.update_task_status(job_id, TaskStatus::Completed);
+    }
+
+    /// Folder of a mod in the game that declares exactly the same 3DMigoto
+    /// namespaces as the extracted files, which means the same library is
+    /// already installed under another folder name.
+    fn installed_folder_with_same_namespaces(
+        &mut self,
+        game_id: &str,
+        extracted_root: &Path,
+    ) -> Option<String> {
+        let wanted = xxmi_persist::explicit_namespace_prefixes_for_mod_root(extracted_root);
+        if wanted.is_empty() {
+            return None;
+        }
+        let same_set = |a: &[String], b: &[String]| {
+            a.len() == b.len()
+                && a.iter().all(|prefix| {
+                    b.iter()
+                        .any(|other| xxmi_persist::namespace_prefixes_equal(prefix, other))
+                })
+        };
+        let mods: Vec<_> = self
+            .state
+            .mods
+            .iter()
+            .filter(|mod_entry| mod_entry.game_id == game_id)
+            .map(|mod_entry| {
+                (
+                    mod_entry.id.clone(),
+                    mod_entry.root_path.clone(),
+                    mod_entry.ini_hash.clone(),
+                    mod_entry.content_mtime,
+                )
+            })
+            .collect();
+        for (mod_id, root_path, ini_hash, content_mtime) in mods {
+            let prefixes = self.explicit_namespace_prefixes_for_mod_cached(
+                &mod_id,
+                &root_path,
+                &ini_hash,
+                content_mtime,
+            );
+            if same_set(&wanted, &prefixes) {
+                return root_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned());
+            }
+        }
+        None
     }
 
     fn preserve_existing_install_metadata(

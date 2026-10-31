@@ -3,6 +3,20 @@ const THALIA_MATCH_FAILURE_BACKOFF: Duration = Duration::from_secs(30);
 const THALIA_MATCH_QUEUE_LIMIT: usize = 128;
 const THALIA_MATCH_CACHE_LIMIT: usize = 512;
 const THALIA_MATCH_HTTP_CONCURRENCY: usize = 2;
+/// Thalia starts at most 2 requests per 2 s per address and queues the rest;
+/// starting them 1 s apart keeps a bulk check out of that queue.
+const THALIA_MATCH_START_SPACING: Duration = Duration::from_secs(1);
+/// Thalia refuses an address past 60 requests per rolling minute. Stay a
+/// little under it, since anything else on the same address counts too.
+const THALIA_MATCH_PER_MINUTE: usize = 50;
+const THALIA_MATCH_MINUTE: Duration = Duration::from_secs(60);
+/// Times one request is sent again after Thalia said busy or over the limit.
+const THALIA_MATCH_RATE_LIMIT_RETRIES: usize = 3;
+const THALIA_MATCH_RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
+/// How long a game's blue notices may be held back while its update check
+/// and Thalia round are expected. A round that never comes (failed startup
+/// scan, a superseded queued check) must not hide the notice forever.
+const THALIA_MATCH_PENDING_HOLD: Duration = Duration::from_secs(60);
 
 /// Recommendations are transient; persisted local matching stays independent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +31,19 @@ pub(crate) enum ThaliaRecommendationAction {
 pub(crate) struct ThaliaRecommendation {
     pub(crate) action: ThaliaRecommendationAction,
     pub(crate) id: Option<u64>,
+    /// Extra files of the same mod that `id` needs, each with its own install
+    /// mode. Always empty for `uncertain`.
+    pub(crate) requires: Vec<thalia::UpdateMatchRequiredFile>,
+}
+
+/// A Thalia plan that still holds against a freshly loaded catalog.
+struct ValidatedThaliaInstall {
+    action: ThaliaRecommendationAction,
+    /// None for `current`, which keeps the installed file.
+    file: Option<gamebanana::ModFile>,
+    /// Extra files still to install. Files already in Mods (or already being
+    /// installed) are left out so no second copy is made.
+    requires: Vec<(thalia::UpdateMatchRequiredAction, gamebanana::ModFile)>,
 }
 
 #[derive(Clone)]
@@ -46,6 +73,39 @@ fn overlay_thalia_recommendation(entry: &mut CachedUpdateEvidence, answer: &Thal
     if entry.state == ModUpdateState::UpdateAvailable {
         return;
     }
+    if answer.action == ThaliaRecommendationAction::Current && !answer.requires.is_empty() {
+        // The installed file stays, but extra files it needs are missing.
+        // Present them like an update so they install the same way.
+        entry.newer_files.clear();
+        let Some(profile) = entry.profile.as_ref() else {
+            return;
+        };
+        let canonical = matcher_adapter::canonicalize_profile(profile);
+        let files: Vec<_> = answer
+            .requires
+            .iter()
+            .filter_map(|required| {
+                canonical.active.iter().find(|file| {
+                    file.id == required.id
+                        && profile_file_is_active_downloadable(&canonical.profile, file)
+                })
+            })
+            .map(|file| TrackedFileMeta {
+                file_id: file.id,
+                file_name: file.file_name.clone(),
+                file_size: Some(file.file_size),
+                date_added: file.date_added,
+                version: file.version.clone(),
+                archived: false,
+                label: file.description.clone(),
+            })
+            .collect();
+        if files.len() == answer.requires.len() {
+            entry.signature = candidate_signature(files);
+            entry.state = ModUpdateState::UpdateAvailable;
+        }
+        return;
+    }
     if answer.action == ThaliaRecommendationAction::Current {
         // `current` is a transient acknowledgement for this exact catalog
         // and installed-file context. Keep the local state untouched, but
@@ -55,7 +115,12 @@ fn overlay_thalia_recommendation(entry: &mut CachedUpdateEvidence, answer: &Thal
         entry.newer_files.clear();
         return;
     }
-    if answer.action != ThaliaRecommendationAction::Update {
+    // A merge is applied like an update: both are decisions Thalia makes for
+    // the user, and only `uncertain` is left to the factual blue picker.
+    if !matches!(
+        answer.action,
+        ThaliaRecommendationAction::Update | ThaliaRecommendationAction::Merge
+    ) {
         return;
     }
     let Some(profile) = entry.profile.as_ref() else {
@@ -79,6 +144,18 @@ fn overlay_thalia_recommendation(entry: &mut CachedUpdateEvidence, answer: &Thal
     entry.state = ModUpdateState::UpdateAvailable;
 }
 
+/// Whether acting on the answer installs anything: a new main file, or extra
+/// files the installed one still needs.
+fn thalia_recommendation_installs_files(answer: &ThaliaRecommendation) -> bool {
+    match answer.action {
+        ThaliaRecommendationAction::Update | ThaliaRecommendationAction::Merge => {
+            answer.id.is_some()
+        }
+        ThaliaRecommendationAction::Current => !answer.requires.is_empty(),
+        ThaliaRecommendationAction::Uncertain => false,
+    }
+}
+
 fn automatic_thalia_update_ids(
     mods: &[ModEntry],
     recommendations: &HashMap<String, ThaliaRecommendation>,
@@ -90,9 +167,9 @@ fn automatic_thalia_update_ids(
         .filter(|entry| {
             checked_mod_ids.contains(&entry.id)
                 && HestiaApp::status_target_enabled(&entry.status, targets)
-                && recommendations.get(&entry.id).is_some_and(|answer| {
-                    answer.action == ThaliaRecommendationAction::Update && answer.id.is_some()
-                })
+                && recommendations
+                    .get(&entry.id)
+                    .is_some_and(thalia_recommendation_installs_files)
         })
         .map(|entry| entry.id.clone())
         .collect();
@@ -161,6 +238,7 @@ struct ThaliaMatchRequest {
     context: ThaliaMatchContext,
     force_refresh: bool,
     cancellation: Arc<AtomicBool>,
+    started: Arc<AtomicBool>,
 }
 
 enum ThaliaMatchResult {
@@ -172,6 +250,8 @@ enum ThaliaMatchResult {
         context: ThaliaMatchContext,
         retry_after: Option<Duration>,
         cancelled: bool,
+        /// Thalia will refuse this exact context again.
+        permanent: bool,
     },
 }
 
@@ -184,6 +264,8 @@ struct ThaliaInflightRequest {
     request_id: u64,
     context: ThaliaMatchContext,
     cancellation: Arc<AtomicBool>,
+    /// Set once the request has been sent, so its quota is spent.
+    started: Arc<AtomicBool>,
 }
 
 /// Transient app-owned coordination state for Thalia matching requests.
@@ -196,8 +278,20 @@ pub(crate) struct ThaliaMatchingState {
     next_request_id: u64,
     force_refresh_games: HashSet<String>,
     inflight: HashMap<ThaliaMatchKey, ThaliaInflightRequest>,
+    /// Sent requests left running across a game or profile switch. Their
+    /// answers are only cached, unless the same context is asked for again
+    /// first, which takes the request back instead of sending another.
+    detached: HashMap<ThaliaMatchKey, ThaliaInflightRequest>,
     cache: HashMap<ThaliaMatchKey, ThaliaCachedRecommendation>,
     failure_backoff: HashMap<ThaliaMatchKey, Instant>,
+    /// Contexts Thalia refused outright (400, 404, 422). They are not asked
+    /// again this session; a changed mod page is a different context.
+    rejected: HashMap<ThaliaMatchKey, Instant>,
+    /// Keys whose latest request failed. Unlike `failure_backoff` this does
+    /// not expire: it records that the blue fallback is the settled outcome.
+    failed_at: HashMap<ThaliaMatchKey, Instant>,
+    /// Games whose update check, and the Thalia round after it, is expected.
+    awaiting_games: HashMap<String, Instant>,
     recommendations: HashMap<String, ThaliaRecommendation>,
     claims: HashMap<String, (ThaliaMatchContext, ThaliaRecommendation)>,
     blocked_claims: HashSet<(String, u64, u64, u64, u64)>,
@@ -216,8 +310,12 @@ impl ThaliaMatchingState {
             next_request_id: 1,
             force_refresh_games: HashSet::new(),
             inflight: HashMap::new(),
+            detached: HashMap::new(),
             cache: HashMap::new(),
             failure_backoff: HashMap::new(),
+            rejected: HashMap::new(),
+            failed_at: HashMap::new(),
+            awaiting_games: HashMap::new(),
             recommendations: HashMap::new(),
             claims: HashMap::new(),
             blocked_claims: HashSet::new(),
@@ -229,12 +327,88 @@ impl ThaliaMatchingState {
         !self.result_rx.is_empty()
     }
 
+    /// An update check is about to run for these games; hold their blue
+    /// notices until Thalia has answered for the resulting contexts.
+    fn begin_round(&mut self, game_ids: impl IntoIterator<Item = String>) {
+        let now = Instant::now();
+        for game_id in game_ids {
+            self.awaiting_games.insert(game_id, now);
+        }
+    }
+
+    fn end_round(&mut self, game_ids: &HashSet<String>) {
+        self.awaiting_games
+            .retain(|game_id, _| !game_ids.contains(game_id));
+    }
+
+    fn game_awaiting(&self, game_id: &str, now: Instant) -> bool {
+        self.awaiting_games
+            .get(game_id)
+            .is_some_and(|started| now.duration_since(*started) < THALIA_MATCH_PENDING_HOLD)
+    }
+
+    /// Time until the earliest held round gives up, so the UI can wake and
+    /// show the blue fallback without waiting for input.
+    fn next_hold_expiry(&self) -> Option<Duration> {
+        let now = Instant::now();
+        self.awaiting_games
+            .values()
+            .filter_map(|started| THALIA_MATCH_PENDING_HOLD.checked_sub(now.duration_since(*started)))
+            .filter(|remaining| !remaining.is_zero())
+            .min()
+    }
+
+    /// Mods whose blue notice should stay hidden because a Thalia answer for
+    /// their exact context is still expected. A known answer, a recorded
+    /// failure, or an expired hold ends the wait; the caller then shows
+    /// whatever that outcome implies (including the blue fallback).
+    fn pending_mod_ids(&self, contexts: &[ThaliaMatchContext]) -> HashSet<String> {
+        if !thalia::THALIA_UPDATE_MATCHING_ENABLED {
+            return HashSet::new();
+        }
+        let now = Instant::now();
+        contexts
+            .iter()
+            .filter(|context| {
+                let key = context.key();
+                if let Some(cached) = self.cache.get(&key) {
+                    // An actionable answer waits for its GameBanana group
+                    // to settle before it is shown; keep the notice held
+                    // for that short window too.
+                    return response_is_actionable(&cached.response)
+                        && validated_recommendation(context, &cached.response).is_some()
+                        && self
+                            .inflight
+                            .values()
+                            .any(|request| request_context_group_matches(request, context));
+                }
+                !self.failed_at.contains_key(&key)
+                    && (self.inflight.contains_key(&key)
+                        || self.game_awaiting(&context.game_id, now))
+            })
+            .map(|context| context.local_mod_id.clone())
+            .collect()
+    }
+
     fn invalidate(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        for request in self.inflight.values() {
+        for request in self.detached.values() {
             request.cancellation.store(true, Ordering::Relaxed);
         }
-        self.inflight.clear();
+        self.detached.clear();
+        self.invalidate_keeping_sent(false);
+    }
+
+    /// Like `invalidate`, but requests already sent keep running: Thalia
+    /// charged them anyway and finishes them even if Hestia hangs up.
+    fn invalidate_keeping_sent(&mut self, keep_sent: bool) {
+        self.generation = self.generation.wrapping_add(1);
+        for (key, request) in self.inflight.drain() {
+            if keep_sent && request.started.load(Ordering::Relaxed) {
+                self.detached.insert(key, request);
+            } else {
+                request.cancellation.store(true, Ordering::Relaxed);
+            }
+        }
         self.recommendations.clear();
         self.claims.clear();
         self.blocked_claims.clear();
@@ -285,9 +459,8 @@ impl ThaliaMatchingState {
             }
             return;
         }
-        if force_refresh {
-            self.cache.remove(&key);
-        }
+        // A forced refresh still asks Thalia again, but the previous answer
+        // for this exact context stays visible until the new one replaces it.
         if self
             .failure_backoff
             .get(&key)
@@ -295,16 +468,28 @@ impl ThaliaMatchingState {
         {
             return;
         }
+        if self.rejected.contains_key(&key) {
+            self.failed_at.entry(key).or_insert(now);
+            return;
+        }
         if self.inflight.contains_key(&key) || self.inflight.len() >= THALIA_MATCH_QUEUE_LIMIT {
             return;
         }
+        if let Some(mut request) = self.detached.remove(&key) {
+            context.request_id = request.request_id;
+            request.context = context;
+            self.inflight.insert(key, request);
+            return;
+        }
         let cancellation = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
         self.inflight.insert(
             key.clone(),
             ThaliaInflightRequest {
                 request_id: context.request_id,
                 context: context.clone(),
                 cancellation: Arc::clone(&cancellation),
+                started: Arc::clone(&started),
             },
         );
         if self
@@ -313,6 +498,7 @@ impl ThaliaMatchingState {
                 context,
                 force_refresh,
                 cancellation,
+                started,
             })
             .is_err()
         {
@@ -322,10 +508,52 @@ impl ThaliaMatchingState {
 
     fn take_results(&mut self) -> Vec<ThaliaMatchResult> {
         let mut results = Vec::new();
-        while let Ok(result) = self.result_rx.try_recv() {
+        while let Ok(mut result) = self.result_rx.try_recv() {
+            let context = match &mut result {
+                ThaliaMatchResult::Completed { context, .. }
+                | ThaliaMatchResult::Failed { context, .. } => context,
+            };
+            let key = context.key();
+            if let Some(request) = self.inflight.get(&key)
+                && request.request_id == context.request_id
+            {
+                // A request taken back after a switch answers for the
+                // context that asked for it last.
+                *context = request.context.clone();
+            } else if self
+                .detached
+                .get(&key)
+                .is_some_and(|request| request.request_id == context.request_id)
+            {
+                self.detached.remove(&key);
+                self.keep_detached_result(key, result);
+                continue;
+            }
             results.push(result);
         }
         results
+    }
+
+    /// Nobody waits for this answer any more; keep it for when the same
+    /// context comes back, so it is not asked again.
+    fn keep_detached_result(&mut self, key: ThaliaMatchKey, result: ThaliaMatchResult) {
+        match result {
+            ThaliaMatchResult::Completed { context, response } => {
+                if validated_recommendation(&context, &response).is_some() {
+                    self.insert_cache(key, response);
+                }
+            }
+            ThaliaMatchResult::Failed {
+                retry_after,
+                cancelled,
+                permanent,
+                ..
+            } => {
+                if !cancelled {
+                    self.record_failure(&key, retry_after, permanent);
+                }
+            }
+        }
     }
 
     fn deferred_contexts(&self) -> impl Iterator<Item = &ThaliaMatchContext> {
@@ -436,7 +664,7 @@ impl ThaliaMatchingState {
                         continue;
                     }
                     if validated_recommendation(&context, &response).is_none() {
-                        self.record_failure(&key, None);
+                        self.record_failure(&key, None, false);
                         continue;
                     }
                     self.insert_cache(key, response.clone());
@@ -446,11 +674,12 @@ impl ThaliaMatchingState {
                     context,
                     retry_after,
                     cancelled,
+                    permanent,
                 } => {
                     if cancelled || context.generation != self.generation {
                         continue;
                     }
-                    self.record_failure(&context.key(), retry_after);
+                    self.record_failure(&context.key(), retry_after, permanent);
                 }
             }
         }
@@ -481,7 +710,7 @@ impl ThaliaMatchingState {
         response: thalia::UpdateMatchResponse,
     ) {
         if validated_recommendation(&context, &response).is_none() {
-            self.record_failure(&context.key(), None);
+            self.record_failure(&context.key(), None, false);
             return;
         }
         if response_is_actionable(&response)
@@ -502,7 +731,7 @@ impl ThaliaMatchingState {
         response: thalia::UpdateMatchResponse,
     ) {
         let Some(recommendation) = validated_recommendation(&context, &response) else {
-            self.record_failure(&context.key(), None);
+            self.record_failure(&context.key(), None, false);
             return;
         };
         if recommendation
@@ -544,12 +773,41 @@ impl ThaliaMatchingState {
         self.recommendations.insert(mod_id.clone(), recommendation);
     }
 
-    fn record_failure(&mut self, key: &ThaliaMatchKey, retry_after: Option<Duration>) {
+    fn record_failure(
+        &mut self,
+        key: &ThaliaMatchKey,
+        retry_after: Option<Duration>,
+        permanent: bool,
+    ) {
         let delay = retry_after
             .unwrap_or(THALIA_MATCH_FAILURE_BACKOFF)
             .max(THALIA_MATCH_FAILURE_BACKOFF);
-        self.failure_backoff
-            .insert(key.clone(), Instant::now() + delay);
+        let now = Instant::now();
+        if permanent {
+            self.rejected.insert(key.clone(), now);
+            if self.rejected.len() > THALIA_MATCH_CACHE_LIMIT {
+                let oldest = self
+                    .rejected
+                    .iter()
+                    .min_by_key(|(_, rejected_at)| **rejected_at)
+                    .map(|(key, _)| key.clone());
+                if let Some(oldest) = oldest {
+                    self.rejected.remove(&oldest);
+                }
+            }
+        }
+        self.failure_backoff.insert(key.clone(), now + delay);
+        self.failed_at.insert(key.clone(), now);
+        if self.failed_at.len() > THALIA_MATCH_CACHE_LIMIT {
+            let oldest = self
+                .failed_at
+                .iter()
+                .min_by_key(|(_, failed_at)| **failed_at)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                self.failed_at.remove(&oldest);
+            }
+        }
         if self.failure_backoff.len() > THALIA_MATCH_CACHE_LIMIT {
             let oldest = self
                 .failure_backoff
@@ -573,6 +831,7 @@ impl ThaliaMatchingState {
                 self.cache.remove(&oldest);
             }
         }
+        self.failed_at.remove(&key);
         self.cache.insert(
             key,
             ThaliaCachedRecommendation {
@@ -627,9 +886,31 @@ impl ThaliaMatchingState {
         .then_some(recommendation.clone())
     }
 
+    /// Answers to show. The TTL only decides when to ask Thalia again. The
+    /// key already pins the exact catalog, recipe, peers and policy the answer
+    /// was given for, so an older answer stays shown until a newer one
+    /// replaces it; otherwise every `current` would flip back to blue after
+    /// 15 minutes.
     fn current_recommendations(
         &self,
         contexts: &[ThaliaMatchContext],
+    ) -> HashMap<String, ThaliaRecommendation> {
+        self.recommendations_within(contexts, None)
+    }
+
+    /// Answers fresh enough to act on without the user, i.e. automatic
+    /// updates. An older answer may be shown, but never installs by itself.
+    fn fresh_recommendations(
+        &self,
+        contexts: &[ThaliaMatchContext],
+    ) -> HashMap<String, ThaliaRecommendation> {
+        self.recommendations_within(contexts, Some(THALIA_MATCH_CACHE_TTL))
+    }
+
+    fn recommendations_within(
+        &self,
+        contexts: &[ThaliaMatchContext],
+        max_age: Option<Duration>,
     ) -> HashMap<String, ThaliaRecommendation> {
         let mut answers = Vec::new();
         let mut claims: HashMap<(String, u64, u64), usize> = HashMap::new();
@@ -637,7 +918,7 @@ impl ThaliaMatchingState {
             let Some(cached) = self.cache.get(&context.key()) else {
                 continue;
             };
-            if cached.cached_at.elapsed() >= THALIA_MATCH_CACHE_TTL {
+            if max_age.is_some_and(|max_age| cached.cached_at.elapsed() >= max_age) {
                 continue;
             }
             let Some(answer) = validated_recommendation(context, &cached.response) else {
@@ -680,6 +961,7 @@ fn spawn_thalia_matching_worker(
     let worker_services = runtime_services.clone();
     runtime_services.spawn(async move {
         let active_jobs = Arc::new(Semaphore::new(THALIA_MATCH_HTTP_CONCURRENCY));
+        let pacer = Arc::new(Mutex::new(ThaliaPacer::default()));
         while let Some(request) = request_rx.recv().await {
             let permit = match Arc::clone(&active_jobs).acquire_owned().await {
                 Ok(permit) => permit,
@@ -687,6 +969,7 @@ fn spawn_thalia_matching_worker(
             };
             let worker_services = worker_services.clone();
             let result_tx = result_tx.clone();
+            let pacer = Arc::clone(&pacer);
             tokio::spawn(async move {
                 let _permit = permit;
                 let result = match worker_services
@@ -695,15 +978,17 @@ fn spawn_thalia_matching_worker(
                     .build()
                 {
                     Ok(client) => {
-                        thalia::fetch_update_match(
-                            &client,
-                            thalia::UpdateMatchRequest {
-                                mod_id: request.context.source_mod_id,
-                                installed_file_id: request.context.installed_file_id,
-                            },
-                            request.force_refresh,
-                            Arc::clone(&request.cancellation),
-                        )
+                        fetch_paced_update_match(&pacer, &request, || {
+                            thalia::fetch_update_match(
+                                &client,
+                                thalia::UpdateMatchRequest {
+                                    mod_id: request.context.source_mod_id,
+                                    installed_file_id: request.context.installed_file_id,
+                                },
+                                request.force_refresh,
+                                Arc::clone(&request.cancellation),
+                            )
+                        })
                         .await
                     }
                     Err(error) => Err(thalia::UpdateMatchError::Transport(error.to_string())),
@@ -717,6 +1002,7 @@ fn spawn_thalia_matching_worker(
                         context: request.context,
                         retry_after: error.retry_after(),
                         cancelled: error.is_cancelled(),
+                        permanent: error.is_permanent(),
                     },
                 };
                 let _ = result_tx.send(event);
@@ -725,11 +1011,118 @@ fn spawn_thalia_matching_worker(
     });
 }
 
+/// When Thalia requests may start, shared by every request in flight.
+struct ThaliaPacer {
+    starts: VecDeque<Instant>,
+    paused_until: Option<Instant>,
+    spacing: Duration,
+    per_minute: usize,
+    /// Least wait after Thalia said busy or over the limit.
+    rate_limit_wait: Duration,
+}
+
+impl Default for ThaliaPacer {
+    fn default() -> Self {
+        Self {
+            starts: VecDeque::new(),
+            paused_until: None,
+            spacing: THALIA_MATCH_START_SPACING,
+            per_minute: THALIA_MATCH_PER_MINUTE,
+            rate_limit_wait: THALIA_MATCH_RATE_LIMIT_WAIT,
+        }
+    }
+}
+
+impl ThaliaPacer {
+    /// The earliest time the next request may start.
+    fn next_start(&mut self, now: Instant) -> Instant {
+        while self
+            .starts
+            .front()
+            .is_some_and(|start| now.duration_since(*start) >= THALIA_MATCH_MINUTE)
+        {
+            self.starts.pop_front();
+        }
+        let mut at = now;
+        if let Some(last) = self.starts.back() {
+            at = at.max(*last + self.spacing);
+        }
+        if self.starts.len() >= self.per_minute {
+            at = at.max(self.starts[self.starts.len() - self.per_minute] + THALIA_MATCH_MINUTE);
+        }
+        if let Some(paused_until) = self.paused_until {
+            at = at.max(paused_until);
+        }
+        at
+    }
+
+    /// Starts a request now if the pacing allows; otherwise how long to wait.
+    fn try_start(&mut self, now: Instant) -> Option<Duration> {
+        let at = self.next_start(now);
+        if at > now {
+            return Some(at - now);
+        }
+        self.starts.push_back(now);
+        None
+    }
+
+    /// Thalia asked to wait; nothing starts before then.
+    fn pause(&mut self, now: Instant, retry_after: Option<Duration>) {
+        let until = now
+            + retry_after
+                .unwrap_or(self.rate_limit_wait)
+                .max(self.rate_limit_wait);
+        self.paused_until = Some(self.paused_until.map_or(until, |paused| paused.max(until)));
+    }
+}
+
+/// Sends one request when the pacer allows, and again (in turn, never in
+/// parallel) when Thalia answers busy or over the limit.
+async fn fetch_paced_update_match<F, Fut>(
+    pacer: &Mutex<ThaliaPacer>,
+    request: &ThaliaMatchRequest,
+    mut send: F,
+) -> Result<thalia::UpdateMatchResponse, thalia::UpdateMatchError>
+where
+    F: FnMut() -> Fut,
+    Fut:
+        std::future::Future<Output = Result<thalia::UpdateMatchResponse, thalia::UpdateMatchError>>,
+{
+    let lock = || pacer.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut retries = 0;
+    loop {
+        loop {
+            if request.cancellation.load(Ordering::Relaxed) {
+                return Err(thalia::UpdateMatchError::Cancelled);
+            }
+            let Some(wait) = lock().try_start(Instant::now()) else {
+                break;
+            };
+            // Short steps, so a cancelled request stops waiting promptly.
+            tokio::time::sleep(wait.min(Duration::from_millis(250))).await;
+        }
+        request.started.store(true, Ordering::Relaxed);
+        let result = send().await;
+        match &result {
+            Err(error) if error.is_rate_limited() => {
+                lock().pause(Instant::now(), error.retry_after());
+                if retries == THALIA_MATCH_RATE_LIMIT_RETRIES {
+                    return result;
+                }
+                retries += 1;
+            }
+            _ => return result,
+        }
+    }
+}
+
 fn response_is_actionable(response: &thalia::UpdateMatchResponse) -> bool {
-    matches!(
-        response.action,
-        thalia::UpdateMatchAction::Update | thalia::UpdateMatchAction::Merge
-    )
+    match response.action {
+        thalia::UpdateMatchAction::Update | thalia::UpdateMatchAction::Merge => true,
+        // Installs its extra files, so it waits for siblings like an update.
+        thalia::UpdateMatchAction::Current => !response.requires.is_empty(),
+        thalia::UpdateMatchAction::Uncertain => false,
+    }
 }
 
 fn claim_block_key(context: &ThaliaMatchContext, id: u64) -> (String, u64, u64, u64, u64) {
@@ -759,6 +1152,7 @@ fn recommendation_from_response(response: &thalia::UpdateMatchResponse) -> Thali
             thalia::UpdateMatchAction::Uncertain => ThaliaRecommendationAction::Uncertain,
         },
         id: response.id,
+        requires: response.requires.clone(),
     }
 }
 
@@ -772,13 +1166,66 @@ fn validated_recommendation(
             let id = recommendation.id?;
             (id != context.installed_file_id
                 && context.candidate_file_ids.contains(&id)
-                && !context.peer_local_claim_ids.contains(&id))
+                && !context.peer_local_claim_ids.contains(&id)
+                && required_files_are_valid(context, &recommendation))
             .then_some(recommendation)
         }
-        ThaliaRecommendationAction::Current | ThaliaRecommendationAction::Uncertain => {
-            recommendation.id.is_none().then_some(recommendation)
-        }
+        ThaliaRecommendationAction::Current => (recommendation.id.is_none()
+            && required_files_are_valid(context, &recommendation))
+        .then_some(recommendation),
+        ThaliaRecommendationAction::Uncertain => (recommendation.id.is_none()
+            && recommendation.requires.is_empty())
+        .then_some(recommendation),
     }
+}
+
+/// Every extra file must be one this context could install: a newer
+/// candidate, or a file a sibling mod already installed (which is then
+/// skipped, never installed twice). Files merged into one folder are checked
+/// later, against the paths they actually write (importing::bundle).
+/// The saved form of an answer, compared as a whole: a different file or
+/// mode is a different answer.
+fn refused_thalia_answer(answer: &ThaliaRecommendation) -> RefusedThaliaAnswer {
+    let action = match answer.action {
+        ThaliaRecommendationAction::Update => "update",
+        ThaliaRecommendationAction::Merge => "merge",
+        ThaliaRecommendationAction::Current => "current",
+        ThaliaRecommendationAction::Uncertain => "uncertain",
+    };
+    let mut requires: Vec<_> = answer
+        .requires
+        .iter()
+        .map(|required| RefusedThaliaRequiredFile {
+            action: match required.action {
+                thalia::UpdateMatchRequiredAction::Merge => "merge",
+                thalia::UpdateMatchRequiredAction::Separate => "separate",
+            }
+            .to_owned(),
+            file: required.id,
+        })
+        .collect();
+    requires.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then_with(|| left.action.cmp(&right.action))
+    });
+    RefusedThaliaAnswer {
+        action: action.to_owned(),
+        file: answer.id,
+        requires,
+    }
+}
+
+fn required_files_are_valid(
+    context: &ThaliaMatchContext,
+    recommendation: &ThaliaRecommendation,
+) -> bool {
+    recommendation.requires.iter().all(|required| {
+        required.id != context.installed_file_id
+            && Some(required.id) != recommendation.id
+            && (context.candidate_file_ids.contains(&required.id)
+                || context.peer_local_claim_ids.contains(&required.id))
+    })
 }
 
 fn persisted_single_installed_file_id(file_set: &FileSetRecipe) -> Option<u64> {
@@ -838,10 +1285,14 @@ fn thalia_hash<T: Hash>(value: &T) -> u64 {
     hasher.finish()
 }
 
+/// GameBanana's update history is left out: whether it was loaded depends on
+/// which screen fetched the page (an update loads it, Browse does not), and
+/// Thalia reads its own copy. Counting it made a plan made from a page saved
+/// by Browse fail against the same page loaded for the update.
 fn thalia_profile_fingerprint(profile: &gamebanana::ProfileResponse) -> u64 {
     thalia_hash(
         &serde_json::to_string(&(
-            cached_profile_catalog_fingerprint(profile),
+            profile_catalog_fingerprint(profile, false),
             &profile.name,
             &profile.short_description,
             &profile.html_text,
@@ -870,6 +1321,8 @@ impl HestiaApp {
         if !thalia::THALIA_UPDATE_MATCHING_ENABLED {
             return;
         }
+        // From here on, a held notice waits only for the requests sent below.
+        self.thalia_matching.end_round(game_ids);
         let evidence = build_cached_update_evidence(&self.state.mods, None);
         let contexts: Vec<_> = self
             .state
@@ -1159,7 +1612,11 @@ impl HestiaApp {
 
     fn queue_automatic_thalia_updates(&mut self, checked_mod_ids: &HashSet<String>) {
         let evidence = build_cached_update_evidence(&self.state.mods, None);
-        let recommendations = self.thalia_recommendations_from_evidence(&evidence);
+        let contexts = self.thalia_display_contexts(&evidence);
+        let recommendations = self.without_present_thalia_requires(
+            &contexts,
+            self.thalia_matching.fresh_recommendations(&contexts),
+        );
         let ids = automatic_thalia_update_ids(
             &self.state.mods,
             &recommendations,
@@ -1171,26 +1628,134 @@ impl HestiaApp {
         }
     }
 
+    fn thalia_display_contexts(
+        &self,
+        evidence: &HashMap<String, CachedUpdateEvidence>,
+    ) -> Vec<ThaliaMatchContext> {
+        self.state
+            .mods
+            .iter()
+            .filter_map(|entry| self.thalia_context_for_mod_internal(entry, evidence, true))
+            .collect()
+    }
+
     fn thalia_recommendations_from_evidence(
         &self,
         evidence: &HashMap<String, CachedUpdateEvidence>,
     ) -> HashMap<String, ThaliaRecommendation> {
-        let contexts: Vec<_> = self
+        let contexts = self.thalia_display_contexts(evidence);
+        self.without_present_thalia_requires(
+            &contexts,
+            self.thalia_matching.current_recommendations(&contexts),
+        )
+    }
+
+    /// Drops extra files the library already has, so an answer whose files
+    /// are all in place reads as plain `current` instead of staying flagged.
+    fn without_present_thalia_requires(
+        &self,
+        contexts: &[ThaliaMatchContext],
+        mut answers: HashMap<String, ThaliaRecommendation>,
+    ) -> HashMap<String, ThaliaRecommendation> {
+        let refused: HashMap<&str, &RefusedThaliaAnswer> = if answers.is_empty() {
+            HashMap::new()
+        } else {
+            self.state
+                .mods
+                .iter()
+                .filter_map(|entry| {
+                    let refused = entry.source.as_ref()?.refused_thalia_answer.as_ref()?;
+                    Some((entry.id.as_str(), refused))
+                })
+                .collect()
+        };
+        for (mod_id, answer) in &mut answers {
+            let Some(context) = contexts
+                .iter()
+                .find(|context| context.local_mod_id == *mod_id)
+            else {
+                continue;
+            };
+            answer.requires.retain(|required| {
+                !self.thalia_required_file_is_present(
+                    &context.game_id,
+                    context.source_mod_id,
+                    required.id,
+                )
+            });
+            if refused
+                .get(mod_id.as_str())
+                .is_some_and(|refused| **refused == refused_thalia_answer(answer))
+            {
+                // Its files did not fit together, so the user picks instead.
+                *answer = ThaliaRecommendation {
+                    action: ThaliaRecommendationAction::Uncertain,
+                    id: None,
+                    requires: Vec::new(),
+                };
+            }
+        }
+        answers
+    }
+
+    /// Saves an answer whose files did not fit together with the mod, so it is
+    /// not tried again after a restart.
+    fn remember_refused_thalia_answer(&mut self, mod_id: &str, answer: &ThaliaRecommendation) {
+        let Some(mod_index) = self.state.mods.iter().position(|entry| entry.id == mod_id) else {
+            return;
+        };
+        let backend = self
             .state
-            .mods
+            .games
             .iter()
-            .filter_map(|entry| self.thalia_context_for_mod_internal(entry, evidence, true))
-            .collect();
-        self.thalia_matching.current_recommendations(&contexts)
+            .find(|game| game.definition.id == self.state.mods[mod_index].game_id)
+            .map(|game| game.definition.backend)
+            .unwrap_or_default();
+        let refused = Some(refused_thalia_answer(answer));
+        let Some(source) = self.state.mods[mod_index].source.as_mut() else {
+            return;
+        };
+        if source.refused_thalia_answer == refused {
+            return;
+        }
+        source.refused_thalia_answer = refused;
+        let save_result = match backend {
+            GameBackend::Xxmi => xxmi::save_mod_metadata(&mut self.state.mods[mod_index]),
+            GameBackend::UnrealEngine => {
+                unrealengine::write_portable_metadata(&self.state.mods[mod_index])
+            }
+        };
+        if let Err(err) = save_result {
+            // Keep it for this session anyway; only the restart loses it.
+            tracing::warn!("could not save the refused Thalia answer for {mod_id}: {err:#}");
+        }
+        self.library_card_cache.key = None;
+        self.library_card_cache.rows = Arc::new(Vec::new());
+        self.library_card_cache.evidence.clear();
+        self.library_card_cache.evidence_key = None;
     }
 
     fn overlay_thalia_update_evidence(&self, evidence: &mut HashMap<String, CachedUpdateEvidence>) {
-        let answers = self.thalia_recommendations_from_evidence(evidence);
+        let contexts = self.thalia_display_contexts(evidence);
+        let answers = self.without_present_thalia_requires(
+            &contexts,
+            self.thalia_matching.current_recommendations(&contexts),
+        );
+        let pending = self.thalia_matching.pending_mod_ids(&contexts);
         for (mod_id, answer) in answers {
             let Some(entry) = evidence.get_mut(&mod_id) else {
                 continue;
             };
             overlay_thalia_recommendation(entry, &answer);
+        }
+        for mod_id in pending {
+            let Some(entry) = evidence.get_mut(&mod_id) else {
+                continue;
+            };
+            if entry.state != ModUpdateState::UpdateAvailable {
+                entry.newer_files.clear();
+                entry.thalia_pending = true;
+            }
         }
     }
 
@@ -1199,15 +1764,25 @@ impl HestiaApp {
             .thalia_matching
             .cache
             .iter()
-            .map(|(key, value)| {
-                (
-                    thalia_hash(key),
-                    thalia_hash(&value.cached_at),
-                    value.cached_at.elapsed() < THALIA_MATCH_CACHE_TTL,
-                )
-            })
+            .map(|(key, value)| (thalia_hash(key), thalia_hash(&value.cached_at)))
             .collect();
         cache.sort_unstable();
+        let mut failed: Vec<_> = self
+            .thalia_matching
+            .failed_at
+            .keys()
+            .map(thalia_hash)
+            .collect();
+        failed.sort_unstable();
+        let now = Instant::now();
+        let mut awaiting: Vec<_> = self
+            .thalia_matching
+            .awaiting_games
+            .keys()
+            .filter(|game_id| self.thalia_matching.game_awaiting(game_id, now))
+            .cloned()
+            .collect();
+        awaiting.sort_unstable();
         let mut pending: Vec<_> = self
             .thalia_matching
             .inflight
@@ -1215,7 +1790,7 @@ impl HestiaApp {
             .map(thalia_hash)
             .collect();
         pending.sort_unstable();
-        thalia_hash(&(self.thalia_matching.generation, cache, pending))
+        thalia_hash(&(self.thalia_matching.generation, cache, pending, failed, awaiting))
     }
 
     fn thalia_update_install_plan(&self, mod_entry_id: &str) -> Option<ThaliaInstallPlan> {
@@ -1223,7 +1798,7 @@ impl HestiaApp {
         let recommendation = self
             .thalia_recommendations_from_evidence(&evidence)
             .remove(mod_entry_id)?;
-        if recommendation.action != ThaliaRecommendationAction::Update {
+        if !thalia_recommendation_installs_files(&recommendation) {
             return None;
         }
         let target = self
@@ -1286,10 +1861,14 @@ impl HestiaApp {
         plan: &ThaliaInstallPlan,
         target: &ModEntry,
         fresh_profile: &gamebanana::ProfileResponse,
-    ) -> Option<gamebanana::ModFile> {
-        if plan.recommendation.action != ThaliaRecommendationAction::Update
-            || !plan.matches_target(target, self.active_profile_id(&target.game_id))
-        {
+    ) -> Option<ValidatedThaliaInstall> {
+        let action = match plan.recommendation.action {
+            ThaliaRecommendationAction::Update => thalia::UpdateMatchAction::Update,
+            ThaliaRecommendationAction::Merge => thalia::UpdateMatchAction::Merge,
+            ThaliaRecommendationAction::Current => thalia::UpdateMatchAction::Current,
+            ThaliaRecommendationAction::Uncertain => return None,
+        };
+        if !plan.matches_target(target, self.active_profile_id(&target.game_id)) {
             return None;
         }
         let evidence = self.thalia_evidence_for_profile(&target.id, fresh_profile)?;
@@ -1298,19 +1877,72 @@ impl HestiaApp {
             return None;
         }
         let response = thalia::UpdateMatchResponse {
-            action: thalia::UpdateMatchAction::Update,
+            action,
             id: plan.recommendation.id,
+            requires: plan.recommendation.requires.clone(),
         };
         validated_recommendation(&context, &response)?;
         let canonical = matcher_adapter::canonicalize_profile(fresh_profile);
-        canonical.active.into_iter().find(|file| {
-            Some(file.id) == plan.recommendation.id
-                && profile_file_is_active_downloadable(&canonical.profile, file)
+        let downloadable = |id: u64| {
+            canonical.active.iter().find(|file| {
+                file.id == id && profile_file_is_active_downloadable(&canonical.profile, file)
+            })
+        };
+        let file = match plan.recommendation.id {
+            Some(id) => Some(downloadable(id)?.clone()),
+            None => None,
+        };
+        let mut requires = Vec::new();
+        for required in &plan.recommendation.requires {
+            if self.thalia_required_file_is_present(&target.game_id, context.source_mod_id, required.id)
+            {
+                continue;
+            }
+            // A required file that can no longer be downloaded makes the whole
+            // answer unusable: installing the update alone would break it.
+            requires.push((required.action, downloadable(required.id)?.clone()));
+        }
+        Some(ValidatedThaliaInstall {
+            action: plan.recommendation.action,
+            file,
+            requires,
         })
+    }
+
+    /// Whether a mod of this game already carries the file, or an install
+    /// queued for it is about to.
+    fn thalia_required_file_is_present(&self, game_id: &str, source_mod_id: u64, file_id: u64) -> bool {
+        let installed = self.state.mods.iter().any(|entry| {
+            entry.game_id == game_id
+                && entry.source.as_ref().is_some_and(|source| {
+                    source
+                        .gamebanana
+                        .as_ref()
+                        .is_some_and(|link| link.mod_id == source_mod_id)
+                        && (source.file_set.selected_file_ids.contains(&file_id)
+                            || source
+                                .file_set
+                                .selected_files_meta
+                                .iter()
+                                .any(|file| file.file_id == file_id))
+                })
+        });
+        installed
+            || self.pending_browse_install_meta.values().any(|meta| {
+                meta.game_id == game_id
+                    && meta.mod_id == source_mod_id
+                    && meta.selected_files.iter().any(|file| file.id == file_id)
+            })
     }
 
     fn invalidate_thalia_matching(&mut self) {
         self.thalia_matching.invalidate();
+    }
+
+    /// A game or profile switch: requests already sent finish and are
+    /// cached, since Thalia charged them anyway.
+    fn invalidate_thalia_matching_keeping_sent(&mut self) {
+        self.thalia_matching.invalidate_keeping_sent(true);
     }
 
     fn invalidate_thalia_matching_for_game(&mut self, game_id: &str) {
@@ -1318,7 +1950,7 @@ impl HestiaApp {
             .selected_game()
             .is_some_and(|game| game.definition.id == game_id)
         {
-            self.invalidate_thalia_matching();
+            self.invalidate_thalia_matching_keeping_sent();
         }
     }
 }
@@ -1340,6 +1972,7 @@ mod thalia_matching_tests {
                 version: None,
                 download_url: Some("https://gamebanana.com/dl/88".into()),
                 is_archived: false,
+                md5: None,
             }],
             ..Default::default()
         };
@@ -1355,6 +1988,7 @@ mod thalia_matching_tests {
             }],
             profile: Some(Arc::new(profile)),
             profile_cached_at: None,
+            thalia_pending: false,
         }
     }
 
@@ -1366,6 +2000,7 @@ mod thalia_matching_tests {
             &ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Update,
                 id: Some(88),
+                requires: Vec::new(),
             },
         );
         assert_eq!(evidence.state, ModUpdateState::UpdateAvailable);
@@ -1376,22 +2011,32 @@ mod thalia_matching_tests {
 
     #[test]
     fn nonreplacement_answers_only_suppress_notice_when_current() {
-        for action in [
-            ThaliaRecommendationAction::Merge,
-            ThaliaRecommendationAction::Uncertain,
-        ] {
-            let mut evidence = overlay_evidence();
-            overlay_thalia_recommendation(
-                &mut evidence,
-                &ThaliaRecommendation {
-                    action,
-                    id: (action == ThaliaRecommendationAction::Merge).then_some(88),
-                },
-            );
-            assert_eq!(evidence.state, ModUpdateState::UpToDate);
-            assert!(evidence.signature.is_none());
-            assert_eq!(evidence.newer_files[0].id, 88);
-        }
+        let mut uncertain = overlay_evidence();
+        overlay_thalia_recommendation(
+            &mut uncertain,
+            &ThaliaRecommendation {
+                action: ThaliaRecommendationAction::Uncertain,
+                id: None,
+                requires: Vec::new(),
+            },
+        );
+        assert_eq!(uncertain.state, ModUpdateState::UpToDate);
+        assert!(uncertain.signature.is_none());
+        assert_eq!(uncertain.newer_files[0].id, 88);
+
+        // A merge is applied like an update, so it shows the same way.
+        let mut merge = overlay_evidence();
+        overlay_thalia_recommendation(
+            &mut merge,
+            &ThaliaRecommendation {
+                action: ThaliaRecommendationAction::Merge,
+                id: Some(88),
+                requires: Vec::new(),
+            },
+        );
+        assert_eq!(merge.state, ModUpdateState::UpdateAvailable);
+        assert_eq!(merge.signature.unwrap().files[0].file_id, 88);
+        assert_eq!(merge.newer_files[0].id, 88);
 
         let mut current = overlay_evidence();
         overlay_thalia_recommendation(
@@ -1399,6 +2044,7 @@ mod thalia_matching_tests {
             &ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Current,
                 id: None,
+                requires: Vec::new(),
             },
         );
         assert!(current.newer_files.is_empty());
@@ -1416,12 +2062,14 @@ mod thalia_matching_tests {
             version: None,
             download_url: Some("https://gamebanana.com/dl/99".into()),
             is_archived: false,
+            md5: None,
         }];
         overlay_thalia_recommendation(
             &mut local_update,
             &ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Current,
                 id: None,
+                requires: Vec::new(),
             },
         );
         assert_eq!(local_update.newer_files[0].id, 99);
@@ -1432,6 +2080,7 @@ mod thalia_matching_tests {
         let answer = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         let mut evidence = overlay_evidence();
         evidence.state = ModUpdateState::UpdateAvailable;
@@ -1459,6 +2108,7 @@ mod thalia_matching_tests {
                 thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Update,
                     id: Some(88),
+                    requires: Vec::new(),
                 },
             );
         }
@@ -1471,9 +2121,78 @@ mod thalia_matching_tests {
             state.current_recommendations(&[first.clone()])["a"].id,
             Some(88)
         );
+        // Expiry only triggers a new request; the answer for the same exact
+        // context keeps showing until it is replaced.
         state.cache.get_mut(&first.key()).unwrap().cached_at =
             Instant::now() - THALIA_MATCH_CACHE_TTL;
-        assert!(state.current_recommendations(&[first]).is_empty());
+        assert_eq!(state.current_recommendations(&[first])["a"].id, Some(88));
+    }
+
+    #[test]
+    fn notice_is_held_until_an_outcome_arrives() {
+        let (mut state, _requests) = test_coordinator();
+        let context = context_for("a", 1, vec![88]);
+        let contexts = [context.clone()];
+        assert!(state.pending_mod_ids(&contexts).is_empty());
+
+        state.begin_round(["game".to_string()]);
+        assert!(state.pending_mod_ids(&contexts).contains("a"));
+
+        state.end_round(&HashSet::from(["game".to_string()]));
+        assert!(state.pending_mod_ids(&contexts).is_empty());
+
+        state.request_with_gate(context.clone(), false, true);
+        assert!(state.pending_mod_ids(&contexts).contains("a"));
+
+        state.inflight.clear();
+        state.insert_cache(
+            context.key(),
+            thalia::UpdateMatchResponse {
+                action: thalia::UpdateMatchAction::Current,
+                id: None,
+                requires: Vec::new(),
+            },
+        );
+        assert!(state.pending_mod_ids(&contexts).is_empty());
+    }
+
+    #[test]
+    fn failure_or_expired_hold_releases_the_blue_fallback() {
+        let mut state = test_state();
+        let context = context_for("a", 1, vec![88]);
+        let contexts = [context.clone()];
+
+        state.begin_round(["game".to_string()]);
+        state.record_failure(&context.key(), None, false);
+        assert!(state.pending_mod_ids(&contexts).is_empty());
+
+        let mut state = test_state();
+        state
+            .awaiting_games
+            .insert("game".to_string(), Instant::now() - THALIA_MATCH_PENDING_HOLD);
+        assert!(state.pending_mod_ids(&contexts).is_empty());
+        assert!(state.next_hold_expiry().is_none());
+    }
+
+    #[test]
+    fn forced_refresh_keeps_the_previous_answer_visible() {
+        let (mut state, _requests) = test_coordinator();
+        let context = context_for("a", 1, vec![88]);
+        state.insert_cache(
+            context.key(),
+            thalia::UpdateMatchResponse {
+                action: thalia::UpdateMatchAction::Current,
+                id: None,
+                requires: Vec::new(),
+            },
+        );
+        state.request_with_gate(context.clone(), true, true);
+        assert!(state.inflight.contains_key(&context.key()));
+        assert!(state.pending_mod_ids(std::slice::from_ref(&context)).is_empty());
+        assert_eq!(
+            state.current_recommendations(&[context])["a"].action,
+            ThaliaRecommendationAction::Current
+        );
     }
 
     #[test]
@@ -1485,6 +2204,7 @@ mod thalia_matching_tests {
             thalia::UpdateMatchResponse {
                 action: thalia::UpdateMatchAction::Update,
                 id: Some(88),
+                requires: Vec::new(),
             },
         );
         state.request_with_gate(context_for("b", 2, vec![88]), false, true);
@@ -1537,6 +2257,7 @@ mod thalia_matching_tests {
             recommendation: ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Update,
                 id: Some(88),
+                requires: Vec::new(),
             },
         };
         assert!(plan.matches_target(&target, None));
@@ -1611,6 +2332,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action,
                     id: file_id,
+                    requires: Vec::new(),
                 },
             });
         }
@@ -1623,7 +2345,7 @@ mod thalia_matching_tests {
         };
         assert_eq!(
             automatic_thalia_update_ids(&mods, &answers, &checked, active_only),
-            vec!["update"]
+            vec!["merge", "update"]
         );
         assert!(
             automatic_thalia_update_ids(&mods, &answers, &HashSet::new(), active_only).is_empty()
@@ -1663,19 +2385,121 @@ mod thalia_matching_tests {
         let cached_answers = state.current_recommendations(&contexts);
         assert_eq!(
             automatic_thalia_update_ids(&mods, &cached_answers, &checked, active_only),
-            vec!["update"]
+            vec!["merge", "update"]
         );
         state.cache.get_mut(&contexts[0].key()).unwrap().cached_at =
             Instant::now() - THALIA_MATCH_CACHE_TTL;
-        assert!(
+        assert_eq!(
             automatic_thalia_update_ids(
                 &mods,
-                &state.current_recommendations(&contexts),
+                &state.fresh_recommendations(&contexts),
                 &checked,
                 active_only
-            )
-            .is_empty()
+            ),
+            vec!["merge"]
         );
+    }
+
+    #[test]
+    fn refused_answer_is_saved_and_matches_only_the_same_answer() {
+        use thalia::{UpdateMatchRequiredAction as Mode, UpdateMatchRequiredFile as Required};
+        let answer = |action, id, requires: Vec<(u64, Mode)>| ThaliaRecommendation {
+            action,
+            id,
+            requires: requires
+                .into_iter()
+                .map(|(id, action)| Required { id, action })
+                .collect(),
+        };
+        let update = ThaliaRecommendationAction::Update;
+        let refused = refused_thalia_answer(&answer(
+            update,
+            Some(88),
+            vec![(90, Mode::Merge), (89, Mode::Merge)],
+        ));
+
+        // `requires` has no order.
+        assert_eq!(
+            refused,
+            refused_thalia_answer(&answer(
+                update,
+                Some(88),
+                vec![(89, Mode::Merge), (90, Mode::Merge)]
+            ))
+        );
+        // Another file, mode or action is a different answer.
+        for other in [
+            answer(update, Some(87), vec![(89, Mode::Merge), (90, Mode::Merge)]),
+            answer(
+                update,
+                Some(88),
+                vec![(89, Mode::Merge), (90, Mode::Separate)],
+            ),
+            answer(update, Some(88), vec![(89, Mode::Merge)]),
+            answer(
+                ThaliaRecommendationAction::Merge,
+                Some(88),
+                vec![(89, Mode::Merge), (90, Mode::Merge)],
+            ),
+        ] {
+            assert_ne!(refused, refused_thalia_answer(&other));
+        }
+
+        // Kept in the mod's saved metadata, and older metadata without it
+        // still loads.
+        let source = ModSourceData {
+            refused_thalia_answer: Some(refused.clone()),
+            ..Default::default()
+        };
+        let saved = serde_json::to_value(&source).unwrap();
+        assert_eq!(
+            saved["refused_thalia_answer"],
+            serde_json::json!({
+                "action": "update",
+                "file": 88,
+                "requires": [
+                    { "action": "merge", "file": 89 },
+                    { "action": "merge", "file": 90 },
+                ],
+            })
+        );
+        let saved: ModSourceData = serde_json::from_value(saved).unwrap();
+        assert_eq!(saved.refused_thalia_answer, Some(refused.clone()));
+        let plain = serde_json::to_value(ModSourceData::default()).unwrap();
+        assert!(plain.get("refused_thalia_answer").is_none());
+        let old: ModSourceData = serde_json::from_value(plain).unwrap();
+        assert_eq!(old.refused_thalia_answer, None);
+    }
+
+    #[test]
+    fn bundle_member_is_never_retried_alone() {
+        let mut payload: crate::model::BrowseDownloadTaskPayload =
+            serde_json::from_value(serde_json::json!({
+                "game_id": "game", "mod_id": 42,
+                "file": { "id": 88, "file_name": "new.zip", "file_size": 1, "date_added": 20 }
+            }))
+            .unwrap();
+        let mut task = TaskEntry {
+            id: 1,
+            kind: TaskKind::Download,
+            status: TaskStatus::Canceled,
+            title: "new.zip".into(),
+            game_id: Some("game".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            total_size: None,
+            unsafe_content: false,
+            retry_payload: Some(TaskRetryPayload::BrowseDownload(payload.clone())),
+        };
+        assert!(HestiaApp::task_is_retryable_browse_download(&task));
+
+        // Saved with the task, so it holds after a restart too.
+        payload.thalia_bundle = true;
+        let saved: crate::model::BrowseDownloadTaskPayload =
+            serde_json::from_str(&serde_json::to_string(&payload).unwrap()).unwrap();
+        assert!(saved.thalia_bundle);
+        task.retry_payload = Some(TaskRetryPayload::BrowseDownload(saved));
+        assert!(!HestiaApp::task_is_retryable_browse_download(&task));
     }
 
     #[test]
@@ -1739,6 +2563,172 @@ mod thalia_matching_tests {
         }
     }
 
+    #[test]
+    fn required_files_must_be_known() {
+        use thalia::{UpdateMatchRequiredAction as Mode, UpdateMatchRequiredFile as Required};
+        let mut context = context_for("a", 0, vec![88, 89, 90]);
+        context.peer_local_claim_ids = vec![55];
+        let answer = |action, requires: Vec<(u64, Mode)>| ThaliaRecommendation {
+            action,
+            id: Some(88),
+            requires: requires
+                .into_iter()
+                .map(|(id, action)| Required { id, action })
+                .collect(),
+        };
+        let update = ThaliaRecommendationAction::Update;
+        let merge = ThaliaRecommendationAction::Merge;
+
+        assert!(required_files_are_valid(
+            &context,
+            &answer(update, vec![(89, Mode::Separate), (90, Mode::Merge)])
+        ));
+        // A file a sibling already installed is skipped later, not refused.
+        assert!(required_files_are_valid(&context, &answer(update, vec![(55, Mode::Separate)])));
+        assert!(required_files_are_valid(&context, &answer(merge, vec![(89, Mode::Separate)])));
+
+        // Not offered to Thalia, the installed file, or the chosen file itself.
+        assert!(!required_files_are_valid(&context, &answer(update, vec![(12, Mode::Separate)])));
+        assert!(!required_files_are_valid(&context, &answer(update, vec![(7, Mode::Merge)])));
+        assert!(!required_files_are_valid(&context, &answer(update, vec![(88, Mode::Merge)])));
+        // Several files merged into one folder are fine here. Whether they
+        // write the same paths is checked once the files are downloaded.
+        assert!(required_files_are_valid(
+            &context,
+            &answer(update, vec![(89, Mode::Merge), (90, Mode::Merge)])
+        ));
+        assert!(required_files_are_valid(&context, &answer(merge, vec![(89, Mode::Merge)])));
+
+        // A refused `requires` makes the whole answer unusable, so the factual
+        // picker shows instead.
+        let response = thalia::UpdateMatchResponse {
+            action: thalia::UpdateMatchAction::Update,
+            id: Some(88),
+            requires: vec![Required {
+                id: 12,
+                action: Mode::Separate,
+            }],
+        };
+        assert!(validated_recommendation(&context, &response).is_none());
+    }
+
+    /// Mock Thalia bodies run through the same parse, check and display steps
+    /// as a real answer.
+    #[test]
+    fn mock_answers_with_requires_parse_check_and_show() {
+        use thalia::{UpdateMatchRequiredAction as Mode, UpdateMatchRequiredFile as Required};
+        let file = |id: u64, date_added: i64| gamebanana::ModFile {
+            id,
+            file_name: format!("{id}.zip"),
+            file_size: 100 + id,
+            date_added,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: Some(format!("https://gamebanana.com/dl/{id}")),
+            is_archived: false,
+            md5: None,
+        };
+        let evidence = || {
+            let mut evidence = overlay_evidence();
+            let profile = gamebanana::ProfileResponse {
+                id: 42,
+                files: vec![file(88, 20), file(89, 21), file(90, 22)],
+                ..Default::default()
+            };
+            evidence.newer_files = profile.files.clone();
+            evidence.profile = Some(Arc::new(profile));
+            evidence
+        };
+        let context = context_for("a", 0, vec![88, 89, 90]);
+        let answer = |body: &str| {
+            let response = thalia::parse_update_match_response(body.as_bytes()).unwrap();
+            validated_recommendation(&context, &response)
+        };
+        let shown = |answer: &ThaliaRecommendation| {
+            let mut evidence = evidence();
+            overlay_thalia_recommendation(&mut evidence, answer);
+            let ids = evidence
+                .signature
+                .map(|signature| signature.files.iter().map(|file| file.file_id).collect())
+                .unwrap_or_else(Vec::new);
+            (evidence.state, ids)
+        };
+
+        // `update` with a library that goes in its own folder.
+        let update =
+            answer(r#"{"action":"update","file":88,"requires":[{"file":89,"action":"separate"}]}"#)
+                .unwrap();
+        assert_eq!(update.action, ThaliaRecommendationAction::Update);
+        assert_eq!(
+            update.requires,
+            vec![Required {
+                id: 89,
+                action: Mode::Separate
+            }]
+        );
+        assert!(thalia_recommendation_installs_files(&update));
+        assert_eq!(shown(&update), (ModUpdateState::UpdateAvailable, vec![88]));
+
+        // `update` with an add-on merged into the mod's folder.
+        let merged =
+            answer(r#"{"action":"update","file":88,"requires":[{"file":90,"action":"merge"}]}"#)
+                .unwrap();
+        assert_eq!(merged.requires[0].action, Mode::Merge);
+        assert!(thalia_recommendation_installs_files(&merged));
+
+        // `merge` with nothing extra.
+        let merge = answer(r#"{"action":"merge","file":88,"requires":[]}"#).unwrap();
+        assert_eq!(merge.action, ThaliaRecommendationAction::Merge);
+        assert!(merge.requires.is_empty());
+        assert_eq!(shown(&merge), (ModUpdateState::UpdateAvailable, vec![88]));
+
+        // `current` that still needs a library: the installed file stays, the
+        // library shows as the thing to install.
+        let current =
+            answer(r#"{"action":"current","file":null,"requires":[{"file":89,"action":"separate"}]}"#)
+                .unwrap();
+        assert_eq!(current.action, ThaliaRecommendationAction::Current);
+        assert!(current.id.is_none());
+        assert!(thalia_recommendation_installs_files(&current));
+        assert_eq!(shown(&current), (ModUpdateState::UpdateAvailable, vec![89]));
+        let current_merge =
+            answer(r#"{"action":"current","file":null,"requires":[{"file":90,"action":"merge"}]}"#)
+                .unwrap();
+        assert_eq!(shown(&current_merge), (ModUpdateState::UpdateAvailable, vec![90]));
+
+        // Once that library is in the library, the same answer is plain current.
+        let mut installed = current.clone();
+        installed.requires.clear();
+        assert!(!thalia_recommendation_installs_files(&installed));
+        let (state, ids) = shown(&installed);
+        assert_eq!(state, ModUpdateState::UpToDate);
+        assert!(ids.is_empty());
+
+        // `uncertain` stays on the picker.
+        let uncertain = answer(r#"{"action":"uncertain","file":null,"requires":[]}"#).unwrap();
+        assert!(!thalia_recommendation_installs_files(&uncertain));
+
+        // Refused: a library Thalia was never offered, and the installed file.
+        assert!(
+            answer(r#"{"action":"current","file":null,"requires":[{"file":12,"action":"separate"}]}"#)
+                .is_none()
+        );
+        assert!(
+            answer(r#"{"action":"current","file":null,"requires":[{"file":7,"action":"separate"}]}"#)
+                .is_none()
+        );
+        // Two merged files pass here; their paths are compared after download.
+        assert!(
+            answer(
+                r#"{"action":"current","file":null,"requires":[{"file":89,"action":"merge"},{"file":90,"action":"merge"}]}"#
+            )
+            .is_some()
+        );
+        // Missing `requires` reads as none.
+        assert!(answer(r#"{"action":"update","file":88}"#).unwrap().requires.is_empty());
+    }
+
     fn test_state() -> ThaliaMatchingState {
         let (request_tx, _request_rx) = worker_channel::<ThaliaMatchRequest>();
         let (_result_tx, result_rx) = worker_channel::<ThaliaMatchResult>();
@@ -1749,8 +2739,12 @@ mod thalia_matching_tests {
             next_request_id: 1,
             force_refresh_games: HashSet::new(),
             inflight: HashMap::new(),
+            detached: HashMap::new(),
             cache: HashMap::new(),
             failure_backoff: HashMap::new(),
+            rejected: HashMap::new(),
+            failed_at: HashMap::new(),
+            awaiting_games: HashMap::new(),
             recommendations: HashMap::new(),
             claims: HashMap::new(),
             blocked_claims: HashSet::new(),
@@ -1767,10 +2761,13 @@ mod thalia_matching_tests {
                 result_rx,
                 generation: 0,
                 next_request_id: 1,
-                force_refresh_games: HashSet::new(),
-                inflight: HashMap::new(),
+                force_refresh_games: HashSet::new(),                inflight: HashMap::new(),
+                detached: HashMap::new(),
                 cache: HashMap::new(),
                 failure_backoff: HashMap::new(),
+                rejected: HashMap::new(),
+                failed_at: HashMap::new(),
+                awaiting_games: HashMap::new(),
                 recommendations: HashMap::new(),
                 claims: HashMap::new(),
                 blocked_claims: HashSet::new(),
@@ -1846,6 +2843,7 @@ mod thalia_matching_tests {
                 version: None,
                 download_url: Some("https://gamebanana.com/dl/88".to_string()),
                 is_archived: false,
+                md5: None,
             }],
             ..Default::default()
         };
@@ -1864,6 +2862,7 @@ mod thalia_matching_tests {
             version: None,
             download_url: Some("https://gamebanana.com/dl/88".to_string()),
             is_archived: false,
+            md5: None,
         };
         let profile = gamebanana::ProfileResponse {
             id: 42,
@@ -1880,6 +2879,7 @@ mod thalia_matching_tests {
         let response = thalia::UpdateMatchResponse {
             action: thalia::UpdateMatchAction::Update,
             id: Some(77),
+            requires: Vec::new(),
         };
         assert!(validated_recommendation(&context, &response).is_none());
     }
@@ -1890,6 +2890,7 @@ mod thalia_matching_tests {
         let response = thalia::UpdateMatchResponse {
             action: thalia::UpdateMatchAction::Merge,
             id: Some(88),
+            requires: Vec::new(),
         };
         let recommendation = validated_recommendation(&context, &response).unwrap();
         assert_eq!(recommendation.action, ThaliaRecommendationAction::Merge);
@@ -1903,13 +2904,13 @@ mod thalia_matching_tests {
             thalia::UpdateMatchAction::Current,
             thalia::UpdateMatchAction::Uncertain,
         ] {
-            let response = thalia::UpdateMatchResponse { action, id: None };
+            let response = thalia::UpdateMatchResponse { action, id: None, requires: Vec::new() };
             assert!(validated_recommendation(&context, &response).is_some());
         }
     }
 
     #[test]
-    fn current_notice_suppression_requires_the_same_fresh_context() {
+    fn current_notice_suppression_requires_the_same_context() {
         let mut state = test_state();
         let context = context_for("mod", 1, vec![88]);
         state.cache.insert(
@@ -1918,6 +2919,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now(),
             },
@@ -1930,9 +2932,15 @@ mod thalia_matching_tests {
         let changed = context_for("mod", 2, vec![99]);
         assert!(state.current_recommendations(&[changed]).is_empty());
 
+        // An expired answer for the same context keeps the notice hidden
+        // until Thalia answers again, but no longer counts as fresh.
         state.cache.get_mut(&context.key()).unwrap().cached_at =
             Instant::now() - THALIA_MATCH_CACHE_TTL - Duration::from_secs(1);
-        assert!(state.current_recommendations(&[context]).is_empty());
+        assert_eq!(
+            state.current_recommendations(std::slice::from_ref(&context))["mod"].action,
+            ThaliaRecommendationAction::Current
+        );
+        assert!(state.fresh_recommendations(&[context]).is_empty());
     }
 
     #[test]
@@ -1946,6 +2954,7 @@ mod thalia_matching_tests {
                 request_id: fresh.request_id,
                 context: fresh.clone(),
                 cancellation: Arc::new(AtomicBool::new(false)),
+                started: Arc::new(AtomicBool::new(false)),
             },
         );
         state.apply_results(
@@ -1954,6 +2963,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
             }],
             |_| true,
@@ -1976,12 +2986,14 @@ mod thalia_matching_tests {
                     request_id: context.request_id,
                     context: context.clone(),
                     cancellation: Arc::new(AtomicBool::new(false)),
+                    started: Arc::new(AtomicBool::new(false)),
                 },
             );
         }
         let response = || thalia::UpdateMatchResponse {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         state.apply_results(
             contexts[..2]
@@ -2006,6 +3018,7 @@ mod thalia_matching_tests {
                 request_id: contexts[2].request_id,
                 context: contexts[2].clone(),
                 cancellation: Arc::new(AtomicBool::new(false)),
+                started: Arc::new(AtomicBool::new(false)),
             },
         );
         state.apply_results(
@@ -2029,6 +3042,7 @@ mod thalia_matching_tests {
                 request_id: first.request_id,
                 context: first.clone(),
                 cancellation: Arc::new(AtomicBool::new(false)),
+                started: Arc::new(AtomicBool::new(false)),
             },
         );
         state.inflight.insert(
@@ -2037,11 +3051,13 @@ mod thalia_matching_tests {
                 request_id: second.request_id,
                 context: second.clone(),
                 cancellation: Arc::new(AtomicBool::new(false)),
+                started: Arc::new(AtomicBool::new(false)),
             },
         );
         let response = || thalia::UpdateMatchResponse {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         state.apply_results(
             vec![ThaliaMatchResult::Completed {
@@ -2074,6 +3090,7 @@ mod thalia_matching_tests {
         let recommendation = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         for (context, mod_id) in [(&first, "a"), (&second, "b")] {
             state.cache.insert(
@@ -2082,6 +3099,7 @@ mod thalia_matching_tests {
                     response: thalia::UpdateMatchResponse {
                         action: thalia::UpdateMatchAction::Update,
                         id: Some(88),
+                        requires: Vec::new(),
                     },
                     cached_at: Instant::now(),
                 },
@@ -2112,10 +3130,12 @@ mod thalia_matching_tests {
         let response = thalia::UpdateMatchResponse {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         let recommendation = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Update,
             id: Some(88),
+            requires: Vec::new(),
         };
         state.cache.insert(
             first.key(),
@@ -2165,6 +3185,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now(),
             },
@@ -2184,6 +3205,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now(),
             },
@@ -2226,6 +3248,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Update,
                     id: Some(88),
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now(),
             },
@@ -2235,6 +3258,7 @@ mod thalia_matching_tests {
             ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Update,
                 id: Some(88),
+                requires: Vec::new(),
             },
         );
         let recommendation = state.recommendations["mod"].clone();
@@ -2259,6 +3283,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now() - THALIA_MATCH_CACHE_TTL + Duration::from_secs(1),
             },
@@ -2278,6 +3303,7 @@ mod thalia_matching_tests {
             ThaliaRecommendation {
                 action: ThaliaRecommendationAction::Current,
                 id: None,
+                requires: Vec::new(),
             },
         );
         let context = context_for("mod", 1, vec![88]);
@@ -2287,6 +3313,7 @@ mod thalia_matching_tests {
                 response: thalia::UpdateMatchResponse {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
+                    requires: Vec::new(),
                 },
                 cached_at: Instant::now() - THALIA_MATCH_CACHE_TTL - Duration::from_secs(1),
             },
@@ -2296,5 +3323,203 @@ mod thalia_matching_tests {
             .claims
             .insert("mod".to_string(), (context, recommendation));
         assert!(state.recommendation_for("mod").is_none());
+    }
+
+    #[test]
+    fn pacer_spaces_starts_and_stays_under_the_minute_limit() {
+        let mut pacer = ThaliaPacer::default();
+        let start = Instant::now();
+        assert_eq!(pacer.try_start(start), None);
+        assert_eq!(pacer.try_start(start), Some(THALIA_MATCH_START_SPACING));
+        let mut now = start;
+        for _ in 1..THALIA_MATCH_PER_MINUTE {
+            now += THALIA_MATCH_START_SPACING;
+            assert_eq!(pacer.try_start(now), None);
+        }
+        // The next one waits until the first leaves the rolling minute.
+        now += THALIA_MATCH_START_SPACING;
+        assert_eq!(
+            pacer.try_start(now),
+            Some(THALIA_MATCH_MINUTE - (now - start))
+        );
+        assert_eq!(pacer.try_start(start + THALIA_MATCH_MINUTE), None);
+
+        // Thalia's wait holds every start back, never shorter than the least
+        // wait, and a later shorter wait does not cut it short.
+        let later = start + Duration::from_secs(200);
+        pacer.pause(later, Some(Duration::ZERO));
+        assert_eq!(pacer.try_start(later), Some(THALIA_MATCH_RATE_LIMIT_WAIT));
+        pacer.pause(later, Some(Duration::from_secs(5)));
+        pacer.pause(later, Some(Duration::from_secs(2)));
+        assert_eq!(pacer.try_start(later), Some(Duration::from_secs(5)));
+    }
+
+    #[tokio::test]
+    async fn busy_answers_are_retried_in_turn_then_given_up() {
+        let pacer = Mutex::new(ThaliaPacer {
+            spacing: Duration::ZERO,
+            rate_limit_wait: Duration::ZERO,
+            ..Default::default()
+        });
+        let request = || ThaliaMatchRequest {
+            context: context_for("mod", 0, vec![88]),
+            force_refresh: false,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            started: Arc::new(AtomicBool::new(false)),
+        };
+        let http = |status| {
+            Err(thalia::UpdateMatchError::Http {
+                status,
+                retry_after: Some(Duration::ZERO),
+            })
+        };
+        let current = || {
+            Ok(thalia::UpdateMatchResponse {
+                action: thalia::UpdateMatchAction::Current,
+                id: None,
+                requires: Vec::new(),
+            })
+        };
+        let run = |answers: Vec<Result<_, _>>| {
+            let pacer = &pacer;
+            async move {
+                let request = request();
+                let mut answers = answers.into_iter();
+                let mut sent = 0;
+                let result = fetch_paced_update_match(pacer, &request, || {
+                    sent += 1;
+                    std::future::ready(answers.next().expect("no more answers"))
+                })
+                .await;
+                (result, sent, request.started.load(Ordering::Relaxed))
+            }
+        };
+
+        let (result, sent, started) = run(vec![http(429), http(429), current()]).await;
+        assert!(result.is_ok());
+        assert_eq!(sent, 3);
+        assert!(started);
+        // Three retries, then "try later".
+        let (result, sent, _) = run((0..4).map(|_| http(429)).collect()).await;
+        assert!(result.unwrap_err().is_rate_limited());
+        assert_eq!(sent, 4);
+        // Other failures are not retried here.
+        for status in [422, 502] {
+            let (result, sent, _) = run(vec![http(status)]).await;
+            assert_eq!(result.unwrap_err().is_permanent(), status == 422);
+            assert_eq!(sent, 1);
+        }
+
+        // A cancelled request never goes out.
+        let request = request();
+        request.cancellation.store(true, Ordering::Relaxed);
+        let mut sent = 0;
+        let result = fetch_paced_update_match(&pacer, &request, || {
+            sent += 1;
+            std::future::ready(current())
+        })
+        .await;
+        assert!(result.unwrap_err().is_cancelled());
+        assert_eq!(sent, 0);
+        assert!(!request.started.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn refused_contexts_are_not_asked_again() {
+        let (mut state, mut request_rx) = test_coordinator();
+        let context = context_for("mod", 0, vec![88]);
+        state.record_failure(&context.key(), None, true);
+        // Past the usual 30 s wait, and even on a manual check.
+        state.failure_backoff.clear();
+        state.request_with_gate(context.clone(), true, true);
+        assert!(request_rx.try_recv().is_err());
+        assert!(state.inflight.is_empty());
+        assert!(state.failed_at.contains_key(&context.key()));
+
+        // A changed mod page is a different context, so it is asked.
+        let mut changed = context.clone();
+        changed.catalog_fingerprint = 9;
+        state.request_with_gate(changed, false, true);
+        assert!(request_rx.try_recv().is_ok());
+
+        // An ordinary failure is asked again once its wait has passed.
+        let other = context_for("other", 0, vec![88]);
+        state.record_failure(&other.key(), None, false);
+        state.failure_backoff.clear();
+        state.request_with_gate(other, false, true);
+        assert!(request_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_switch_keeps_sent_requests_and_drops_queued_ones() {
+        let (mut state, mut request_rx) = test_coordinator();
+        let (result_tx, result_rx) = worker_channel::<ThaliaMatchResult>();
+        state.result_rx = result_rx;
+        let sent = context_for("sent", 0, vec![88]);
+        state.request_with_gate(sent.clone(), false, true);
+        state.request_with_gate(context_for("queued", 0, vec![88]), false, true);
+        let sent_request = request_rx.try_recv().unwrap();
+        let queued_request = request_rx.try_recv().unwrap();
+        sent_request.started.store(true, Ordering::Relaxed);
+
+        state.invalidate_keeping_sent(true);
+        assert!(queued_request.cancellation.load(Ordering::Relaxed));
+        assert!(!sent_request.cancellation.load(Ordering::Relaxed));
+
+        // Asking for the same context again takes the request back, and its
+        // answer arrives for the new round.
+        state.request_with_gate(sent.clone(), false, true);
+        assert!(request_rx.try_recv().is_err());
+        let answer = thalia::UpdateMatchResponse {
+            action: thalia::UpdateMatchAction::Current,
+            id: None,
+            requires: Vec::new(),
+        };
+        result_tx
+            .send(ThaliaMatchResult::Completed {
+                context: sent_request.context.clone(),
+                response: answer.clone(),
+            })
+            .unwrap();
+        let results = state.take_results();
+        let [ThaliaMatchResult::Completed { context, .. }] = results.as_slice() else {
+            panic!("expected the answer");
+        };
+        assert_eq!(context.generation, state.generation);
+        assert!(context.same_semantic_context(&ThaliaMatchContext {
+            generation: state.generation,
+            request_id: context.request_id,
+            ..sent.clone()
+        }));
+        state.apply_results(results, |_| true);
+        assert!(state.inflight.is_empty());
+
+        // An answer nobody asks for again is kept for later.
+        state.cache.clear();
+        state.request_with_gate(sent.clone(), false, true);
+        let again = request_rx.try_recv().unwrap();
+        again.started.store(true, Ordering::Relaxed);
+        state.invalidate_keeping_sent(true);
+        result_tx
+            .send(ThaliaMatchResult::Completed {
+                context: again.context.clone(),
+                response: answer.clone(),
+            })
+            .unwrap();
+        assert!(state.take_results().is_empty());
+        assert_eq!(
+            state.cache.get(&sent.key()).map(|cached| &cached.response),
+            Some(&answer)
+        );
+
+        // Closing or a proxy change still stops everything.
+        state.cache.clear();
+        state.request_with_gate(sent.clone(), false, true);
+        let last = request_rx.try_recv().unwrap();
+        last.started.store(true, Ordering::Relaxed);
+        state.invalidate_keeping_sent(true);
+        state.invalidate();
+        assert!(last.cancellation.load(Ordering::Relaxed));
+        assert!(state.detached.is_empty());
     }
 }

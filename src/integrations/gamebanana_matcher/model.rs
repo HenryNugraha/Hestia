@@ -1,7 +1,30 @@
 use serde::Deserialize;
 
 const MODEL_SCHEMA: &str = "hestia-native-hgb-model-v1";
-const RAW_FEATURE_COUNT: usize = 92;
+/// Stage 1, `model_stage1.json`: the metadata model.
+pub const STAGE1_VARIANT: &str = "ablation92";
+/// Stage 2, `model_stage2.json`: stage 1's inputs plus the archive path
+/// columns.  It must be retrained whenever stage 1's inputs change.
+pub const STAGE2_VARIANT: &str = "paths105";
+
+/// The inputs stage 1 reads, in order: exactly what `features` computes.
+pub fn stage1_input_names() -> Vec<String> {
+    super::features::NUMERIC_FEATURES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
+/// The inputs stage 2 reads, in order: stage 1's, then the path columns.
+pub fn stage2_input_names() -> Vec<String> {
+    let mut names = stage1_input_names();
+    names.extend(
+        super::paths::PATH_FEATURE_NAMES
+            .iter()
+            .map(|name| format!("archive_{name}")),
+    );
+    names
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatcherError {
@@ -75,9 +98,22 @@ pub struct Score {
 
 impl NativeModel {
     pub fn from_json_str(value: &str) -> Result<Self, MatcherError> {
+        Self::from_json_str_for(value, STAGE1_VARIANT, &stage1_input_names())
+    }
+
+    pub fn from_stage2_json_str(value: &str) -> Result<Self, MatcherError> {
+        Self::from_json_str_for(value, STAGE2_VARIANT, &stage2_input_names())
+    }
+
+    /// Parse a bundle that must be `variant` and read exactly `input_names`.
+    fn from_json_str_for(
+        value: &str,
+        variant: &str,
+        input_names: &[String],
+    ) -> Result<Self, MatcherError> {
         let model: Self =
             serde_json::from_str(value).map_err(|error| MatcherError::Json(error.to_string()))?;
-        model.validate()?;
+        model.validate(variant, input_names)?;
         Ok(model)
     }
 
@@ -86,9 +122,9 @@ impl NativeModel {
     }
 
     pub fn score_raw(&self, raw_features: &[Option<f64>]) -> Result<Score, MatcherError> {
-        if raw_features.len() != RAW_FEATURE_COUNT {
+        if raw_features.len() != self.raw_feature_count {
             return Err(MatcherError::WrongFeatureCount {
-                expected: RAW_FEATURE_COUNT,
+                expected: self.raw_feature_count,
                 actual: raw_features.len(),
             });
         }
@@ -96,28 +132,34 @@ impl NativeModel {
         Ok(self.score_transformed(&transformed))
     }
 
-    fn validate(&self) -> Result<(), MatcherError> {
+    fn validate(&self, variant: &str, input_names: &[String]) -> Result<(), MatcherError> {
+        let raw_feature_count = input_names.len();
         if self.schema != MODEL_SCHEMA {
             return Err(MatcherError::SchemaMismatch(format!(
                 "expected {MODEL_SCHEMA}, got {}",
                 self.schema
             )));
         }
-        if self.model_variant != "ablation92" {
+        if self.model_variant != variant {
             return Err(MatcherError::InvalidModel(format!(
-                "expected ablation92, got {}",
+                "expected {variant}, got {}",
                 self.model_variant
             )));
         }
-        if self.raw_feature_count != RAW_FEATURE_COUNT
-            || self.raw_feature_names.len() != RAW_FEATURE_COUNT
+        if self.raw_feature_count != raw_feature_count
+            || self.raw_feature_names.len() != raw_feature_count
         {
             return Err(MatcherError::InvalidModel(format!(
-                "raw feature count must be {RAW_FEATURE_COUNT}"
+                "raw feature count must be {raw_feature_count}"
             )));
         }
+        if self.raw_feature_names != input_names {
+            return Err(MatcherError::InvalidModel(
+                "input names do not match the features Hestia computes".to_owned(),
+            ));
+        }
         if self.output_feature_count != self.output_feature_names.len()
-            || self.imputer_medians.len() != RAW_FEATURE_COUNT
+            || self.imputer_medians.len() != self.raw_feature_count
             || self.scaler_means.len() != self.output_feature_count
             || self.scaler_scales.len() != self.output_feature_count
         {
@@ -128,7 +170,7 @@ impl NativeModel {
         if self
             .missing_indicator_indexes
             .iter()
-            .any(|index| *index >= RAW_FEATURE_COUNT)
+            .any(|index| *index >= self.raw_feature_count)
         {
             return Err(MatcherError::InvalidModel(
                 "missing indicator index is out of range".to_owned(),
@@ -229,7 +271,7 @@ impl NativeModel {
 
     fn transform(&self, raw_features: &[Option<f64>]) -> Vec<f64> {
         let mut values = Vec::with_capacity(self.output_feature_count);
-        let mut missing = vec![false; RAW_FEATURE_COUNT];
+        let mut missing = vec![false; self.raw_feature_count];
         for (index, value) in raw_features.iter().enumerate() {
             let number = value.filter(|number| number.is_finite());
             match number {
@@ -305,7 +347,8 @@ mod tests {
     #[cfg(gamebanana_matcher_fixtures)]
     use serde::Deserialize;
 
-    const MODEL_JSON: &str = include_str!("model.json");
+    const MODEL_JSON: &str = include_str!("model_stage1.json");
+    const STAGE2_JSON: &str = include_str!("model_stage2.json");
     #[cfg(gamebanana_matcher_fixtures)]
     const FIXTURES_JSON: &str = include_str!("tests/fixtures/model-parity-fixtures.json");
 
@@ -323,6 +366,60 @@ mod tests {
         expected_raw_score: f64,
         expected_probability: f64,
         expected_accepted: bool,
+    }
+
+    #[cfg(gamebanana_matcher_path_fixtures)]
+    #[test]
+    fn paths_model_fixtures_match_sklearn_to_double_precision() {
+        #[derive(Debug, Deserialize)]
+        struct PathFixtures {
+            cases: Vec<PathCase>,
+        }
+        #[derive(Debug, Deserialize)]
+        struct PathCase {
+            raw_features: Vec<Option<f64>>,
+            expected_raw_score: f64,
+            expected_probability: f64,
+        }
+        let model = NativeModel::from_stage2_json_str(STAGE2_JSON).unwrap();
+        let fixtures: PathFixtures = serde_json::from_str(include_str!(
+            "tests/fixtures/paths-model-parity-fixtures.json"
+        ))
+        .unwrap();
+        assert!(fixtures.cases.len() > 40);
+        for fixture in fixtures.cases {
+            let score = model.score_raw(&fixture.raw_features).unwrap();
+            assert!((score.raw_score - fixture.expected_raw_score).abs() <= 1e-12);
+            assert!((score.probability - fixture.expected_probability).abs() <= 1e-12);
+        }
+    }
+
+    #[test]
+    fn stage2_model_parses_and_rejects_the_wrong_variant() {
+        let model = NativeModel::from_stage2_json_str(STAGE2_JSON).unwrap();
+        assert!(model.score_raw(&vec![None; 105]).is_ok());
+        assert!(model.score_raw(&vec![None; 92]).is_err());
+        assert!(NativeModel::from_json_str(STAGE2_JSON).is_err());
+        assert!(NativeModel::from_stage2_json_str(MODEL_JSON).is_err());
+    }
+
+    /// Both stages must read exactly the inputs Hestia computes, and stage 2
+    /// must start with stage 1's.  A retrain or feature change that breaks
+    /// this fails here instead of switching a stage off at run time.
+    #[test]
+    fn stage_models_read_the_inputs_hestia_computes() {
+        let stage1 = NativeModel::from_json_str(MODEL_JSON).unwrap();
+        let stage2 = NativeModel::from_stage2_json_str(STAGE2_JSON).unwrap();
+        assert_eq!(stage1.raw_feature_names, stage1_input_names());
+        assert_eq!(stage2.raw_feature_names, stage2_input_names());
+        assert_eq!(
+            stage2.raw_feature_names[..stage1.raw_feature_names.len()],
+            stage1.raw_feature_names[..]
+        );
+
+        let renamed = MODEL_JSON.replacen("\"filename_token_jaccard\"", "\"renamed_input\"", 1);
+        assert_ne!(renamed, MODEL_JSON);
+        assert!(NativeModel::from_json_str(&renamed).is_err());
     }
 
     #[cfg(gamebanana_matcher_fixtures)]

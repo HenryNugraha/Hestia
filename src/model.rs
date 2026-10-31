@@ -1601,6 +1601,31 @@ pub struct ModSourceData {
     /// the baseline is rewritten (install, update, relink).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted_local_changes: Option<AcceptedLocalChanges>,
+    /// A Thalia answer whose files could not be put together (two merged files
+    /// writing the same path, or an archive without exactly one mod folder).
+    /// The same files would fail the same way every time, so while Thalia
+    /// keeps giving exactly this answer the user picks instead. Any other
+    /// answer is used as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_thalia_answer: Option<RefusedThaliaAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub struct RefusedThaliaAnswer {
+    /// `update`, `merge` or `current`.
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<u64>,
+    /// Sorted by file; `requires` has no order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<RefusedThaliaRequiredFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub struct RefusedThaliaRequiredFile {
+    /// `merge` or `separate`.
+    pub action: String,
+    pub file: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -1658,6 +1683,8 @@ pub struct GameBananaFileMeta {
     pub version: Option<String>,
     pub download_url: Option<String>,
     pub archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -2391,6 +2418,10 @@ pub struct BrowseDownloadTaskPayload {
     /// this unset so their configured conflict policy still applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explicit_resolution: Option<ImportResolution>,
+    /// Part of a Thalia bundle. Installing it alone would leave the mod with
+    /// only some of the files it needs, so it is never retried on its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thalia_bundle: bool,
 }
 
 impl BrowseDownloadTaskPayload {
@@ -2422,6 +2453,8 @@ pub struct BrowseDownloadTaskFile {
     pub download_url: Option<String>,
     #[serde(default)]
     pub is_archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

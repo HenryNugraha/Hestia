@@ -1002,6 +1002,7 @@ mod window_download_tests {
             download_count: 0,
             version: None,
             is_archived: false,
+            md5: None,
         };
         let kept = handoff_overlay_question(
             OverlayInstallQuestion::File {

@@ -5,15 +5,20 @@
 //! model is embedded in this crate and parsed once.  Candidate selection keeps
 //! deterministic release proof ahead of the learned score and abstains on
 //! every ambiguity.
+//!
+//! When the metadata model cannot decide, a second model trained with the
+//! same inputs plus GameBanana's archive path lists (`paths`) gets one try.
 
 pub mod features;
 pub mod model;
+pub mod paths;
 
 use model::NativeModel;
 use serde_json::Value;
 use std::sync::OnceLock;
 
-const MODEL_JSON: &str = include_str!("model.json");
+const STAGE1_MODEL_JSON: &str = include_str!("model_stage1.json");
+const STAGE2_MODEL_JSON: &str = include_str!("model_stage2.json");
 const SCORE_TIE_EPSILON: f64 = 1e-12;
 const VERSION_KEYS: [&str; 3] = ["_sVersion", "version", "_sFileVersion"];
 const NUMERIC_KEYS: [&str; 14] = [
@@ -34,11 +39,23 @@ const NUMERIC_KEYS: [&str; 14] = [
 ];
 const FILENAME_KEYS: [&str; 2] = ["_sFile", "name"];
 
-static MODEL: OnceLock<Result<NativeModel, String>> = OnceLock::new();
+static STAGE1_MODEL: OnceLock<Result<NativeModel, String>> = OnceLock::new();
+static STAGE2_MODEL: OnceLock<Result<NativeModel, String>> = OnceLock::new();
 
-fn embedded_model() -> Option<&'static NativeModel> {
-    MODEL
-        .get_or_init(|| NativeModel::from_json_str(MODEL_JSON).map_err(|error| error.to_string()))
+fn stage1_model() -> Option<&'static NativeModel> {
+    STAGE1_MODEL
+        .get_or_init(|| {
+            NativeModel::from_json_str(STAGE1_MODEL_JSON).map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .ok()
+}
+
+fn stage2_model() -> Option<&'static NativeModel> {
+    STAGE2_MODEL
+        .get_or_init(|| {
+            NativeModel::from_stage2_json_str(STAGE2_MODEL_JSON).map_err(|error| error.to_string())
+        })
         .as_ref()
         .ok()
 }
@@ -57,6 +74,8 @@ pub struct PairScore {
 pub struct CandidateEvidence {
     pub file_id: u64,
     pub score: Option<f64>,
+    /// The archive path model's score; `None` when the lists are unknown.
+    pub path_score: Option<f64>,
     pub eligible: bool,
     pub vetoed: bool,
     pub verified_release_chain: bool,
@@ -74,13 +93,29 @@ pub fn score_pair(row: &Value) -> Option<PairScore> {
     if contains_unsupported_numeric(row, None) {
         return None;
     }
-    let model = embedded_model()?;
+    let model = stage1_model()?;
     let raw_features = features::extract_pair_checked(row).ok()?;
     let score = model.score_raw(&raw_features).ok()?;
     Some(PairScore {
         probability: score.probability,
         version_conflict: version_conflict_veto(row),
     })
+}
+
+/// Score one raw pair with the archive path model.  `path_features` comes
+/// from [`paths::group_path_features`] for the pair's whole source group.
+pub fn score_pair_with_paths(row: &Value, path_features: &paths::PathFeatures) -> Option<f64> {
+    if contains_unsupported_numeric(row, None) {
+        return None;
+    }
+    let model = stage2_model()?;
+    let mut raw_features = features::extract_pair_checked(row).ok()?;
+    raw_features.extend(
+        path_features
+            .iter()
+            .map(|value| value.is_finite().then_some(*value)),
+    );
+    Some(model.score_raw(&raw_features).ok()?.probability)
 }
 
 /// Return whether the raw pair has the explicit evidence required before a
@@ -121,57 +156,105 @@ pub fn model_evidence_floor(row: &Value) -> bool {
     features::filename_version_progresses(&filename_text(source), &filename_text(candidate))
 }
 
-/// Choose one candidate using proof first, then the frozen model cutoff.
-///
-/// Vetoed/ineligible candidates are removed before any proof is considered.
-/// A unique verified release chain outranks a unique typed release proof.
-/// Multiple proofs at the same priority abstain and never fall through to a
-/// lower priority or the learned model. Model ties are checked before the
-/// strict cutoff, including a tie that straddles the cutoff.
-pub fn choose_candidate(candidates: &[CandidateEvidence]) -> Option<u64> {
+enum Decision<'a> {
+    Chosen(u64),
+    Abstain,
+    /// No proof decided and the metadata model did not pick; these are the
+    /// candidates the archive path model may still choose from.
+    ModelUndecided(Vec<&'a CandidateEvidence>),
+}
+
+fn decide_without_paths(candidates: &[CandidateEvidence]) -> Decision<'_> {
     let allowed: Vec<&CandidateEvidence> = candidates
         .iter()
         .filter(|candidate| candidate.eligible && !candidate.vetoed)
         .collect();
     if allowed.is_empty() {
-        return None;
+        return Decision::Abstain;
     }
 
-    if let Some(choice) = unique_proof(&allowed, |candidate| candidate.verified_release_chain) {
-        return choice;
-    }
-    if let Some(choice) = unique_proof(&allowed, |candidate| candidate.verified_typed_release) {
-        return choice;
+    for proof in [
+        unique_proof(&allowed, |candidate| candidate.verified_release_chain),
+        unique_proof(&allowed, |candidate| candidate.verified_typed_release),
+    ] {
+        match proof {
+            Some(Some(file_id)) => return Decision::Chosen(file_id),
+            Some(None) => return Decision::Abstain,
+            None => {}
+        }
     }
 
-    let cutoff = embedded_model()?.threshold();
-    let mut scored: Vec<&CandidateEvidence> = allowed
-        .into_iter()
-        .filter(|candidate| candidate.score.is_some_and(|score| score.is_finite()))
+    let Some(model) = stage1_model() else {
+        return Decision::Abstain;
+    };
+    match model_choice(&allowed, |candidate| candidate.score, model.threshold()) {
+        Some(file_id) => Decision::Chosen(file_id),
+        None => Decision::ModelUndecided(allowed),
+    }
+}
+
+/// Choose one candidate using proof first, then the frozen model cutoff,
+/// then the archive path model.
+///
+/// Vetoed/ineligible candidates are removed before any proof is considered.
+/// A unique verified release chain outranks a unique typed release proof.
+/// Multiple proofs at the same priority abstain and never fall through to a
+/// lower priority or the learned model. Model ties are checked before the
+/// strict cutoff, including a tie that straddles the cutoff.  The path model
+/// runs only when the metadata model did not pick and every remaining
+/// candidate has a path score, with the same tie, cutoff and floor rules.
+pub fn choose_candidate(candidates: &[CandidateEvidence]) -> Option<u64> {
+    match decide_without_paths(candidates) {
+        Decision::Chosen(file_id) => Some(file_id),
+        Decision::Abstain => None,
+        Decision::ModelUndecided(allowed) => {
+            if allowed.iter().any(|candidate| candidate.path_score.is_none()) {
+                return None;
+            }
+            let cutoff = stage2_model()?.threshold();
+            model_choice(&allowed, |candidate| candidate.path_score, cutoff)
+        }
+    }
+}
+
+/// Whether archive path lists could still change this choice: no proof
+/// decided and the metadata model did not pick.
+pub fn needs_path_evidence(candidates: &[CandidateEvidence]) -> bool {
+    matches!(
+        decide_without_paths(candidates),
+        Decision::ModelUndecided(_)
+    )
+}
+
+fn model_choice(
+    allowed: &[&CandidateEvidence],
+    score: impl Fn(&CandidateEvidence) -> Option<f64>,
+    cutoff: f64,
+) -> Option<u64> {
+    let mut scored: Vec<(&CandidateEvidence, f64)> = allowed
+        .iter()
+        .filter_map(|candidate| {
+            score(candidate)
+                .filter(|score| score.is_finite())
+                .map(|score| (*candidate, score))
+        })
         .collect();
     if scored.is_empty() {
         return None;
     }
-    scored.sort_by(|left, right| {
-        right
-            .score
-            .expect("filtered finite score")
-            .total_cmp(&left.score.expect("filtered finite score"))
-    });
-    let top_score = scored[0].score.expect("filtered finite score");
+    scored.sort_by(|left, right| right.1.total_cmp(&left.1));
+    let top_score = scored[0].1;
     let ties = scored
         .iter()
-        .filter(|candidate| {
-            (candidate.score.expect("filtered finite score") - top_score).abs() <= SCORE_TIE_EPSILON
-        })
+        .filter(|(_, score)| (score - top_score).abs() <= SCORE_TIE_EPSILON)
         .count();
     if ties != 1 || top_score <= cutoff {
         return None;
     }
-    if !scored[0].model_evidence_floor {
+    if !scored[0].0.model_evidence_floor {
         return None;
     }
-    Some(scored[0].file_id)
+    Some(scored[0].0.file_id)
 }
 
 fn unique_proof(
@@ -325,6 +408,7 @@ mod tests {
         CandidateEvidence {
             file_id,
             score,
+            path_score: None,
             eligible: true,
             vetoed: false,
             verified_release_chain: false,
@@ -566,7 +650,7 @@ mod tests {
 
     #[test]
     #[cfg(gamebanana_matcher_fixtures)]
-    fn compact_three_thousand_row_score_fixture_matches_embedded_model() {
+    fn compact_three_thousand_row_score_fixture_matches_stage1_model() {
         #[derive(serde::Deserialize)]
         struct Fixture {
             rows: Vec<Row>,
@@ -582,7 +666,7 @@ mod tests {
             serde_json::from_str(include_str!("tests/fixtures/parity-score-fixtures.json"))
                 .unwrap();
         assert_eq!(fixture.rows.len(), 3016);
-        let model = embedded_model().unwrap();
+        let model = stage1_model().unwrap();
         for row in fixture.rows {
             let score = model.score_raw(&row.features).unwrap();
             assert!((score.raw_score - row.raw_score).abs() <= 1e-12);
@@ -593,7 +677,7 @@ mod tests {
 
     #[test]
     fn model_requires_strict_cutoff_and_unique_top() {
-        let cutoff = embedded_model().unwrap().threshold();
+        let cutoff = stage1_model().unwrap().threshold();
         assert_eq!(choose_candidate(&[evidence(1, Some(cutoff))]), None);
         assert_eq!(
             choose_candidate(&[
@@ -612,8 +696,75 @@ mod tests {
     }
 
     #[test]
+    fn path_model_decides_only_after_the_metadata_model_abstains() {
+        let cutoff = stage1_model().unwrap().threshold();
+        let path_cutoff = stage2_model().unwrap().threshold();
+        let with_path = |file_id, score, path_score| CandidateEvidence {
+            path_score,
+            ..evidence(file_id, score)
+        };
+
+        // Metadata model picks: path scores never override it.
+        let picked = [
+            with_path(1, Some(cutoff + 0.01), Some(0.0)),
+            with_path(2, Some(0.1), Some(path_cutoff + 0.01)),
+        ];
+        assert!(!needs_path_evidence(&picked));
+        assert_eq!(choose_candidate(&picked), Some(1));
+
+        // Metadata model undecided: the path model picks.
+        let undecided = [
+            with_path(1, Some(0.5), Some(0.1)),
+            with_path(2, Some(0.4), Some(path_cutoff + 0.01)),
+        ];
+        assert!(needs_path_evidence(&undecided));
+        assert_eq!(choose_candidate(&undecided), Some(2));
+
+        // One remaining candidate without a list: no path decision.
+        let partial = [
+            with_path(1, Some(0.5), None),
+            with_path(2, Some(0.4), Some(path_cutoff + 0.01)),
+        ];
+        assert_eq!(choose_candidate(&partial), None);
+
+        // The path pick still needs the evidence floor and the strict cutoff.
+        let mut no_floor = with_path(2, Some(0.4), Some(path_cutoff + 0.01));
+        no_floor.model_evidence_floor = false;
+        assert_eq!(choose_candidate(&[no_floor]), None);
+        assert_eq!(
+            choose_candidate(&[with_path(2, Some(0.4), Some(path_cutoff))]),
+            None
+        );
+
+        // Proofs, including an ambiguous one, never reach the path model.
+        let mut proof_a = with_path(1, Some(0.1), Some(0.0));
+        proof_a.verified_typed_release = true;
+        let mut proof_b = with_path(2, Some(0.1), Some(path_cutoff + 0.01));
+        proof_b.verified_typed_release = true;
+        assert!(!needs_path_evidence(&[proof_a, proof_b]));
+        assert_eq!(choose_candidate(&[proof_a, proof_b]), None);
+
+        // Vetoed candidates neither need nor use lists.
+        let mut vetoed = with_path(2, Some(0.4), Some(path_cutoff + 0.01));
+        vetoed.vetoed = true;
+        assert!(!needs_path_evidence(&[vetoed]));
+        assert_eq!(choose_candidate(&[vetoed]), None);
+    }
+
+    #[test]
+    fn path_scores_use_the_metadata_features_plus_path_columns() {
+        let row = version_row("1.0", "1.1");
+        let known = [0.5; paths::PATH_FEATURE_COUNT];
+        let unknown = [f64::NAN; paths::PATH_FEATURE_COUNT];
+        let with_lists = score_pair_with_paths(&row, &known).expect("scores");
+        let without_lists = score_pair_with_paths(&row, &unknown).expect("scores");
+        assert!(with_lists.is_finite() && without_lists.is_finite());
+        assert_ne!(with_lists, without_lists);
+    }
+
+    #[test]
     fn model_tie_is_checked_before_cutoff_even_when_second_is_below_it() {
-        let cutoff = embedded_model().unwrap().threshold();
+        let cutoff = stage1_model().unwrap().threshold();
         assert_eq!(
             choose_candidate(&[
                 evidence(1, Some(cutoff + 1e-13)),

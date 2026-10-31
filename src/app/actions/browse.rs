@@ -316,6 +316,7 @@ impl HestiaApp {
             version: file.version.clone(),
             download_url: file.download_url.clone(),
             is_archived: file.is_archived,
+            md5: file.md5.clone(),
         }
     }
 
@@ -332,6 +333,7 @@ impl HestiaApp {
             version: file.version.clone(),
             download_url: file.download_url.clone(),
             is_archived: file.is_archived,
+            md5: file.md5.clone(),
         }
     }
 
@@ -413,6 +415,7 @@ impl HestiaApp {
                 .get(&mod_id)
                 .is_some_and(|detail| detail.is_tool),
             explicit_resolution,
+            thalia_bundle: false,
         }
     }
 
@@ -433,6 +436,7 @@ impl HestiaApp {
             file_name: payload.file.file_name.clone(),
             cache_limit_bytes,
             total_size: Some(payload.file.file_size),
+            md5: payload.file.md5.clone(),
         }
     }
 
@@ -506,14 +510,24 @@ impl HestiaApp {
 
     fn task_is_retryable_browse_download(task: &TaskEntry) -> bool {
         matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
-            && Self::browse_download_retry_payload_for_task(task).is_some()
+            && Self::browse_download_retry_payload_for_task(task)
+                .is_some_and(|payload| !payload.thalia_bundle)
     }
 
     fn retry_browse_download_task(&mut self, task_id: u64) -> bool {
+        self.requeue_browse_download_task(task_id, false)
+    }
+
+    /// `in_bundle` lets a live Thalia bundle restart one member's download,
+    /// which a proxy change does. A user never retries one member alone.
+    fn requeue_browse_download_task(&mut self, task_id: u64, in_bundle: bool) -> bool {
         let Some(task) = self.state.tasks.iter().find(|task| task.id == task_id) else {
             return false;
         };
-        if !Self::task_is_retryable_browse_download(task) {
+        let retryable = matches!(task.status, TaskStatus::Failed | TaskStatus::Canceled)
+            && Self::browse_download_retry_payload_for_task(task)
+                .is_some_and(|payload| !payload.thalia_bundle || in_bundle);
+        if !retryable {
             return false;
         }
         let Some(payload) = Self::browse_download_retry_payload_for_task(task).cloned() else {
@@ -2572,7 +2586,12 @@ impl HestiaApp {
                         .await
                     {
                         let byte_size = bytes.len() as u64;
-                        if job.total_size.is_none_or(|expected| byte_size == expected) {
+                        if job.total_size.is_none_or(|expected| byte_size == expected)
+                            && job
+                                .md5
+                                .as_deref()
+                                .is_none_or(|md5| importing::bundle::bytes_match_md5(&bytes, md5))
+                        {
                             return Ok::<u64, anyhow::Error>(byte_size);
                         }
                     }
@@ -2585,6 +2604,7 @@ impl HestiaApp {
                         handle.clone(),
                     )
                     .await?;
+                    verify_browse_download_md5(&portable, &job, &cancel, &handle).await?;
                     Ok(byte_size)
                 }
                 .await;
@@ -2651,6 +2671,16 @@ impl HestiaApp {
                         .write_cached_download_to_temp_archive(task_id, &cache_key, &file_name)
                     {
                         Ok(temp_archive) => {
+                            if let Some(game_id) = install_game_id.as_deref()
+                                && self.hold_thalia_bundle_download(
+                                    task_id,
+                                    game_id,
+                                    &title,
+                                    temp_archive.clone(),
+                                )
+                            {
+                                continue;
+                            }
                             let Some(game_id) = install_game_id else {
                                 self.update_task_status(task_id, TaskStatus::Failed);
                                 self.report_error_message(
@@ -2691,7 +2721,11 @@ impl HestiaApp {
                     self.mark_usage_counters_dirty();
                     self.update_task_status(task_id, TaskStatus::Canceled);
                     if self.proxy_requeue_browse_downloads.remove(&task_id) {
-                        let _ = self.retry_browse_download_task(task_id);
+                        let in_bundle = self
+                            .thalia_install_bundles
+                            .iter()
+                            .any(|bundle| bundle.members.contains(&task_id));
+                        let _ = self.requeue_browse_download_task(task_id, in_bundle);
                     } else {
                         self.set_message_ok(self.text().download_canceled(&title));
                     }
@@ -2859,25 +2893,27 @@ impl HestiaApp {
                     && evaluation_state != Some(ModUpdateState::UpdateAvailable)
                     && update_files.is_empty()
                 {
-                    if let Some(file) = validated_thalia_file {
+                    if let Some(validated) = validated_thalia_file {
                         let (update_folder_name, post_install_rename_to) =
                             self.prepare_browse_update_folder_name(
                                 pending.update_target_id.as_deref(),
                                 update_folder_name.clone(),
                                 preferred_update_folder_name.as_deref(),
                             );
-                        if !Self::should_show_local_change_update_prefs(&existing_mod) {
-                            self.queue_browse_download(
-                                pending.game_id.clone(),
-                                pending.mod_id,
-                                file.clone(),
-                                vec![file],
-                                Some(pending.task_id),
+                        // A rename still pending after the update would move
+                        // the folder a merged file has to land in.
+                        let merge_needs_stable_folder = post_install_rename_to.is_some()
+                            && validated.requires.iter().any(|(action, _)| {
+                                *action == thalia::UpdateMatchRequiredAction::Merge
+                            });
+                        if !Self::should_show_local_change_update_prefs(&existing_mod)
+                            && !merge_needs_stable_folder
+                        {
+                            self.queue_thalia_install(
+                                &pending,
+                                validated,
                                 detail.unsafe_content,
                                 update_folder_name,
-                                pending.update_target_id.clone(),
-                                pending.install_state,
-                                pending.preserve_existing_state,
                                 post_install_rename_to,
                             );
                         } else {
@@ -2888,7 +2924,10 @@ impl HestiaApp {
                                 files: selectable
                                     .into_iter()
                                     .map(|candidate| BrowseSelectableFile {
-                                        selected: candidate.id == file.id,
+                                        selected: validated
+                                            .file
+                                            .as_ref()
+                                            .is_some_and(|file| file.id == candidate.id),
                                         file: candidate,
                                     })
                                     .collect(),
@@ -3150,6 +3189,544 @@ impl HestiaApp {
         self.set_message_ok(self.text().resolving_download(&title));
     }
 
+    /// Queues what Thalia decided, with no prompt. `update` replaces the mod
+    /// and `merge` adds the file to it, exactly like the file review buttons.
+    /// Extra files go into one bundle so nothing is installed until all of
+    /// them downloaded.
+    fn queue_thalia_install(
+        &mut self,
+        pending: &PendingBrowseInstall,
+        validated: ValidatedThaliaInstall,
+        unsafe_content: bool,
+        update_folder_name: Option<String>,
+        post_install_rename_to: Option<String>,
+    ) {
+        let ValidatedThaliaInstall {
+            action,
+            file,
+            requires,
+        } = validated;
+        let main_resolution = (action == ThaliaRecommendationAction::Merge)
+            .then_some(ImportResolution::Merge);
+        if requires.is_empty() && file.is_none() {
+            // `current` whose extra files are all in place already.
+            self.remove_task(pending.task_id);
+            return;
+        }
+        if let Some(file) = file.clone()
+            && (requires.is_empty() || !self.game_can_download_mods(&pending.game_id))
+        {
+            self.queue_browse_download_with_resolution(
+                pending.game_id.clone(),
+                pending.mod_id,
+                file.clone(),
+                vec![file],
+                Some(pending.task_id),
+                unsafe_content,
+                update_folder_name,
+                pending.update_target_id.clone(),
+                pending.install_state,
+                pending.preserve_existing_state,
+                post_install_rename_to,
+                main_resolution,
+            );
+            return;
+        }
+        if !self.game_can_download_mods(&pending.game_id) {
+            self.update_task_status(pending.task_id, TaskStatus::Failed);
+            self.report_warn(
+                self.game_mod_setup_message(&pending.game_id),
+                Some(self.text().install_unavailable()),
+            );
+            return;
+        }
+        let title = self
+            .browse_mod_title_for_install(pending.mod_id, pending.update_target_id.as_deref())
+            .or_else(|| file.as_ref().map(|file| file.file_name.clone()))
+            .unwrap_or_default();
+        let mut members = Vec::new();
+        let mut separate = HashSet::new();
+        let mut main = None;
+        for (_, required) in requires
+            .iter()
+            .filter(|(action, _)| *action == thalia::UpdateMatchRequiredAction::Separate)
+        {
+            let task_id = self.next_background_job_id();
+            self.thalia_separate_install_jobs.insert(task_id);
+            separate.insert(task_id);
+            self.queue_browse_download_with_resolution(
+                pending.game_id.clone(),
+                pending.mod_id,
+                required.clone(),
+                vec![required.clone()],
+                Some(task_id),
+                unsafe_content,
+                None,
+                None,
+                self.state.static_prefs.mod_install_state,
+                false,
+                None,
+                Some(ImportResolution::KeepBoth),
+            );
+            members.push(task_id);
+        }
+        // Explicit, so the installs share one serial lane in the install
+        // queue and run in the order released below.
+        if let Some(file) = file {
+            self.queue_browse_download_with_resolution(
+                pending.game_id.clone(),
+                pending.mod_id,
+                file.clone(),
+                vec![file],
+                Some(pending.task_id),
+                unsafe_content,
+                update_folder_name.clone(),
+                pending.update_target_id.clone(),
+                pending.install_state,
+                pending.preserve_existing_state,
+                post_install_rename_to,
+                Some(main_resolution.unwrap_or(ImportResolution::Replace)),
+            );
+            members.push(pending.task_id);
+            main = Some(pending.task_id);
+        }
+        // With `current` there is no main download, so the update task is
+        // reused by the first extra file instead of left hanging.
+        let mut spare_task_id = (!members.contains(&pending.task_id)).then_some(pending.task_id);
+        for (_, required) in requires
+            .iter()
+            .filter(|(action, _)| *action == thalia::UpdateMatchRequiredAction::Merge)
+        {
+            let task_id = spare_task_id
+                .take()
+                .unwrap_or_else(|| self.next_background_job_id());
+            self.queue_browse_download_with_resolution(
+                pending.game_id.clone(),
+                pending.mod_id,
+                required.clone(),
+                vec![required.clone()],
+                Some(task_id),
+                unsafe_content,
+                update_folder_name.clone(),
+                pending.update_target_id.clone(),
+                pending.install_state,
+                pending.preserve_existing_state,
+                None,
+                Some(ImportResolution::Merge),
+            );
+            members.push(task_id);
+        }
+        if let Some(task_id) = spare_task_id {
+            self.remove_task(task_id);
+        }
+        for &member in &members {
+            self.mark_thalia_bundle_payload(member);
+        }
+        let target = pending.update_target_id.clone().map(|mod_id| {
+            let state = self.thalia_bundle_target_state(&mod_id);
+            (mod_id, state)
+        });
+        let answer = pending.thalia_plan.as_ref().map(|plan| {
+            (
+                plan.context.local_mod_id.clone(),
+                plan.recommendation.clone(),
+            )
+        });
+        let key = self.next_background_job_id();
+        self.thalia_install_bundles.push(ThaliaInstallBundle {
+            key,
+            title,
+            game_id: pending.game_id.clone(),
+            members,
+            separate,
+            main,
+            target,
+            answer,
+            downloaded: HashMap::new(),
+            preparing: false,
+            prepared_root: None,
+            target_changed: false,
+            finished: HashSet::new(),
+            installed_any: false,
+        });
+    }
+
+    fn mark_thalia_bundle_payload(&mut self, task_id: u64) {
+        let Some(TaskRetryPayload::BrowseDownload(mut payload)) = self
+            .state
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .and_then(|task| task.retry_payload.clone())
+        else {
+            return;
+        };
+        payload.thalia_bundle = true;
+        self.update_task_retry_payload(task_id, Some(TaskRetryPayload::BrowseDownload(payload)));
+    }
+
+    /// A fingerprint of the mod's folder as it is now, `None` when it is gone
+    /// or cannot be read.
+    fn thalia_bundle_target_state(&self, mod_id: &str) -> Option<u64> {
+        let entry = self.state.mods.iter().find(|entry| entry.id == mod_id)?;
+        importing::bundle::mod_folder_state(&entry.root_path)
+    }
+
+    /// True while the mod a bundle updates looks the same on disk as when the
+    /// update was queued.
+    fn thalia_bundle_target_unchanged(&self, index: usize) -> bool {
+        self.thalia_install_bundles[index]
+            .target
+            .as_ref()
+            .is_none_or(|(mod_id, state)| {
+                state.is_some() && self.thalia_bundle_target_state(mod_id) == *state
+            })
+    }
+
+    /// Checked right before the mod itself is written. Separate folders do
+    /// not touch the mod, so only the mod's own install is stopped.
+    fn thalia_bundle_target_changed_before_install(&mut self, job_id: u64) -> bool {
+        let Some(index) = self.thalia_install_bundles.iter().position(|bundle| {
+            bundle.members.contains(&job_id) && !bundle.separate.contains(&job_id)
+        }) else {
+            return false;
+        };
+        if self.thalia_bundle_target_unchanged(index) {
+            return false;
+        }
+        self.thalia_install_bundles[index].target_changed = true;
+        true
+    }
+
+    fn task_is_running(&self, task_id: u64) -> bool {
+        self.browse_download_queue
+            .iter()
+            .any(|job| job.task_id == task_id)
+            || self.browse_download_inflight.contains_key(&task_id)
+            || self.install_queue.iter().any(|job| job.id == task_id)
+            || self.install_inflight.contains_key(&task_id)
+    }
+
+    /// Keeps a finished bundle download back until its siblings finished.
+    /// Returns false when the task is not part of a bundle.
+    fn hold_thalia_bundle_download(
+        &mut self,
+        task_id: u64,
+        game_id: &str,
+        title: &str,
+        archive: PathBuf,
+    ) -> bool {
+        if self.thalia_canceled_bundle_tasks.remove(&task_id) {
+            Self::cleanup_runtime_temp_for_source(&ImportSource::Archive(archive));
+            self.pending_browse_install_meta.remove(&task_id);
+            self.pending_browse_install_safety.remove(&task_id);
+            self.update_task_status(task_id, TaskStatus::Canceled);
+            return true;
+        }
+        let Some(index) = self
+            .thalia_install_bundles
+            .iter()
+            .position(|bundle| bundle.members.contains(&task_id))
+        else {
+            return false;
+        };
+        let bundle = &mut self.thalia_install_bundles[index];
+        bundle
+            .downloaded
+            .insert(task_id, (game_id.to_string(), title.to_string(), archive));
+        if bundle.downloaded.len() < bundle.members.len() {
+            self.update_task_status(task_id, TaskStatus::Queued);
+            return true;
+        }
+        self.start_thalia_bundle_prepare(index);
+        true
+    }
+
+    /// Every file is downloaded. They are checked and the mod's folder is
+    /// built in a scratch folder before anything is installed.
+    fn start_thalia_bundle_prepare(&mut self, index: usize) {
+        if !self.thalia_bundle_target_unchanged(index) {
+            self.thalia_install_bundles[index].target_changed = true;
+            self.fail_thalia_bundle(index, None, None);
+            return;
+        }
+        let bundle = &self.thalia_install_bundles[index];
+        let parts = bundle
+            .members
+            .iter()
+            .filter_map(|member| {
+                let (_, title, archive) = bundle.downloaded.get(member)?;
+                let meta = self.pending_browse_install_meta.get(member);
+                // With `merge` the update itself is added to the installed
+                // folder like any merged file, so it gets no say over them.
+                let replaces = meta.is_none_or(|meta| {
+                    meta.explicit_resolution != Some(ImportResolution::Merge)
+                });
+                let role = if bundle.separate.contains(member) {
+                    importing::bundle::BundlePartRole::Separate
+                } else if bundle.main == Some(*member) && replaces {
+                    importing::bundle::BundlePartRole::Main
+                } else {
+                    importing::bundle::BundlePartRole::Merge
+                };
+                let md5 = meta
+                    .and_then(|meta| meta.selected_files.first())
+                    .and_then(|file| file.md5.clone());
+                Some(importing::bundle::BundlePart {
+                    job_id: *member,
+                    file_name: title.clone(),
+                    archive: archive.clone(),
+                    md5,
+                    role,
+                })
+            })
+            .collect();
+        let key = bundle.key;
+        let game_id = bundle.game_id.clone();
+        let members = bundle.members.clone();
+        self.thalia_install_bundles[index].preparing = true;
+        for member in members {
+            self.update_task_status(member, TaskStatus::Installing);
+        }
+        let _ = self.install_request_tx.send(InstallRequest::PrepareThaliaBundle {
+            job_id: key,
+            game_id,
+            parts,
+        });
+    }
+
+    /// The files are checked and combined. Files merged into the mod now live
+    /// in one folder, so their tasks fold into the first one, which records
+    /// all of them. Separate folders install first, the mod last.
+    fn thalia_bundle_prepared(
+        &mut self,
+        key: u64,
+        root: PathBuf,
+        folders: Vec<importing::bundle::PreparedBundleFolder>,
+    ) {
+        let Some(index) = self
+            .thalia_install_bundles
+            .iter()
+            .position(|bundle| bundle.key == key && bundle.preparing)
+        else {
+            let _ = fs::remove_dir_all(&root);
+            return;
+        };
+        let downloaded = {
+            let bundle = &mut self.thalia_install_bundles[index];
+            bundle.preparing = false;
+            bundle.prepared_root = Some(root);
+            std::mem::take(&mut bundle.downloaded)
+        };
+        for (_, _, archive) in downloaded.values() {
+            Self::cleanup_runtime_temp_for_source(&ImportSource::Archive(archive.clone()));
+        }
+        if !self.thalia_bundle_target_unchanged(index) {
+            self.thalia_install_bundles[index].target_changed = true;
+            self.fail_thalia_bundle(index, None, None);
+            return;
+        }
+        let bundle = &self.thalia_install_bundles[index];
+        let lead = folders
+            .iter()
+            .map(|folder| folder.job_id)
+            .find(|job_id| !bundle.separate.contains(job_id));
+        let folded: Vec<u64> = bundle
+            .members
+            .iter()
+            .copied()
+            .filter(|member| !bundle.separate.contains(member) && Some(*member) != lead)
+            .collect();
+        let game_id = bundle.game_id.clone();
+        let mut merged_files = Vec::new();
+        for member in &folded {
+            if let Some(meta) = self.pending_browse_install_meta.remove(member) {
+                merged_files.extend(meta.selected_files);
+            }
+            self.pending_browse_install_safety.remove(member);
+        }
+        if let Some(meta) = lead.and_then(|lead| self.pending_browse_install_meta.get_mut(&lead)) {
+            meta.selected_files.extend(merged_files);
+        }
+        self.thalia_install_bundles[index]
+            .members
+            .retain(|member| !folded.contains(member));
+        for member in folded {
+            self.remove_task(member);
+        }
+        for folder in folders {
+            let title = downloaded
+                .get(&folder.job_id)
+                .map(|(_, title, _)| title.clone())
+                .unwrap_or_default();
+            self.thalia_bundle_manifests
+                .insert(folder.job_id, Arc::new(folder.manifest));
+            self.enqueue_install_source_for_existing_task(
+                folder.job_id,
+                game_id.clone(),
+                title,
+                ImportSource::Folder(folder.source),
+                None,
+            );
+        }
+    }
+
+    fn thalia_bundle_prepare_failed(&mut self, key: u64, failure: importing::bundle::BundleFailure) {
+        let Some(index) = self
+            .thalia_install_bundles
+            .iter()
+            .position(|bundle| bundle.key == key && bundle.preparing)
+        else {
+            return;
+        };
+        self.thalia_install_bundles[index].preparing = false;
+        self.fail_thalia_bundle(index, None, Some(failure));
+    }
+
+    /// A bundle member that is downloaded and waiting, or being checked, sits
+    /// in no queue of its own, so canceling it stops the whole bundle.
+    fn cancel_waiting_thalia_bundle_member(&mut self, task_id: u64) -> bool {
+        let waiting = self.thalia_install_bundles.iter().any(|bundle| {
+            bundle.members.contains(&task_id)
+                && (bundle.preparing || bundle.downloaded.contains_key(&task_id))
+        });
+        if waiting {
+            self.update_task_status(task_id, TaskStatus::Canceled);
+        }
+        waiting
+    }
+
+    /// Called for every task that reached a final status. A finished member
+    /// counts toward its bundle; a failed or canceled one stops the rest so a
+    /// mod is never left with only some of the files Thalia said it needs.
+    fn note_thalia_bundle_task_finished(&mut self, task_id: u64, status: TaskStatus) {
+        if status == TaskStatus::Canceled && self.proxy_requeue_browse_downloads.contains(&task_id)
+        {
+            return;
+        }
+        let Some(index) = self
+            .thalia_install_bundles
+            .iter()
+            .position(|bundle| bundle.members.contains(&task_id))
+        else {
+            self.thalia_separate_install_jobs.remove(&task_id);
+            self.thalia_canceled_bundle_tasks.remove(&task_id);
+            return;
+        };
+        if status == TaskStatus::Completed {
+            let bundle = &mut self.thalia_install_bundles[index];
+            if bundle.finished.insert(task_id) {
+                bundle.installed_any = true;
+            }
+            self.thalia_separate_install_jobs.remove(&task_id);
+            if bundle.finished.len() == bundle.members.len() {
+                let bundle = self.thalia_install_bundles.remove(index);
+                if let Some(root) = bundle.prepared_root {
+                    let _ = fs::remove_dir_all(root);
+                }
+            }
+            return;
+        }
+        self.fail_thalia_bundle(index, Some(task_id), None);
+    }
+
+    /// Stops a bundle: `ended_task` is the member that failed or was
+    /// canceled, `failure` what went wrong while the files were checked.
+    /// Only separate folders can be installed by then, since the mod itself
+    /// is always written last.
+    fn fail_thalia_bundle(
+        &mut self,
+        index: usize,
+        ended_task: Option<u64>,
+        failure: Option<importing::bundle::BundleFailure>,
+    ) {
+        use importing::bundle::BundleFailure;
+        let bundle = self.thalia_install_bundles.remove(index);
+        if bundle.preparing {
+            let _ = self.install_request_tx.send(InstallRequest::Cancel {
+                job_id: bundle.key,
+            });
+        }
+        for (_, _, archive) in bundle.downloaded.values() {
+            Self::cleanup_runtime_temp_for_source(&ImportSource::Archive(archive.clone()));
+        }
+        let task_title = |task_id: u64| {
+            self.state
+                .tasks
+                .iter()
+                .find(|task| task.id == task_id)
+                .map(|task| task.title.clone())
+        };
+        let failed_file = match &failure {
+            Some(
+                BundleFailure::Checksum { file_name }
+                | BundleFailure::Layout { file_name }
+                | BundleFailure::Other {
+                    file_name: Some(file_name),
+                    ..
+                },
+            ) => Some(file_name.clone()),
+            _ => None,
+        }
+        .or_else(|| ended_task.and_then(task_title))
+        .or_else(|| bundle.members.first().copied().and_then(task_title))
+        .unwrap_or_default();
+        let stopped_status = if failure.is_some() || bundle.target_changed {
+            TaskStatus::Failed
+        } else {
+            TaskStatus::Canceled
+        };
+        for member in bundle.members.iter().copied() {
+            // Retrying one member alone would install it without the rest.
+            self.update_task_retry_payload(member, None);
+            self.thalia_separate_install_jobs.remove(&member);
+            self.thalia_bundle_manifests.remove(&member);
+            if bundle.finished.contains(&member) {
+                continue;
+            }
+            if !self.task_is_running(member) {
+                // Downloaded and waiting for the others, or being checked.
+                self.pending_browse_install_meta.remove(&member);
+                self.pending_browse_install_safety.remove(&member);
+                if Some(member) != ended_task {
+                    self.update_task_status(member, stopped_status);
+                }
+                continue;
+            }
+            if Some(member) == ended_task {
+                continue;
+            }
+            if self.browse_download_inflight.contains_key(&member) {
+                self.thalia_canceled_bundle_tasks.insert(member);
+            }
+            self.cancel_task(member);
+        }
+        if let Some(root) = bundle.prepared_root.as_ref() {
+            let _ = fs::remove_dir_all(root);
+        }
+        // Thalia's answer itself did not fit, so asking the same question
+        // again would only fail again. The user picks instead.
+        if matches!(
+            failure,
+            Some(BundleFailure::Layout { .. } | BundleFailure::Clash { .. })
+        ) && let Some((mod_id, answer)) = bundle.answer.as_ref()
+        {
+            self.remember_refused_thalia_answer(mod_id, answer);
+        }
+        let message = if bundle.target_changed {
+            self.text().thalia_bundle_target_changed(&bundle.title)
+        } else if let Some(BundleFailure::Clash { path }) = &failure {
+            self.text().thalia_bundle_clash(&bundle.title, path)
+        } else if bundle.installed_any {
+            self.text()
+                .thalia_bundle_partly_updated(&bundle.title, &failed_file)
+        } else {
+            self.text()
+                .thalia_bundle_not_updated(&bundle.title, &failed_file)
+        };
+        self.report_warn(message, Some(self.text().update_unavailable()));
+    }
+
     fn confirm_browse_file_prompt(&mut self) {
         let action = self
             .browse_state
@@ -3359,6 +3936,7 @@ mod browse_file_prompt_tests {
         let recommendation = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Merge,
             id: Some(11),
+            requires: Vec::new(),
         };
         assert_eq!(
             thalia_merge_recommendation_id(Some(&recommendation), &files),
@@ -3368,11 +3946,13 @@ mod browse_file_prompt_tests {
         let stale = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Merge,
             id: Some(99),
+            requires: Vec::new(),
         };
         assert_eq!(thalia_merge_recommendation_id(Some(&stale), &files), None);
         let update = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Update,
             id: Some(11),
+            requires: Vec::new(),
         };
         assert_eq!(thalia_merge_recommendation_id(Some(&update), &files), None);
     }
@@ -3403,6 +3983,7 @@ mod browse_file_prompt_tests {
             version: None,
             download_url: Some(format!("https://example.com/{file_name}")),
             is_archived: false,
+            md5: None,
         }
     }
 
@@ -4029,6 +4610,41 @@ async fn sleep_cancelable(delay: Duration, cancel: &Arc<AtomicBool>) -> Result<(
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
     }
+}
+
+/// A finished download that is not the file GameBanana lists (damaged on the
+/// way, or a cached or partial copy changed on disk) is thrown away, so a
+/// retry downloads it fresh.
+async fn verify_browse_download_md5(
+    portable: &PortablePaths,
+    job: &BrowseDownloadJob,
+    cancel: &Arc<AtomicBool>,
+    handle: &tokio::runtime::Handle,
+) -> Result<()> {
+    let Some(expected) = job.md5.clone().filter(|md5| !md5.trim().is_empty()) else {
+        return Ok(());
+    };
+    let path = persistence::cache_file_path(&job.cache_key);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let cancel_for_hash = Arc::clone(cancel);
+    let actual = handle
+        .spawn_blocking(move || importing::bundle::file_md5_hex(&path, &cancel_for_hash))
+        .await??;
+    if actual.eq_ignore_ascii_case(expected.trim()) {
+        return Ok(());
+    }
+    let portable = portable.clone();
+    let key = job.cache_key.clone();
+    let partial = browse_download_partial_path(job);
+    let _ = handle
+        .spawn_blocking(move || {
+            let _ = std::fs::remove_file(partial);
+            persistence::cache_remove(&portable, &key)
+        })
+        .await;
+    bail!("the downloaded file does not match GameBanana's checksum, try again")
 }
 
 fn browse_download_partial_path(job: &BrowseDownloadJob) -> PathBuf {

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
@@ -315,6 +315,9 @@ pub struct ModFile {
     pub download_url: Option<String>,
     #[serde(rename = "_bIsArchived", default)]
     pub is_archived: bool,
+    /// GameBanana's MD5 of the archive, checked after every download.
+    #[serde(rename = "_sMd5Checksum", default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
 }
 
 fn deserialize_optional_status<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -625,6 +628,14 @@ pub struct ProfileResponse {
         skip_serializing_if = "Option::is_none"
     )]
     pub update_history: Option<UpdateHistory>,
+    /// Hestia-owned cache metadata: GameBanana's archive path list per file
+    /// id, attached only when the update matcher asks for it.
+    #[serde(
+        rename = "file_listings",
+        default,
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub file_listings: BTreeMap<u64, Vec<String>>,
 }
 
 pub fn profile_category_name(profile: &ProfileResponse) -> Option<String> {
@@ -1227,6 +1238,7 @@ mod tests {
             version: None,
             download_url: download_url.map(str::to_owned),
             is_archived,
+            md5: None,
         }
     }
 
@@ -1839,6 +1851,51 @@ pub async fn attach_update_history_async(
     if let Ok(Ok(history)) = history {
         profile.update_history = Some(history);
     }
+}
+
+/// GameBanana's answer for one file's archive contents.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum RawFileList {
+    Paths(Vec<String>),
+    /// The file is gone or has no readable list; asking again will not help.
+    Unavailable,
+}
+
+const RAW_FILE_LIST_ATTEMPTS: usize = 3;
+const RAW_FILE_LIST_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Fetch the path list inside one file's archive.  GameBanana sometimes
+/// answers 200 with an empty body; that is retried, then reported as an
+/// error so it is never cached as a real answer.
+pub async fn fetch_raw_file_list_async(
+    client: &ClientWithMiddleware,
+    file_id: u64,
+) -> Result<RawFileList> {
+    let url = Url::parse(&format!("{GAMEBANANA_API_BASE}/File/{file_id}/RawFileList"))?;
+    for attempt in 1..=RAW_FILE_LIST_ATTEMPTS {
+        let response = client
+            .get(url.as_str())
+            .send()
+            .await
+            .context("failed to fetch GameBanana file list")?;
+        if matches!(response.status().as_u16(), 400 | 403 | 404 | 410) {
+            return Ok(RawFileList::Unavailable);
+        }
+        let body = response
+            .error_for_status()
+            .context("GameBanana file list returned an error")?
+            .text()
+            .await
+            .context("failed to read GameBanana file list")?;
+        let paths = crate::integrations::gamebanana_matcher::paths::split_raw_file_list(&body);
+        if !paths.is_empty() {
+            return Ok(RawFileList::Paths(paths));
+        }
+        if attempt < RAW_FILE_LIST_ATTEMPTS {
+            tokio::time::sleep(RAW_FILE_LIST_RETRY_DELAY).await;
+        }
+    }
+    bail!("GameBanana file list for {file_id} came back empty")
 }
 
 /// Per GameBanana's dev guidance, `_aPreviewContent` is the current preview

@@ -2733,18 +2733,27 @@ impl HestiaApp {
             .unwrap_or(mod_entry.update_state)
     }
 
+    /// Thalia has not answered yet for this mod's newer files, so its blue
+    /// notice is held back (see `overlay_thalia_update_evidence`).
+    fn thalia_check_pending(&self, mod_entry: &ModEntry) -> bool {
+        self.cached_grouped_evidence_for_mod(mod_entry)
+            .is_some_and(|evidence| evidence.thalia_pending)
+    }
+
     fn mod_update_badge(&self, text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
         let effective_state = self.effective_update_state_for_badge(mod_entry);
         // A linked mod with no reconciled verdict yet (no cached snapshot to
         // compare against -- never successfully checked, or awaiting the
         // throttled network check) must never read as "Unlinked": the GameBanana
-        // source is right there. Show a neutral pending badge instead.
-        if effective_state == ModUpdateState::Unlinked
+        // source is right there. Show a neutral pending badge instead. The same
+        // applies while Thalia is still deciding about its newer files.
+        if (effective_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
                 .as_ref()
                 .and_then(|source| source.gamebanana.as_ref())
-                .is_some()
+                .is_some())
+            || self.thalia_check_pending(mod_entry)
         {
             return (text.checking(), Color32::from_rgb(142, 153, 168));
         }
@@ -2775,12 +2784,13 @@ impl HestiaApp {
 
     fn mod_update_badge_tooltip(&self, mod_entry: &ModEntry) -> &'static str {
         let effective_state = self.effective_update_state_for_badge(mod_entry);
-        if effective_state == ModUpdateState::Unlinked
+        if (effective_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
                 .as_ref()
                 .and_then(|source| source.gamebanana.as_ref())
-                .is_some()
+                .is_some())
+            || self.thalia_check_pending(mod_entry)
         {
             return "Linked to GameBanana; checking for updates.";
         }

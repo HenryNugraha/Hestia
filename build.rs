@@ -11,6 +11,12 @@ fn main() {
     {
         println!("cargo:rustc-cfg=gamebanana_matcher_fixtures");
     }
+    println!("cargo:rustc-check-cfg=cfg(gamebanana_matcher_path_fixtures)");
+    if fixtures.join("paths-model-parity-fixtures.json").is_file()
+        && fixtures.join("path-feature-fixtures.json").is_file()
+    {
+        println!("cargo:rustc-cfg=gamebanana_matcher_path_fixtures");
+    }
 
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         let mut res = winres::WindowsResource::new();

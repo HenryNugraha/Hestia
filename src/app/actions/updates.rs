@@ -2492,6 +2492,34 @@ fn release_sequence_candidate_matches(
     latest.2 == candidate.id && active_ids.contains(&candidate.id)
 }
 
+/// Archive path lists the matcher could still use for these recipes: the
+/// installed file and every eligible candidate of each single-source recipe
+/// that the metadata model left undecided.  Lists already attached to the
+/// profile are left out.
+fn file_listing_ids_wanted(
+    items: &[(Option<i64>, FileSetRecipe)],
+    profile: &gamebanana::ProfileResponse,
+) -> Vec<u64> {
+    if gamebanana::is_unavailable(profile)
+        || !matcher_adapter::canonicalize_profile(profile)
+            .ambiguous_ids
+            .is_empty()
+    {
+        return Vec::new();
+    }
+    let Some(group) = matcher_adapter::evaluate_native_single_group(items, profile) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<u64> = group
+        .evaluations
+        .into_iter()
+        .flat_map(|evaluation| evaluation.missing_listing_ids)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 fn evaluate_file_set_update_group(
     items: &[(Option<i64>, FileSetRecipe)],
     profile: &gamebanana::ProfileResponse,
@@ -3145,6 +3173,16 @@ fn cached_profile_freshness(
 }
 
 fn cached_profile_catalog_fingerprint(profile: &gamebanana::ProfileResponse) -> String {
+    profile_catalog_fingerprint(profile, true)
+}
+
+/// Without history the page reads as if GameBanana's update history had not
+/// been loaded, so the same page fingerprints the same either way.
+fn profile_catalog_fingerprint(
+    profile: &gamebanana::ProfileResponse,
+    with_history: bool,
+) -> String {
+    let update_history = profile.update_history.as_ref().filter(|_| with_history);
     let mut files: Vec<_> = profile
         .files
         .iter()
@@ -3158,9 +3196,7 @@ fn cached_profile_catalog_fingerprint(profile: &gamebanana::ProfileResponse) -> 
         .collect();
     files.sort_by_key(|file| serde_json::to_string(file).unwrap_or_default());
 
-    let history = profile
-        .update_history
-        .as_ref()
+    let history = update_history
         .map(|history| {
             let mut records: Vec<_> = history
                 .records
@@ -3181,7 +3217,7 @@ fn cached_profile_catalog_fingerprint(profile: &gamebanana::ProfileResponse) -> 
         "trashed": profile.is_trashed,
         "withheld": profile.is_withheld,
         "files": files,
-        "history_known": profile.update_history.is_some(),
+        "history_known": update_history.is_some(),
         "history": history,
     }))
     .unwrap_or_default()
@@ -3287,7 +3323,20 @@ fn build_cached_update_evidence(
                 {
                     conflicting_at_freshness = true;
                 }
-                Some((chosen_freshness, _, _, _)) if freshness == *chosen_freshness => {}
+                Some((chosen_freshness, _, chosen_profile, _))
+                    if freshness == *chosen_freshness =>
+                {
+                    // Same catalog: keep the copy with more archive lists.
+                    let chosen_listings = chosen_profile.file_listings.len();
+                    if profile.file_listings.len() > chosen_listings {
+                        chosen = Some((
+                            freshness,
+                            fingerprint,
+                            Arc::new(profile),
+                            source.profile_cached_at,
+                        ));
+                    }
+                }
                 _ => {
                     let profile_cached_at = source.profile_cached_at;
                     chosen = Some((
@@ -3312,6 +3361,7 @@ fn build_cached_update_evidence(
                         installed_files: Vec::new(),
                         profile: None,
                         profile_cached_at: None,
+                        thalia_pending: false,
                     },
                 );
             }
@@ -3367,6 +3417,7 @@ fn build_cached_update_evidence(
                         .unwrap_or_default(),
                     profile: Some(Arc::clone(&profile)),
                     profile_cached_at,
+                    thalia_pending: false,
                 },
             );
         }
@@ -3737,6 +3788,7 @@ fn profile_to_response(
             version: file.version.clone(),
             download_url: file.download_url.clone(),
             is_archived: file.archived,
+            md5: file.md5.clone(),
         };
         if file.archived {
             profile.archived_files.push(remote_file);
@@ -3760,6 +3812,7 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
             version: file.version.clone(),
             download_url: file.download_url.clone(),
             archived: file.is_archived,
+            md5: file.md5.clone(),
         });
     }
     for file in &profile.archived_files {
@@ -3773,6 +3826,7 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
             version: file.version.clone(),
             download_url: file.download_url.clone(),
             archived: true,
+            md5: file.md5.clone(),
         });
     }
     GameBananaSnapshot {
@@ -4236,18 +4290,21 @@ impl HestiaApp {
         target_game_id: Option<&str>,
         force: bool,
     ) {
+        let round_games: Vec<String> = target_game_id
+            .map(|game_id| vec![game_id.to_string()])
+            .unwrap_or_else(|| {
+                self.state
+                    .mods
+                    .iter()
+                    .map(|mod_entry| mod_entry.game_id.clone())
+                    .collect()
+            });
+        // Hold blue notices from now until this check's Thalia round, even
+        // when the check itself has to wait for a busy batch or another check.
+        self.thalia_matching.begin_round(round_games.iter().cloned());
         if force {
-            let force_games = target_game_id
-                .map(|game_id| vec![game_id.to_string()])
-                .unwrap_or_else(|| {
-                    self.state
-                        .mods
-                        .iter()
-                        .map(|mod_entry| mod_entry.game_id.clone())
-                        .collect()
-                });
             self.thalia_matching
-                .mark_force_refresh_for_games(force_games);
+                .mark_force_refresh_for_games(round_games);
         }
         if self.folder_batch_job.is_some()
             || target_game_id.is_some_and(|game_id| self.folder_batch_game_busy(game_id))
@@ -4426,8 +4483,11 @@ impl HestiaApp {
         if state_changed_without_fetch {
             self.save_state();
         }
+        // With nothing to fetch, no check result will arrive to start the
+        // Thalia round, so ask now from the cached catalog.
+        let nothing_to_fetch = items.is_empty();
         self.dispatch_update_check_items(items);
-        if !allow_network {
+        if !allow_network || nothing_to_fetch {
             let game_ids: HashSet<String> = target_game_id
                 .map(|game_id| [game_id.to_string()].into_iter().collect())
                 .unwrap_or_else(|| self.state.mods.iter().map(|mod_entry| mod_entry.game_id.clone()).collect());
@@ -6602,6 +6662,7 @@ mod update_signature_tests {
             version: None,
             download_url: Some(format!("https://example.com/{file_name}")),
             is_archived: false,
+            md5: None,
         }
     }
 
@@ -6671,6 +6732,29 @@ mod update_signature_tests {
             files,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn undecided_recipe_asks_for_every_archive_list_of_its_group() {
+        let source = mod_file(10, "skin.zip", 100);
+        let first = mod_file(20, "skin_a.zip", 200);
+        let second = mod_file(21, "skin_b.zip", 200);
+        let mut remote = profile(vec![source.clone(), first, second], 300);
+        let items = [(Some(source.date_added), fallback_file_set(&source))];
+        let list = |name: &str| vec![format!("Skin/{name}.ini"), "Skin/body.dds".to_owned()];
+
+        assert_eq!(file_listing_ids_wanted(&items, &remote), vec![10, 20, 21]);
+
+        remote.file_listings.insert(10, list("skin"));
+        remote.file_listings.insert(20, list("skin"));
+        assert_eq!(file_listing_ids_wanted(&items, &remote), vec![21]);
+
+        remote.file_listings.insert(21, list("other"));
+        assert!(file_listing_ids_wanted(&items, &remote).is_empty());
+        // Thin metadata: the path model may not pick either, but the lists
+        // never turn the recipe into a skipped check.
+        let evaluations = evaluate_file_set_update_group(&items, &remote);
+        assert_ne!(evaluations[0].state, ModUpdateState::CheckSkipped);
     }
 
     #[test]
@@ -6812,6 +6896,7 @@ mod update_signature_tests {
             installed_files: vec![tracked_file_meta_from_mod_file(&source)],
             profile: Some(Arc::new(profile.clone())),
             profile_cached_at: None,
+            thalia_pending: false,
         };
         assert!(HestiaApp::has_newer_files_notice_from_evidence(
             &mod_entry,
@@ -6912,13 +6997,15 @@ mod update_signature_tests {
             }),
             is_native_single: true,
             abstention_state: ModUpdateState::UpToDate,
+            missing_listing_ids: Vec::new(),
         }
     }
 
     #[test]
     fn snapshot_only_profile_reconstructs_files_for_update_checks() {
         let source = versioned_mod_file(10, "legacy.zip", 100, "1.0");
-        let candidate = versioned_mod_file(20, "legacyplus.zip", 200, "2.0");
+        let mut candidate = versioned_mod_file(20, "legacyplus.zip", 200, "2.0");
+        candidate.md5 = Some("5d41402abc4b2a76b9719d911017c592".to_string());
         let mut archived = mod_file(30, "legacy_old.zip", 50);
         archived.is_archived = true;
         archived.version = Some("0.9".to_string());
@@ -6936,6 +7023,11 @@ mod update_signature_tests {
         assert_eq!(reconstructed.archived_files[0].id, 30);
         assert_eq!(reconstructed.files[0].version.as_deref(), Some("1.0"));
         assert_eq!(reconstructed.archived_files[0].version.as_deref(), Some("0.9"));
+        assert_eq!(
+            reconstructed.files[1].md5.as_deref(),
+            Some("5d41402abc4b2a76b9719d911017c592")
+        );
+        assert_eq!(reconstructed.files[0].md5, None);
         assert_ne!(
             determine_file_set_update_state(
                 &fallback_file_set(&source),
@@ -7151,6 +7243,17 @@ mod update_signature_tests {
         assert_ne!(
             cached_profile_catalog_fingerprint(&profile_without_history),
             cached_profile_catalog_fingerprint(&changed_profile_date)
+        );
+
+        // A Thalia plan made from a page saved by Browse (no history) must
+        // still match the same page loaded with history for the update.
+        assert_eq!(
+            thalia_profile_fingerprint(&profile_without_history),
+            thalia_profile_fingerprint(&profile_with_known_empty_history)
+        );
+        assert_ne!(
+            thalia_profile_fingerprint(&profile_without_history),
+            thalia_profile_fingerprint(&changed_profile_date)
         );
     }
 

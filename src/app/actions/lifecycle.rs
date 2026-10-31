@@ -615,6 +615,10 @@ impl HestiaApp {
             proxy_requeue_browse_downloads: HashSet::new(),
             pending_browse_install_safety: HashMap::new(),
             pending_browse_install_meta: HashMap::new(),
+            thalia_install_bundles: Vec::new(),
+            thalia_separate_install_jobs: HashSet::new(),
+            thalia_canceled_bundle_tasks: HashSet::new(),
+            thalia_bundle_manifests: HashMap::new(),
             gif_rewritten_markdown_cache: HashMap::new(),
             markdown_dependency_signature_cache: HashMap::new(),
             render_safe_markdown_cache: HashMap::new(),
@@ -718,6 +722,7 @@ impl HestiaApp {
             pending_events: PendingEventsFlags::default(),
         };
         Self::cleanup_runtime_temp_downloads_best_effort();
+        importing::bundle::remove_stale_bundle_dirs();
         app.release_stuck_xxmi_reload_hotkeys();
         app.dispatch_profile_recovery();
         if app.state.static_prefs.use_custom_proxy
@@ -1126,6 +1131,20 @@ impl HestiaApp {
         self.restart_active_translations_for_proxy_change();
         self.invalidate_thalia_matching();
         self.restart_active_update_check_for_proxy_change();
+        // Invalidation cancelled any Thalia requests in flight. A restarted
+        // update check asks again when it finishes; otherwise ask now so
+        // held notices are not left waiting for answers that never come.
+        let game_ids: HashSet<String> = self
+            .state
+            .mods
+            .iter()
+            .map(|mod_entry| mod_entry.game_id.clone())
+            .collect();
+        if self.update_check_inflight {
+            self.thalia_matching.begin_round(game_ids);
+        } else {
+            self.schedule_thalia_matching_for_games(&game_ids);
+        }
         if let (Some(cancel), Some(request)) = (
             self.feedback_survey_cancellation.as_ref(),
             self.feedback_survey_active_request.clone(),
@@ -2638,6 +2657,7 @@ impl HestiaApp {
         }
         source.ignore_update_always.hash(hasher);
         source.dismissed_newer_file_ids.hash(hasher);
+        source.refused_thalia_answer.hash(hasher);
         Self::hash_optional_datetime_for_library_cache(
             hasher,
             source.baseline_content_mtime.as_ref(),
@@ -4012,7 +4032,7 @@ impl HestiaApp {
         self.enqueue_cover_preload();
 
         if previous_game_id.as_deref() != Some(game_id.as_str()) {
-            self.invalidate_thalia_matching();
+            self.invalidate_thalia_matching_keeping_sent();
             self.clear_library_folder_selection();
             self.library_folder_selection_context = None;
             self.selected_category_folder_id = None;

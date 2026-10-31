@@ -1013,6 +1013,7 @@ mod translation_tests {
             version: None,
             download_url: Some(url.to_string()),
             is_archived: false,
+            md5: None,
         }
     }
 

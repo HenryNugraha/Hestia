@@ -1013,4 +1013,9 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Tutup tanpa memasang apa pun.", // FilePromptCancelTooltip
     "Mod ini berubah. Buka kembali daftar file.", // FileReviewTargetChanged
     "Mod dengan file baru: {count}", // NewFilesInFolder
+    "{title} tidak diperbarui, {file} tidak selesai. Tidak ada yang diubah.", // ThaliaBundleNotUpdated
+    "{title} tidak diperbarui, {file} tidak selesai. Hanya file terpisah yang dibutuhkannya yang dipasang.", // ThaliaBundlePartlyUpdated
+    "{folder} sudah ada di mod kamu, jadi salinan yang ada tetap dipakai.", // ThaliaRequiredCopyKept
+    "{title} tidak diperbarui, dua filenya akan menulis {path}. Tidak ada yang diubah.", // ThaliaBundleClash
+    "{title} berubah saat pembaruannya sedang disiapkan, jadi tidak diperbarui.", // ThaliaBundleTargetChanged
 ];

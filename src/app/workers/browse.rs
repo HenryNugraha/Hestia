@@ -370,6 +370,31 @@ mod browse_worker_tests {
     }
 
     #[test]
+    fn fresh_profile_keeps_saved_lists_of_deleted_files() {
+        // 661936 replaced file 1858820 with a renamed 1871047; only the saved
+        // profile still has the deleted file's list.
+        let saved = r#"{"_idRow":661936,"file_listings":{
+            "1858820":["TangtangMod/Master.ini"],
+            "1871047":["old/answer.ini"]}}"#;
+        let mut fresh: gamebanana::ProfileResponse =
+            serde_json::from_str(r#"{"_idRow":661936,"file_listings":{
+                "1871047":["DannTheMannTangtangMod/Master.ini"]}}"#)
+                .unwrap();
+
+        carry_over_file_listings(&mut fresh, Some(saved), 661936);
+        assert_eq!(fresh.file_listings[&1858820], vec!["TangtangMod/Master.ini"]);
+        assert_eq!(
+            fresh.file_listings[&1871047],
+            vec!["DannTheMannTangtangMod/Master.ini"]
+        );
+
+        let mut other: gamebanana::ProfileResponse =
+            serde_json::from_str(r#"{"_idRow":1}"#).unwrap();
+        carry_over_file_listings(&mut other, Some(saved), 1);
+        assert!(other.file_listings.is_empty());
+    }
+
+    #[test]
     fn typed_profile_cache_keys_do_not_alias_mod_and_tool_ids() {
         assert_ne!(
             gamebanana::profile_cache_key_typed(728107, false),
@@ -626,6 +651,24 @@ fn cached_detail_profile(raw: Option<&str>, mod_id: u64) -> Option<gamebanana::P
     (profile.id == mod_id).then_some(profile)
 }
 
+/// The update check may have fetched archive lists for files the author has
+/// since deleted. Those are no longer on the page, so only the saved profile
+/// still has them, and without them the update matcher loses a renamed file
+/// it already paired. A file's contents never change, so an old list stays
+/// valid.
+fn carry_over_file_listings(
+    profile: &mut gamebanana::ProfileResponse,
+    cached_profile_json: Option<&str>,
+    mod_id: u64,
+) {
+    let Some(cached) = cached_detail_profile(cached_profile_json, mod_id) else {
+        return;
+    };
+    for (id, paths) in cached.file_listings {
+        profile.file_listings.entry(id).or_insert(paths);
+    }
+}
+
 async fn load_profile_with_cache(
     portable: &PortablePaths,
     client: &ClientWithMiddleware,
@@ -638,12 +681,15 @@ async fn load_profile_with_cache(
 ) -> Result<(gamebanana::ProfileResponse, bool, Option<DateTime<Utc>>)> {
     if !force_refresh {
         if let Some(raw) = cached_profile_json {
-            if let Ok(profile) = serde_json::from_str::<gamebanana::ProfileResponse>(raw) {
+            if let Ok(mut profile) = serde_json::from_str::<gamebanana::ProfileResponse>(raw) {
+                attach_cached_file_listings(portable, &mut profile).await;
                 return Ok((profile, false, None));
             }
         }
         if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await? {
-            if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached) {
+            if let Ok(mut profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
+            {
+                attach_cached_file_listings(portable, &mut profile).await;
                 return Ok((profile, false, None));
             }
         }
@@ -654,19 +700,24 @@ async fn load_profile_with_cache(
             if include_update_history {
                 gamebanana::attach_update_history_async(client, &mut profile, false).await;
             }
+            carry_over_file_listings(&mut profile, cached_profile_json, mod_id);
+            attach_cached_file_listings(portable, &mut profile).await;
             if let Ok(bytes) = serde_json::to_vec(&profile) {
                 cache_put_blocking_detached(portable, cache_key, "browse-json", bytes, 0);
             }
             Ok((profile, false, Some(Utc::now())))
         }
         Err(err) if force_refresh => {
-            if let Some(profile) = cached_detail_profile(cached_profile_json, mod_id) {
+            if let Some(mut profile) = cached_detail_profile(cached_profile_json, mod_id) {
+                attach_cached_file_listings(portable, &mut profile).await;
                 return Ok((profile, true, None));
             }
             if let Some(cached) = cache_get_blocking(portable.clone(), cache_key.to_string()).await?
             {
-                if let Ok(profile) = serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
+                if let Ok(mut profile) =
+                    serde_json::from_slice::<gamebanana::ProfileResponse>(&cached)
                 {
+                    attach_cached_file_listings(portable, &mut profile).await;
                     return Ok((profile, true, None));
                 }
             }

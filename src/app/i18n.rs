@@ -1006,10 +1006,15 @@ pub(crate) enum TextKey {
     FilePromptCancelTooltip,
     FileReviewTargetChanged,
     NewFilesInFolder,
+    ThaliaBundleNotUpdated,
+    ThaliaBundlePartlyUpdated,
+    ThaliaRequiredCopyKept,
+    ThaliaBundleClash,
+    ThaliaBundleTargetChanged,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::NewFilesInFolder as usize + 1;
+    const COUNT: usize = Self::ThaliaBundleTargetChanged as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2196,6 +2201,34 @@ impl TextCatalog {
 
     fn new_files_in_folder(self, count: usize) -> String {
         self.count_label(TextKey::NewFilesInFolder, count)
+    }
+
+    fn thalia_bundle_not_updated(self, title: &str, file: &str) -> String {
+        self.get(TextKey::ThaliaBundleNotUpdated)
+            .replace("{title}", title)
+            .replace("{file}", file)
+    }
+
+    fn thalia_bundle_partly_updated(self, title: &str, file: &str) -> String {
+        self.get(TextKey::ThaliaBundlePartlyUpdated)
+            .replace("{title}", title)
+            .replace("{file}", file)
+    }
+
+    fn thalia_bundle_clash(self, title: &str, path: &str) -> String {
+        self.get(TextKey::ThaliaBundleClash)
+            .replace("{title}", title)
+            .replace("{path}", path)
+    }
+
+    fn thalia_bundle_target_changed(self, title: &str) -> String {
+        self.get(TextKey::ThaliaBundleTargetChanged)
+            .replace("{title}", title)
+    }
+
+    fn thalia_required_copy_kept(self, folder: &str) -> String {
+        self.get(TextKey::ThaliaRequiredCopyKept)
+            .replace("{folder}", folder)
     }
 
     fn no_configured_character_category_list(self) -> &'static str {

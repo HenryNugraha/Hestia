@@ -14,14 +14,21 @@
 //!    abstain, while the existing multi-file resolver remains responsible for
 //!    multi-file recipes.
 //!
+//! When the metadata model cannot decide, the archive path model gets one try
+//! with GameBanana's file lists from `ProfileResponse::file_listings`.  The
+//! update worker fetches those lists only for recipes that report them in
+//! `missing_listing_ids`.
+//!
 //! A native abstention is terminal for a single-source recipe.  The caller
 //! must not fall back to a softer single-file matcher after `choose_candidate`
 //! abstains.
 
 use super::*;
 use crate::integrations::gamebanana;
+use crate::integrations::gamebanana_matcher::paths::group_path_features;
 use crate::integrations::gamebanana_matcher::{
-    CandidateEvidence, choose_candidate, model_evidence_floor, score_pair,
+    CandidateEvidence, choose_candidate, model_evidence_floor, needs_path_evidence, score_pair,
+    score_pair_with_paths,
 };
 use crate::model::{FileSetRecipe, TrackedFileMeta};
 use serde_json::{Map, Value};
@@ -354,6 +361,8 @@ pub(super) struct NativeSingleEvaluation {
     pub(super) claim: Option<NativeClaim>,
     pub(super) is_native_single: bool,
     pub(super) abstention_state: ModUpdateState,
+    /// File ids whose archive lists could still decide this recipe.
+    pub(super) missing_listing_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -402,18 +411,20 @@ fn candidate_evidence(
     profile_files: &[&gamebanana::ModFile],
     active_files: &[&gamebanana::ModFile],
     shape_index: &CatalogShapeIndex,
-) -> CandidateEvidence {
+) -> (CandidateEvidence, Option<Value>) {
     let eligible = candidate_is_eligible(candidate, tracked, current.map(|(file, _)| file));
     if !eligible {
-        return CandidateEvidence {
+        let evidence = CandidateEvidence {
             file_id: candidate.id,
             score: None,
+            path_score: None,
             eligible: false,
             vetoed: true,
             verified_release_chain: false,
             verified_typed_release: false,
             model_evidence_floor: false,
         };
+        return (evidence, None);
     }
 
     let source = source_value(tracked, current);
@@ -440,15 +451,59 @@ fn candidate_evidence(
         profile_files,
         active_files,
     );
-    CandidateEvidence {
+    let evidence = CandidateEvidence {
         file_id: candidate.id,
         score: score.map(|pair| pair.probability),
+        path_score: None,
         eligible: true,
         vetoed: generic_veto || graph_veto,
         verified_release_chain,
         verified_typed_release,
         model_evidence_floor: model_evidence_floor(&row),
+    };
+    (evidence, Some(row))
+}
+
+/// Score the archive path model once the metadata model is undecided.  The
+/// group is every eligible candidate, as in training.  Every list must be
+/// known; otherwise the ids still missing are returned for the worker.
+fn attach_path_scores(
+    context: &PairContext,
+    source_id: Option<u64>,
+    evidence: &mut [CandidateEvidence],
+    rows: &[Option<Value>],
+) -> Vec<u64> {
+    if !needs_path_evidence(evidence) {
+        return Vec::new();
     }
+    let Some(source_id) = source_id else {
+        return Vec::new();
+    };
+    let listings = &context.canonical.profile.file_listings;
+    let group: Vec<usize> = (0..evidence.len())
+        .filter(|index| evidence[*index].eligible)
+        .collect();
+    let missing: Vec<u64> = std::iter::once(source_id)
+        .chain(group.iter().map(|index| evidence[*index].file_id))
+        .filter(|file_id| !listings.contains_key(file_id))
+        .collect();
+    if !missing.is_empty() {
+        return missing;
+    }
+    let candidate_lists: Vec<Option<&[String]>> = group
+        .iter()
+        .map(|index| listings.get(&evidence[*index].file_id).map(Vec::as_slice))
+        .collect();
+    let features = group_path_features(
+        listings.get(&source_id).map(Vec::as_slice),
+        &candidate_lists,
+    );
+    for (index, features) in group.into_iter().zip(features) {
+        if let (Some(features), Some(row)) = (features, rows[index].as_ref()) {
+            evidence[index].path_score = score_pair_with_paths(row, &features);
+        }
+    }
+    Vec::new()
 }
 
 fn no_update_state(
@@ -479,7 +534,7 @@ fn evaluate_single(
         .filter(|file| super::profile_file_is_active_downloadable(&context.canonical.profile, file))
         .collect::<Vec<_>>();
     let shape_index = CatalogShapeIndex::from_active_files(&active_files);
-    let evidence = context
+    let (mut evidence, rows): (Vec<_>, Vec<_>) = context
         .canonical
         .active
         .iter()
@@ -494,7 +549,11 @@ fn evaluate_single(
                 &shape_index,
             )
         })
-        .collect::<Vec<_>>();
+        .unzip();
+    let source_id = (tracked.file_id != 0)
+        .then_some(tracked.file_id)
+        .or_else(|| current.map(|(file, _)| file.id).filter(|id| *id != 0));
+    let missing_listing_ids = attach_path_scores(context, source_id, &mut evidence, &rows);
     let choice = choose_candidate(&evidence);
     let Some(candidate_id) = choice else {
         // Native abstention is terminal.  The caller must not invoke the
@@ -507,6 +566,7 @@ fn evaluate_single(
             claim: None,
             is_native_single: true,
             abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
+            missing_listing_ids,
         };
     };
     let Some(candidate) = context
@@ -523,6 +583,7 @@ fn evaluate_single(
             claim: None,
             is_native_single: true,
             abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
+            missing_listing_ids: Vec::new(),
         };
     };
     let signature =
@@ -539,6 +600,7 @@ fn evaluate_single(
         }),
         is_native_single: true,
         abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
+        missing_listing_ids: Vec::new(),
     }
 }
 
@@ -648,6 +710,7 @@ mod tests {
             version: None,
             download_url: Some("https://example.com/old.zip".to_owned()),
             is_archived: false,
+            md5: None,
         });
         let canonical = canonicalize_profile(&profile);
         assert!(current_source(&canonical, &tracked).is_none());
@@ -673,6 +736,7 @@ mod tests {
             }),
             is_native_single: true,
             abstention_state: ModUpdateState::UpToDate,
+            missing_listing_ids: Vec::new(),
         }];
 
         abstain_competing_native_claims(&mut evaluations, &HashSet::from([candidate_id]));

@@ -75,6 +75,7 @@ fn spawn_install_workers(
                         choice,
                         target_root,
                         gb_profile,
+                        expected_manifest,
                     } => {
                         let prepared = prepared_cache.lock().unwrap().remove(&job_id);
                         let Some(prepared) = prepared else {
@@ -135,7 +136,7 @@ fn spawn_install_workers(
                                     };
 
                                     let installed_path =
-                                        importing::install_candidate_with_state_cancelable(
+                                        importing::install_candidate_with_state_verified_cancelable(
                                             &candidate.path,
                                             preferred_name,
                                             &target_root,
@@ -144,6 +145,9 @@ fn spawn_install_workers(
                                             source_is_archive,
                                             game_backend,
                                             candidate_install_states[i].clone(),
+                                            expected_manifest
+                                                .as_deref()
+                                                .filter(|_| candidate_indices.len() == 1),
                                             &cancel,
                                         )?
                                         .ok_or_else(|| anyhow!("Import cancelled"))?;
@@ -187,6 +191,43 @@ fn spawn_install_workers(
                                 });
                             }
                         }
+                        cancel_flags.lock().unwrap().remove(&job_id);
+                    }
+                    InstallRequest::PrepareThaliaBundle {
+                        job_id,
+                        game_id,
+                        parts,
+                    } => {
+                        let cancel = {
+                            let mut flags = cancel_flags.lock().unwrap();
+                            flags
+                                .entry(job_id)
+                                .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+                                .clone()
+                        };
+                        let result = handle
+                            .spawn_blocking(move || {
+                                importing::bundle::prepare_bundle(&game_id, &parts, &cancel)
+                            })
+                            .await;
+                        let event = match result {
+                            Ok(Ok((root, folders))) => InstallEvent::ThaliaBundlePrepared {
+                                job_id,
+                                root,
+                                folders,
+                            },
+                            Ok(Err(failure)) => {
+                                InstallEvent::ThaliaBundlePrepareFailed { job_id, failure }
+                            }
+                            Err(err) => InstallEvent::ThaliaBundlePrepareFailed {
+                                job_id,
+                                failure: importing::bundle::BundleFailure::Other {
+                                    file_name: None,
+                                    error: format!("bundle worker join error: {err}"),
+                                },
+                            },
+                        };
+                        let _ = tx.send(event);
                         cancel_flags.lock().unwrap().remove(&job_id);
                     }
                     InstallRequest::SyncImages {
@@ -312,6 +353,7 @@ fn spawn_install_workers(
             let job_id = match &request {
                 InstallRequest::Inspect { job_id, .. } => *job_id,
                 InstallRequest::Install { job_id, .. } => *job_id,
+                InstallRequest::PrepareThaliaBundle { job_id, .. } => *job_id,
                 InstallRequest::SyncImages { job_id, .. } => *job_id,
                 InstallRequest::Cancel { job_id } => *job_id,
                 InstallRequest::Drop { job_id } => *job_id,

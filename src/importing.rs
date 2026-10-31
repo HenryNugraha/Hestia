@@ -25,6 +25,8 @@ use crate::model::{
 };
 use crate::persistence;
 
+pub mod bundle;
+
 pub const CANCELLED_ERROR: &str = "install canceled";
 pub type CancelFlag = Arc<AtomicBool>;
 
@@ -1342,6 +1344,8 @@ pub fn install_candidate_cancelable(
 /// scan.  Staging happens in a sibling of the destination root so a partially copied candidate
 /// cannot be mistaken for a live mod.  XXMI represents a disabled mod as one folder containing
 /// `DISABLED_BY_HESTIA`; Unreal keeps disabled mods in its separate disabled root.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub fn install_candidate_with_state_cancelable(
     candidate_path: &Path,
     preferred_name: &str,
@@ -1351,6 +1355,36 @@ pub fn install_candidate_with_state_cancelable(
     source_is_archive: bool,
     backend: GameBackend,
     status: ModStatus,
+    cancel: &CancelFlag,
+) -> Result<Option<PathBuf>> {
+    install_candidate_with_state_verified_cancelable(
+        candidate_path,
+        preferred_name,
+        target_root,
+        disabled_target_root,
+        choice,
+        source_is_archive,
+        backend,
+        status,
+        None,
+        cancel,
+    )
+}
+
+/// Same as [`install_candidate_with_state_cancelable`], and when `expected`
+/// is given the staged copy must hold exactly those files, or nothing is
+/// published.
+#[allow(clippy::too_many_arguments)]
+pub fn install_candidate_with_state_verified_cancelable(
+    candidate_path: &Path,
+    preferred_name: &str,
+    target_root: &Path,
+    disabled_target_root: Option<&Path>,
+    choice: ConflictChoice,
+    source_is_archive: bool,
+    backend: GameBackend,
+    status: ModStatus,
+    expected: Option<&bundle::FolderManifest>,
     cancel: &CancelFlag,
 ) -> Result<Option<PathBuf>> {
     validate_install_folder_name(preferred_name)?;
@@ -1398,6 +1432,9 @@ pub fn install_candidate_with_state_cancelable(
         .context("failed to create install staging directory")?;
     let staged_candidate = stage.path().join("candidate");
     stage_candidate_payload(candidate_path, &staged_candidate, source_is_archive, cancel)?;
+    if let Some(expected) = expected {
+        bundle::verify_folder_manifest(&staged_candidate, expected, cancel)?;
+    }
 
     let existing_destination = destination.is_dir().then_some(destination.as_path());
     let existing_alternate = alternate.as_deref().filter(|path| path.is_dir());

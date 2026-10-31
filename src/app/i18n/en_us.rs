@@ -1013,4 +1013,9 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Close without installing anything.", // FilePromptCancelTooltip
     "This mod changed. Open the file list again.", // FileReviewTargetChanged
     "Mods with new files: {count}", // NewFilesInFolder
+    "{title} was not updated, {file} did not finish. Nothing was changed.", // ThaliaBundleNotUpdated
+    "{title} was not updated, {file} did not finish. Only the separate files it needs were installed.", // ThaliaBundlePartlyUpdated
+    "{folder} is already in your mods, so the existing copy was kept.", // ThaliaRequiredCopyKept
+    "{title} was not updated, two of its files would write {path}. Nothing was changed.", // ThaliaBundleClash
+    "{title} changed while its update was getting ready, so it was not updated.", // ThaliaBundleTargetChanged
 ];

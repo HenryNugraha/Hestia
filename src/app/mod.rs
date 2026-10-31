@@ -45,7 +45,8 @@ use crate::{
         LibrarySort, MOD_META_DIR, MetadataSourceKind, ModCategory, ModCategorySortMode, ModEntry,
         ModInstallState, ModSourceData, ModStatus, ModStatusTargets, ModUpdateState,
         ModifiedUpdateBehavior, OperationLogEntry, OverlayHotkey, OverlayHotkeyProblem,
-        ProfileCatalog, ProfileId, ProfileRecord, ReloadHotkeyTrigger, RendererPreference,
+        ProfileCatalog, ProfileId, ProfileRecord, RefusedThaliaAnswer, RefusedThaliaRequiredFile,
+        ReloadHotkeyTrigger, RendererPreference,
         SearchSort, StagedAppUpdate, TaskEntry, TaskKind, TaskRetryPayload, TaskStatus,
         TasksLayout, TasksOrder, ToolEntry, TrackedFileMeta, UnsafeContentMode,
         UnsafeContentPreference, default_modded_exe_candidates, default_mods_path,
@@ -344,6 +345,11 @@ impl eframe::App for HestiaApp {
             // fires in every library and browse frame, so ahead of the branches above
             // it would swallow their much shorter delays.
             ctx.request_repaint_after(Duration::from_secs(60));
+        }
+        // A held blue notice must reappear when its hold gives up, even with
+        // no input. egui keeps the earliest of several requested repaints.
+        if let Some(remaining) = self.thalia_matching.next_hold_expiry() {
+            ctx.request_repaint_after(remaining);
         }
     }
 

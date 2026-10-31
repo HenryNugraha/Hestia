@@ -197,6 +197,9 @@ impl HestiaApp {
                 );
             }
         }
+        if status.is_terminal() {
+            self.note_thalia_bundle_task_finished(job_id, status);
+        }
         self.save_state();
     }
 
@@ -742,6 +745,9 @@ impl HestiaApp {
 
     fn cancel_task(&mut self, job_id: u64) {
         if self.cancel_app_update_task(job_id) {
+            return;
+        }
+        if self.cancel_waiting_thalia_bundle_member(job_id) {
             return;
         }
 

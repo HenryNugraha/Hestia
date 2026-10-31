@@ -1012,4 +1012,9 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Закрыть без установки.", // FilePromptCancelTooltip
     "Мод изменился. Откройте список файлов снова.", // FileReviewTargetChanged
     "Моды с новыми файлами: {count}", // NewFilesInFolder
+    "{title} не обновлён: {file} не завершён. Ничего не изменено.", // ThaliaBundleNotUpdated
+    "{title} не обновлён: {file} не завершён. Установлены только нужные ему отдельные файлы.", // ThaliaBundlePartlyUpdated
+    "{folder} уже есть среди ваших модов, поэтому оставлена существующая копия.", // ThaliaRequiredCopyKept
+    "{title} не обновлён: два его файла записали бы {path}. Ничего не изменено.", // ThaliaBundleClash
+    "{title} изменился, пока готовилось обновление, поэтому он не обновлён.", // ThaliaBundleTargetChanged
 ];
