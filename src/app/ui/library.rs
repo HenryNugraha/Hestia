@@ -12905,13 +12905,15 @@ impl HestiaApp {
                     }
                     apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
-                let clicked_detail_scroll = ui.input(|i| {
-                    i.pointer.any_click()
-                        && i
-                            .pointer
-                            .interact_pos()
-                            .is_some_and(|pos| detail_scroll_output.inner_rect.contains(pos))
-                });
+                // Only clicks that land on this window count: a popup drawn over the scroll
+                // area (the "..." menu's "Link Mod") would otherwise re-collapse the section
+                // it just opened in the same frame.
+                let clicked_detail_scroll = ui
+                    .input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten())
+                    .is_some_and(|pos| {
+                        detail_scroll_output.inner_rect.contains(pos)
+                            && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+                    });
                 if self.my_mod_source_expanded && clicked_detail_scroll {
                     self.my_mod_source_expanded = false;
                 }
