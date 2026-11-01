@@ -1875,6 +1875,17 @@ fn paint_selected_mod_count_badge(ui: &mut Ui, text: TextCatalog, count: usize) 
     );
 }
 
+/// The mod context menu's 3px button corners.  A submenu opens in a Ui of its
+/// own that doesn't keep the menu's style, so it sets them again.
+fn set_mod_context_submenu_corner_radius(ui: &mut Ui) {
+    let radius = egui::CornerRadius::same(3);
+    let widgets = &mut ui.style_mut().visuals.widgets;
+    widgets.inactive.corner_radius = radius;
+    widgets.hovered.corner_radius = radius;
+    widgets.active.corner_radius = radius;
+    widgets.open.corner_radius = radius;
+}
+
 fn render_selected_mod_summary(ui: &mut Ui, text: TextCatalog, titles: &[String], count: usize) {
     const MAX_MOD_NAME_CHARS: usize = 23;
     const CLAMPED_MOD_NAME_CHARS: usize = 20;
@@ -4012,6 +4023,10 @@ impl HestiaApp {
             .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         let popup_id = ui.id().with(("mod_category_popup", &selected.id));
+        if self.mod_detail_category_picker_pending.as_deref() == Some(selected.id.as_str()) {
+            self.mod_detail_category_picker_pending = None;
+            egui::Popup::open_id(ui.ctx(), popup_id);
+        }
         self.render_category_picker_popup(
             ui,
             &response,
@@ -4040,7 +4055,7 @@ impl HestiaApp {
         let text = self.text();
         let categories = self.categories_for_game(game_id);
         if categories.is_empty() {
-            ui.menu_button(
+            let response = ui.menu_button(
                 icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0),
                 |ui| {
                     ui.set_min_width(188.0);
@@ -4053,10 +4068,14 @@ impl HestiaApp {
             )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                self.open_mod_detail_category_picker(mod_id);
+                ui.close();
+            }
             return;
         }
 
-        ui.menu_button(
+        let response = ui.menu_button(
             icon_text_sized(Icon::Tag, text.categories(), 12.0, 12.0),
             |ui| {
                 const CATEGORY_ICON_WIDTH: f32 = 18.0;
@@ -4204,6 +4223,12 @@ impl HestiaApp {
         )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+        // Clicking Categories opens the mod's details with their category
+        // menu, for moving it with the details in view.
+        if response.clicked() {
+            self.open_mod_detail_category_picker(mod_id);
+            ui.close();
+        }
     }
 
     fn render_mod_card_open_submenu(&mut self, ui: &mut Ui, mod_id: &str, root_path: &Path) {
@@ -4218,10 +4243,11 @@ impl HestiaApp {
             .map(|link| link.mod_id)
             .filter(|id| *id > 0);
 
-        ui.menu_button(
+        let response = ui.menu_button(
             icon_text_sized(Icon::FolderOpen, text.open(), 12.0, 12.0),
             |ui| {
                 ui.set_min_width(156.0);
+                set_mod_context_submenu_corner_radius(ui);
                 if ui
                     .button(icon_text_sized(
                         Icon::FolderOpen,
@@ -4273,6 +4299,11 @@ impl HestiaApp {
         )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+        // Clicking Open opens the mod's details.
+        if response.clicked() {
+            self.set_selected_mod_id(Some(mod_id.to_owned()));
+            ui.close();
+        }
     }
 
     fn render_selected_mods_category_submenu(&mut self, ui: &mut Ui, game_id: &str) {
@@ -8093,6 +8124,8 @@ impl HestiaApp {
                                             ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.active.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                                            // Submenus take their frame margin from here, so they match this one.
+                                            ui.style_mut().spacing.menu_margin = egui::Margin::same(12);
 
                                             render_selected_mod_summary(
                                                 ui,
@@ -8244,6 +8277,8 @@ impl HestiaApp {
                                             ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.active.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.open.corner_radius = radius;
+                                            // Submenus take their frame margin from here, so they match this one.
+                                            ui.style_mut().spacing.menu_margin = egui::Margin::same(12);
                                             let title = user_title
                                                 .as_deref()
                                                 .unwrap_or(folder_name);
@@ -8387,26 +8422,72 @@ impl HestiaApp {
                                                             ModMutationKind::EnableIntoActive,
                                                         )
                                                         .is_some();
-                                                    let response = ui.add_enabled(
-                                                        !locked,
-                                                        egui::Button::new(icon_text_sized(
-                                                            Icon::Check,
-                                                            text.enable(),
-                                                            12.0,
-                                                            12.0,
-                                                        )),
-                                                    );
-                                                    let response = if locked {
-                                                        response.on_disabled_hover_text(
-                                                            text.mods_locked_probably_by_game(),
-                                                        )
+                                                    if !locked && self.mod_has_enabled_category_mates(mod_id) {
+                                                        // A split button: Enable itself still enables,
+                                                        // the submenu adds turning the others off.
+                                                        let menu = ui.menu_button(
+                                                            icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0),
+                                                            |ui| {
+                                                                ui.set_min_width(156.0);
+                                                                set_mod_context_submenu_corner_radius(ui);
+                                                                if ui
+                                                                    .button(icon_text_sized(
+                                                                        Icon::Check,
+                                                                        text.enable_this_mod(),
+                                                                        12.0,
+                                                                        12.0,
+                                                                    ))
+                                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                                    .clicked()
+                                                                {
+                                                                    self.enable_or_restore_mod_by_id(mod_id);
+                                                                    ui.close();
+                                                                }
+                                                                if ui
+                                                                    .button(icon_text_sized(
+                                                                        Icon::ArrowRightLeft,
+                                                                        text.enable_this_mod_disable_others(),
+                                                                        12.0,
+                                                                        12.0,
+                                                                    ))
+                                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                                    .clicked()
+                                                                {
+                                                                    self.enable_mod_disable_others_by_id(mod_id);
+                                                                    ui.close();
+                                                                }
+                                                            },
+                                                        );
+                                                        if menu
+                                                            .response
+                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                            .clicked()
+                                                        {
+                                                            self.enable_or_restore_mod_by_id(mod_id);
+                                                            ui.close();
+                                                        }
                                                     } else {
-                                                        response.on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                    };
-                                                    if response.clicked()
-                                                    {
-                                                        self.enable_or_restore_mod_by_id(mod_id);
-                                                        ui.close();
+                                                        let response = ui.add_enabled(
+                                                            !locked,
+                                                            egui::Button::new(icon_text_sized(
+                                                                Icon::Check,
+                                                                text.enable(),
+                                                                12.0,
+                                                                12.0,
+                                                            )),
+                                                        );
+                                                        let response = if locked {
+                                                            response.on_disabled_hover_text(
+                                                                text.mods_locked_probably_by_game(),
+                                                            )
+                                                        } else {
+                                                            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                        };
+                                                        if response.clicked()
+                                                        {
+                                                            self.enable_or_restore_mod_by_id(mod_id);
+                                                            ui.close();
+                                                        }
                                                     }
                                                     self.render_mod_card_category_submenu(
                                                         ui,

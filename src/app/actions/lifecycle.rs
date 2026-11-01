@@ -459,6 +459,7 @@ impl HestiaApp {
             last_titlebar_rect: None,
             last_right_pane_rect: None,
             mod_detail_focus_requested: false,
+            mod_detail_category_picker_pending: None,
             browse_detail_focus_requested: false,
             mod_detail_editing: false,
             selected_mod_detail_snapshot: None,
@@ -3536,6 +3537,7 @@ impl HestiaApp {
         self.selected_mod_detail_snapshot = None;
         self.library_detail_content_cache = None;
         self.clear_mod_detail_rename();
+        self.mod_detail_category_picker_pending = None;
         self.my_mod_overlay_images.clear();
         self.browse_state.screenshot_overlay = None;
         if let Some(id) = mod_id {

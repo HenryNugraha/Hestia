@@ -433,6 +433,9 @@ pub struct HestiaApp {
     last_titlebar_rect: Option<egui::Rect>,
     last_right_pane_rect: Option<egui::Rect>,
     mod_detail_focus_requested: bool,
+    /// The mod whose details should open their category menu once drawn, from
+    /// the mod menu's Categories.
+    mod_detail_category_picker_pending: Option<String>,
     browse_detail_focus_requested: bool,
     mod_detail_editing: bool,
     selected_mod_detail_snapshot: Option<Arc<ModEntry>>,

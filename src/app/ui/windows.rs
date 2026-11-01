@@ -237,6 +237,23 @@ fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: C
     }
 }
 
+/// Hestia's orange button: idle, hovered and pressed fills.
+const ORANGE_BUTTON_FILLS: [Color32; 3] = [
+    Color32::from_rgb(180, 78, 35),
+    Color32::from_rgb(198, 88, 41),
+    Color32::from_rgb(150, 61, 28),
+];
+
+/// Gives the buttons added after it in `ui` idle, hovered and pressed
+/// fills.  Used instead of `Button::fill`, which pins one color and kills
+/// the hover and press feedback.
+fn set_button_fills(ui: &mut Ui, [idle, hovered, pressed]: [Color32; 3]) {
+    let widgets = &mut ui.visuals_mut().widgets;
+    widgets.inactive.weak_bg_fill = idle;
+    widgets.hovered.weak_bg_fill = hovered;
+    widgets.active.weak_bg_fill = pressed;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum XxmiD3dxSettingsAction {
     Apply,
@@ -250,7 +267,8 @@ struct XxmiD3dxSettingsActionState<'a> {
     action: XxmiD3dxSettingsAction,
     label: &'a str,
     status: &'a str,
-    fill: Color32,
+    /// Idle, hovered and pressed fills.
+    fill: [Color32; 3],
     enabled: bool,
 }
 
@@ -259,8 +277,12 @@ fn xxmi_d3dx_settings_action_state<'a>(
     status: Option<&xxmi_persist::D3dxReloadConfigStatus>,
     saved_management: bool,
 ) -> XxmiD3dxSettingsActionState<'a> {
-    let orange = Color32::from_rgb(180, 78, 35);
-    let neutral = Color32::from_rgb(88, 92, 102);
+    let orange = ORANGE_BUTTON_FILLS;
+    let neutral = [
+        Color32::from_rgb(88, 92, 102),
+        Color32::from_rgb(104, 109, 120),
+        Color32::from_rgb(72, 75, 84),
+    ];
     let Some(status) = status else {
         return XxmiD3dxSettingsActionState {
             action: XxmiD3dxSettingsAction::Unavailable,
@@ -2843,21 +2865,27 @@ impl HestiaApp {
                     );
                     ui.add_space(14.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(text.cancel()).clicked() {
+                        if ui
+                            .button(text.cancel())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
                             cancel = true;
                         }
-                        if ui
-                            .add(
-                                egui::Button::new(icon_text_sized(
+                        let replace_clicked = ui
+                            .scope(|ui| {
+                                set_button_fills(ui, ORANGE_BUTTON_FILLS);
+                                ui.button(icon_text_sized(
                                     Icon::FileCog,
                                     text.replace(),
                                     14.0,
                                     13.0,
                                 ))
-                                .fill(Color32::from_rgb(180, 78, 35)),
-                            )
-                            .clicked()
-                        {
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            })
+                            .inner;
+                        if replace_clicked {
                             replace = true;
                         }
                         if prompt_game_running {
@@ -3605,6 +3633,7 @@ impl HestiaApp {
                                         | XxmiD3dxSettingsAction::Manage
                                         | XxmiD3dxSettingsAction::Repair => Icon::FileCog,
                                     };
+                                    set_button_fills(ui, action_state.fill);
                                     let response = ui.add_enabled(
                                         action_state.enabled,
                                         egui::Button::new(icon_text_sized(
@@ -3612,9 +3641,9 @@ impl HestiaApp {
                                             action_state.label,
                                             13.0,
                                             12.0,
-                                        ))
-                                        .fill(action_state.fill),
-                                    );
+                                        )),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                                     if response.clicked() {
                                         if let Some(game_id) = selected_game_id.as_deref() {
                                             match action_state.action {

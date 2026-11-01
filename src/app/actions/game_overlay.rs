@@ -284,7 +284,7 @@ impl HestiaApp {
             return;
         }
         for change in changes {
-            let (error, press_key) = match self.apply_game_overlay_change(&game_id, &change) {
+            let (error, press_key) = match self.apply_mod_change(&game_id, &change.mod_id, change.action) {
                 Ok(press_key) => (None, press_key),
                 Err(error) => (Some(error), None),
             };
@@ -429,14 +429,16 @@ impl HestiaApp {
         })
     }
 
-    /// Makes a change the in-game overlay asked for with the steps of the
-    /// library's Enable and Disable, as one change with one reload.  Gives the
-    /// game's reload key when the reload settings leave pressing it to the
-    /// user.  The error is for the overlay's warning strip.
-    fn apply_game_overlay_change(
+    /// Makes a change the in-game overlay asked for, or the library's "Enable
+    /// this mod, disable others", with the steps of the library's Enable and
+    /// Disable, as one change with one reload.  Gives the game's reload key
+    /// when the reload settings leave pressing it to the user.  The error is
+    /// for the overlay's warning strip.
+    fn apply_mod_change(
         &mut self,
         game_id: &str,
-        change: &overlay_protocol::Change,
+        mod_id: &str,
+        action: overlay_protocol::ChangeAction,
     ) -> Result<Option<String>, String> {
         use overlay_protocol::ChangeAction;
 
@@ -452,7 +454,7 @@ impl HestiaApp {
         };
         // A mod that's gone leaves the overlay with the library sent next.
         let Some(target) = self.state.mods.iter().find(|entry| {
-            entry.id == change.mod_id
+            entry.id == mod_id
                 && entry.game_id == game_id
                 && entry.status != ModStatus::Archived
         }) else {
@@ -460,7 +462,7 @@ impl HestiaApp {
         };
         let mut turn_off = Vec::new();
         let mut turn_on = Vec::new();
-        match change.action {
+        match action {
             ChangeAction::Use | ChangeAction::TurnOn if target.status == ModStatus::Disabled => {
                 turn_on.push(target.id.clone());
             }
@@ -471,7 +473,7 @@ impl HestiaApp {
         }
         // Uncategorized mods have nothing to do with each other, so using one
         // leaves the rest on.  Unsafe mods the overlay hides count too.
-        if change.action == ChangeAction::Use
+        if action == ChangeAction::Use
             && let Some(category_id) = effective_category_id(&self.state.categories, target)
         {
             turn_off.extend(
@@ -480,7 +482,7 @@ impl HestiaApp {
                     .iter()
                     .filter(|entry| {
                         entry.game_id == game_id
-                            && entry.id != change.mod_id
+                            && entry.id != mod_id
                             && entry.status == ModStatus::Active
                             && effective_category_id(&self.state.categories, entry)
                                 == Some(category_id)

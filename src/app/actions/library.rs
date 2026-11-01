@@ -1463,6 +1463,46 @@ impl HestiaApp {
         }
     }
 
+    /// Whether "Enable this mod, disable others" has others to turn off: an
+    /// enabled mod in the same category.  Uncategorized mods have none, as in
+    /// the overlay.
+    fn mod_has_enabled_category_mates(&self, mod_id: &str) -> bool {
+        let Some(target) = self.state.mods.iter().find(|entry| entry.id == mod_id) else {
+            return false;
+        };
+        let Some(category_id) = effective_category_id(&self.state.categories, target) else {
+            return false;
+        };
+        self.state.mods.iter().any(|entry| {
+            entry.game_id == target.game_id
+                && entry.id != target.id
+                && entry.status == ModStatus::Active
+                && effective_category_id(&self.state.categories, entry) == Some(category_id)
+        })
+    }
+
+    /// "Enable this mod, disable others": the overlay's Space, from the mod
+    /// menu.  Errors are reported on the way.
+    fn enable_mod_disable_others_by_id(&mut self, mod_id: &str) {
+        let Some(game_id) = self
+            .state
+            .mods
+            .iter()
+            .find(|entry| entry.id == mod_id)
+            .map(|entry| entry.game_id.clone())
+        else {
+            return;
+        };
+        let _ = self.apply_mod_change(&game_id, mod_id, overlay_protocol::ChangeAction::Use);
+    }
+
+    /// The mod menu's Categories, clicked: the mod's details, with their
+    /// category menu opened as soon as they're drawn.
+    fn open_mod_detail_category_picker(&mut self, mod_id: &str) {
+        self.set_selected_mod_id(Some(mod_id.to_owned()));
+        self.mod_detail_category_picker_pending = Some(mod_id.to_owned());
+    }
+
     fn archive_mod_by_id(&mut self, mod_id: &str) {
         if self.folder_batch_blocks_mod(mod_id) {
             self.set_message_ok(self.text().folder_batch_busy_tooltip());

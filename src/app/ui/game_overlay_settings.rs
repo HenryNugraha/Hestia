@@ -74,6 +74,7 @@ impl HestiaApp {
                                     13.0,
                                     13.0,
                                 ))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             {
                                 *preview = None;
@@ -96,6 +97,7 @@ impl HestiaApp {
                                     13.0,
                                 )),
                             )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(text.get(TextKey::SettingsGameOverlayPreviewTooltip))
                             .on_disabled_hover_text(
                                 text.get(TextKey::SettingsGameOverlayPreviewUnavailable),
@@ -252,7 +254,8 @@ fn game_overlay_hotkey_picker(
         let response = ui.add(
             egui::Button::new(icon_text_sized(Icon::Keyboard, &keys, 13.0, 13.0))
                 .selected(listening),
-        );
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
         let response = if listening {
             response
         } else {
@@ -271,6 +274,7 @@ fn game_overlay_hotkey_picker(
         if *hotkey != OverlayHotkey::DEFAULT
             && ui
                 .button(icon_rich(Icon::RotateCcw, 13.0, ui.visuals().text_color()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(
                     text.get(TextKey::SettingsGameOverlayResetKey)
                         .replace("{key}", &OverlayHotkey::DEFAULT.parts().join(" + ")),

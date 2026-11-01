@@ -2678,6 +2678,15 @@ impl TextCatalog {
         self.get(TextKey::LibraryDisable)
     }
 
+    // The mod menu's Enable submenu says what the overlay's key hints say.
+    fn enable_this_mod(self) -> &'static str {
+        self.get(TextKey::GameOverlayHintEnable)
+    }
+
+    fn enable_this_mod_disable_others(self) -> &'static str {
+        self.get(TextKey::GameOverlayHintExclusive)
+    }
+
     fn archive(self) -> &'static str {
         self.get(TextKey::LibraryArchive)
     }
