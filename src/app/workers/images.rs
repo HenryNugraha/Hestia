@@ -871,9 +871,11 @@ fn spawn_cover_worker(
             let Some(image) = load_cover_color_image(bytes) else {
                 continue;
             };
+            let backdrop = backdrop_copy(&image);
             let _ = tx.send(CoverResult {
                 game_id: request.game_id,
                 image,
+                backdrop,
             });
         }
     });

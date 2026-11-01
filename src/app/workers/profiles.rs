@@ -2038,7 +2038,6 @@ fn recover_profile_staging(
     recover_profile_archive_sidecars(roots, spec)?;
     recover_profile_conflicts(roots, spec, warnings)?;
     recover_profile_deletions(roots, spec)?;
-    remove_legacy_active_profile_marker(roots)?;
     Ok(recovered_active)
 }
 
@@ -2436,20 +2435,6 @@ fn recover_legacy_profile_swap(
     Ok(())
 }
 
-fn remove_legacy_active_profile_marker(
-    roots: &crate::integrations::profiles::ProfileRoots,
-) -> std::io::Result<()> {
-    let marker = roots.profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE);
-    if marker.exists() {
-        std::fs::remove_file(marker)?;
-    }
-    let part = roots.profiles_dir.join("active_profile.json.part");
-    if part.exists() {
-        std::fs::remove_file(part)?;
-    }
-    Ok(())
-}
-
 fn recover_profile_archive_sidecars(
     roots: &crate::integrations::profiles::ProfileRoots,
     spec: &ProfileOperationSpec,
@@ -2462,8 +2447,9 @@ fn recover_profile_archive_sidecars(
         }
         let name = entry.file_name().to_string_lossy().to_string();
         let path = entry.path();
+        // Not ours to manage any more, but a leftover `.part` must not be quarantined as an
+        // archive sidecar either.
         if name == "active_profile.json.part" || name == LEGACY_ACTIVE_PROFILE_MARKER_FILE {
-            let _ = std::fs::remove_file(path);
             continue;
         }
         // A sidecar is always `<final archive>.bak` / `.part`, so stripping the suffix gives the
@@ -3682,26 +3668,21 @@ mod profile_worker_tests {
     }
 
     #[test]
-    fn recovery_removes_legacy_active_profile_marker() {
+    fn recovery_leaves_legacy_active_profile_marker_alone() {
         let temp = tempfile::tempdir().unwrap();
-        let roots = profiles::ProfileRoots {
-            profiles_dir: temp.path().join("Mods_Profiles"),
-            mods: temp.path().join("Mods"),
-            archived: None,
-            disabled: None,
-        };
+        let game = xxmi_game(&temp.path().join("Mods"));
+        let roots = profiles::profile_roots(&game, false).unwrap();
         std::fs::create_dir_all(&roots.profiles_dir).unwrap();
-        std::fs::write(
-            roots.profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE),
-            b"{}",
-        )
-        .unwrap();
-        std::fs::write(roots.profiles_dir.join("active_profile.json.part"), b"{}").unwrap();
+        let marker = roots.profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE);
+        let part = roots.profiles_dir.join("active_profile.json.part");
+        std::fs::write(&marker, b"{}").unwrap();
+        std::fs::write(&part, b"{}").unwrap();
 
-        remove_legacy_active_profile_marker(&roots).unwrap();
+        let mut warnings = Vec::new();
+        recover_profile_staging(&roots, &recovery_spec(game), &mut warnings).unwrap();
 
-        assert!(!roots.profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE).exists());
-        assert!(!roots.profiles_dir.join("active_profile.json.part").exists());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
+        assert_eq!(std::fs::read(&part).unwrap(), b"{}");
     }
 
     #[test]
@@ -4478,11 +4459,6 @@ mod profile_worker_tests {
             b"legacy outgoing marker",
         )
         .unwrap();
-        std::fs::write(
-            profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE),
-            b"legacy active marker",
-        )
-        .unwrap();
         let roots = crate::integrations::profiles::ProfileRoots {
             profiles_dir: profiles_dir.clone(),
             mods: mods.clone(),
@@ -4491,7 +4467,6 @@ mod profile_worker_tests {
         };
 
         rollback_profile_swap(&roots, &outgoing, &target, true).unwrap();
-        remove_legacy_active_profile_marker(&roots).unwrap();
 
         assert!(
             !profiles_dir.join(LEGACY_ACTIVE_PROFILE_MARKER_FILE).exists(),

@@ -546,6 +546,9 @@ pub struct HestiaApp {
     game_icon_textures: HashMap<String, egui::TextureHandle>,
     tool_icon_textures: HashMap<String, egui::TextureHandle>,
     game_cover_textures: HashMap<String, egui::TextureHandle>,
+    /// Blurred copies of the game covers, faded in while a window is open over
+    /// the right pane. See `backdrop_copy`.
+    game_cover_backdrop_textures: HashMap<String, egui::TextureHandle>,
     mod_thumbnail_placeholder: Option<egui::TextureHandle>,
     mod_cover_textures: HashMap<String, egui::TextureHandle>,
     mod_full_textures: HashMap<String, egui::TextureHandle>,
@@ -1633,6 +1636,7 @@ struct CoverRequest {
 struct CoverResult {
     game_id: String,
     image: egui::ColorImage,
+    backdrop: egui::ColorImage,
 }
 
 struct IconRequest {

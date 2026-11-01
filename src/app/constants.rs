@@ -36,8 +36,10 @@ const MAXIMIZED_TITLEBAR_CONTROL_BUTTON_WIDTH: f32 = 40.0;
 const MAXIMIZED_TITLEBAR_CONTROL_BUTTON_HEIGHT: f32 = 30.0;
 const MAXIMIZED_TITLEBAR_CONTROL_ICON_SIZE: f32 = 18.0;
 const GAME_SWITCHER_GRID_ICON_SIZE: f32 = 256.0;
-const COVER_RIGHT_EXTEND: f32 = 2.0; // Adjust this to extend cover to right edge
-const COVER_BOTTOM_EXTEND: f32 = 2.0; // Adjust this to extend cover to bottom edge
+/// How long the right pane takes to blur and darken behind a window, and to clear again.
+const RIGHT_PANE_BACKDROP_FADE_SECONDS: f32 = 0.35;
+/// How dark the right pane gets behind a window: a black layer at this opacity, out of 255.
+const RIGHT_PANE_BACKDROP_DIM_ALPHA: f32 = 128.0;
 
 // Toast notification limits, timing, and positioning.
 const TOAST_LIMIT: usize = 5;

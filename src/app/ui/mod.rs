@@ -29,6 +29,9 @@ impl HestiaApp {
             || profile_progress_open
     }
 
+    /// Keeps clicks off the right pane while a bound window is open.  The pane
+    /// draws its own blur and darkening (see `render_right_pane`), so this
+    /// draws nothing.
     fn render_right_pane_window_scrim(&self, ctx: &egui::Context) {
         if !self.right_pane_bound_window_open() {
             return;
@@ -42,13 +45,8 @@ impl HestiaApp {
             .fixed_pos(rect.min)
             .interactable(true)
             .show(ctx, |ui| {
-                let (scrim_rect, response) =
+                let (_, response) =
                     ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
-                ui.painter().rect_filled(
-                    scrim_rect,
-                    0.0,
-                    Color32::from_black_alpha(84),
-                );
                 response.on_hover_cursor(egui::CursorIcon::Default);
             });
     }

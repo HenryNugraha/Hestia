@@ -10778,9 +10778,15 @@ impl HestiaApp {
             return;
         }
         self.last_right_pane_rect = Some(pane_rect);
-        let mut full_rect = pane_rect;
-        full_rect.max.x += COVER_RIGHT_EXTEND;
-        full_rect.max.y += COVER_BOTTOM_EXTEND;
+        // The cover runs past the pane to the window's right and bottom edges, so
+        // it touches them instead of leaving the window's margin as a dark strip.
+        let full_rect = egui::Rect::from_min_max(pane_rect.min, ui.ctx().viewport_rect().max);
+        // The pane's own painter is clipped to the window's margin, so paint on the
+        // same layer through one clipped to the cover instead.
+        let cover_painter = ui
+            .ctx()
+            .layer_painter(ui.layer_id())
+            .with_clip_rect(full_rect);
 
         let details_rect = pane_rect.shrink2(egui::vec2(12.0, 12.0));
 
@@ -10789,56 +10795,73 @@ impl HestiaApp {
             .selected_game()
             .filter(|game| game.enabled && self.has_enabled_games())
             .map(|game| game.definition.id.clone());
-        if let Some(game_id) = game_id {
-            if let Some(cover_texture) = self.game_cover_textures.get(&game_id) {
-                let texture_size = cover_texture.size_vec2();
-                let texture_aspect = texture_size.x / texture_size.y;
+        let cover = game_id.as_ref().and_then(|game_id| {
+            let cover_texture = self.game_cover_textures.get(game_id)?;
+            let texture_size = cover_texture.size_vec2();
+            let texture_aspect = texture_size.x / texture_size.y;
 
-                let container_rect = full_rect;
-                let container_height = container_rect.height();
-                let scaled_width = container_height * texture_aspect;
+            let container_rect = full_rect;
+            let container_height = container_rect.height();
+            let scaled_width = container_height * texture_aspect;
 
-                if scaled_width > container_rect.width() {
-                    // Image wider than container: fit height, clip sides
-                    let uv_width_fraction = container_rect.width() / scaled_width;
-                    let uv_x_offset = (1.0 - uv_width_fraction) / 2.0;
+            let (rect, uv) = if scaled_width > container_rect.width() {
+                // Image wider than container: fit height, clip sides
+                let uv_width_fraction = container_rect.width() / scaled_width;
+                let uv_x_offset = (1.0 - uv_width_fraction) / 2.0;
+                (
+                    container_rect,
+                    egui::Rect::from_min_max(
+                        egui::pos2(uv_x_offset, 0.0),
+                        egui::pos2(1.0 - uv_x_offset, 1.0),
+                    ),
+                )
+            } else {
+                // Image narrower than or equal to container: fit height, center horizontally
+                let x_offset = (container_rect.width() - scaled_width) / 2.0;
+                let centered_rect = egui::Rect::from_min_size(
+                    container_rect.min + egui::vec2(x_offset, 0.0),
+                    egui::vec2(scaled_width, container_height),
+                );
+                (
+                    centered_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                )
+            };
+            cover_painter.image(cover_texture.id(), rect, uv, Color32::WHITE);
+            Some((rect, uv))
+        });
 
-                    ui.painter().image(
-                        cover_texture.id(),
-                        container_rect,
-                        egui::Rect::from_min_max(
-                            egui::pos2(uv_x_offset, 0.0),
-                            egui::pos2(1.0 - uv_x_offset, 1.0),
-                        ),
-                        Color32::WHITE,
-                    );
-                } else {
-                    // Image narrower than or equal to container: fit height, center horizontally
-                    let x_offset = (container_rect.width() - scaled_width) / 2.0;
-                    let centered_rect = egui::Rect::from_min_size(
-                        container_rect.min + egui::vec2(x_offset, 0.0),
-                        egui::vec2(scaled_width, container_height),
-                    );
-
-                    ui.painter().image(
-                        cover_texture.id(),
-                        centered_rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
-                }
-            }
-        }
-
-        // Detail windows belong to the pane itself, so dim the cover before drawing them.
-        // Other bound windows use the shared scrim rendered after the workspace.
+        // Any window over the pane blurs and darkens the cover, fading in and out.
+        // It is drawn here, under every window, and only once, so the pane looks
+        // the same with one window open as with several.
         let detail_window_open = (show_mod_detail && self.mod_detail_open)
             || (!show_mod_detail && self.browse_detail_open);
-        if detail_window_open {
-            ui.painter().rect_filled(
+        let pane_covered = detail_window_open || self.right_pane_bound_window_open();
+        let covered_amount = ui.ctx().animate_bool_with_time_and_easing(
+            egui::Id::new("right_pane_backdrop"),
+            pane_covered,
+            RIGHT_PANE_BACKDROP_FADE_SECONDS,
+            egui::emath::easing::cubic_in_out,
+        );
+        if covered_amount > 0.0 {
+            // Until a newly picked game's blurred copy is ready, the cover only darkens.
+            let backdrop = game_id
+                .as_ref()
+                .and_then(|game_id| self.game_cover_backdrop_textures.get(game_id));
+            if let (Some(backdrop), Some((rect, uv))) = (backdrop, cover) {
+                cover_painter.image(
+                    backdrop.id(),
+                    rect,
+                    uv,
+                    Color32::WHITE.gamma_multiply(covered_amount),
+                );
+            }
+            cover_painter.rect_filled(
                 full_rect,
                 0.0,
-                Color32::from_black_alpha(84),
+                Color32::from_black_alpha(
+                    (RIGHT_PANE_BACKDROP_DIM_ALPHA * covered_amount).round() as u8,
+                ),
             );
         }
 

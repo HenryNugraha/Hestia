@@ -612,20 +612,11 @@ impl HestiaApp {
     }
 
     fn enqueue_cover_preload(&mut self) {
-        let Some(selected_game_id) = self
-            .state
-            .games
-            .get(self.selected_game)
-            .map(|game| game.definition.id.clone())
-        else {
-            return;
-        };
+        // The selected game's cover is loaded straight away when it is picked,
+        // but its blurred copy still comes from here, so it is not skipped.
         for game in &self.state.games {
             let game_id = &game.definition.id;
-            if game_id == &selected_game_id {
-                continue;
-            }
-            if self.game_cover_textures.contains_key(game_id) {
+            if self.game_cover_backdrop_textures.contains_key(game_id) {
                 continue;
             }
             if self.pending_cover_requests.contains(game_id) {
@@ -696,12 +687,20 @@ impl HestiaApp {
     fn consume_cover_results(&mut self, ctx: &egui::Context) {
         while let Ok(result) = self.cover_result_rx.try_recv() {
             self.pending_cover_requests.remove(&result.game_id);
-            let texture = ctx.load_texture(
-                format!("game-cover-{}", result.game_id),
-                result.image,
+            if !self.game_cover_textures.contains_key(&result.game_id) {
+                let texture = ctx.load_texture(
+                    format!("game-cover-{}", result.game_id),
+                    result.image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.game_cover_textures.insert(result.game_id.clone(), texture);
+            }
+            let backdrop = ctx.load_texture(
+                format!("game-cover-backdrop-{}", result.game_id),
+                result.backdrop,
                 egui::TextureOptions::LINEAR,
             );
-            self.game_cover_textures.insert(result.game_id, texture);
+            self.game_cover_backdrop_textures.insert(result.game_id, backdrop);
         }
     }
 

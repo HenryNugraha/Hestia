@@ -557,6 +557,7 @@ impl HestiaApp {
             tool_icon_textures: HashMap::new(),
             tool_icon_texture_failures: HashMap::new(),
             game_cover_textures,
+            game_cover_backdrop_textures: HashMap::new(),
             mod_thumbnail_placeholder,
             mod_cover_textures,
             mod_full_textures,

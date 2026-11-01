@@ -183,81 +183,39 @@ fn resolve_persistent_data_paths_with_fallback_dir(
     let latest_fallback_state_source = latest_versioned_portable_state(fallback_dir);
     let fallback_history = fallback_dir.join("hestia.dat");
 
-    if portable_state.exists() {
+    // A save beside the exe is only used when one is already there and the folder still takes
+    // writes. Everything else, first runs included, lives in AppData, so separate copies of
+    // Hestia share one save instead of each starting its own.
+    let portable_save_exists = portable_state.exists()
+        || latest_portable_state_source.is_some()
+        || legacy_exe_portable_state.exists()
+        || portable_history.exists();
+    if portable_save_exists && dir_is_writable(root, exe_stem) {
+        let state_source = if portable_state.exists() {
+            None
+        } else {
+            latest_portable_state_source.or_else(|| {
+                legacy_exe_portable_state
+                    .exists()
+                    .then_some(legacy_exe_portable_state)
+            })
+        };
         return PersistentDataPaths {
             state_archive: portable_state,
-            state_source: None,
+            state_source,
             history_db: portable_history,
         };
     }
 
-    if let Some(state_source) = latest_portable_state_source {
-        return PersistentDataPaths {
-            state_archive: portable_state,
-            state_source: Some(state_source),
-            history_db: portable_history,
-        };
-    }
-
-    if legacy_exe_portable_state.exists() {
-        return PersistentDataPaths {
-            state_archive: portable_state,
-            state_source: Some(legacy_exe_portable_state),
-            history_db: portable_history,
-        };
-    }
-
-    if portable_history.exists() {
-        return PersistentDataPaths {
-            state_archive: portable_state,
-            state_source: None,
-            history_db: portable_history,
-        };
-    }
-
-    if fallback_state.exists() {
-        return PersistentDataPaths {
-            state_archive: fallback_state,
-            state_source: None,
-            history_db: fallback_history,
-        };
-    }
-
-    if let Some(state_source) = latest_fallback_state_source {
-        return PersistentDataPaths {
-            state_archive: fallback_state,
-            state_source: Some(state_source),
-            history_db: fallback_history,
-        };
-    }
-
-    if fallback_exe_state.exists() {
-        return PersistentDataPaths {
-            state_archive: fallback_state,
-            state_source: Some(fallback_exe_state),
-            history_db: fallback_history,
-        };
-    }
-
-    if fallback_history.exists() {
-        return PersistentDataPaths {
-            state_archive: fallback_state,
-            state_source: None,
-            history_db: fallback_history,
-        };
-    }
-
-    if dir_is_writable(root, exe_stem) {
-        return PersistentDataPaths {
-            state_archive: portable_state,
-            state_source: None,
-            history_db: portable_history,
-        };
-    }
-
+    let state_source = if fallback_state.exists() {
+        None
+    } else {
+        latest_fallback_state_source
+            .or_else(|| fallback_exe_state.exists().then_some(fallback_exe_state))
+    };
     PersistentDataPaths {
         state_archive: fallback_state,
-        state_source: None,
+        state_source,
         history_db: fallback_history,
     }
 }
@@ -1950,7 +1908,7 @@ games = []
     }
 
     #[test]
-    fn persistent_paths_renamed_exe_creates_stable_portable_state() {
+    fn persistent_paths_renamed_exe_creates_stable_fallback_state() {
         let temp = tempfile::tempdir().unwrap();
         let install_dir = temp.path().join("install");
         let fallback_dir = temp.path().join("appdata").join("Hestia");
@@ -1963,9 +1921,9 @@ games = []
             &fallback_dir,
         );
 
-        assert_eq!(paths.state_archive, install_dir.join("hestia.toml"));
+        assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
         assert_eq!(paths.state_source, None);
-        assert_eq!(paths.history_db, install_dir.join("hestia.dat"));
+        assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
     }
 
     #[test]
@@ -2036,12 +1994,37 @@ games = []
     }
 
     #[test]
-    fn persistent_paths_create_portable_files_when_no_existing_state_and_writable() {
+    fn persistent_paths_new_install_uses_fallback_even_when_install_dir_is_writable() {
         let temp = tempfile::tempdir().unwrap();
         let install_dir = temp.path().join("install");
         let fallback_dir = temp.path().join("appdata").join("Hestia");
         fs::create_dir_all(&install_dir).unwrap();
         fs::create_dir_all(&fallback_dir).unwrap();
+
+        let paths = resolve_persistent_data_paths_with_fallback_dir(
+            &install_dir.join("hestia.exe"),
+            &install_dir,
+            &fallback_dir,
+        );
+
+        assert_eq!(paths.state_archive, fallback_dir.join("hestia.toml"));
+        assert_eq!(paths.state_source, None);
+        assert_eq!(paths.history_db, fallback_dir.join("hestia.dat"));
+        assert!(
+            fs::read_dir(&install_dir).unwrap().next().is_none(),
+            "a first run must leave the install folder untouched"
+        );
+    }
+
+    #[test]
+    fn persistent_paths_keep_portable_history_without_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let fallback_dir = temp.path().join("appdata").join("Hestia");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&fallback_dir).unwrap();
+        fs::write(install_dir.join("hestia.dat"), "history").unwrap();
+        fs::write(fallback_dir.join("hestia.toml"), "fallback state").unwrap();
 
         let paths = resolve_persistent_data_paths_with_fallback_dir(
             &install_dir.join("hestia.exe"),
