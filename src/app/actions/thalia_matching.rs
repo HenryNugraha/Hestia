@@ -2546,6 +2546,36 @@ mod thalia_matching_tests {
         assert!(!update_task_targets_mod(&task, &target, "Updating a"));
     }
 
+    #[test]
+    fn bundle_of_separate_files_blocks_a_duplicate_update() {
+        let target = tracked_mod_for_test("a", ModStatus::Active);
+        // `current` with one separate file: no main download, no update task.
+        let mut bundle = ThaliaInstallBundle {
+            key: 9,
+            title: "a".into(),
+            game_id: target.game_id.clone(),
+            members: vec![2],
+            separate: HashSet::from([2]),
+            main: None,
+            target: Some((target.id.clone(), Some(1))),
+            answer: None,
+            downloaded: HashMap::new(),
+            preparing: false,
+            prepared_root: None,
+            target_changed: false,
+            finished: HashSet::new(),
+            installed_any: false,
+        };
+        assert!(thalia_bundle_updates_mod(&bundle, &target));
+        bundle.game_id = "other-game".into();
+        assert!(!thalia_bundle_updates_mod(&bundle, &target));
+        bundle.game_id = target.game_id.clone();
+        bundle.target = Some(("other-mod".into(), Some(1)));
+        assert!(!thalia_bundle_updates_mod(&bundle, &target));
+        bundle.target = None;
+        assert!(!thalia_bundle_updates_mod(&bundle, &target));
+    }
+
     fn context_for(
         local_mod_id: &str,
         request_id: u64,

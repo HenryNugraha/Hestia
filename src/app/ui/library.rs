@@ -247,6 +247,217 @@ fn render_folder_selection_checkbox(ui: &mut Ui, checked: bool, visible: bool) -
     }
 }
 
+/// The mod detail window's name when not renaming.
+fn mod_detail_title_label(ui: &mut Ui, title: &str) -> egui::Response {
+    ui.add(
+        egui::Label::new(RichText::new(title).heading())
+            .selectable(false)
+            .sense(Sense::click()),
+    )
+}
+
+/// The rename row that replaces [`mod_detail_title_label`]: the name input, then
+/// Cancel and Save. Returns `(input, cancel, save)`.
+fn mod_detail_title_input(
+    ui: &mut Ui,
+    name: &mut String,
+    title: &str,
+) -> (egui::Response, egui::Response, egui::Response) {
+    let title_size = ui.fonts_mut(|f| {
+        f.layout_no_wrap(
+            title.to_owned(),
+            egui::TextStyle::Heading.resolve(ui.style()),
+            egui::Color32::WHITE,
+        )
+        .size()
+    });
+    let input_width = title_size
+        .x
+        .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
+        .max(ui.available_width() / 6.25); // min width of 16% from the whole width
+    // A frameless TextEdit has no inner margin, so its text lands on the label's
+    // pixels. Its height is the font's unrounded row height though (26.06 vs the
+    // label's 26 in some fonts), so it sits in a slot of the label's exact height
+    // to keep everything below from shifting.
+    let (_, slot) = ui.allocate_space(egui::vec2(input_width, title_size.y));
+    let input = ui
+        .new_child(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(egui::Layout::left_to_right(egui::Align::Min)),
+        )
+        .add(
+            egui::TextEdit::singleline(name)
+                .id_source(MOD_DETAIL_RENAME_INPUT_ID)
+                .font(egui::TextStyle::Heading)
+                .desired_width(input_width)
+                .frame(egui::Frame::NONE),
+        );
+    let cancel = mod_detail_rename_icon_button(ui, Icon::X, 14.0, Color32::from_rgba_unmultiplied(160,160,160,160), egui::vec2(4.0, 6.0));
+    ui.add_space(-8.0);
+    let save = mod_detail_rename_icon_button(ui, Icon::Check, 16.0, Color32::from_rgb(110, 194, 132), egui::vec2(4.0, 6.0));
+    (input, cancel, save)
+}
+
+/// Takes the same space and draws the icon in the same place as a frameless
+/// `Button`, but only a `hit_size` box centered on the drawn icon is clickable
+/// instead of the whole interact-height box.
+fn mod_detail_rename_icon_button(
+    ui: &mut Ui,
+    icon: Icon,
+    size: f32,
+    color: Color32,
+    hit_size: egui::Vec2,
+) -> egui::Response {
+    let galley = egui::WidgetText::from(icon_rich(icon, size, color)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let slot_size = egui::vec2(galley.size().x, galley.size().y.max(ui.spacing().interact_size.y));
+    let (slot, slot_response) = ui.allocate_exact_size(slot_size, Sense::hover());
+    let text_pos = slot.center() - galley.size() / 2.0;
+    let hit_rect = egui::Rect::from_center_size(
+        galley.mesh_bounds.translate(text_pos.to_vec2()).center(),
+        hit_size,
+    );
+    let response = ui.interact(hit_rect, slot_response.id.with("hit"), Sense::click());
+    // 70% opacity at rest, full while hovered or pressed.
+    let opacity = if response.hovered() || response.is_pointer_button_down_on() {
+        1.0
+    } else {
+        0.7
+    };
+    ui.painter()
+        .galley_with_override_text_color(text_pos, galley, color.gamma_multiply(opacity));
+    response
+}
+
+#[cfg(test)]
+mod mod_detail_title_tests {
+    use super::*;
+
+    /// Lays out the title row the way the mod detail window does and returns the
+    /// name text's top-left corner plus the whole row's rect.
+    fn title_row(ctx: &egui::Context, renaming: bool, width: f32) -> (egui::Pos2, egui::Rect) {
+        let title = "Furina Swimsuit Retexture";
+        let mut name = title.to_owned();
+        let mut row_rect = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(width);
+            row_rect = ui
+                .horizontal_wrapped(|ui| {
+                    if renaming {
+                        mod_detail_title_input(ui, &mut name, title);
+                    } else {
+                        mod_detail_title_label(ui, title);
+                    }
+                })
+                .response
+                .rect;
+        });
+        output.textures_delta.clear();
+        let text_pos = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == title => {
+                    Some(text.pos + text.galley.rect.min.to_vec2())
+                }
+                _ => None,
+            })
+            .expect("the name is drawn");
+        (text_pos, row_rect)
+    }
+
+    /// Lays out one rename icon, either as a plain frameless `Button` or as
+    /// [`mod_detail_rename_icon_button`], and returns where the icon is drawn, the
+    /// clickable rect and where the next widget would go.
+    fn icon_row(
+        ctx: &egui::Context,
+        icon: Icon,
+        size: f32,
+        hit_size: egui::Vec2,
+        compact: bool,
+    ) -> (egui::Pos2, egui::Rect, egui::Pos2) {
+        let color = Color32::WHITE;
+        let mut hit = egui::Rect::NOTHING;
+        let mut next = egui::Pos2::ZERO;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(30.0);
+                hit = if compact {
+                    mod_detail_rename_icon_button(ui, icon, size, color, hit_size).rect
+                } else {
+                    ui.add(egui::Button::new(icon_rich(icon, size, color)).frame(false)).rect
+                };
+                next = ui.cursor().min;
+            });
+        });
+        output.textures_delta.clear();
+        let icon_pos = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.pos),
+                _ => None,
+            })
+            .expect("the icon is drawn");
+        (icon_pos, hit, next)
+    }
+
+    #[test]
+    fn rename_buttons_shrink_hitbox_but_keep_position() {
+        let ctx = egui::Context::default();
+        install_app_fonts(&ctx, AppFontStyle::default());
+        apply_theme(&ctx);
+        for (icon, size, hit_size) in [
+            (Icon::X, 14.0, egui::vec2(4.0, 6.0)),
+            (Icon::Check, 16.0, egui::vec2(4.0, 6.0)),
+        ] {
+            // Fonts load on the first frame; measure on the second.
+            let _ = icon_row(&ctx, icon, size, hit_size, false);
+            let button = icon_row(&ctx, icon, size, hit_size, false);
+            let _ = icon_row(&ctx, icon, size, hit_size, true);
+            let compact = icon_row(&ctx, icon, size, hit_size, true);
+            assert_eq!(compact.0, button.0, "the icon moves ({icon:?})");
+            assert_eq!(compact.2, button.2, "the widgets after it move ({icon:?})");
+            assert!(button.1.contains_rect(compact.1), "hitbox leaves the old one ({icon:?})");
+            assert_eq!(compact.1.size(), hit_size, "hitbox size ({icon:?})");
+        }
+    }
+
+    #[test]
+    fn rename_input_sits_exactly_on_the_name() {
+        for style in [
+            AppFontStyle::Classic,
+            AppFontStyle::Modern,
+            AppFontStyle::Elegant,
+            AppFontStyle::Traditional,
+        ] {
+            // Interface sizes Small, Normal and Large.
+            for zoom in [0.7, 1.0, 1.3] {
+                let ctx = egui::Context::default();
+                install_app_fonts(&ctx, style);
+                apply_theme(&ctx);
+                ctx.set_zoom_factor(zoom);
+                for width in [600.0, 260.0] {
+                    // Fonts load on the first frame; measure on the second.
+                    let _ = title_row(&ctx, false, width);
+                    let label = title_row(&ctx, false, width);
+                    let _ = title_row(&ctx, true, width);
+                    let input = title_row(&ctx, true, width);
+                    let case = format!("{style:?}, zoom {zoom}, width {width}");
+                    assert_eq!(input.0, label.0, "the name text moves ({case})");
+                    assert_eq!(input.1.top(), label.1.top(), "the row's top moves ({case})");
+                    assert_eq!(input.1.bottom(), label.1.bottom(), "content below moves ({case})");
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod category_tests {
     use super::*;
@@ -10964,29 +11175,8 @@ impl HestiaApp {
                 let age = mod_age_label(selected.updated_at, text);
                 ui.horizontal_wrapped(|ui| {
                     if self.mod_detail_editing && self.mod_detail_edit_target_id.as_deref() == Some(&selected.id) {
-                        let title_width = ui.fonts_mut(|f| {
-                            f.layout_no_wrap(
-                                title.clone(),
-                                egui::TextStyle::Heading.resolve(ui.style()),
-                                egui::Color32::WHITE,
-                            )
-                            .size()
-                            .x
-                        });
-                        let resp = egui::Frame::NONE
-                            .outer_margin(egui::Margin::symmetric(-4, -2))
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.mod_detail_edit_name)
-                                        .id_source(MOD_DETAIL_RENAME_INPUT_ID)
-                                        .font(egui::TextStyle::Heading)
-                                        .desired_width(title_width
-                                            .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
-                                            .max(ui.available_width() / 6.25) // min width of 16% from the whole width
-                                        )
-                                        .frame(egui::Frame::NONE)
-                                )
-                            }).inner;
+                        let (resp, cancel_btn, save_btn) =
+                            mod_detail_title_input(ui, &mut self.mod_detail_edit_name, &title);
                         self.request_mod_detail_rename_focus(ui.ctx(), &resp, &selected.id);
                         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                             self.clear_mod_detail_rename();
@@ -10994,17 +11184,17 @@ impl HestiaApp {
                         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                             self.perform_mod_rename(selected.id.clone());
                         }
-                        let cancel_btn = ui.add(egui::Button::new(icon_rich(Icon::X, 14.0, Color32::from_rgba_unmultiplied(160,160,160,160))).frame(false));
                         if cancel_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             self.clear_mod_detail_rename();
                         }
-                        ui.add_space(-10.0);
-                        let save_btn = ui.add(egui::Button::new(icon_rich(Icon::Check, 16.0, Color32::from_rgb(110, 194, 132))).frame(false));
                         if save_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             self.perform_mod_rename(selected.id.clone());
                         }
                     } else {
-                        ui.heading(&title);
+                        // Double-clicking the name starts the same rename as F2.
+                        if mod_detail_title_label(ui, &title).double_clicked() {
+                            self.start_selected_mod_rename();
+                        }
                     }
                 });
                 let linked = selected.source.as_ref().and_then(|s| s.gamebanana.as_ref()).is_some();

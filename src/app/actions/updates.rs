@@ -170,6 +170,16 @@ fn update_task_targets_mod(task: &TaskEntry, target: &ModEntry, update_title: &s
     }
 }
 
+/// A `current` answer with only separate extra files has no main download
+/// and drops the update task, so the bundle is all that ties them to the mod.
+fn thalia_bundle_updates_mod(bundle: &ThaliaInstallBundle, target: &ModEntry) -> bool {
+    bundle.game_id == target.game_id
+        && bundle
+            .target
+            .as_ref()
+            .is_some_and(|(mod_id, _)| *mod_id == target.id)
+}
+
 #[derive(Debug, Clone)]
 enum ResolvedTrackedFiles {
     Tracked(Vec<TrackedFileMeta>),
@@ -4842,6 +4852,10 @@ impl HestiaApp {
                 pending.update_target_id.as_deref() == Some(mod_entry.id.as_str())
                     && pending.game_id == mod_entry.game_id
             })
+            || self
+                .thalia_install_bundles
+                .iter()
+                .any(|bundle| thalia_bundle_updates_mod(bundle, mod_entry))
             || self.pending_browse_install_meta.values().any(|meta| {
                 meta.update_target_mod_id.as_deref() == Some(mod_entry.id.as_str())
                     && meta.game_id == mod_entry.game_id
