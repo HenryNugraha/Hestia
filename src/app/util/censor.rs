@@ -16,7 +16,7 @@ const CENSOR_COVER_ALPHA: u32 = 150;
 /// The shorter side of the blurred cover behind windows open over the right
 /// pane, in pixels.  Larger than a censored copy, so the cover stays
 /// recognizable, just soft.
-const BACKDROP_COPY_SHORT_SIDE: usize = 64;
+const BACKDROP_COPY_SHORT_SIDE: usize = 96;
 
 /// How far the blurred cover's colors move toward grey, in percent: 0 keeps
 /// them, 100 is fully grey.
@@ -228,7 +228,7 @@ mod censor_copy_tests {
     #[test]
     fn backdrop_copies_wash_out_colors_without_darkening() {
         let copy = backdrop_copy(&plain(1920, 1080, egui::Color32::from_rgb(255, 0, 128)));
-        assert_eq!(copy.size, [114, 64]);
+        assert_eq!(copy.size, [171, 96]);
         // Pink moves 30% of the way to the grey of its brightness (90).
         assert!(
             copy.pixels
