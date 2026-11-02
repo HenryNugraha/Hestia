@@ -12006,10 +12006,21 @@ impl HestiaApp {
                                                 let _ = xxmi::save_mod_metadata(mod_entry);
                                             }
                                         }
+                                        self.pending_link_category_mods.remove(&selected.id);
                                         self.save_state();
                                     }
 
                                     if let Some((id, is_tool)) = link_and_sync_id {
+                                        // A new link of a mod with no category moves it into its
+                                        // GameBanana category once the page comes back.
+                                        let place_in_category = self.selected_mod().is_some_and(|mod_entry| {
+                                            mod_entry
+                                                .source
+                                                .as_ref()
+                                                .and_then(|source| source.gamebanana.as_ref())
+                                                .is_none_or(|link| link.mod_id == 0)
+                                                && effective_category_id(&self.state.categories, mod_entry).is_none()
+                                        });
                                         let mut mod_entry_id = None;
                                         if let Some(mod_entry) = self.selected_mod_mut() {
                                             let source = mod_entry.source.get_or_insert_with(ModSourceData::default);
@@ -12024,6 +12035,9 @@ impl HestiaApp {
                                         }
 
                                         if let Some(m_id) = mod_entry_id {
+                                            if place_in_category {
+                                                self.pending_link_category_mods.insert(m_id.clone());
+                                            }
                                             self.queue_update_check_for_mod(&m_id);
                                             self.set_message_ok(text.syncing_gamebanana());
                                         }

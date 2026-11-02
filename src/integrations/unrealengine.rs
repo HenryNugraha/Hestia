@@ -490,15 +490,19 @@ fn resolve_nte_launch_command(game: &GameInstall) -> Result<UnrealLaunchCommand>
             configured_path.display()
         )
     })?;
-    let fallback_on_elevation = nte_launcher_command(&root).map(Box::new);
-    let global_dir = root.join("NTEGlobal");
-    let config_path = global_dir.join("Config").join("Config.ini");
-    if let Some(command) = read_nte_launch_command_from_config(&config_path, &global_dir, &root)? {
-        if command.executable.is_file() {
-            return Ok(command.with_fallback(fallback_on_elevation));
+    let launcher_dirs = nte_launcher_dirs(&root);
+    let fallback_on_elevation = nte_launcher_command(&root, &launcher_dirs).map(Box::new);
+    for launcher_dir in &launcher_dirs {
+        let config_path = launcher_dir.join("Config").join("Config.ini");
+        if let Some(command) = read_nte_launch_command_from_config(&config_path, launcher_dir, &root)?
+        {
+            if command.executable.is_file() {
+                return Ok(command.with_fallback(fallback_on_elevation));
+            }
         }
     }
 
+    let global_dir = root.join("NTEGlobal");
     let fallback_exe = global_dir.join("NTEGlobalGame.exe");
     if fallback_exe.is_file() {
         return Ok(UnrealLaunchCommand {
@@ -513,10 +517,18 @@ fn resolve_nte_launch_command(game: &GameInstall) -> Result<UnrealLaunchCommand>
         return Ok(command);
     }
 
-    bail!(
-        "NTE launch executable not found: {}",
-        fallback_exe.display()
-    )
+    // Installs without the NTEGlobal wrapper or launcher (the Chinese server) start the
+    // picked executable itself.
+    let working_dir = configured_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(root);
+    Ok(UnrealLaunchCommand {
+        executable: configured_path.to_path_buf(),
+        args: Vec::new(),
+        working_dir,
+        fallback_on_elevation: None,
+    })
 }
 
 fn read_nte_launch_command_from_config(
@@ -640,11 +652,38 @@ fn nte_install_root_from_path(path: &Path) -> Option<PathBuf> {
         }
     }
 
+    if let Some(root) = path
+        .ancestors()
+        .skip(1)
+        .find(|ancestor| ancestor.join("Client").join("WindowsNoEditor").join("HT").is_dir())
+    {
+        return Some(root.to_path_buf());
+    }
+
     let parent = path.parent()?;
     if parent.join("NTEGlobal").is_dir() || parent.join("Client").is_dir() {
         return Some(parent.to_path_buf());
     }
     None
+}
+
+/// Launcher folders beside `Client` that carry the publisher's `Config\Config.ini`. Global
+/// names its folder NTEGlobal; other regions may not, so any folder with that config counts.
+fn nte_launcher_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.join("Config").join("Config.ini").is_file())
+        .collect();
+    dirs.sort();
+    dirs.sort_by_key(|path| {
+        !path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("NTEGlobal"))
+    });
+    dirs
 }
 
 impl UnrealLaunchCommand {
@@ -654,13 +693,23 @@ impl UnrealLaunchCommand {
     }
 }
 
-fn nte_launcher_command(root: &Path) -> Option<UnrealLaunchCommand> {
-    let launcher = [
-        root.join("NTEGlobalLauncher.exe"),
-        root.join("NTEGlobal").join("NTEGlobalLauncher.exe"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())?;
+fn nte_launcher_command(root: &Path, launcher_dirs: &[PathBuf]) -> Option<UnrealLaunchCommand> {
+    // The config names its own launcher ([General] Launcher=); the Global names stay as a
+    // fallback for installs whose config lacks it.
+    let configured = launcher_dirs.iter().flat_map(|dir| {
+        fs::read_to_string(dir.join("Config").join("Config.ini"))
+            .ok()
+            .and_then(|contents| ini_value(&contents, "General", "Launcher"))
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| vec![root.join(&name), dir.join(&name)])
+            .unwrap_or_default()
+    });
+    let launcher = configured
+        .chain([
+            root.join("NTEGlobalLauncher.exe"),
+            root.join("NTEGlobal").join("NTEGlobalLauncher.exe"),
+        ])
+        .find(|path| path.is_file())?;
     Some(UnrealLaunchCommand {
         executable: launcher,
         args: Vec::new(),
@@ -674,8 +723,14 @@ fn launch_unreal_command(command: &UnrealLaunchCommand) -> Result<()> {
         Ok(()) => Ok(()),
         Err(err) if err.raw_os_error() == Some(740) => {
             let Some(fallback) = command.fallback_on_elevation.as_deref() else {
-                return Err(anyhow!(err)
-                    .context(format!("failed to launch {}", command.executable.display())));
+                // No unelevated launcher to hand off to, so let the shell raise the game.
+                let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+                return crate::integrations::xxmi::launch_executable_with_args(
+                    &command.executable,
+                    &args,
+                    true,
+                    "game executable",
+                );
             };
             spawn_detached(fallback).with_context(|| {
                 format!(
@@ -1310,5 +1365,81 @@ mod tests {
         let fallback = command.fallback_on_elevation.as_deref().unwrap();
         assert_eq!(fallback.executable, selected_launcher);
         assert_eq!(fallback.working_dir, root);
+    }
+
+    // Layout from the Chinese-server report (issue #21): only Client, no NTEGlobal.
+    #[test]
+    fn nte_launch_command_starts_ht_game_without_global_wrapper() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp
+            .path()
+            .join("Program Files")
+            .join("Neverness To Everness");
+        let ht_game = root.join(r"Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe");
+        fs::create_dir_all(ht_game.parent().unwrap()).unwrap();
+        fs::write(&ht_game, "").unwrap();
+
+        let mut game = nte_game(temp.path());
+        game.vanilla_exe_path_override = Some(ht_game.clone());
+
+        let command = resolve_launch_command(&game).unwrap();
+        assert_eq!(command.executable, ht_game);
+        assert!(command.args.is_empty());
+        assert_eq!(command.working_dir, ht_game.parent().unwrap());
+        assert!(command.fallback_on_elevation.is_none());
+    }
+
+    #[test]
+    fn nte_launch_command_reads_config_from_any_launcher_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Custom Root");
+        let ht_game = root.join(r"Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe");
+        let launcher_dir = root.join("RegionLauncher");
+        let wrapper = launcher_dir.join("RegionGame.exe");
+        let launcher = launcher_dir.join("RegionLauncher.exe");
+        fs::create_dir_all(ht_game.parent().unwrap()).unwrap();
+        fs::create_dir_all(launcher_dir.join("Config")).unwrap();
+        fs::write(&ht_game, "").unwrap();
+        fs::write(&wrapper, "").unwrap();
+        fs::write(&launcher, "").unwrap();
+        fs::write(
+            launcher_dir.join("Config").join("Config.ini"),
+            "[General]\nLauncher=RegionLauncher.exe\n[UPDATE_CONFIG]\nLaunchFilePath=RegionGame.exe\nLaunchCmdLine=/launcher\n",
+        )
+        .unwrap();
+
+        let mut game = nte_game(temp.path());
+        game.vanilla_exe_path_override = Some(ht_game);
+
+        let command = resolve_launch_command(&game).unwrap();
+        assert_eq!(command.executable, wrapper);
+        assert_eq!(command.args, vec!["/launcher"]);
+        assert_eq!(command.working_dir, launcher_dir);
+        let fallback = command.fallback_on_elevation.as_deref().unwrap();
+        assert_eq!(fallback.executable, launcher);
+        assert_eq!(fallback.working_dir, root);
+    }
+
+    #[test]
+    fn nte_launch_command_skips_config_whose_target_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Neverness To Everness");
+        let ht_game = root.join(r"Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe");
+        let launcher_dir = root.join("RegionLauncher");
+        fs::create_dir_all(ht_game.parent().unwrap()).unwrap();
+        fs::create_dir_all(launcher_dir.join("Config")).unwrap();
+        fs::write(&ht_game, "").unwrap();
+        fs::write(
+            launcher_dir.join("Config").join("Config.ini"),
+            "[General]\nLauncher=Missing.exe\n[UPDATE_CONFIG]\nLaunchFilePath=Missing.exe\n",
+        )
+        .unwrap();
+
+        let mut game = nte_game(temp.path());
+        game.vanilla_exe_path_override = Some(ht_game.clone());
+
+        let command = resolve_launch_command(&game).unwrap();
+        assert_eq!(command.executable, ht_game);
+        assert!(command.fallback_on_elevation.is_none());
     }
 }

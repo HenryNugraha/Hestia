@@ -664,6 +664,9 @@ pub struct HestiaApp {
     update_check_active_items: Vec<UpdateCheckItem>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
+    // Mods linked by hand while unlinked and uncategorized; they go into their
+    // GameBanana category once the link's first page fetch comes back.
+    pending_link_category_mods: HashSet<String>,
     thalia_matching: ThaliaMatchingState,
     refresh_request_tx: WorkerTx<RefreshRequest>,
     refresh_result_rx: WorkerRx<RefreshEvent>,

@@ -4575,6 +4575,7 @@ impl HestiaApp {
             let mut warn_lines: Vec<String> = Vec::new();
             let mut auto_update_ids: Vec<String> = Vec::new();
             let mut stale_group_targets: HashMap<(String, u64, bool), String> = HashMap::new();
+            let mut link_category_placements = Vec::new();
             let active_update_tasks: HashSet<(String, String)> = self
                 .state
                 .tasks
@@ -4652,6 +4653,11 @@ impl HestiaApp {
                     // result to the new source.
                     continue;
                 };
+                if let Some(profile) = profile.as_ref()
+                    && self.pending_link_category_mods.remove(&mod_id)
+                {
+                    link_category_placements.push((mod_id.clone(), game_id.clone(), profile.clone()));
+                }
                 if let Some(mod_entry) = self.state.mods.get_mut(mod_index) {
                     let old_preview_urls = mod_entry
                         .source
@@ -4794,6 +4800,9 @@ impl HestiaApp {
             }
             for line in warn_lines {
                 self.log_warn(format!("update check: {line}"));
+            }
+            for (mod_id, game_id, profile) in link_category_placements {
+                self.place_linked_mod_in_category(&mod_id, &game_id, &profile);
             }
             self.save_state();
             for mod_id in stale_group_targets.values() {
@@ -5836,33 +5845,66 @@ impl HestiaApp {
         if meta.update_target_mod_id.is_some() {
             return;
         }
-
-        let enabled = if let Some(enabled) = self
-            .state
-            .create_downloaded_mod_category_by_game
-            .get(&meta.game_id)
-            .copied()
-        {
-            enabled
-        } else {
-            let game_has_categories = self
-                .state
-                .categories
-                .iter()
-                .any(|category| category.game_id == meta.game_id);
-            let enabled = !game_has_categories;
-            self.state
-                .create_downloaded_mod_category_by_game
-                .insert(meta.game_id.clone(), enabled);
-            self.save_state();
-            enabled
-        };
-        if !enabled && !always {
+        if !self.create_downloaded_mod_category(&meta.game_id) && !always {
             return;
         }
+        self.place_mod_in_gamebanana_category(mod_entry_id, &meta.game_id, gb_profile);
+    }
 
+    /// A mod linked by hand while it had no category goes where a download of
+    /// it would, if it still has none.
+    fn place_linked_mod_in_category(
+        &mut self,
+        mod_entry_id: &str,
+        game_id: &str,
+        profile: &gamebanana::ProfileResponse,
+    ) {
+        let uncategorized = self
+            .state
+            .mods
+            .iter()
+            .find(|mod_entry| mod_entry.id == mod_entry_id && mod_entry.game_id == game_id)
+            .is_some_and(|mod_entry| effective_category_id(&self.state.categories, mod_entry).is_none());
+        if !uncategorized || !self.create_downloaded_mod_category(game_id) {
+            return;
+        }
+        self.place_mod_in_gamebanana_category(mod_entry_id, game_id, Some(profile));
+    }
+
+    /// The Settings switch that puts `game_id`'s GameBanana mods in their
+    /// category. Unset, it starts on only for a game without categories.
+    fn create_downloaded_mod_category(&mut self, game_id: &str) -> bool {
+        if let Some(enabled) = self
+            .state
+            .create_downloaded_mod_category_by_game
+            .get(game_id)
+            .copied()
+        {
+            return enabled;
+        }
+        let game_has_categories = self
+            .state
+            .categories
+            .iter()
+            .any(|category| category.game_id == game_id);
+        let enabled = !game_has_categories;
+        self.state
+            .create_downloaded_mod_category_by_game
+            .insert(game_id.to_string(), enabled);
+        self.save_state();
+        enabled
+    }
+
+    /// Moves the mod into the category for its GameBanana category, creating
+    /// one when none matches.
+    fn place_mod_in_gamebanana_category(
+        &mut self,
+        mod_entry_id: &str,
+        game_id: &str,
+        gb_profile: Option<&gamebanana::ProfileResponse>,
+    ) {
         let Some(mod_index) = self.state.mods.iter().position(|mod_entry| {
-            mod_entry.id == mod_entry_id && mod_entry.game_id == meta.game_id
+            mod_entry.id == mod_entry_id && mod_entry.game_id == game_id
         }) else {
             return;
         };
@@ -5890,7 +5932,7 @@ impl HestiaApp {
             .filter(|id| *id != 0);
         // Set only for a character's mods.
         let character_super_category_id =
-            gamebanana::character_super_category_id_for_hestia(&meta.game_id).filter(|id| {
+            gamebanana::character_super_category_id_for_hestia(game_id).filter(|id| {
                 gb_profile
                     .and_then(|profile| profile.super_category.as_ref())
                     .is_some_and(|category| category.id == *id)
@@ -5898,7 +5940,7 @@ impl HestiaApp {
         let (category_id, category_name) = if let Some(existing) = download_category(
             &self.state.categories,
             &self.state.mods,
-            &meta.game_id,
+            game_id,
             &category_name,
             remote_category_id,
             character_super_category_id,
@@ -5910,14 +5952,14 @@ impl HestiaApp {
                 .state
                 .categories
                 .iter()
-                .filter(|category| category.game_id == meta.game_id)
+                .filter(|category| category.game_id == game_id)
                 .map(|category| category.order)
                 .max()
                 .unwrap_or(-1)
                 + 1;
             self.state.categories.push(ModCategory {
                 id: category_id.clone(),
-                game_id: meta.game_id.clone(),
+                game_id: game_id.to_string(),
                 name: category_name.clone(),
                 order,
                 gamebanana_character: None,

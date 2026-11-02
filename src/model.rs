@@ -3125,16 +3125,12 @@ fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
             .map(|parent| parent.to_path_buf())
     }
 
-    fn display_name_matches(display_name: &str, needles: &[&str]) -> bool {
-        let display_name = display_name.to_ascii_lowercase();
-        needles.iter().any(|needle| display_name.contains(needle))
-    }
-
     fn collect_from_uninstall_key(
         roots: &mut Vec<PathBuf>,
         hive: HKEY,
         view: REG_SAM_FLAGS,
         needles: &[&str],
+        word_needles: &[&str],
     ) {
         let uninstall_key = wide_null("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
         let mut key = HKEY::default();
@@ -3192,7 +3188,7 @@ fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
             let display_name = registry_string_value(subkey, "DisplayName");
             if display_name
                 .as_deref()
-                .is_some_and(|name| display_name_matches(name, needles))
+                .is_some_and(|name| display_name_matches(name, needles, word_needles))
             {
                 if let Some(install_location) = registry_string_value(subkey, "InstallLocation") {
                     push_install_root(roots, PathBuf::from(install_location));
@@ -3219,17 +3215,23 @@ fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
         "starrail" => &["honkai: star rail", "honkai star rail", "star rail"],
         "genshin" => &["genshin impact"],
         "honkai-impact" => &["honkai impact 3rd", "honkai impact"],
+        "nte" => &["neverness to everness", "nevernesstoeverness", "异环"],
         "xxmi-launcher" => &["xxmi launcher"],
         _ => &[],
     };
-    if needles.is_empty() {
+    // Short names that would also hit inside longer words ("nte" in "Intel").
+    let word_needles: &[&str] = match game_id {
+        "nte" => &["nte"],
+        _ => &[],
+    };
+    if needles.is_empty() && word_needles.is_empty() {
         return Vec::new();
     }
 
     let mut roots = Vec::new();
     for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
-            collect_from_uninstall_key(&mut roots, hive, view, needles);
+            collect_from_uninstall_key(&mut roots, hive, view, needles, word_needles);
         }
     }
     roots.sort();
@@ -3240,6 +3242,16 @@ fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
 #[cfg(not(windows))]
 fn registry_game_install_roots(_game_id: &str) -> Vec<PathBuf> {
     Vec::new()
+}
+
+/// `needles` match anywhere in the name; `word_needles` only as a whole word.
+#[cfg(any(windows, test))]
+fn display_name_matches(display_name: &str, needles: &[&str], word_needles: &[&str]) -> bool {
+    let display_name = display_name.to_ascii_lowercase();
+    needles.iter().any(|needle| display_name.contains(needle))
+        || display_name
+            .split(|ch: char| !ch.is_alphanumeric())
+            .any(|word| word_needles.contains(&word))
 }
 
 fn build_candidates(roots: &[PathBuf], rels: &[&str]) -> Vec<PathBuf> {
@@ -3305,8 +3317,53 @@ mod dir_creation_probe_tests {
 }
 
 #[cfg(test)]
+mod installed_program_name_tests {
+    use super::*;
+
+    #[test]
+    fn short_name_matches_only_as_a_whole_word() {
+        let needles = ["neverness to everness"];
+        let words = ["nte"];
+        assert!(display_name_matches("NTE: Neverness to Everness", &needles, &words));
+        assert!(display_name_matches("NTE", &[], &words));
+        assert!(display_name_matches("NTE 异环", &[], &words));
+        assert!(!display_name_matches("Intel(R) Chipset Device Software", &[], &words));
+        assert!(!display_name_matches("Internet Download Manager", &[], &words));
+        assert!(!display_name_matches("Cliente VPN", &[], &words));
+    }
+}
+
+#[cfg(test)]
 mod unreal_path_tests {
     use super::*;
+
+    // Path from the Chinese-server report (issue #21).
+    #[test]
+    fn nte_reported_chinese_path_is_a_candidate_with_matching_mod_paths() {
+        let reported = Path::new(
+            r"C:\Program Files\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe",
+        );
+        let candidates = build_candidates(&[PathBuf::from(r"C:\Program Files")], vanilla_exe_rels("nte"));
+        assert!(candidates.iter().any(|candidate| candidate == reported));
+        assert!(vanilla_exe_file_names("nte").contains(&"HTGame.exe"));
+        assert_eq!(
+            default_unreal_pak_mods_path_from_exe("nte", reported).unwrap(),
+            Path::new(
+                r"C:\Program Files\Neverness To Everness\Client\WindowsNoEditor\HT\Content\Paks\~mods"
+            )
+        );
+        assert_eq!(
+            default_unreal_bypasser_paths_from_exe("nte", reported),
+            vec![
+                PathBuf::from(
+                    r"C:\Program Files\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\AyakaNTEModLoader.asi"
+                ),
+                PathBuf::from(
+                    r"C:\Program Files\Neverness To Everness\Client\WindowsNoEditor\HT\Binaries\Win64\UniversalSigBypasser.asi"
+                ),
+            ]
+        );
+    }
 
     #[test]
     fn nte_pak_path_derives_from_ht_game_exe() {

@@ -650,6 +650,7 @@ impl HestiaApp {
             update_check_active_items: Vec::new(),
             pending_update_check_game: None,
             pending_update_check_mods: HashSet::new(),
+            pending_link_category_mods: HashSet::new(),
             thalia_matching,
             refresh_request_tx,
             refresh_result_rx,

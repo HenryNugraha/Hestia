@@ -771,7 +771,7 @@ pub fn launch_vanilla_executable(path: &Path) -> Result<()> {
     launch_executable_with_args(path, &[], true, "vanilla executable")
 }
 
-fn launch_executable_with_args(
+pub(crate) fn launch_executable_with_args(
     path: &Path,
     args: &[&str],
     #[cfg_attr(not(windows), allow(unused_variables))] detached: bool,
