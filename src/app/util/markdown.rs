@@ -573,6 +573,21 @@ fn mod_primary_description_markdown(
     mod_entry: &ModEntry,
     portable: &persistence::PortablePaths,
 ) -> String {
+    match mod_primary_description_html(mod_entry) {
+        // The cached GameBanana profile's images aren't in the mod's folder.
+        Some((html, from_profile)) => prepare_markdown_for_display(
+            &html,
+            (!from_profile).then_some(mod_entry.root_path.as_path()),
+            Some(parse_gb_id_from_entry(mod_entry)),
+            portable,
+        ),
+        None => "No description".to_string(),
+    }
+}
+
+/// The description the mod details window shows, as HTML, and whether it
+/// came from the cached GameBanana profile.
+fn mod_primary_description_html(mod_entry: &ModEntry) -> Option<(String, bool)> {
     if let Some(html) = mod_entry
         .metadata
         .user
@@ -580,12 +595,7 @@ fn mod_primary_description_markdown(
         .as_deref()
         .filter(|d| !d.trim().is_empty())
     {
-        return prepare_markdown_for_display(
-            html,
-            Some(&mod_entry.root_path),
-            Some(parse_gb_id_from_entry(mod_entry)),
-            portable,
-        );
+        return Some((html.to_owned(), false));
     }
 
     if let Some(raw) = mod_entry
@@ -595,32 +605,75 @@ fn mod_primary_description_markdown(
     {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
             if let Some(html) = value.get("_sText").and_then(|v| v.as_str()) {
-                return prepare_markdown_for_display(
-                    html,
-                    None,
-                    Some(parse_gb_id_from_entry(mod_entry)),
-                    portable,
-                );
+                return Some((html.to_owned(), true));
             }
         }
     }
 
-    if let Some(html) = mod_entry
+    mod_entry
         .source
         .as_ref()
         .and_then(|s| s.snapshot.as_ref())
         .and_then(|s| s.description.as_deref())
         .filter(|d| !d.trim().is_empty())
-    {
-        return prepare_markdown_for_display(
-            html,
-            Some(&mod_entry.root_path),
-            Some(parse_gb_id_from_entry(mod_entry)),
-            portable,
-        );
-    }
+        .map(|html| (html.to_owned(), false))
+}
 
-    "No description".to_string()
+/// Markdown as plain text, for the in-game overlay, which shows no
+/// pictures, links or styles.  Paragraphs keep a blank line between them and
+/// list items a bullet.
+fn markdown_plain_text(markdown: &str) -> String {
+    use pulldown_cmark::{Event, Tag, TagEnd};
+
+    let mut text = String::new();
+    // Inside a picture, whose alt text isn't shown.
+    let mut images = 0_usize;
+    for event in pulldown_cmark::Parser::new(markdown) {
+        match event {
+            Event::Start(Tag::Image { .. }) => images += 1,
+            Event::End(TagEnd::Image) => images = images.saturating_sub(1),
+            _ if images > 0 => {}
+            Event::Text(part) | Event::Code(part) => {
+                // Where the details window shows a YouTube video.
+                if !part.trim_start().starts_with("{{hestia-youtube:") {
+                    text.push_str(&part);
+                }
+            }
+            Event::SoftBreak => text.push(' '),
+            Event::HardBreak | Event::Rule => text.push('\n'),
+            Event::Html(html) | Event::InlineHtml(html)
+                if html.trim_start().to_ascii_lowercase().starts_with("<br") =>
+            {
+                text.push('\n');
+            }
+            Event::Start(Tag::Item) => text.push_str("• "),
+            Event::End(TagEnd::Item | TagEnd::TableRow | TagEnd::TableHead) => text.push('\n'),
+            Event::End(TagEnd::TableCell) => text.push_str("  "),
+            Event::End(
+                TagEnd::Paragraph
+                | TagEnd::Heading(_)
+                | TagEnd::CodeBlock
+                | TagEnd::BlockQuote(_)
+                | TagEnd::List(_)
+                | TagEnd::Table,
+            ) => text.push_str("\n\n"),
+            _ => {}
+        }
+    }
+    let mut plain = String::with_capacity(text.len());
+    let mut blank_lines = 0;
+    for line in text.lines().map(str::trim_end) {
+        if line.trim().is_empty() {
+            blank_lines += 1;
+            continue;
+        }
+        if !plain.is_empty() {
+            plain.push_str(if blank_lines > 0 { "\n\n" } else { "\n" });
+        }
+        blank_lines = 0;
+        plain.push_str(line);
+    }
+    plain
 }
 
 fn mod_extracted_description_markdown(mod_entry: &ModEntry) -> Option<String> {
@@ -1395,5 +1448,35 @@ mod markdown_link_tests {
         );
         assert!(markdown.contains(r#"href="https://example.com/a%20b""#), "{markdown}");
         assert!(markdown.contains(r#"href="https://example.com/c%26d""#), "{markdown}");
+    }
+}
+
+#[cfg(test)]
+mod markdown_plain_text_tests {
+    use super::*;
+
+    #[test]
+    fn gamebanana_html_reads_as_plain_text() {
+        let html = concat!(
+            "<h2>Summer <b>swimsuit</b></h2>",
+            "<p>Replaces the default outfit.<br>Works with &amp; without the hat.</p>",
+            r#"<p><img src="https://images.gamebanana.com/a.png" alt="preview"></p>"#,
+            r#"<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe>"#,
+            "<ul><li>H: hat</li><li>J: <a href=\"https://example.com\">jacket</a></li></ul>",
+            "<p>Thanks!</p>",
+        );
+        assert_eq!(
+            markdown_plain_text(&prepare_markdown_content(html)),
+            "Summer swimsuit\n\nReplaces the default outfit.\nWorks with & without the hat.\n\n• H: hat\n• J: jacket\n\nThanks!"
+        );
+    }
+
+    #[test]
+    fn a_personal_note_keeps_its_lines() {
+        assert_eq!(
+            markdown_plain_text("Use with **Hair v2**.  \nF6 is the good one.\n\n\n\n- one\n- two\n"),
+            "Use with Hair v2.\nF6 is the good one.\n\n• one\n• two"
+        );
+        assert_eq!(markdown_plain_text("  \n\n"), "");
     }
 }

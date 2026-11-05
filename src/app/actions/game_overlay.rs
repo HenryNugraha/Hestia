@@ -174,6 +174,7 @@ impl HestiaApp {
         let mut browse = Vec::new();
         let mut installs = Vec::new();
         let mut hotkeys = Vec::new();
+        let mut infos = Vec::new();
         let mut presses = Vec::new();
         let mut opacity_changed = None;
         let mut all_characters_changed = None;
@@ -205,6 +206,9 @@ impl HestiaApp {
                 }
                 OverlayEvent::Message(overlay_protocol::FromOverlay::Hotkeys { mod_id }) => {
                     hotkeys.push(mod_id);
+                }
+                OverlayEvent::Message(overlay_protocol::FromOverlay::Info { mod_id }) => {
+                    infos.push(mod_id);
                 }
                 OverlayEvent::Message(overlay_protocol::FromOverlay::PressHotkey {
                     id,
@@ -267,6 +271,17 @@ impl HestiaApp {
                 if let Some(process) = &self.game_overlay.process {
                     self.game_overlay.hotkey_mods.insert(mod_id.clone());
                     process.send_hotkeys(mod_id, entry.root_path, values);
+                }
+            }
+            for mod_id in infos {
+                if let Some(process) = &self.game_overlay.process
+                    && let Some(entry) = self
+                        .state
+                        .mods
+                        .iter()
+                        .find(|entry| entry.id == mod_id && entry.game_id == game_id)
+                {
+                    process.send_info(entry);
                 }
             }
             for (id, mod_id, index, key) in presses {

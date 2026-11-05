@@ -472,13 +472,106 @@ struct OverlayProcess {
     child: std::process::Child,
     outbox: Arc<OverlayOutbox>,
     events: std::sync::mpsc::Receiver<OverlayEvent>,
-    /// Mods whose hotkeys the overlay asked for, with their folders.
-    hotkeys: std::sync::mpsc::Sender<OverlayHotkeysRequest>,
+    /// Mods whose hotkeys or info the overlay asked for.
+    reads: std::sync::mpsc::Sender<OverlayReadRequest>,
 }
 
-/// A mod, its folder, and the values its hotkeys have now, which decide the
-/// ones that do nothing in the game at the moment.
-type OverlayHotkeysRequest = (String, PathBuf, HashMap<String, String>);
+enum OverlayReadRequest {
+    /// A mod, its folder, and the values its hotkeys have now, which decide
+    /// the ones that do nothing in the game at the moment.
+    Hotkeys(String, PathBuf, HashMap<String, String>),
+    Info(OverlayInfoDraft),
+}
+
+/// A mod's description and text files as the library has them, which the
+/// worker turns into plain text.
+struct OverlayInfoDraft {
+    mod_id: String,
+    description_html: Option<String>,
+    /// The personal note's path in the mod's folder.
+    note_path: String,
+    text_sources: Vec<crate::model::ExtractedMetadataTextSource>,
+    /// The source the details window was left on.
+    selected: Option<MetadataSourceKind>,
+    readme_path: Option<String>,
+}
+
+impl OverlayInfoDraft {
+    fn new(entry: &ModEntry) -> Self {
+        Self {
+            mod_id: entry.id.clone(),
+            description_html: mod_primary_description_html(entry).map(|(html, _)| html),
+            note_path: xxmi::personal_note_relative_path(),
+            text_sources: entry.metadata.extracted.text_sources.clone(),
+            selected: entry.metadata.user.selected_metadata_source,
+            readme_path: entry.metadata.extracted.readme_path.clone(),
+        }
+    }
+
+    fn resolve(self) -> overlay_protocol::ModInfo {
+        use overlay_protocol::{InfoKind, InfoSource};
+
+        /// Long readmes are cut, the overlay being no place to read them.
+        const MAX_CHARS: usize = 20_000;
+        let clip = |text: String| match text.char_indices().nth(MAX_CHARS) {
+            Some((end, _)) => format!("{}…", &text[..end]),
+            None => text,
+        };
+        let description = self
+            .description_html
+            .as_deref()
+            .map(|html| markdown_plain_text(&prepare_markdown_content(html)))
+            .unwrap_or_default();
+        let mut sources = vec![InfoSource {
+            kind: InfoKind::Description,
+            path: String::new(),
+            label: String::new(),
+            text: clip(description),
+        }];
+        // The note, then the files, like the details window's list.
+        let mut files = self.text_sources;
+        files.sort_by_key(|source| source.path != self.note_path);
+        for source in files {
+            let note = source.path == self.note_path;
+            let markdown = note || source.path.to_ascii_lowercase().ends_with(".md");
+            let text = if markdown {
+                markdown_plain_text(&source.content)
+            } else {
+                source.content.trim().to_owned()
+            };
+            let label = if source.label.trim().is_empty() {
+                source.path.clone()
+            } else {
+                source.label
+            };
+            sources.push(InfoSource {
+                kind: if note { InfoKind::Note } else { InfoKind::File },
+                path: source.path,
+                label,
+                text: clip(text),
+            });
+        }
+        let readme = self
+            .readme_path
+            .as_deref()
+            .and_then(|path| sources.iter().position(|source| source.path == path));
+        let shown = match self.selected {
+            Some(MetadataSourceKind::Description) => Some(0),
+            Some(MetadataSourceKind::TextFile) => readme,
+            _ => None,
+        }
+        // The details window's own fallback, without the hotkeys.
+        .or_else(|| (!sources[0].text.is_empty()).then_some(0))
+        .or(readme)
+        .or_else(|| sources.iter().position(|source| !source.text.is_empty()))
+        .unwrap_or(0);
+        overlay_protocol::ModInfo {
+            mod_id: self.mod_id,
+            sources,
+            shown,
+        }
+    }
+}
 
 impl OverlayProcess {
     fn spawn(game: &RunningGame, start: OverlayStartDraft) -> std::io::Result<Self> {
@@ -493,8 +586,8 @@ impl OverlayProcess {
         let outbox = Arc::new(OverlayOutbox::default());
         outbox.update(|pending| pending.start = Some(start));
         let (report, events) = std::sync::mpsc::channel();
-        let (hotkeys, hotkey_requests) = std::sync::mpsc::channel();
-        if let Err(error) = Self::link(&mut child, &outbox, report, hotkey_requests) {
+        let (reads, read_requests) = std::sync::mpsc::channel();
+        if let Err(error) = Self::link(&mut child, &outbox, report, read_requests) {
             outbox.close();
             let _ = child.kill();
             let _ = child.wait();
@@ -508,7 +601,7 @@ impl OverlayProcess {
             child,
             outbox,
             events,
-            hotkeys,
+            reads,
         })
     }
 
@@ -516,7 +609,7 @@ impl OverlayProcess {
         child: &mut std::process::Child,
         outbox: &Arc<OverlayOutbox>,
         report: std::sync::mpsc::Sender<OverlayEvent>,
-        hotkey_requests: std::sync::mpsc::Receiver<OverlayHotkeysRequest>,
+        read_requests: std::sync::mpsc::Receiver<OverlayReadRequest>,
     ) -> std::io::Result<()> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(std::io::Error::other("the overlay has no pipes"));
@@ -530,8 +623,8 @@ impl OverlayProcess {
             .spawn(move || read_from_overlay(stdout, &report))?;
         let outbox = Arc::clone(outbox);
         std::thread::Builder::new()
-            .name("hestia-overlay-hotkeys".to_owned())
-            .spawn(move || read_hotkeys(&outbox, &hotkey_requests))?;
+            .name("hestia-overlay-reads".to_owned())
+            .spawn(move || read_mods(&outbox, &read_requests))?;
         Ok(())
     }
 
@@ -556,7 +649,16 @@ impl OverlayProcess {
 
     /// Reads the mod's hotkeys and sends them to the overlay.
     fn send_hotkeys(&self, mod_id: String, root: PathBuf, values: HashMap<String, String>) {
-        let _ = self.hotkeys.send((mod_id, root, values));
+        let _ = self
+            .reads
+            .send(OverlayReadRequest::Hotkeys(mod_id, root, values));
+    }
+
+    /// Sends the overlay the mod's description and text files.
+    fn send_info(&self, entry: &ModEntry) {
+        let _ = self
+            .reads
+            .send(OverlayReadRequest::Info(OverlayInfoDraft::new(entry)));
     }
 
     /// Answers a hotkey press the overlay asked for.
@@ -654,11 +756,18 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
     }
 }
 
-/// Reads mods' hotkeys, the way the library lists them, one mod at a time,
-/// so the last answer about a mod is about it as it is now.  Ends with the
-/// overlay.
-fn read_hotkeys(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<OverlayHotkeysRequest>) {
-    for (mod_id, root, values) in requests {
+/// Reads mods' hotkeys, the way the library lists them, and their info, one
+/// mod at a time, so the last answer about a mod is about it as it is now.
+/// Ends with the overlay.
+fn read_mods(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<OverlayReadRequest>) {
+    for request in requests {
+        let (mod_id, root, values) = match request {
+            OverlayReadRequest::Hotkeys(mod_id, root, values) => (mod_id, root, values),
+            OverlayReadRequest::Info(draft) => {
+                outbox.send(overlay_protocol::ToOverlay::Info(draft.resolve()));
+                continue;
+            }
+        };
         let rows = hotkeys_list_rows(&parse_mod_config_inis(&root));
         let hotkeys = rows
             .iter()

@@ -39,6 +39,12 @@ pub(super) enum Command {
     Toggle,
     /// Turn the focused card over to its hotkeys, or back.
     Flip,
+    /// Turn the focused card over to its info, or back.
+    Info,
+    /// A page of the info up, or down.
+    Page(i32),
+    /// To the top of the info, or the bottom.
+    Jump(i32),
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -69,6 +75,10 @@ mod vk {
     pub(super) const MENU: u32 = 0x12;
     pub(super) const ESCAPE: u32 = 0x1B;
     pub(super) const SPACE: u32 = 0x20;
+    pub(super) const PRIOR: u32 = 0x21;
+    pub(super) const NEXT: u32 = 0x22;
+    pub(super) const END: u32 = 0x23;
+    pub(super) const HOME: u32 = 0x24;
     pub(super) const LEFT: u32 = 0x25;
     pub(super) const UP: u32 = 0x26;
     pub(super) const RIGHT: u32 = 0x27;
@@ -80,6 +90,7 @@ mod vk {
     pub(super) const F: u32 = 0x46;
     #[cfg(test)]
     pub(super) const H: u32 = 0x48;
+    pub(super) const I: u32 = 0x49;
     pub(super) const Q: u32 = 0x51;
     pub(super) const R: u32 = 0x52;
     pub(super) const S: u32 = 0x53;
@@ -160,9 +171,13 @@ impl Role {
     }
 }
 
+/// A set of `KEYS`, a key's bit being `1 << index`.
+type Mask = u64;
+
 /// Every key the overlay tracks.  A key's bit in the router masks is
-/// `1 << index`.
-const KEYS: [(u32, Role); 29] = [
+/// `1 << index`.  The reading keys at the end are tracked only while a card
+/// shows its info, and reach the game otherwise.
+const KEYS: [(u32, Role); 34] = [
     (vk::W, Role::Activate(Command::Row(-1))),
     (vk::UP, Role::Activate(Command::Row(-1))),
     (vk::S, Role::Activate(Command::Row(1))),
@@ -179,6 +194,7 @@ const KEYS: [(u32, Role); 29] = [
     (vk::RETURN, Role::Enable),
     (vk::X, Role::Activate(Command::Toggle)),
     (vk::R, Role::Activate(Command::Flip)),
+    (vk::I, Role::Activate(Command::Info)),
     (vk::TAB, Role::Search),
     (vk::F, Role::Search),
     (vk::ESCAPE, Role::Escape),
@@ -192,7 +208,14 @@ const KEYS: [(u32, Role); 29] = [
     (vk::F10, Role::Swallow),
     (vk::LWIN, Role::Windows),
     (vk::RWIN, Role::Windows),
+    (vk::PRIOR, Role::Navigate(Command::Page(-1))),
+    (vk::NEXT, Role::Navigate(Command::Page(1))),
+    (vk::HOME, Role::Activate(Command::Jump(-1))),
+    (vk::END, Role::Activate(Command::Jump(1))),
 ];
+
+/// Where the reading keys start in `KEYS`.
+const FIRST_READING_KEY: usize = KEYS.len() - 4;
 
 /// Stands in `KEYS` for the hotkey's key, which Settings can change.  No
 /// real key has code 0.
@@ -201,7 +224,12 @@ const HOTKEY: u32 = 0;
 // Set and read on the thread that runs the UI and the window procedure.
 thread_local! {
     static HOTKEY_KEYS: Cell<OverlayHotkey> = const { Cell::new(OverlayHotkey::DEFAULT) };
+    /// A card shows its info, so the overlay takes the reading keys.
+    static READING: Cell<bool> = const { Cell::new(false) };
 }
+
+/// The reading keys, which mods may use too.
+const READING_KEYS: Mask = !0 << FIRST_READING_KEY & !(!0 << KEYS.len());
 
 /// Makes `hotkey` the key the overlay tracks as its hotkey.
 pub(super) fn set_hotkey(hotkey: OverlayHotkey) {
@@ -219,7 +247,7 @@ fn real_key(key: u32) -> u32 {
 }
 
 #[cfg(any(windows, test))]
-const fn bit(key: u32) -> u32 {
+const fn bit(key: u32) -> Mask {
     let mut index = 0;
     while index < KEYS.len() {
         if KEYS[index].0 == key {
@@ -231,18 +259,19 @@ const fn bit(key: u32) -> u32 {
 }
 
 #[cfg(any(windows, test))]
-const SHIFT_KEYS: u32 = bit(vk::LSHIFT) | bit(vk::RSHIFT);
+const SHIFT_KEYS: Mask = bit(vk::LSHIFT) | bit(vk::RSHIFT);
 #[cfg(any(windows, test))]
-const WINDOWS_KEYS: u32 = bit(vk::LWIN) | bit(vk::RWIN);
+const WINDOWS_KEYS: Mask = bit(vk::LWIN) | bit(vk::RWIN);
 /// Shift, Ctrl and Alt, which the game may take with a key it gets.
 #[cfg(any(windows, test))]
-const MODIFIER_KEYS: u32 =
+const MODIFIER_KEYS: Mask =
     SHIFT_KEYS | bit(vk::LCONTROL) | bit(vk::RCONTROL) | bit(vk::LMENU) | bit(vk::RMENU);
 
 fn slot(key: u32) -> Option<(usize, Role)> {
     let key = if key == hotkey_key() { HOTKEY } else { key };
     KEYS.iter()
         .position(|&(tracked, _)| tracked == key)
+        .filter(|&index| index < FIRST_READING_KEY || READING.get())
         .map(|index| (index, KEYS[index].1))
 }
 
@@ -270,6 +299,7 @@ fn types(key: u32) -> bool {
                 | vk::C
                 | vk::X
                 | vk::R
+                | vk::I
                 | vk::F
                 | vk::SPACE
         )
@@ -305,10 +335,15 @@ fn egui_vk(key: egui::Key) -> Option<u32> {
         Key::Enter => vk::RETURN,
         Key::X => vk::X,
         Key::R => vk::R,
+        Key::I => vk::I,
         Key::Escape => vk::ESCAPE,
         Key::F10 => vk::F10,
         Key::Tab => vk::TAB,
         Key::F => vk::F,
+        Key::PageUp => vk::PRIOR,
+        Key::PageDown => vk::NEXT,
+        Key::Home => vk::HOME,
+        Key::End => vk::END,
         // The letter, digit or F key the hotkey can be.
         _ => return OverlayHotkey::key_code(key.name()).map(u32::from),
     })
@@ -321,10 +356,12 @@ fn egui_vk(key: egui::Key) -> Option<u32> {
 #[derive(Default)]
 pub(super) struct EguiKeys {
     typing: bool,
+    /// A card shows its info.
+    reading: bool,
     /// Bits as in `KEYS`.  egui marks repeats only after this filter runs.
-    held: u32,
+    held: Mask,
     /// Keys whose press typed into the search.
-    passed: u32,
+    passed: Mask,
     events: Vec<Event>,
 }
 
@@ -361,6 +398,17 @@ impl EguiKeys {
         self.typing = typing;
     }
 
+    /// Whether a card shows its info, so the overlay takes the reading keys.
+    pub(super) fn set_reading(&mut self, reading: bool) {
+        READING.set(reading);
+        if self.reading && !reading {
+            // Their releases go to egui now.
+            self.held &= !READING_KEYS;
+            self.passed &= !READING_KEYS;
+        }
+        self.reading = reading;
+    }
+
     /// Routes a key like the window procedure does and returns whether egui
     /// keeps it.
     fn key(&mut self, key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> bool {
@@ -370,7 +418,7 @@ impl EguiKeys {
         let Some((index, role)) = slot(vk) else {
             return true;
         };
-        let mask: u32 = 1 << index;
+        let mask: Mask = 1 << index;
         let passed = self.passed & mask != 0;
 
         if !pressed {
@@ -465,21 +513,38 @@ impl KeyMessage {
 /// While a search is being typed, letters and Space go to the search field.
 /// `passed` marks those presses, so their repeats and release go there too.
 #[cfg(any(windows, test))]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Router {
-    down: u32,
-    ours: u32,
-    passed: u32,
+    down: Mask,
+    ours: Mask,
+    passed: Mask,
     typing: bool,
+    /// A card shows its info.
+    reading: bool,
     next_repeat: [Option<Instant>; KEYS.len()],
     events: VecDeque<Event>,
+}
+
+#[cfg(any(windows, test))]
+impl Default for Router {
+    fn default() -> Self {
+        Self {
+            down: 0,
+            ours: 0,
+            passed: 0,
+            typing: false,
+            reading: false,
+            next_repeat: [None; KEYS.len()],
+            events: VecDeque::new(),
+        }
+    }
 }
 
 #[cfg(any(windows, test))]
 impl Router {
     /// Starts over from the physical key state.  Of `ours`, only keys that
     /// are still held are kept.
-    fn reset(&mut self, held: u32, ours: u32) {
+    fn reset(&mut self, held: Mask, ours: Mask) {
         self.down = held;
         self.ours = ours & held;
         self.passed = 0;
@@ -489,6 +554,20 @@ impl Router {
 
     fn clear(&mut self) {
         self.reset(0, 0);
+    }
+
+    /// Once the reading keys go back to the game, their releases won't
+    /// reach the router.
+    fn set_reading(&mut self, reading: bool) {
+        if self.reading && !reading {
+            self.down &= !READING_KEYS;
+            self.ours &= !READING_KEYS;
+            self.passed &= !READING_KEYS;
+            for at in &mut self.next_repeat[FIRST_READING_KEY..] {
+                *at = None;
+            }
+        }
+        self.reading = reading;
     }
 
     /// The hotkey swallowed its key's press while the overlay had the
@@ -501,7 +580,7 @@ impl Router {
 
     /// Whether a key that went down in the overlay is still `held`.  Handing
     /// the keyboard back now would send its repeats and release to the game.
-    fn busy(&self, held: u32) -> bool {
+    fn busy(&self, held: Mask) -> bool {
         self.ours & held != 0
     }
 
@@ -515,7 +594,7 @@ impl Router {
         let Some((index, role)) = slot(key) else {
             return false;
         };
-        let mask: u32 = 1 << index;
+        let mask: Mask = 1 << index;
         let swallow = !matches!(role, Role::Windows) && self.passed & mask == 0;
 
         if !pressed {
@@ -723,9 +802,11 @@ fn physically_down(key: u32) -> bool {
 /// Reads the tracked keys.  This only sees the truth while the overlay has
 /// the keyboard: a game that blocks input also hides it from this call.
 #[cfg(windows)]
-fn physical_keys() -> u32 {
+fn physical_keys() -> Mask {
+    let reading = READING.get();
     KEYS.iter()
         .enumerate()
+        .filter(|&(index, _)| index < FIRST_READING_KEY || reading)
         .filter(|&(_, &(key, _))| physically_down(real_key(key)))
         .fold(0, |held, (index, _)| held | (1 << index))
 }
@@ -790,7 +871,7 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     .filter(|&key| !physically_down(key));
     let now = Instant::now();
     // The game mustn't get the overlay's own keys.
-    let own_press = message.pressed && (1_u32 << index) & MODIFIER_KEYS == 0;
+    let own_press = message.pressed && (1 << index) & MODIFIER_KEYS == 0;
     let (swallow, title) = notify_shared(|shared| {
         let swallow = shared.router.key(message.key, message.pressed, now);
         if let Some(key) = other_shift {
@@ -923,6 +1004,14 @@ impl Keyboard {
         let _ = typing;
     }
 
+    /// Whether a card shows its info, so the overlay takes the reading keys
+    /// instead of passing them to the game.
+    pub(super) fn set_reading(&self, reading: bool) {
+        READING.set(reading);
+        #[cfg(windows)]
+        with_shared(|shared| shared.router.set_reading(reading));
+    }
+
     /// Whether a key pressed in the overlay is still physically held.
     pub(super) fn busy(&self) -> bool {
         #[cfg(windows)]
@@ -953,7 +1042,7 @@ impl Drop for Keyboard {
 mod tests {
     use super::*;
 
-    const ALL: u32 = u32::MAX;
+    const ALL: Mask = Mask::MAX;
     /// The B key, which the overlay does not use.
     const UNUSED: u32 = 0x42;
 
@@ -1058,6 +1147,77 @@ mod tests {
     }
 
     #[test]
+    fn reading_keys_reach_the_game_unless_a_card_shows_its_info() {
+        let now = Instant::now();
+        let mut router = Router::default();
+        let reading_keys = [vk::PRIOR, vk::NEXT, vk::HOME, vk::END];
+        for key in reading_keys {
+            assert!(!consumes(key));
+            assert!(!router.key(key, true, now));
+            assert!(!router.key(key, false, now));
+        }
+        assert!(drain(&mut router).is_empty());
+
+        READING.set(true);
+        router.set_reading(true);
+        for key in reading_keys {
+            assert!(consumes(key));
+            assert!(router.key(key, true, now));
+            assert!(router.key(key, false, now));
+        }
+        assert_eq!(
+            drain(&mut router),
+            vec![
+                command(Command::Page(-1)),
+                command(Command::Page(1)),
+                command(Command::Jump(-1)),
+                command(Command::Jump(1)),
+            ]
+        );
+        // PgDn repeats like the other navigation keys.
+        router.key(vk::NEXT, true, now);
+        router.key(vk::NEXT, true, after(now, 350));
+        assert_eq!(drain(&mut router).len(), 2);
+
+        // Held as the info closes, its release goes to the game, so the
+        // router forgets it.
+        READING.set(false);
+        router.set_reading(false);
+        assert_eq!(router.down, 0);
+        assert!(!router.busy(ALL));
+        assert!(!router.key(vk::NEXT, false, now));
+    }
+
+    #[test]
+    fn egui_reading_keys_scroll_only_while_a_card_shows_its_info() {
+        use egui::{Key, Modifiers};
+
+        let mut keys = EguiKeys::default();
+        assert_eq!(
+            tap(&mut keys, Key::PageDown, Modifiers::NONE),
+            (Vec::new(), true)
+        );
+        keys.set_reading(true);
+        for (key, expected) in [
+            (Key::PageUp, Command::Page(-1)),
+            (Key::PageDown, Command::Page(1)),
+            (Key::Home, Command::Jump(-1)),
+            (Key::End, Command::Jump(1)),
+        ] {
+            assert_eq!(
+                tap(&mut keys, key, Modifiers::NONE),
+                (vec![command(expected)], false),
+                "{key:?}"
+            );
+        }
+        keys.set_reading(false);
+        assert_eq!(
+            tap(&mut keys, Key::End, Modifiers::NONE),
+            (Vec::new(), true)
+        );
+    }
+
+    #[test]
     fn swallowed_keys_have_no_commands_but_hold_up_focus_return() {
         let now = Instant::now();
         let keys = [
@@ -1094,6 +1254,7 @@ mod tests {
             (vk::RETURN, Command::Exclusive),
             (vk::X, Command::Toggle),
             (vk::R, Command::Flip),
+            (vk::I, Command::Info),
         ] {
             router.key(key, true, now);
             router.key(key, true, after(now, 500));
@@ -1492,6 +1653,7 @@ mod tests {
             (Key::Enter, Modifiers::SHIFT, Some(command(Command::Toggle))),
             (Key::X, none, Some(command(Command::Toggle))),
             (Key::R, none, Some(command(Command::Flip))),
+            (Key::I, none, Some(command(Command::Info))),
             (Key::Tab, none, Some(Event::Search)),
             (Key::F, none, Some(Event::Search)),
             (Key::F, Modifiers::CTRL, Some(Event::Search)),
@@ -1530,6 +1692,7 @@ mod tests {
             (Key::Enter, false),
             (Key::X, false),
             (Key::R, false),
+            (Key::I, false),
             (Key::Tab, false),
             (Key::Escape, false),
         ] {

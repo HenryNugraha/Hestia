@@ -15,6 +15,8 @@ pub(super) enum Hint {
     Toggle,
     /// R turns the focused card over to its hotkeys.
     Hotkeys,
+    /// I turns the focused card over to its info.
+    Info,
     Search,
     /// Enter while typing a search.
     TypedExclusive,
@@ -57,6 +59,7 @@ impl Mode {
                 Hint::Exclusive,
                 Hint::Toggle,
                 Hint::Hotkeys,
+                Hint::Info,
                 Hint::Search,
             ],
             Self::Typing => &[
@@ -72,6 +75,7 @@ impl Mode {
                 Hint::Exclusive,
                 Hint::Toggle,
                 Hint::Hotkeys,
+                Hint::Info,
                 Hint::EditSearch,
                 Hint::ClearSearch,
             ],
@@ -88,6 +92,7 @@ impl Hint {
             Self::Exclusive => &["Space"],
             Self::Toggle => &["X"],
             Self::Hotkeys => &["R"],
+            Self::Info => &["I"],
             Self::Search | Self::DoneTyping | Self::EditSearch => &["Tab"],
             Self::TypedExclusive => &["Enter"],
             Self::TypedToggle => &["Shift", "Enter"],
@@ -103,12 +108,14 @@ impl Hint {
                 Space::Install => TextKey::GameOverlayHintInstall,
                 Space::TryAgain => TextKey::GameOverlayHintTryAgain,
                 Space::PressHotkey => TextKey::GameOverlayHintPressHotkey,
+                Space::NextSource => TextKey::GameOverlayHintNextSource,
             },
             Self::Navigate => TextKey::GameOverlayHintNavigate,
             Self::Mods => TextKey::GameOverlayHintMods,
             Self::Categories => TextKey::GameOverlayHintCategories,
             Self::Toggle | Self::TypedToggle => TextKey::GameOverlayHintToggle,
             Self::Hotkeys => TextKey::GameOverlayHintHotkeys,
+            Self::Info => TextKey::GameOverlayHintInfo,
             Self::Search => TextKey::GameOverlayHintSearch,
             Self::DoneTyping => TextKey::GameOverlayHintDoneTyping,
             Self::EditSearch => TextKey::GameOverlayHintEditSearch,
@@ -125,6 +132,7 @@ impl Hint {
             Self::Exclusive | Self::TypedExclusive => available.exclusive,
             Self::Toggle | Self::TypedToggle => available.toggle,
             Self::Hotkeys => available.hotkeys,
+            Self::Info => available.info,
             Self::Search | Self::DoneTyping | Self::EditSearch | Self::ClearSearch => true,
         }
     }
@@ -270,6 +278,7 @@ mod tests {
             ("Space", "Enable this mod, disable others"),
             ("X", "Toggle Enable/Disable"),
             ("R", "Mod hotkeys"),
+            ("I", "Mod info"),
         ];
         let expected = |extra: &[(&'static str, &'static str)]| {
             normal
@@ -305,6 +314,7 @@ mod tests {
             toggle: true,
             space: Space::Exclusive,
             hotkeys: true,
+            info: true,
         };
         for (typed, key) in [
             (Hint::TypedExclusive, Hint::Exclusive),
@@ -325,6 +335,8 @@ mod tests {
         assert!(Hint::Navigate.enabled(ShortcutAvailability { mods: true, ..none }));
         assert!(!Hint::Hotkeys.enabled(none));
         assert!(Hint::Hotkeys.enabled(all));
+        assert!(!Hint::Info.enabled(none));
+        assert!(Hint::Info.enabled(all));
     }
 
     #[test]
@@ -346,6 +358,7 @@ mod tests {
             label(Space::PressHotkey),
             ("Press this key", "Press this key")
         );
+        assert_eq!(label(Space::NextSource), ("Next source", "Next source"));
     }
 
     #[test]

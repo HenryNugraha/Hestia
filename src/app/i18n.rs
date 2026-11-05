@@ -1012,10 +1012,14 @@ pub(crate) enum TextKey {
     ThaliaBundleClash,
     ThaliaBundleTargetChanged,
     FileInOtherMod,
+    GameOverlayShowInfo,
+    GameOverlayHideInfo,
+    GameOverlayHintInfo,
+    GameOverlayHintNextSource,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::FileInOtherMod as usize + 1;
+    const COUNT: usize = Self::GameOverlayHintNextSource as usize + 1;
 }
 
 include!("i18n/en_us.rs");

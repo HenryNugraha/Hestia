@@ -1018,4 +1018,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "{title} не обновлён: два его файла записали бы {path}. Ничего не изменено.", // ThaliaBundleClash
     "{title} изменился, пока готовилось обновление, поэтому он не обновлён.", // ThaliaBundleTargetChanged
     "В {title}", // FileInOtherMod
+    "Показать описание", // GameOverlayShowInfo
+    "Скрыть описание", // GameOverlayHideInfo
+    "Описание мода", // GameOverlayHintInfo
+    "Следующий источник", // GameOverlayHintNextSource
 ];

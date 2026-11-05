@@ -1019,4 +1019,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "{title} 未更新：它的两个文件会写入 {path}。没有任何更改。", // ThaliaBundleClash
     "{title} 在更新准备期间发生了变化，因此未更新。", // ThaliaBundleTargetChanged
     "已在 {title} 中", // FileInOtherMod
+    "显示信息", // GameOverlayShowInfo
+    "隐藏信息", // GameOverlayHideInfo
+    "模组信息", // GameOverlayHintInfo
+    "下一个来源", // GameOverlayHintNextSource
 ];

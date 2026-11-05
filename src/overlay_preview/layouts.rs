@@ -10,7 +10,7 @@ use egui::{
 
 mod card_keys;
 
-use card_keys::{CardKeys, Face};
+use card_keys::{CardKeys, Face, Side};
 
 use super::data::{Catalog, Category, Costume};
 use super::gamebanana::{self, GameBanana, InstallNews, ListKey, StatusCard};
@@ -18,8 +18,8 @@ use super::text;
 use super::thumbnails::ThumbnailCache;
 use crate::app::TextKey;
 use crate::overlay_protocol::{
-    BrowseMod, ChangeAction, FromOverlay, InstallStage, ModHotkeys, SameNameChoice, Selection,
-    ToOverlay, UNCATEGORIZED_ID, names_character,
+    BrowseMod, ChangeAction, FromOverlay, InstallStage, ModHotkeys, ModInfo, SameNameChoice,
+    Selection, ToOverlay, UNCATEGORIZED_ID, names_character,
 };
 
 const OVERLAY_OPACITY_MIN: u8 = 50;
@@ -131,8 +131,8 @@ enum PendingCommand {
     Mod(i32),
     Category(i32),
     Action(ModAction),
-    /// Turn the focused card over to its hotkeys, or back.
-    Flip,
+    /// Turn the focused card over to its hotkeys or info, or back.
+    Flip(Side),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +168,8 @@ pub(super) struct ShortcutAvailability {
     pub space: Space,
     /// The focused card has hotkeys to turn over to.
     pub hotkeys: bool,
+    /// The focused card has info to turn over to.
+    pub info: bool,
 }
 
 /// What Space does on the focused card.
@@ -182,6 +184,8 @@ pub(super) enum Space {
     TryAgain,
     /// The card shows its hotkeys, and Space presses the selected one.
     PressHotkey,
+    /// The card shows its info, and Space shows the next source.
+    NextSource,
 }
 
 /// What a search shows.  A category whose name matches shows all its mods,
@@ -538,7 +542,8 @@ impl Layouts {
         self.gamebanana.take_requests()
     }
 
-    /// The mods whose hotkeys to ask Hestia for since the last call.
+    /// The mods whose hotkeys and info to ask Hestia for since the last
+    /// call.
     pub(super) fn take_hotkey_requests(&mut self) -> Vec<FromOverlay> {
         self.keys.take_requests()
     }
@@ -546,6 +551,12 @@ impl Layouts {
     pub(super) fn receive_hotkeys(&mut self, answers: Vec<ModHotkeys>) {
         for answer in answers {
             self.keys.receive(answer);
+        }
+    }
+
+    pub(super) fn receive_info(&mut self, answers: Vec<ModInfo>) {
+        for answer in answers {
+            self.keys.receive_info(answer);
         }
     }
 
@@ -1291,7 +1302,16 @@ impl Layouts {
     /// Turns the focused card over to its hotkeys, or back, after the
     /// commands queued before it.
     pub(super) fn flip_focused(&mut self, ctx: &egui::Context) {
-        self.pending_commands.push_back(PendingCommand::Flip);
+        self.pending_commands
+            .push_back(PendingCommand::Flip(Side::Keys));
+        ctx.request_repaint();
+    }
+
+    /// Turns the focused card over to its info, or back, after the commands
+    /// queued before it.
+    pub(super) fn flip_focused_info(&mut self, ctx: &egui::Context) {
+        self.pending_commands
+            .push_back(PendingCommand::Flip(Side::Info));
         ctx.request_repaint();
     }
 
@@ -1304,20 +1324,54 @@ impl Layouts {
                 .is_some_and(|mod_id| self.keys.showing(&mod_id))
     }
 
-    /// Moves through the focused card's hotkeys.  False when they don't
-    /// show or there's no row that way, so the key switches rows.
+    /// The focused card shows its info, or turns to it, and W and S scroll
+    /// it and Space shows the next source.
+    pub(super) fn info_shown(&self) -> bool {
+        self.row == Row::Mods && self.info_open()
+    }
+
+    /// The focused card shows its info, or turns to it, whichever row is
+    /// picked, so PgUp, PgDn, Home and End scroll it.
+    pub(super) fn info_open(&self) -> bool {
+        self.focused_mod_id()
+            .is_some_and(|mod_id| self.keys.showing_info(&mod_id))
+    }
+
+    /// Moves through the focused card's hotkeys, or scrolls its info.  False
+    /// when neither shows or there's nothing more that way, so the key
+    /// switches rows.
     pub(super) fn select_hotkey(&mut self, ctx: &egui::Context, direction: i32) -> bool {
-        if !self.hotkeys_shown() {
+        if !self.hotkeys_shown() && !self.info_shown() {
             return false;
         }
         ctx.request_repaint();
         self.keys.select(direction)
     }
 
-    /// Asks Hestia to press the focused card's selected hotkey in the game.
+    /// Asks Hestia to press the focused card's selected hotkey in the game,
+    /// or shows the next source of its info.
     pub(super) fn press_hotkey(&mut self, ctx: &egui::Context, now: f64) {
         if self.hotkeys_shown() {
             self.keys.press_selected(now);
+            ctx.request_repaint();
+        } else if self.info_shown() {
+            self.keys.next_info_source();
+            ctx.request_repaint();
+        }
+    }
+
+    /// PgUp and PgDn: a page of the focused card's info up or down.
+    pub(super) fn page_info(&mut self, ctx: &egui::Context, direction: i32) {
+        if self.info_open() {
+            self.keys.page_info(direction);
+            ctx.request_repaint();
+        }
+    }
+
+    /// Home and End: to the top or bottom of the focused card's info.
+    pub(super) fn jump_info(&mut self, ctx: &egui::Context, direction: i32) {
+        if self.info_open() {
+            self.keys.jump_info(direction);
             ctx.request_repaint();
         }
     }
@@ -1608,6 +1662,7 @@ impl Layouts {
                 toggle: false,
                 space: space.unwrap_or_default(),
                 hotkeys: false,
+                info: false,
             };
         };
         // Exclusive also disables mods the search hides, so count them all.
@@ -1619,19 +1674,27 @@ impl Layouts {
             .count();
         let loose = is_loose(category);
         let pressing = self.hotkeys_shown();
+        let reading = self.info_shown();
         ShortcutAvailability {
             categories,
             mods,
-            exclusive: pressing || !(focused.active && (loose || active_count == 1)),
+            exclusive: if reading {
+                self.keys.info_sources(&focused.id) > 1
+            } else {
+                pressing || !(focused.active && (loose || active_count == 1))
+            },
             toggle: true,
             space: if pressing {
                 Space::PressHotkey
+            } else if reading {
+                Space::NextSource
             } else if loose {
                 Space::Enable
             } else {
                 Space::Exclusive
             },
             hotkeys: self.keys.has(&focused.id),
+            info: self.keys.has_info(&focused.id),
         }
     }
 
@@ -1992,9 +2055,9 @@ impl Layouts {
                     }
                     self.apply_focused_costume_action(action, now);
                 }
-                PendingCommand::Flip => {
+                PendingCommand::Flip(side) => {
                     if let Some(mod_id) = self.focused_mod_id() {
-                        self.keys.toggle(&mod_id, now);
+                        self.keys.toggle(&mod_id, side, now);
                     }
                 }
             }
@@ -2625,7 +2688,8 @@ impl Layouts {
         } else {
             content_gray(82, overlay_opacity)
         };
-        // The focused card of a library mod can turn over to its hotkeys.
+        // The focused card of a library mod can turn over to its hotkeys or
+        // info.
         let own_focused = match self.card(category_index, costume_index) {
             Some(Card::Own(costume)) if focused => Some(costume.id.clone()),
             _ => None,
@@ -2640,10 +2704,12 @@ impl Layouts {
         }
         let settled = interactable && face.settled();
         if let Some(mod_id) = own_focused.as_deref().filter(|_| face.back) {
-            let button = settled.then(|| {
-                self.keys
-                    .keys_button(ui, full_rect, card_id.with("keys"), true, overlay_opacity)
-            });
+            let buttons = settled
+                .then(|| {
+                    self.keys
+                        .buttons(ui, full_rect, card_id, mod_id, true, overlay_opacity)
+                })
+                .flatten();
             let clicked = self.keys.paint_back(
                 ui,
                 card_id.with("key-rows"),
@@ -2655,26 +2721,23 @@ impl Layouts {
                 reveal,
                 overlay_opacity,
                 self.row == Row::Mods,
-                button,
+                buttons,
             );
-            if clicked || (settled && response.clicked()) {
-                self.keys.toggle(mod_id, now);
+            let side =
+                clicked.or_else(|| (settled && response.clicked()).then(|| self.keys.side()));
+            if let Some(side) = side {
+                self.keys.toggle(mod_id, side, now);
                 ui.ctx().request_repaint();
             }
             return;
         }
-        let has_keys = own_focused
+        let buttons = own_focused
             .as_deref()
-            .is_some_and(|mod_id| self.keys.has(mod_id));
-        let keys_button = (settled && has_keys).then(|| {
-            self.keys.keys_button(
-                ui,
-                visual_rect,
-                card_id.with("keys"),
-                false,
-                overlay_opacity,
-            )
-        });
+            .filter(|_| settled)
+            .and_then(|mod_id| {
+                self.keys
+                    .buttons(ui, visual_rect, card_id, mod_id, false, overlay_opacity)
+            });
         let image_rect = visual_rect.shrink(1.0);
         let texture = self.texture_for(ui, image.as_deref());
         if !face.settled() {
@@ -2825,10 +2888,10 @@ impl Layouts {
             paint_gamebanana_badge(ui, visual_rect, focused, installed, reveal, overlay_opacity);
         }
         if new {
-            // The keys button's label covers the tag while it's out.
-            let (room, shown) = keys_button.as_ref().map_or((0.0, 1.0), |button| {
-                (card_keys::BUTTON_ROOM, 1.0 - button.open)
-            });
+            // A button's label covers the tag while it's out.
+            let (room, shown) = buttons
+                .as_ref()
+                .map_or((0.0, 1.0), |buttons| (buttons.room(), 1.0 - buttons.open()));
             paint_new_tag(ui, visual_rect, room, reveal * shown, overlay_opacity);
         }
         if let Some((galley, color, bar)) = status {
@@ -2847,11 +2910,11 @@ impl Layouts {
                 let _ = delayed_tooltip(response, clean_display_name(&name));
             }
         }
-        if let Some(button) = keys_button
-            && self.keys.button(ui, button, overlay_opacity)
+        if let Some(buttons) = buttons
+            && let Some(side) = self.keys.paint_buttons(ui, buttons, overlay_opacity)
             && let Some(mod_id) = own_focused
         {
-            self.keys.toggle(&mod_id, now);
+            self.keys.toggle(&mod_id, side, now);
             ui.ctx().request_repaint();
         }
     }
@@ -5010,6 +5073,7 @@ mod tests {
                 toggle: true,
                 space: Space::Exclusive,
                 hotkeys: false,
+                info: false,
             }
         );
 
@@ -5023,6 +5087,7 @@ mod tests {
                 toggle: true,
                 space: Space::Exclusive,
                 hotkeys: false,
+                info: false,
             }
         );
     }
@@ -5370,6 +5435,7 @@ mod tests {
                 toggle: true,
                 space: Space::Exclusive,
                 hotkeys: false,
+                info: false,
             }
         );
 
@@ -5383,6 +5449,7 @@ mod tests {
                 toggle: true,
                 space: Space::Exclusive,
                 hotkeys: false,
+                info: false,
             }
         );
 
@@ -5400,6 +5467,7 @@ mod tests {
                 toggle: false,
                 space: Space::Exclusive,
                 hotkeys: false,
+                info: false,
             }
         );
     }

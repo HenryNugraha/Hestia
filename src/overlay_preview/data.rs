@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     model::{DISABLED_CONTAINER, MOD_META_DIR},
-    overlay_protocol::{ModHotkey, ModHotkeys, Settings, Start},
+    overlay_protocol::{InfoKind, InfoSource, ModHotkey, ModHotkeys, ModInfo, Settings, Start},
 };
 
 /// The preview's sample library, in target/overlay-preview.
@@ -104,6 +104,46 @@ pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
                 unavailable: false,
             })
             .collect(),
+    }
+}
+
+/// What the preview shows on every card's info side.
+pub(super) fn sample_info(mod_id: &str) -> ModInfo {
+    let source = |kind, path: &str, label: &str, text: &str| InfoSource {
+        kind,
+        path: path.to_owned(),
+        label: label.to_owned(),
+        text: text.to_owned(),
+    };
+    ModInfo {
+        mod_id: mod_id.to_owned(),
+        sources: vec![
+            source(
+                InfoKind::Description,
+                "",
+                "",
+                "Summer swimsuit\n\nReplaces the default outfit with a two-piece swimsuit and \
+                 a sun hat. Works with or without the jacket.\n\n\u{2022} H: hat\n\u{2022} J: \
+                 jacket\n\u{2022} K: skirt length\n\nThanks to everyone who tested the early \
+                 versions, and to the folks who sent in the glasses fix. Report problems on the \
+                 page, not in private messages, so others can find the answers.\n\nChangelog\n\n\
+                 1.2: fixed the hat clipping through long hair.\n1.1: added the jacket toggle.\n\
+                 1.0: first release.",
+            ),
+            source(
+                InfoKind::Note,
+                "hestia_note.md",
+                "",
+                "Use with the beach map. Turn the hat off for cutscenes.",
+            ),
+            source(
+                InfoKind::File,
+                "README.txt",
+                "README.txt",
+                "Install: drop the folder into Mods and press F10.",
+            ),
+        ],
+        shown: 0,
     }
 }
 

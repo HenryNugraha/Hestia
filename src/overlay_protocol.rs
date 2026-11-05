@@ -59,6 +59,9 @@ pub(crate) enum ToOverlay {
     Install(InstallUpdate),
     /// A mod's hotkeys the overlay asked for with `FromOverlay::Hotkeys`.
     Hotkeys(ModHotkeys),
+    /// A mod's description and text files the overlay asked for with
+    /// `FromOverlay::Info`.
+    Info(ModInfo),
     /// Hestia has pressed, or couldn't press, a hotkey the overlay asked for
     /// with `FromOverlay::PressHotkey`.
     HotkeyPressed {
@@ -230,6 +233,11 @@ pub(crate) enum FromOverlay {
         /// Its `ModHotkey::raw`, in case the list has changed since.
         key: String,
     },
+    /// A library mod's description and text files.  Hestia answers with
+    /// `ToOverlay::Info`.
+    Info {
+        mod_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +310,42 @@ pub(crate) struct ModHotkey {
     /// mod's settings has the wrong value for it.  Greyed out, not pressed.
     #[serde(default)]
     pub unavailable: bool,
+}
+
+/// What the source list of the mod details window has, besides the hotkeys,
+/// as plain text.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ModInfo {
+    pub mod_id: String,
+    /// The description first, then the personal note if there is one, then
+    /// the mod's own text files.
+    pub sources: Vec<InfoSource>,
+    /// The one the details window shows, so the overlay starts on it.
+    #[serde(default)]
+    pub shown: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct InfoSource {
+    pub kind: InfoKind,
+    /// The file's path in the mod's folder, which tells the sources apart.
+    /// Empty for the description.
+    #[serde(default)]
+    pub path: String,
+    /// What the list calls a text file.  The overlay names the others.
+    #[serde(default)]
+    pub label: String,
+    /// Empty for a mod without a description.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum InfoKind {
+    #[default]
+    Description,
+    Note,
+    File,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,6 +597,24 @@ mod tests {
                     unavailable: true,
                 }],
             }),
+            ToOverlay::Info(ModInfo {
+                mod_id: "mod-1".into(),
+                sources: vec![
+                    InfoSource {
+                        kind: InfoKind::Description,
+                        path: String::new(),
+                        label: String::new(),
+                        text: "A swimsuit.\n\nPress H for the hat.".into(),
+                    },
+                    InfoSource {
+                        kind: InfoKind::File,
+                        path: "readme.txt".into(),
+                        label: "readme.txt".into(),
+                        text: "Thanks".into(),
+                    },
+                ],
+                shown: 1,
+            }),
             ToOverlay::HotkeyPressed { id: 4, error: None },
             ToOverlay::HotkeyPressed {
                 id: 5,
@@ -626,6 +688,9 @@ mod tests {
                 mod_id: "mod-1".into(),
                 index: 0,
                 key: "ctrl VK_H".into(),
+            },
+            FromOverlay::Info {
+                mod_id: "mod-1".into(),
             },
         ] {
             let line = encode(&message).unwrap();

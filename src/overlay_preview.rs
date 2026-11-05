@@ -541,6 +541,7 @@ impl eframe::App for OverlayPreview {
                     .replace_catalog(data::catalog_from_library(library));
             }
             self.samples.receive_hotkeys(news.hotkeys);
+            self.samples.receive_info(news.info);
             for (id, error) in news.pressed {
                 if let Some(error) = self.samples.hotkey_pressed(id, error, now) {
                     live.strip.warn(now);
@@ -662,11 +663,14 @@ impl eframe::App for OverlayPreview {
                         }
                     } else if self.session.is_open() || self.pinned {
                         match command {
-                            // A card showing its hotkeys takes W, S and Space.
+                            // A card showing its hotkeys or info takes W, S
+                            // and Space.
                             keyboard::Command::Row(direction)
                                 if self.samples.select_hotkey(&ctx, direction) => {}
                             keyboard::Command::Row(direction) => self.samples.switch_row(direction),
-                            keyboard::Command::Exclusive if self.samples.hotkeys_shown() => {
+                            keyboard::Command::Exclusive
+                                if self.samples.hotkeys_shown() || self.samples.info_shown() =>
+                            {
                                 self.samples.press_hotkey(&ctx, now)
                             }
                             keyboard::Command::Move(direction) => {
@@ -789,6 +793,9 @@ impl eframe::App for OverlayPreview {
                     .samples
                     .apply_focused_action(&ctx, layouts::ModAction::Toggle),
                 keyboard::Command::Flip => self.samples.flip_focused(&ctx),
+                keyboard::Command::Info => self.samples.flip_focused_info(&ctx),
+                keyboard::Command::Page(direction) => self.samples.page_info(&ctx, direction),
+                keyboard::Command::Jump(direction) => self.samples.jump_info(&ctx, direction),
                 // Settled when the key arrived.
                 keyboard::Command::Row(_) | keyboard::Command::Move(_) => {}
             }
@@ -940,11 +947,16 @@ impl eframe::App for OverlayPreview {
         }
         // Letters and Space type only while the search is being typed.
         let typing = self.search.typing();
+        // PgUp, PgDn, Home and End reach the game unless a card shows its
+        // info.
+        let reading = self.samples.info_open();
         if let Some(keyboard) = &self.keyboard {
             keyboard.set_typing(typing);
+            keyboard.set_reading(reading);
         }
         if let Some(keys) = &mut self.egui_keys {
             keys.set_typing(typing);
+            keys.set_reading(reading);
         }
         if self.capture.is_some() {
             // Allow the native surface and its initial layout to settle before readback.
@@ -977,6 +989,14 @@ impl eframe::App for OverlayPreview {
                 })
                 .collect();
             self.samples.receive_hotkeys(answers);
+            let answers = hotkey_requests
+                .iter()
+                .filter_map(|request| match request {
+                    FromOverlay::Info { mod_id } => Some(data::sample_info(mod_id)),
+                    _ => None,
+                })
+                .collect();
+            self.samples.receive_info(answers);
             // The preview has no game, so every press goes through.
             for request in &hotkey_requests {
                 if let FromOverlay::PressHotkey { id, .. } = request {
