@@ -2,7 +2,8 @@
 //! hotkeys once its card is focused, and the card gets a keys button when it
 //! has any.  The button, a click on the back, or R turns the card over.  A
 //! click on a key, or Space on the one W and S picked, has Hestia press it in
-//! the game.
+//! the game.  A key that does nothing in the game right now is greyed out and
+//! can't be pressed.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -333,7 +334,12 @@ impl CardKeys {
     }
 
     fn press(&mut self, mod_id: String, index: usize, now: f64) {
-        let Some(row) = self.hotkeys.get(&mod_id).and_then(|rows| rows.get(index)) else {
+        let Some(row) = self
+            .hotkeys
+            .get(&mod_id)
+            .and_then(|rows| rows.get(index))
+            .filter(|row| !row.unavailable)
+        else {
             return;
         };
         let key = row.raw.clone();
@@ -623,7 +629,7 @@ impl CardKeys {
             );
             // Above the card, so a click on a key presses it, not turns the
             // card back.
-            let hovered = settled && {
+            let hovered = settled && !row.unavailable && {
                 let response = ui
                     .interact(row_rect, id.with(index), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -656,7 +662,20 @@ impl CardKeys {
                 .filter(|progress| (0.0..1.0).contains(progress))
                 .map_or(0.0, |progress| 1.0 - progress as f32);
             lit_moving |= lit > 0.0;
-            let key = elided_galley(ui, &row.key, key_font.clone(), key_color, column - 10.0);
+            let grey = |color: Color32| {
+                if row.unavailable {
+                    scale_color_alpha(color, 0.4)
+                } else {
+                    color
+                }
+            };
+            let key = elided_galley(
+                ui,
+                &row.key,
+                key_font.clone(),
+                grey(key_color),
+                column - 10.0,
+            );
             let keycap = Rect::from_min_size(
                 egui::pos2(list.min.x, y - KEYCAP_HEIGHT * 0.5),
                 Vec2::new(key.size().x + 10.0, KEYCAP_HEIGHT),
@@ -664,7 +683,7 @@ impl CardKeys {
             painter.rect_filled(
                 keycap,
                 CornerRadius::same(3),
-                fade(rgba_alpha(58, 58, 58, 255, overlay_opacity)),
+                grey(fade(rgba_alpha(58, 58, 58, 255, overlay_opacity))),
             );
             if lit > 0.0 {
                 painter.rect_filled(
@@ -681,11 +700,11 @@ impl CardKeys {
                 CornerRadius::same(3),
                 Stroke::new(
                     1.0,
-                    fade(if waiting || lit > 0.0 {
+                    grey(fade(if waiting || lit > 0.0 {
                         content_color(ACCENT, overlay_opacity)
                     } else {
                         content_gray(96, overlay_opacity)
-                    }),
+                    })),
                 ),
                 StrokeKind::Inside,
             );
@@ -698,7 +717,7 @@ impl CardKeys {
                 ui,
                 &row.label,
                 label_font.clone(),
-                fade(content_gray(214, overlay_opacity)),
+                grey(fade(content_gray(214, overlay_opacity))),
                 room - column - 8.0,
             );
             painter.galley(
@@ -780,6 +799,7 @@ mod tests {
                     key: format!("F{index}"),
                     label: format!("Key {index}"),
                     raw: format!("VK_F{index}"),
+                    unavailable: false,
                 })
                 .collect(),
         }
@@ -942,6 +962,22 @@ mod tests {
         keys.press_selected(3.0);
         keys.press_selected(3.0 + ANSWER_SECS);
         assert_eq!(keys.presses.len(), 1);
+    }
+
+    #[test]
+    fn a_greyed_out_key_is_not_pressed() {
+        let mut keys = CardKeys::default();
+        let mut hotkeys = answer("some", 2);
+        hotkeys.hotkeys[1].unavailable = true;
+        keys.receive(hotkeys);
+        keys.toggle("some", 0.0);
+        keys.select(1);
+        keys.press_selected(1.0);
+        assert!(keys.take_requests().is_empty());
+        assert!(keys.presses.is_empty());
+        keys.select(-1);
+        keys.press_selected(1.0);
+        assert_eq!(keys.take_requests().len(), 1);
     }
 
     #[test]

@@ -101,6 +101,7 @@ pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
                 key: key.to_owned(),
                 label: label.to_owned(),
                 raw: key.to_owned(),
+                unavailable: false,
             })
             .collect(),
     }

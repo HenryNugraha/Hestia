@@ -13520,7 +13520,9 @@ fn format_config_key(raw: &str) -> String {
 }
 
 fn format_config_key_token(t: &str) -> String {
-    let named = match t {
+    // `VK_OEM_2` and `OEM_2` are the same key, so the `oem_` names match either way.
+    let oem = t.strip_prefix("vk_").filter(|rest| rest.starts_with("oem_")).unwrap_or(t);
+    let named = match oem {
         "vk_down" => "Down",
         "vk_up" => "Up",
         "vk_left" => "Left",
@@ -13627,6 +13629,11 @@ struct HotkeyListRow {
     label: String,
     var_name: Option<String>,
     values: Vec<String>,
+    /// The variable's starting value from `[Constants]`, used until the game saves one.
+    default_value: Option<String>,
+    /// The `$var == value` checks in the section's `condition` (only when they are all
+    /// joined by `&&`). Decides when the key does anything in game.
+    conditions: Vec<(String, String)>,
 }
 
 enum HotkeyListAction {
@@ -13707,6 +13714,7 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
         for section in &ini.sections {
             let mut key = "";
             let mut typ = "";
+            let mut condition = "";
             let mut has_run = false;
             let mut first_var: Option<(&str, &str)> = None;
             for line in &section.lines {
@@ -13718,6 +13726,8 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                     key = v;
                 } else if k.eq_ignore_ascii_case("type") {
                     typ = v;
+                } else if k.eq_ignore_ascii_case("condition") {
+                    condition = v;
                 } else if k.eq_ignore_ascii_case("run") {
                     has_run = true;
                 } else if let Some(name) = k.strip_prefix('$') {
@@ -13736,11 +13746,18 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
             // drop the leading `$` so the label reads "Hair Color", not "$Hair Color".
             let stripped = stripped.strip_prefix('$').unwrap_or(stripped);
 
-            if let Some((var_name, values)) = first_var {
-                // Cycle toggle: needs a `$var` to flip. Skip mouse buttons, hold
-                // bindings, and command (`run =`) plumbing.
-                if has_run
-                    || typ.eq_ignore_ascii_case("hold")
+            let conditions = hotkey_condition_checks(condition);
+            // A `run =` beside a value list is usually the mod redrawing after the change
+            // (`run = CommandListProcessToggles`), so the section is still a toggle. A
+            // `run =` beside one fixed value is a command fed by that value (`$direction
+            // = 1` then `run = CommandListCycleVariant`), listed as an action below.
+            let cycle = first_var.filter(|(_, values)| {
+                !has_run || values.split(',').filter(|part| !part.trim().is_empty()).count() > 1
+            });
+            if let Some((var_name, values)) = cycle {
+                // Cycle toggle: needs a `$var` to flip. Skip mouse buttons and hold
+                // bindings.
+                if typ.eq_ignore_ascii_case("hold")
                     || !config_key_has_specific_key(key)
                     || key.to_ascii_lowercase().contains("button")
                 {
@@ -13779,19 +13796,28 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                         .filter(|part| !part.is_empty())
                         .map(str::to_string)
                         .collect(),
+                    default_value: ini
+                        .constants
+                        .iter()
+                        .find(|constant| constant.name.eq_ignore_ascii_case(var_name))
+                        .and_then(|constant| constant.value.clone()),
+                    conditions,
                 });
             } else if has_run {
                 // Command binding with no cycle var (e.g. "reset menu position"). Keep
-                // only the useful keyboard ones: drop menu plumbing by name and anything
-                // using a VK_ key (mouse buttons, arrows, …). Shown last, no cycle values.
+                // only the useful keyboard ones: drop menu plumbing by name and mouse
+                // buttons or arrows (menu dragging and navigation). Shown last, no cycle
+                // values.
                 let inner_lc = inner.to_ascii_lowercase();
                 let name_excluded = inner_lc.starts_with("keyclick")
                     || inner_lc.starts_with("keyclose")
                     || inner_lc.starts_with("commandlist");
-                let uses_vk = key
-                    .split_whitespace()
-                    .any(|token| token.to_ascii_lowercase().starts_with("vk_"));
-                if name_excluded || uses_vk || !config_key_has_specific_key(key) {
+                let uses_mouse_or_arrow = key.split_whitespace().any(|token| {
+                    let token = token.to_ascii_lowercase();
+                    token.contains("button")
+                        || matches!(token.as_str(), "vk_left" | "vk_right" | "vk_up" | "vk_down")
+                });
+                if name_excluded || uses_mouse_or_arrow || !config_key_has_specific_key(key) {
                     continue;
                 }
                 rows.push(HotkeyListRow {
@@ -13803,6 +13829,8 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                     label: humanize_section_label(stripped),
                     var_name: None,
                     values: Vec::new(),
+                    default_value: None,
+                    conditions,
                 });
             }
         }
@@ -13876,6 +13904,73 @@ fn hotkey_current_value<'a>(
         .filter(|(key, _)| key.to_lowercase().ends_with(&suffix.to_lowercase()));
     let first = matches.next()?;
     matches.next().is_none().then_some(first.1.as_str())
+}
+
+/// The `$var == value` checks in a key section's condition, e.g.
+/// `$object_detected == 1 && $body == 0` gives `object_detected = 1` and `body = 0`.
+/// Anything with `||` is left alone (empty), since a single unmet check wouldn't prove
+/// the key is off. Variables of other namespaces (`$\ns\var`) are skipped.
+fn hotkey_condition_checks(condition: &str) -> Vec<(String, String)> {
+    if condition.contains("||") {
+        return Vec::new();
+    }
+    condition
+        .split("&&")
+        .filter_map(|part| {
+            let part = part.trim().trim_matches(['(', ')']).trim();
+            let (var, value) = part.split_once("==")?;
+            let var = var.trim().strip_prefix('$')?;
+            let value = value.trim();
+            let plain = |text: &str| {
+                !text.is_empty()
+                    && text
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+            };
+            (plain(var) && plain(value)).then(|| (var.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// Same value as 3DMigoto compares them: as numbers when both are, else as text.
+fn hotkey_values_match(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    match (a.parse::<f64>(), b.parse::<f64>()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.eq_ignore_ascii_case(b),
+    }
+}
+
+/// The key does nothing in game right now: its condition checks another listed toggle
+/// of the same ini, and that toggle has a different value. Such rows are greyed out
+/// and never pressed, since mods often share one key between them. False when the
+/// value isn't known.
+fn hotkey_row_unavailable(
+    row: &HotkeyListRow,
+    rows: &[HotkeyListRow],
+    current_values: &HashMap<String, String>,
+) -> bool {
+    row.conditions.iter().any(|(var, needed)| {
+        if row
+            .var_name
+            .as_deref()
+            .is_some_and(|own| own.eq_ignore_ascii_case(var))
+        {
+            return false;
+        }
+        let Some(other) = rows.iter().find(|other| {
+            other.ini_rel_path == row.ini_rel_path
+                && other
+                    .var_name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(var))
+        }) else {
+            return false;
+        };
+        hotkey_current_value(other, current_values)
+            .or(other.default_value.as_deref())
+            .is_some_and(|current| !hotkey_values_match(current, needed))
+    })
 }
 
 fn next_hotkey_value(row: &HotkeyListRow, current: Option<&str>) -> Option<String> {
@@ -13975,8 +14070,9 @@ fn paint_hotkey_element_hover(ui: &Ui, response: &egui::Response, corner_radius:
 }
 
 /// Simplified keybind view: one line per real cycle toggle (`key -> label ->
-/// values`). Menu/mouse plumbing (`run =` / mouse buttons) and hold bindings are
-/// hidden, and the mod's "show UI" toggle (if any) is floated to the top.
+/// values`). Menu/mouse plumbing and hold bindings are hidden, and the mod's "show UI"
+/// toggle (if any) is floated to the top. Rows that do nothing while another toggle
+/// has its current value are greyed out and can't be clicked.
 /// `translations` swaps each label for its translated form when one is available.
 fn render_mod_config_simple(
     ui: &mut Ui,
@@ -13998,13 +14094,17 @@ fn render_mod_config_simple(
 
     let mut action = None;
     ui.add_space(2.0);
-    for row in rows {
+    for row in &rows {
         let label = translations
             .get(&row.label)
             .map(String::as_str)
             .unwrap_or(&row.label);
-        let current = hotkey_current_value(&row, current_values).map(str::to_string);
+        let current = hotkey_current_value(row, current_values).map(str::to_string);
+        let unavailable = hotkey_row_unavailable(row, &rows, current_values);
         ui.horizontal_wrapped(|ui| {
+            if unavailable {
+                ui.disable();
+            }
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(
                 RichText::new("•")
@@ -14014,7 +14114,7 @@ fn render_mod_config_simple(
             let key_response = keycap_badge(ui, &row.key);
             if key_response.clicked() && action.is_none() {
                 if let Some(var_name) = row.var_name.clone()
-                    && let Some(value) = next_hotkey_value(&row, current.as_deref())
+                    && let Some(value) = next_hotkey_value(row, current.as_deref())
                 {
                     action = Some(HotkeyListAction::SetValue {
                         ini_rel_path: row.ini_rel_path.clone(),
@@ -14033,7 +14133,7 @@ fn render_mod_config_simple(
             let label_response = clickable_hotkey_label(ui, label, Color32::from_gray(214));
             if label_response.clicked() && action.is_none() {
                 if let Some(var_name) = row.var_name.clone()
-                    && let Some(value) = next_hotkey_value(&row, current.as_deref())
+                    && let Some(value) = next_hotkey_value(row, current.as_deref())
                 {
                     action = Some(HotkeyListAction::SetValue {
                         ini_rel_path: row.ini_rel_path.clone(),

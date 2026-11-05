@@ -298,6 +298,10 @@ pub(crate) struct ModHotkey {
     /// The key as the mod's file has it, such as "ctrl VK_H".
     #[serde(default)]
     pub raw: String,
+    /// The key does nothing in the game right now, because another of the
+    /// mod's settings has the wrong value for it.  Greyed out, not pressed.
+    #[serde(default)]
+    pub unavailable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -546,6 +550,7 @@ mod tests {
                     key: "Ctrl+H".into(),
                     label: "Hat".into(),
                     raw: "ctrl VK_H".into(),
+                    unavailable: true,
                 }],
             }),
             ToOverlay::HotkeyPressed { id: 4, error: None },

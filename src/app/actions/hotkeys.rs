@@ -177,7 +177,9 @@ impl HestiaApp {
                     values,
                 } => {
                     if self.mod_hotkey_values_loading.remove(&mod_id) {
-                        self.mod_hotkey_values_cache.insert(mod_id, (ini_hash, values));
+                        self.mod_hotkey_values_cache
+                            .insert(mod_id.clone(), (ini_hash, values));
+                        self.resend_game_overlay_hotkeys(&mod_id);
                     }
                 }
                 HotkeyCustomizationEvent::ValueFinished {
@@ -201,7 +203,8 @@ impl HestiaApp {
                     self.hotkey_clear_inflight.remove(&mod_id);
                     self.mod_hotkey_values_loading.remove(&mod_id);
                     self.mod_hotkey_values_cache
-                        .insert(mod_id, (None, HashMap::new()));
+                        .insert(mod_id.clone(), (None, HashMap::new()));
+                    self.resend_game_overlay_hotkeys(&mod_id);
                     self.push_log(format!(
                         "XXMI mod customization ({game_id} / {folder_name}): {status}; {message}"
                     ));
@@ -572,6 +575,7 @@ impl HestiaApp {
             .or_else(|| Self::action_hotkey_rel_var_key(ini_rel_path, var_name))
             .unwrap_or_else(|| var_name.to_string());
         values.insert(replacement_key, value.trim().to_string());
+        self.resend_game_overlay_hotkeys(&entry.id);
     }
 
     fn set_hotkey_value(

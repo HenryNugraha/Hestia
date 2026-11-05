@@ -29,6 +29,9 @@ struct ModConfigConstant {
     global: bool,
     /// Declared `persist` — 3DMigoto saves it to `d3dx_user.ini` without a mirror.
     persist: bool,
+    /// The starting value as written (`= 0`), if any. Stands in for the current value
+    /// until the game has saved one.
+    value: Option<String>,
 }
 
 /// The config-relevant sections found in a single `.ini` file.
@@ -149,7 +152,13 @@ fn parse_ini_namespace_and_constants(text: &str) -> (Option<String>, Vec<ModConf
 /// `[global] [persist] $name [= value]`; the keyword order is not fixed. Lines without a
 /// `$name` token (blank assignments, `run =` plumbing, etc.) yield `None`.
 fn parse_constant_declaration(line: &str) -> Option<ModConfigConstant> {
-    let head = line.split_once('=').map_or(line, |(head, _)| head);
+    let (head, value) = line
+        .split_once('=')
+        .map_or((line, None), |(head, value)| (head, Some(value)));
+    let value = value
+        .map(|value| value.split(';').next().unwrap_or("").trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let mut global = false;
     let mut persist = false;
     let mut name: Option<String> = None;
@@ -168,6 +177,7 @@ fn parse_constant_declaration(line: &str) -> Option<ModConfigConstant> {
         name,
         global,
         persist,
+        value,
     })
 }
 
@@ -292,26 +302,31 @@ local $ignored = 4
                     name: "swapvar".into(),
                     global: true,
                     persist: true,
+                    value: Some("0".into()),
                 },
                 ModConfigConstant {
                     name: "other".into(),
                     global: true,
                     persist: true,
+                    value: Some("1".into()),
                 },
                 ModConfigConstant {
                     name: "volatile".into(),
                     global: true,
                     persist: false,
+                    value: Some("2".into()),
                 },
                 ModConfigConstant {
                     name: "plain".into(),
                     global: false,
                     persist: false,
+                    value: Some("3".into()),
                 },
                 ModConfigConstant {
                     name: "ignored".into(),
                     global: false,
                     persist: false,
+                    value: Some("4".into()),
                 },
             ]
         );
@@ -357,6 +372,121 @@ $swapvar = 0,1,2
         assert_eq!(inis[0].namespace.as_deref(), Some("foo\\bar"));
         assert_eq!(inis[0].constants.len(), 1);
         assert!(inis[0].constants[0].global && inis[0].constants[0].persist);
+    }
+
+    fn rows_from(ini: &str) -> Vec<HotkeyListRow> {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("mod.ini"), ini).unwrap();
+        hotkeys_list_rows(&parse_mod_config_inis(dir.path()))
+    }
+
+    #[test]
+    fn toggles_that_run_a_command_list_are_still_listed() {
+        // From DannTheMann's Tangtang mod: every toggle redraws through a command list.
+        let rows = rows_from(
+            "\
+[Constants]
+global persist $earing = 0
+global persist $body_set = 0
+[KeySwapEaring]
+condition = $object_detected == 1
+key = ctrl no_shift no_alt VK_LEFT
+type = cycle
+$earing = 0,1
+run = CommandListProcessToggles
+[KeySwapBodySet]
+condition = $object_detected == 1
+key = ctrl no_shift no_alt VK_OEM_2
+type = cycle
+$body_set = 0,1
+run = CommandListProcessToggles
+",
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| !row.is_action && row.values == ["0", "1"]));
+        assert!(rows.iter().any(|row| row.key == "Ctrl+Left"));
+        assert!(rows.iter().any(|row| row.key == "Ctrl+/"));
+    }
+
+    #[test]
+    fn a_command_fed_by_one_fixed_value_is_an_action() {
+        // From the same mod's Master.ini: `$direction` is the command's input, not a toggle.
+        let rows = rows_from(
+            "\
+[KeyNextVariant]
+condition = $\\TangtangUnified\\object_detected == 1
+key = no_ctrl no_shift no_alt VK_OEM_2
+type = press
+$direction = 1
+run = CommandListCycleVariant
+[KeyMenuNavigateDown]
+key = no_ctrl no_shift no_alt VK_DOWN
+run = CommandListNavigate
+",
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].is_action);
+        assert_eq!(rows[0].key, "/");
+        assert_eq!(rows[0].label, "Next Variant");
+        assert!(rows[0].conditions.is_empty());
+    }
+
+    #[test]
+    fn rows_sharing_a_key_wait_on_the_toggle_their_condition_checks() {
+        // From Gilberta: Alt+Up changes a different setting for each Body value.
+        let ini = "\
+[Constants]
+global persist $body = 0
+global persist $dressleotard = 0
+global persist $dressnude = 0
+[KeyToggleGilbertaBody]
+condition = $object_detected == 1
+key = no_shift no_alt ctrl VK_UP
+type = cycle
+$body = 0,1,2,3
+[KeyToggleGilbertaDressLeotard]
+condition = $object_detected == 1 && $body == 0
+key = no_ctrl no_shift alt VK_UP
+type = cycle
+$dressleotard = 0,1,2
+[KeyToggleGilbertaDressNude]
+condition = $object_detected == 1 && ($body == 1)
+key = no_ctrl no_shift alt VK_UP
+type = cycle
+$dressnude = 0,1,2
+";
+        let rows = rows_from(ini);
+        let row = |var: &str| {
+            rows.iter()
+                .find(|row| row.var_name.as_deref() == Some(var))
+                .unwrap()
+        };
+        let unavailable = |var: &str, values: &HashMap<String, String>| {
+            hotkey_row_unavailable(row(var), &rows, values)
+        };
+
+        // Nothing saved yet: Body starts at 0 from [Constants].
+        let unsaved = HashMap::new();
+        assert!(!unavailable("dressleotard", &unsaved));
+        assert!(unavailable("dressnude", &unsaved));
+        assert!(!unavailable("body", &unsaved));
+
+        let saved = HashMap::from([("mod.ini\\body".to_string(), "1".to_string())]);
+        assert!(unavailable("dressleotard", &saved));
+        assert!(!unavailable("dressnude", &saved));
+    }
+
+    #[test]
+    fn condition_checks_skip_what_they_cannot_judge() {
+        assert_eq!(
+            hotkey_condition_checks("$object_detected && ($Lock == 0)"),
+            vec![("Lock".to_string(), "0".to_string())]
+        );
+        assert!(hotkey_condition_checks("$a == 1 || $b == 2").is_empty());
+        assert!(hotkey_condition_checks("$\\ns\\a == 1").is_empty());
+        assert!(hotkey_condition_checks("$a == $b").is_empty());
+        assert!(hotkey_values_match("1.0", "1"));
+        assert!(!hotkey_values_match("1", "0"));
     }
 
     fn mirror_test_entry(root_path: std::path::PathBuf) -> ModEntry {

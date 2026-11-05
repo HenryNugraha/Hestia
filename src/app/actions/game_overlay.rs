@@ -52,6 +52,9 @@ struct GameOverlay {
     /// The overlay's number for the hotkey press about to go to the hotkey
     /// worker, which its answer repeats.
     pending_hotkey_press: Option<u64>,
+    /// The mods whose hotkeys the overlay asked for.  Their hotkeys go to it
+    /// again when their values change, which can grey some out.
+    hotkey_mods: HashSet<String>,
 }
 
 impl HestiaApp {
@@ -260,8 +263,10 @@ impl HestiaApp {
                 // Pressing a key that cycles a value starts from the value the
                 // mod has now.
                 self.ensure_hotkey_values_cached(&entry);
+                let values = self.cached_hotkey_values(&mod_id);
                 if let Some(process) = &self.game_overlay.process {
-                    process.send_hotkeys(mod_id, entry.root_path);
+                    self.game_overlay.hotkey_mods.insert(mod_id.clone());
+                    process.send_hotkeys(mod_id, entry.root_path, values);
                 }
             }
             for (id, mod_id, index, key) in presses {
@@ -369,6 +374,12 @@ impl HestiaApp {
             return Err(not_sent());
         }
         let current_values = self.cached_hotkey_values(mod_id);
+        if hotkey_row_unavailable(row, &rows, &current_values) {
+            // The overlay's list is out of date: it greys the key once it has
+            // the new one.
+            self.resend_game_overlay_hotkeys(mod_id);
+            return Err(not_sent());
+        }
         let current = hotkey_current_value(row, &current_values);
         self.game_overlay.pending_hotkey_press = Some(id);
         match (row.var_name.as_deref(), next_hotkey_value(row, current)) {
@@ -387,6 +398,24 @@ impl HestiaApp {
         match self.game_overlay.pending_hotkey_press.take() {
             Some(_) => Err(not_sent()),
             None => Ok(()),
+        }
+    }
+
+    /// Sends the overlay a mod's hotkeys again after their values changed, when
+    /// it asked for them.
+    fn resend_game_overlay_hotkeys(&self, mod_id: &str) {
+        let Some(process) = &self.game_overlay.process else {
+            return;
+        };
+        if !self.game_overlay.hotkey_mods.contains(mod_id) {
+            return;
+        }
+        if let Some(entry) = self.state.mods.iter().find(|entry| entry.id == mod_id) {
+            process.send_hotkeys(
+                mod_id.to_owned(),
+                entry.root_path.clone(),
+                self.cached_hotkey_values(mod_id),
+            );
         }
     }
 
@@ -626,6 +655,7 @@ impl HestiaApp {
             Ok(process) => {
                 tracing::info!(game = %running.id, "Started the in-game overlay");
                 self.game_overlay.process = Some(process);
+                self.game_overlay.hotkey_mods.clear();
                 self.game_overlay.sent = Some(library);
                 self.game_overlay.sent_settings = Some(start_settings);
                 self.game_overlay.next_library_check = Some(now + GAME_OVERLAY_LIBRARY_INTERVAL);

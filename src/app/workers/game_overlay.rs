@@ -473,8 +473,12 @@ struct OverlayProcess {
     outbox: Arc<OverlayOutbox>,
     events: std::sync::mpsc::Receiver<OverlayEvent>,
     /// Mods whose hotkeys the overlay asked for, with their folders.
-    hotkeys: std::sync::mpsc::Sender<(String, PathBuf)>,
+    hotkeys: std::sync::mpsc::Sender<OverlayHotkeysRequest>,
 }
+
+/// A mod, its folder, and the values its hotkeys have now, which decide the
+/// ones that do nothing in the game at the moment.
+type OverlayHotkeysRequest = (String, PathBuf, HashMap<String, String>);
 
 impl OverlayProcess {
     fn spawn(game: &RunningGame, start: OverlayStartDraft) -> std::io::Result<Self> {
@@ -512,7 +516,7 @@ impl OverlayProcess {
         child: &mut std::process::Child,
         outbox: &Arc<OverlayOutbox>,
         report: std::sync::mpsc::Sender<OverlayEvent>,
-        hotkey_requests: std::sync::mpsc::Receiver<(String, PathBuf)>,
+        hotkey_requests: std::sync::mpsc::Receiver<OverlayHotkeysRequest>,
     ) -> std::io::Result<()> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(std::io::Error::other("the overlay has no pipes"));
@@ -551,8 +555,8 @@ impl OverlayProcess {
     }
 
     /// Reads the mod's hotkeys and sends them to the overlay.
-    fn send_hotkeys(&self, mod_id: String, root: PathBuf) {
-        let _ = self.hotkeys.send((mod_id, root));
+    fn send_hotkeys(&self, mod_id: String, root: PathBuf, values: HashMap<String, String>) {
+        let _ = self.hotkeys.send((mod_id, root, values));
     }
 
     /// Answers a hotkey press the overlay asked for.
@@ -653,14 +657,16 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
 /// Reads mods' hotkeys, the way the library lists them, one mod at a time,
 /// so the last answer about a mod is about it as it is now.  Ends with the
 /// overlay.
-fn read_hotkeys(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<(String, PathBuf)>) {
-    for (mod_id, root) in requests {
-        let hotkeys = hotkeys_list_rows(&parse_mod_config_inis(&root))
-            .into_iter()
+fn read_hotkeys(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<OverlayHotkeysRequest>) {
+    for (mod_id, root, values) in requests {
+        let rows = hotkeys_list_rows(&parse_mod_config_inis(&root));
+        let hotkeys = rows
+            .iter()
             .map(|row| overlay_protocol::ModHotkey {
-                key: row.key,
-                label: row.label,
-                raw: row.raw_key,
+                key: row.key.clone(),
+                label: row.label.clone(),
+                raw: row.raw_key.clone(),
+                unavailable: hotkey_row_unavailable(row, &rows, &values),
             })
             .collect();
         outbox.send(overlay_protocol::ToOverlay::Hotkeys(
