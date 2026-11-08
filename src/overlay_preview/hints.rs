@@ -17,6 +17,8 @@ pub(super) enum Hint {
     Hotkeys,
     /// I turns the focused card over to its info.
     Info,
+    /// Esc turns a card showing its hotkeys or info back to its picture.
+    TurnBack,
     Search,
     /// Enter while typing a search.
     TypedExclusive,
@@ -37,12 +39,17 @@ pub(super) enum Mode {
     Typing,
     /// The normal keys, on search results.
     Results,
+    /// The focused card shows its hotkeys or info, which keep only a few
+    /// keys.
+    Back,
 }
 
 impl Mode {
-    pub(super) fn new(typing: bool, filtering: bool) -> Self {
+    pub(super) fn new(typing: bool, filtering: bool, back: bool) -> Self {
         if typing {
             Self::Typing
+        } else if back {
+            Self::Back
         } else if filtering {
             Self::Results
         } else {
@@ -79,6 +86,7 @@ impl Mode {
                 Hint::EditSearch,
                 Hint::ClearSearch,
             ],
+            Self::Back => &[Hint::Navigate, Hint::Exclusive, Hint::TurnBack],
         }
     }
 }
@@ -96,7 +104,7 @@ impl Hint {
             Self::Search | Self::DoneTyping | Self::EditSearch => &["Tab"],
             Self::TypedExclusive => &["Enter"],
             Self::TypedToggle => &["Shift", "Enter"],
-            Self::ClearSearch => &["Esc"],
+            Self::ClearSearch | Self::TurnBack => &["Esc"],
         }
     }
 
@@ -120,6 +128,7 @@ impl Hint {
             Self::DoneTyping => TextKey::GameOverlayHintDoneTyping,
             Self::EditSearch => TextKey::GameOverlayHintEditSearch,
             Self::ClearSearch => TextKey::GameOverlayHintClearSearch,
+            Self::TurnBack => TextKey::GameOverlayHintTurnBack,
         })
     }
 
@@ -133,7 +142,11 @@ impl Hint {
             Self::Toggle | Self::TypedToggle => available.toggle,
             Self::Hotkeys => available.hotkeys,
             Self::Info => available.info,
-            Self::Search | Self::DoneTyping | Self::EditSearch | Self::ClearSearch => true,
+            Self::Search
+            | Self::DoneTyping
+            | Self::EditSearch
+            | Self::ClearSearch
+            | Self::TurnBack => true,
         }
     }
 }
@@ -255,10 +268,12 @@ mod tests {
 
     #[test]
     fn the_search_decides_which_hints_show() {
-        assert_eq!(Mode::new(false, false), Mode::Normal);
-        assert_eq!(Mode::new(true, false), Mode::Typing);
-        assert_eq!(Mode::new(true, true), Mode::Typing);
-        assert_eq!(Mode::new(false, true), Mode::Results);
+        assert_eq!(Mode::new(false, false, false), Mode::Normal);
+        assert_eq!(Mode::new(true, false, false), Mode::Typing);
+        assert_eq!(Mode::new(true, true, true), Mode::Typing);
+        assert_eq!(Mode::new(false, true, false), Mode::Results);
+        assert_eq!(Mode::new(false, true, true), Mode::Back);
+        assert_eq!(Mode::new(false, false, true), Mode::Back);
 
         let hints = |mode: Mode| {
             mode.sequence()
@@ -299,6 +314,15 @@ mod tests {
                 ("Shift+Enter", "Toggle Enable/Disable"),
                 ("Tab", "Done typing"),
                 ("Esc", "Clear search"),
+            ]
+            .map(|(keys, label)| (keys.to_owned(), label))
+        );
+        assert_eq!(
+            hints(Mode::Back),
+            [
+                ("W+A+S+D", "Navigate"),
+                ("Space", "Enable this mod, disable others"),
+                ("Esc", "Back"),
             ]
             .map(|(keys, label)| (keys.to_owned(), label))
         );

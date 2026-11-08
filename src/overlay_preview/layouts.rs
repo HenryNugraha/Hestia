@@ -1331,10 +1331,31 @@ impl Layouts {
     }
 
     /// The focused card shows its info, or turns to it, whichever row is
-    /// picked, so PgUp, PgDn, Home and End scroll it.
-    pub(super) fn info_open(&self) -> bool {
+    /// picked.
+    fn info_open(&self) -> bool {
         self.focused_mod_id()
             .is_some_and(|mod_id| self.keys.showing_info(&mod_id))
+    }
+
+    /// The focused card shows its hotkeys or info, so the overlay keeps only
+    /// the keys that work there.
+    pub(super) fn back_shown(&self) -> bool {
+        self.hotkeys_shown() || self.info_shown()
+    }
+
+    /// Esc on a card showing its hotkeys or info: turns it back to its
+    /// picture.  False when no card shows its back.
+    pub(super) fn turn_to_front(&mut self, ctx: &egui::Context, now: f64) -> bool {
+        if !self.back_shown() {
+            return false;
+        }
+        let Some(mod_id) = self.focused_mod_id() else {
+            return false;
+        };
+        let side = self.keys.side();
+        self.keys.toggle(&mod_id, side, now);
+        ctx.request_repaint();
+        true
     }
 
     /// Moves through the focused card's hotkeys, or scrolls its info.  False
@@ -1356,22 +1377,6 @@ impl Layouts {
             ctx.request_repaint();
         } else if self.info_shown() {
             self.keys.next_info_source();
-            ctx.request_repaint();
-        }
-    }
-
-    /// PgUp and PgDn: a page of the focused card's info up or down.
-    pub(super) fn page_info(&mut self, ctx: &egui::Context, direction: i32) {
-        if self.info_open() {
-            self.keys.page_info(direction);
-            ctx.request_repaint();
-        }
-    }
-
-    /// Home and End: to the top or bottom of the focused card's info.
-    pub(super) fn jump_info(&mut self, ctx: &egui::Context, direction: i32) {
-        if self.info_open() {
-            self.keys.jump_info(direction);
             ctx.request_repaint();
         }
     }

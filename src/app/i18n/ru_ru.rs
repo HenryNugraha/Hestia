@@ -1022,4 +1022,5 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Скрыть описание", // GameOverlayHideInfo
     "Описание мода", // GameOverlayHintInfo
     "Следующий источник", // GameOverlayHintNextSource
+    "Назад", // GameOverlayHintTurnBack
 ];

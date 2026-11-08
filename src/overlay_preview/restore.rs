@@ -79,9 +79,10 @@ fn spawn_main(state_path: Option<&Path>) -> Result<()> {
 #[cfg(windows)]
 fn try_restore_existing_window() -> Result<bool> {
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    use windows::core::w;
+    use windows::core::HSTRING;
 
-    let Some(hwnd) = (unsafe { FindWindowW(None, w!("Hestia")) }).ok() else {
+    let title = HSTRING::from(crate::overlay_protocol::MAIN_WINDOW_TITLE);
+    let Some(hwnd) = (unsafe { FindWindowW(None, &title) }).ok() else {
         return Ok(false);
     };
     if hwnd.0.is_null() {

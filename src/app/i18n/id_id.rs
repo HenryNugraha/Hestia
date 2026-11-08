@@ -1023,4 +1023,5 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Sembunyikan info", // GameOverlayHideInfo
     "Info mod", // GameOverlayHintInfo
     "Sumber berikutnya", // GameOverlayHintNextSource
+    "Kembali", // GameOverlayHintTurnBack
 ];

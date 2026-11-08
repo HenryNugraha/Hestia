@@ -18,10 +18,19 @@ pub(crate) const OVERLAY_ARG: &str = "--overlay";
 pub(crate) const UNCATEGORIZED_ID: &str = "hestia:uncategorized";
 
 /// The overlay's window title.  XXMI takes keys only from the game or a
-/// window titled "Hestia", so the overlay has that title just while Hestia
+/// window titled `XXMI_TITLE`, so the overlay has that title just while Hestia
 /// presses a key for the game through it, or while a key the overlay doesn't
 /// use is down, then this one back.
 pub(crate) const OVERLAY_TITLE: &str = "Hestia overlay";
+
+/// The main window's title.  It borrows `XXMI_TITLE` just while Hestia presses
+/// a key for the game, so the keys typed in it never reach the game.
+pub(crate) const MAIN_WINDOW_TITLE: &str = "Hestia Mod Manager";
+
+/// The title XXMI takes keys from, besides the game: Hestia writes it as
+/// `additional_foreground_window` in d3dx.ini.  XXMI needs the whole title to
+/// match, so `MAIN_WINDOW_TITLE` and `OVERLAY_TITLE` don't count.
+pub(crate) const XXMI_TITLE: &str = "Hestia";
 
 /// Marks the keys Hestia presses for the game, so the overlay leaves them
 /// alone: the overlay may be in front while Hestia presses them.
@@ -183,7 +192,7 @@ pub(crate) enum FromOverlay {
     /// Turn a mod on or off.  Hestia answers with `ToOverlay::Changed`.
     Change(Change),
     /// Whether the search takes the keys, so Hestia doesn't reload with the
-    /// overlay titled "Hestia" meanwhile.
+    /// overlay titled `XXMI_TITLE` meanwhile.
     Typing {
         typing: bool,
     },

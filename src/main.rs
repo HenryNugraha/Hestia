@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
         .with_min_inner_size(app::MAIN_WINDOW_MIN_SIZE)
         .with_decorations(false)
         .with_icon(icon)
-        .with_title("Hestia");
+        .with_title(overlay_protocol::MAIN_WINDOW_TITLE);
     if state.static_prefs.window_maximized {
         viewport = viewport.with_visible(false);
     } else {

@@ -1023,4 +1023,5 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "隐藏信息", // GameOverlayHideInfo
     "模组信息", // GameOverlayHintInfo
     "下一个来源", // GameOverlayHintNextSource
+    "返回", // GameOverlayHintTurnBack
 ];

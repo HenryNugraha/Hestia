@@ -1023,4 +1023,5 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Hide info", // GameOverlayHideInfo
     "Mod info", // GameOverlayHintInfo
     "Next source", // GameOverlayHintNextSource
+    "Back", // GameOverlayHintTurnBack
 ];

@@ -143,34 +143,6 @@ impl CardKeys {
         true
     }
 
-    /// Scrolls the info a page up for a negative direction, or down, keeping
-    /// a line of the last page in view.
-    pub(in crate::overlay_preview::layouts) fn page_info(&mut self, direction: i32) {
-        let page = self.fit.saturating_sub(1).max(1);
-        self.scroll_info(|scroll, hidden| {
-            if direction < 0 {
-                scroll.saturating_sub(page)
-            } else {
-                (scroll + page).min(hidden)
-            }
-        });
-    }
-
-    /// Scrolls the info to its top for a negative direction, or its bottom.
-    pub(in crate::overlay_preview::layouts) fn jump_info(&mut self, direction: i32) {
-        self.scroll_info(|_, hidden| if direction < 0 { 0 } else { hidden });
-    }
-
-    fn scroll_info(&mut self, to: impl FnOnce(usize, usize) -> usize) {
-        if let Some(flip) = self
-            .flip
-            .as_mut()
-            .filter(|flip| flip.back && flip.side == super::Side::Info)
-        {
-            flip.scroll = to(flip.scroll, self.hidden_rows);
-        }
-    }
-
     /// The source in `header` and its text in `body`, from the scrolled-to
     /// line.
     #[allow(clippy::too_many_arguments)]

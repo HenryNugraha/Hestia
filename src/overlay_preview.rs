@@ -193,10 +193,10 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             .expect("valid embedded app icon");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            // The overlay is titled "Hestia", which XXMI takes keys from,
-            // just while Hestia presses a key for the game through it or a
-            // key the overlay doesn't use is down, never while the search
-            // takes the keys.
+            // The overlay takes the title XXMI takes keys from just while
+            // Hestia presses a key for the game through it or a key the
+            // overlay doesn't use is down, never while the search takes the
+            // keys.
             .with_title(if preview {
                 "Hestia — Overlay preview"
             } else {
@@ -695,9 +695,17 @@ impl eframe::App for OverlayPreview {
                     session::Transition::None
                 }
                 keyboard::Event::Escape => {
-                    // Esc clears a search first, then cancels an install's
-                    // question, then closes.
-                    if self.search.escape() {
+                    // Esc stops typing a search first, then turns a card's
+                    // back over, then clears the search, then cancels an
+                    // install's question, then closes.
+                    if self.search.typing() && self.search.escape() {
+                        ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
+                        session::Transition::None
+                    } else if (self.session.is_open() || self.pinned)
+                        && self.samples.turn_to_front(&ctx, now)
+                    {
+                        session::Transition::None
+                    } else if self.search.escape() {
                         ctx.memory_mut(|memory| memory.surrender_focus(search_id()));
                         session::Transition::None
                     } else if (self.session.is_open() || self.pinned)
@@ -794,8 +802,6 @@ impl eframe::App for OverlayPreview {
                     .apply_focused_action(&ctx, layouts::ModAction::Toggle),
                 keyboard::Command::Flip => self.samples.flip_focused(&ctx),
                 keyboard::Command::Info => self.samples.flip_focused_info(&ctx),
-                keyboard::Command::Page(direction) => self.samples.page_info(&ctx, direction),
-                keyboard::Command::Jump(direction) => self.samples.jump_info(&ctx, direction),
                 // Settled when the key arrived.
                 keyboard::Command::Row(_) | keyboard::Command::Move(_) => {}
             }
@@ -947,16 +953,16 @@ impl eframe::App for OverlayPreview {
         }
         // Letters and Space type only while the search is being typed.
         let typing = self.search.typing();
-        // PgUp, PgDn, Home and End reach the game unless a card shows its
-        // info.
-        let reading = self.samples.info_open();
+        // A card showing its hotkeys or info keeps only Esc, W, A, S, D,
+        // Space and the hotkey, so mods get the rest.
+        let back = self.samples.back_shown();
         if let Some(keyboard) = &self.keyboard {
             keyboard.set_typing(typing);
-            keyboard.set_reading(reading);
+            keyboard.set_back(back);
         }
         if let Some(keys) = &mut self.egui_keys {
             keys.set_typing(typing);
-            keys.set_reading(reading);
+            keys.set_back(back);
         }
         if self.capture.is_some() {
             // Allow the native surface and its initial layout to settle before readback.
@@ -1381,7 +1387,11 @@ impl OverlayPreview {
     }
 
     fn hint_mode(&self) -> hints::Mode {
-        hints::Mode::new(self.search.typing(), self.search.active())
+        hints::Mode::new(
+            self.search.typing(),
+            self.search.active(),
+            self.samples.back_shown(),
+        )
     }
 
     fn start_window_drag(&self, ctx: &egui::Context) {

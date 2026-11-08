@@ -1184,29 +1184,6 @@ mod tests {
     }
 
     #[test]
-    fn page_and_jump_keys_scroll_the_info() {
-        let mut keys = CardKeys::default();
-        keys.receive(answer("some", 2));
-        keys.receive_info(info("some"));
-        keys.toggle("some", Side::Keys, 0.0);
-        keys.hidden_rows = 20;
-        keys.fit = 8;
-        keys.page_info(1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 0, "not on the keys");
-        keys.toggle("some", Side::Info, 0.0);
-        keys.page_info(1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 7);
-        keys.jump_info(1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 20);
-        keys.page_info(1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 20);
-        keys.page_info(-1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 13);
-        keys.jump_info(-1);
-        assert_eq!(keys.flip.as_ref().unwrap().scroll, 0);
-    }
-
-    #[test]
     fn only_mods_with_hotkeys_turn_over() {
         let mut keys = CardKeys::default();
         keys.receive(answer("none", 0));

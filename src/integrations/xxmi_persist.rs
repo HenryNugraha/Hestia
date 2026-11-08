@@ -1856,7 +1856,9 @@ const HESTIA_SECTION_NOTE_REFRAIN: &str =
 /// duplicate-key precedence never decides the outcome.
 const HESTIA_STASH_MARKER: &str = "; Disabled by Hestia while it injects its own value";
 const FOREGROUND_WINDOW_KEY: &str = "additional_foreground_window";
-const HESTIA_WINDOW_TITLE: &str = "Hestia";
+/// The `additional_foreground_window` value Hestia writes, and the title its windows borrow
+/// while they pass keys to the game.
+const HESTIA_WINDOW_TITLE: &str = crate::overlay_protocol::XXMI_TITLE;
 /// `[System]` key whose value is the autosave cadence in seconds. Hestia forces it to
 /// `1` so mirrored in-game customization flushes within ~1s.
 const AUTOSAVE_INTERVAL_KEY: &str = "settings_auto_save_interval";
@@ -2631,13 +2633,48 @@ fn reload_hotkey_vk(importer_root: &Path) -> u16 {
     DEFAULT
 }
 
+/// Most non-modifier keys one binding may hold together (`ctrl t a n g` has four).
+#[cfg(windows)]
+const KEY_SPEC_MAX_KEYS: usize = 8;
+
+/// A mod hotkey as 3DMigoto reads it: the modifiers plus every other listed key, all held
+/// at once. Most bindings have one key; lock toggles often use a word, like `ctrl t a n g`.
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Default)]
 struct KeySpec {
     ctrl: bool,
     alt: bool,
     shift: bool,
-    key: u16,
+    keys: [u16; KEY_SPEC_MAX_KEYS],
+    key_count: usize,
+}
+
+#[cfg(windows)]
+impl KeySpec {
+    fn single(vk: u16) -> Self {
+        let mut spec = Self::default();
+        spec.push_key(vk);
+        spec
+    }
+
+    /// The non-modifier keys, in the order the binding lists them.
+    fn main_keys(&self) -> &[u16] {
+        &self.keys[..self.key_count]
+    }
+
+    /// Adds a key; false when the binding already holds the most keys allowed. A key
+    /// listed twice is held once.
+    fn push_key(&mut self, vk: u16) -> bool {
+        if self.main_keys().contains(&vk) {
+            return true;
+        }
+        if self.key_count == KEY_SPEC_MAX_KEYS {
+            return false;
+        }
+        self.keys[self.key_count] = vk;
+        self.key_count += 1;
+        true
+    }
 }
 
 #[cfg(windows)]
@@ -2734,19 +2771,19 @@ fn parse_key_spec(raw: &str) -> Option<KeySpec> {
             }
             _ => {}
         }
-        if spec.key != 0 {
-            return None;
-        }
-        if let Some(vk) = vk_for_named_token(&token_lc) {
-            spec.key = vk;
+        let vk = if let Some(vk) = vk_for_named_token(&token_lc) {
+            vk
         } else if let Some((vk, needs_shift)) = vk_for_char_token(token) {
-            spec.key = vk;
             spec.shift |= needs_shift;
+            vk
         } else {
+            return None;
+        };
+        if !spec.push_key(vk) {
             return None;
         }
     }
-    (spec.key != 0).then_some(spec)
+    (spec.key_count > 0).then_some(spec)
 }
 
 #[cfg(windows)]
@@ -3028,7 +3065,7 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     if game_overlay_process().is_some_and(|overlay| overlay.pid == pid) {
         return ReloadForeground::Overlay { title, hwnd };
     }
-    if title == HESTIA_WINDOW_TITLE {
+    if is_hestia_main_window(&title, pid) {
         return ReloadForeground::Hestia { title, hwnd };
     }
     let candidates = game_exe_candidates(game);
@@ -3064,18 +3101,26 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     ReloadForeground::Other { title }
 }
 
-/// Hestia's main window: this process's window titled "Hestia", never the in-game overlay
-/// while it carries that title for a reload.
+/// Whether a window is Hestia's main window: this process's, with its own title or the one
+/// XXMI takes keys from while it borrows that.
+#[cfg(windows)]
+fn is_hestia_main_window(title: &str, pid: u32) -> bool {
+    pid == std::process::id()
+        && (title == crate::overlay_protocol::MAIN_WINDOW_TITLE || title == HESTIA_WINDOW_TITLE)
+}
+
+/// Hestia's main window: this process's window with its own title, never the in-game overlay.
 #[cfg(windows)]
 fn hestia_window() -> Option<windows::Win32::Foundation::HWND> {
     use windows::{
         Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId},
-        core::w,
+        core::HSTRING,
     };
 
+    let title = HSTRING::from(crate::overlay_protocol::MAIN_WINDOW_TITLE);
     let mut after = None;
     loop {
-        let hwnd = unsafe { FindWindowExW(None, after, None, w!("Hestia")).ok()? };
+        let hwnd = unsafe { FindWindowExW(None, after, None, &title).ok()? };
         if hwnd.0.is_null() {
             return None;
         }
@@ -3090,7 +3135,7 @@ fn hestia_window() -> Option<windows::Win32::Foundation::HWND> {
 
 // ---------------------------------------------------------------------------
 // The in-game overlay: another Hestia process, whose window XXMI takes keys from only while
-// it's titled "Hestia".
+// it carries `HESTIA_WINDOW_TITLE`.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
@@ -3155,25 +3200,38 @@ fn set_window_title(hwnd: windows::Win32::Foundation::HWND, title: &str) -> bool
     sent.0 != 0
 }
 
-/// The overlay titled "Hestia" until dropped.
+/// A window of Hestia's, the main window or the in-game overlay, carrying the title XXMI
+/// takes keys from until dropped, then its own again.  XXMI then takes every key pressed in
+/// it, so Hestia borrows the title only while it presses a key for the game.
 #[cfg(windows)]
-struct OverlayTitle(windows::Win32::Foundation::HWND);
+struct BorrowedTitle {
+    hwnd: windows::Win32::Foundation::HWND,
+    own: &'static str,
+}
 
 #[cfg(windows)]
-impl OverlayTitle {
-    fn take(overlay: windows::Win32::Foundation::HWND) -> Self {
-        set_window_title(overlay, HESTIA_WINDOW_TITLE);
-        Self(overlay)
+impl BorrowedTitle {
+    fn overlay(overlay: windows::Win32::Foundation::HWND) -> Self {
+        Self::take(overlay, crate::overlay_protocol::OVERLAY_TITLE)
+    }
+
+    fn main_window(hestia: windows::Win32::Foundation::HWND) -> Self {
+        Self::take(hestia, crate::overlay_protocol::MAIN_WINDOW_TITLE)
+    }
+
+    fn take(hwnd: windows::Win32::Foundation::HWND, own: &'static str) -> Self {
+        set_window_title(hwnd, HESTIA_WINDOW_TITLE);
+        Self { hwnd, own }
     }
 }
 
 #[cfg(windows)]
-impl Drop for OverlayTitle {
+impl Drop for BorrowedTitle {
     fn drop(&mut self) {
-        if !set_window_title(self.0, crate::overlay_protocol::OVERLAY_TITLE) {
+        if !set_window_title(self.hwnd, self.own) {
             tracing::warn!(
-                "the in-game overlay did not take its title back in time; it gets it once it \
-                 responds"
+                "{:?} did not take its title back in time; it gets it once it responds",
+                self.own
             );
         }
     }
@@ -3728,8 +3786,8 @@ pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>>
 enum AcceptedForeground {
     Window(windows::Win32::Foundation::HWND),
     /// A window that passes every key to the game while it has the key down, so only as long
-    /// as no key but the pressed one and its modifiers is down: the in-game overlay titled
-    /// "Hestia".
+    /// as no key but the pressed one and its modifiers is down: the in-game overlay carrying
+    /// the title XXMI takes keys from.
     Quiet {
         hwnd: windows::Win32::Foundation::HWND,
         spec: KeySpec,
@@ -3757,7 +3815,7 @@ fn key_spec_keys(spec: KeySpec) -> Vec<u16> {
         VK_SHIFT,
     };
 
-    let mut keys = vec![spec.key];
+    let mut keys = spec.main_keys().to_vec();
     for (held, modifier) in [
         (spec.ctrl, [VK_CONTROL, VK_LCONTROL, VK_RCONTROL]),
         (spec.alt, [VK_MENU, VK_LMENU, VK_RMENU]),
@@ -3842,8 +3900,10 @@ fn wait_for_foreground_window(
 
 #[cfg(windows)]
 fn foreground_is_game_or_hestia(game_hwnd: windows::Win32::Foundation::HWND) -> bool {
-    foreground_window_title_and_pid().is_some_and(|(foreground, title, _)| {
-        foreground == game_hwnd || title == HESTIA_WINDOW_TITLE
+    foreground_window_title_and_pid().is_some_and(|(foreground, title, pid)| {
+        foreground == game_hwnd
+            || title == HESTIA_WINDOW_TITLE
+            || is_hestia_main_window(&title, pid)
     })
 }
 
@@ -3904,15 +3964,27 @@ fn send_reload_hotkey_burst(
     Ok(true)
 }
 
+/// Presses `keys` in order and holds them all together, so a multi-key binding like
+/// `ctrl t a n g` fires once the last key goes down, then releases them in reverse.
 #[cfg(windows)]
-fn hold_key_with_guards(
-    vk: u16,
+fn hold_keys_with_guards(
+    keys: &[u16],
     key_down_label: &str,
     key_up_label: &str,
     interrupted_label: &str,
     allowed_modifiers: &[u16],
     accepted_foreground: AcceptedForeground,
 ) -> Result<bool> {
+    fn release_all(held: Vec<HeldKey>, label: &str) -> Result<()> {
+        let mut first_err = None;
+        for key in held.into_iter().rev() {
+            if let Err(err) = key.release(label) {
+                first_err.get_or_insert(err);
+            }
+        }
+        first_err.map_or(Ok(()), Err)
+    }
+
     if !accepted_foreground_still_active(accepted_foreground) {
         return Ok(false);
     }
@@ -3920,7 +3992,11 @@ fn hold_key_with_guards(
         return Ok(false);
     }
 
-    let held = HeldKey::press(vk, key_down_label)?;
+    // A failed press drops (and so releases) the keys already held.
+    let mut held = Vec::with_capacity(keys.len());
+    for &vk in keys {
+        held.push(HeldKey::press(vk, key_down_label)?);
+    }
     let started = std::time::Instant::now();
     let hold = Duration::from_millis(RELOAD_KEY_HOLD_MS);
     let poll = Duration::from_millis(RELOAD_KEY_HOLD_POLL_MS);
@@ -3928,12 +4004,12 @@ fn hold_key_with_guards(
         if !accepted_foreground_still_active(accepted_foreground)
             || unexpected_modifier_guard_active(allowed_modifiers)
         {
-            held.release(interrupted_label)?;
+            release_all(held, interrupted_label)?;
             return Ok(false);
         }
         std::thread::sleep(poll.min(hold.saturating_sub(started.elapsed())));
     }
-    held.release(key_up_label)
+    release_all(held, key_up_label)
         .map_err(|err| anyhow!("{key_down_label} succeeded but release failed: {err:#}"))?;
     Ok(true)
 }
@@ -4056,6 +4132,7 @@ fn send_reload_hotkey_via_hestia_focus(
             }
         ));
     }
+    let title = BorrowedTitle::main_window(hestia_hwnd);
     if !wait_for_foreground_window(
         hestia_hwnd,
         Some(HESTIA_WINDOW_TITLE),
@@ -4070,6 +4147,7 @@ fn send_reload_hotkey_via_hestia_focus(
         RELOAD_KEY_PULSE_COUNT,
         AcceptedForeground::Window(hestia_hwnd),
     )?;
+    drop(title);
     std::thread::sleep(Duration::from_millis(80));
     let restored = set_foreground_window(restore_hwnd)
         && wait_for_foreground_window(restore_hwnd, None, FOREGROUND_SETTLE_TIMEOUT);
@@ -4083,9 +4161,9 @@ fn send_reload_hotkey_via_hestia_focus(
 }
 
 /// The in-game overlay is foreground.  XXMI takes keys only from the game or a window titled
-/// "Hestia", so the overlay carries that title for each press of the reload key, then gets
-/// its own back.  Titled "Hestia", it would pass every key pressed in it to the game's mod
-/// hotkeys too, so a press waits until the overlay's search doesn't take the keys and no key
+/// `HESTIA_WINDOW_TITLE`, so the overlay carries that title for each press of the reload key,
+/// then gets its own back.  With that title, it would pass every key pressed in it to the
+/// game's mod hotkeys too, so a press waits until the overlay's search doesn't take the keys and no key
 /// has been down for a moment, and a key pressed during it ends it early to be tried again.
 /// Returns `None` when the overlay lost the foreground before any press, so the caller looks
 /// again.
@@ -4120,12 +4198,9 @@ fn send_reload_hotkey_via_overlay(
         }
         let accepted = AcceptedForeground::Quiet {
             hwnd: overlay,
-            spec: KeySpec {
-                key: vk,
-                ..KeySpec::default()
-            },
+            spec: KeySpec::single(vk),
         };
-        let title = OverlayTitle::take(overlay);
+        let title = BorrowedTitle::overlay(overlay);
         let done = wait_for_foreground_window(
             overlay,
             Some(HESTIA_WINDOW_TITLE),
@@ -4199,7 +4274,7 @@ fn send_key_spec_via_overlay(
             hwnd: overlay,
             spec,
         };
-        let title = OverlayTitle::take(overlay);
+        let title = BorrowedTitle::overlay(overlay);
         let titled = wait_for_foreground_window(
             overlay,
             Some(HESTIA_WINDOW_TITLE),
@@ -4240,7 +4315,8 @@ fn focus_route_message(outcome: FocusRouteOutcome) -> String {
 
 /// Foreground-aware profile reload sender. If the game is foreground, XXMI accepts normal
 /// global input through its own `pid == GetCurrentProcessId()` foreground check. If Hestia is
-/// foreground, this relies on the `additional_foreground_window = Hestia` d3dx.ini grant.
+/// foreground, it borrows the title the `additional_foreground_window` d3dx.ini grant names
+/// for the presses, so XXMI takes keys from its window only then.
 /// Other foreground windows get a short retry window to cover focus transitions.
 #[cfg(windows)]
 pub fn send_reload_hotkey_foreground_aware(
@@ -4302,11 +4378,17 @@ pub fn send_reload_hotkey_foreground_aware(
                         ),
                     });
                 }
-                let sent = send_reload_hotkey_burst(
+                let title = BorrowedTitle::main_window(hwnd);
+                let sent = wait_for_foreground_window(
+                    hwnd,
+                    Some(HESTIA_WINDOW_TITLE),
+                    FOREGROUND_SETTLE_TIMEOUT,
+                ) && send_reload_hotkey_burst(
                     &importer_root,
                     RELOAD_KEY_PULSE_COUNT,
                     AcceptedForeground::Window(hwnd),
                 )?;
+                drop(title);
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
                         with_hint(format!("sent reload hotkey; {label}"))
@@ -4387,7 +4469,9 @@ fn send_key_spec(spec: KeySpec, accepted_foreground: AcceptedForeground) -> Resu
         return Ok(false);
     }
 
-    send_keyboard_input(spec.key, true, "hotkey settle-up")?;
+    for &key in spec.main_keys() {
+        send_keyboard_input(key, true, "hotkey settle-up")?;
+    }
     std::thread::sleep(std::time::Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
     if !accepted_foreground_still_active(accepted_foreground) {
         return Ok(false);
@@ -4409,8 +4493,8 @@ fn send_key_spec(spec: KeySpec, accepted_foreground: AcceptedForeground) -> Resu
     for modifier in &modifiers {
         held_modifiers.push(HeldKey::press(*modifier, "hotkey modifier down")?);
     }
-    let key_result = hold_key_with_guards(
-        spec.key,
+    let key_result = hold_keys_with_guards(
+        spec.main_keys(),
         "hotkey key down",
         "hotkey key up",
         "hotkey key interrupted",
@@ -4473,7 +4557,13 @@ pub fn send_mod_hotkey_foreground_aware(
                         ),
                     });
                 }
-                let sent = send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
+                let title = BorrowedTitle::main_window(hwnd);
+                let sent = wait_for_foreground_window(
+                    hwnd,
+                    Some(HESTIA_WINDOW_TITLE),
+                    FOREGROUND_SETTLE_TIMEOUT,
+                ) && send_key_spec(spec, AcceptedForeground::Window(hwnd))?;
+                drop(title);
                 return Ok(ReloadHotkeyReport {
                     message: if sent {
                         with_hint(format!("sent mod hotkey; {label}"))
@@ -5455,15 +5545,31 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     fn parses_simple_mod_hotkey_specs() {
         let shift_slash = parse_key_spec("shift /").unwrap();
         assert!(shift_slash.shift);
-        assert_eq!(shift_slash.key, 0xBF);
+        assert_eq!(shift_slash.main_keys(), &[0xBF]);
         let no_mod_period = parse_key_spec("no_modifiers .").unwrap();
         assert!(!no_mod_period.ctrl);
         assert!(!no_mod_period.alt);
         assert!(!no_mod_period.shift);
-        assert_eq!(no_mod_period.key, 0xBE);
+        assert_eq!(no_mod_period.main_keys(), &[0xBE]);
         let ctrl_four = parse_key_spec("ctrl 4").unwrap();
         assert!(ctrl_four.ctrl);
-        assert_eq!(ctrl_four.key, 0x34);
+        assert_eq!(ctrl_four.main_keys(), &[0x34]);
+    }
+
+    /// Lock toggles often bind a whole word, held together (Curvier Tangtang's lock).
+    #[cfg(windows)]
+    #[test]
+    fn parses_multi_key_mod_hotkey_specs() {
+        let lock = parse_key_spec("ctrl t a n g").unwrap();
+        assert!(lock.ctrl);
+        assert!(!lock.shift);
+        assert_eq!(lock.main_keys(), &[0x54, 0x41, 0x4E, 0x47]);
+        let named = parse_key_spec("no_ctrl VK_LEFT VK_UP").unwrap();
+        assert_eq!(named.main_keys(), &[0x25, 0x26]);
+        assert_eq!(parse_key_spec("a a").unwrap().main_keys(), &[0x41]);
+        assert!(parse_key_spec("a b c d e f g h i").is_none());
+        assert!(parse_key_spec("ctrl a ???").is_none());
+        assert!(key_spec_keys(lock).contains(&0x4E));
     }
 
     #[test]

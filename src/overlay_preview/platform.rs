@@ -495,7 +495,7 @@ pub(super) fn hide() {
 
 /// XXMI takes keys from a window with this title as well as from the game.
 #[cfg(windows)]
-const XXMI_TITLE: &str = "Hestia";
+use crate::overlay_protocol::XXMI_TITLE;
 
 /// The overlay's title before it lent itself `XXMI_TITLE`.
 #[cfg(windows)]
