@@ -1024,4 +1024,8 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "模组信息", // GameOverlayHintInfo
     "下一个来源", // GameOverlayHintNextSource
     "返回", // GameOverlayHintTurnBack
+    "角色布局：", // SettingsGameOverlayCharacterLayout
+    "轮播（横向）", // SettingsGameOverlayCharacterLayoutCarousel
+    "网格（纵向）", // SettingsGameOverlayCharacterLayoutGrid
+    "轮播显示一行，左右滚动，滚轮滚动时直接选中角色。网格每行显示 7 个，滚轮按整行滚动且不选中，角色多时更快。", // SettingsGameOverlayCharacterLayoutTooltip
 ];

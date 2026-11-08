@@ -195,6 +195,8 @@ pub struct StaticPreferences {
     #[serde(default = "serde_default_true")]
     pub game_overlay_pin_button: bool,
     #[serde(default)]
+    pub game_overlay_character_layout: OverlayCharacterLayout,
+    #[serde(default)]
     pub window_pos: Option<[f32; 2]>,
     #[serde(default)]
     pub window_size: Option<[f32; 2]>,
@@ -301,6 +303,7 @@ impl Default for StaticPreferences {
             game_overlay_key_hints: true,
             game_overlay_opacity_slider: true,
             game_overlay_pin_button: true,
+            game_overlay_character_layout: OverlayCharacterLayout::default(),
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -2158,6 +2161,13 @@ impl Default for RendererPreference {
     fn default() -> Self {
         Self::Auto
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverlayCharacterLayout {
+    #[default]
+    Carousel,
+    Grid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -215,6 +215,7 @@ fn launch(start: Option<crate::overlay_protocol::Start>) -> anyhow::Result<()> {
             let egui_keys =
                 (keyboard.is_none() || !cfg!(windows)).then(keyboard::EguiKeys::default);
             let mut samples = layouts::Layouts::new(catalog);
+            samples.set_character_layout(settings.character_layout);
             let live = match live_start {
                 Some((host_window, game_processes, selection, library)) => {
                     samples.set_gamebanana(settings.gamebanana, settings.all_characters);
@@ -1240,6 +1241,7 @@ impl OverlayPreview {
         if !settings.pin_button {
             self.pinned = false;
         }
+        self.samples.set_character_layout(settings.character_layout);
         if settings.zoom != old.zoom {
             let zoom = OVERLAY_ZOOM * settings.zoom;
             ctx.set_zoom_factor(zoom);

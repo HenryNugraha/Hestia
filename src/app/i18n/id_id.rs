@@ -1024,4 +1024,8 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Info mod", // GameOverlayHintInfo
     "Sumber berikutnya", // GameOverlayHintNextSource
     "Kembali", // GameOverlayHintTurnBack
+    "Tata letak karakter:", // SettingsGameOverlayCharacterLayout
+    "Karusel (horizontal)", // SettingsGameOverlayCharacterLayoutCarousel
+    "Grid (vertikal)", // SettingsGameOverlayCharacterLayoutGrid
+    "Karusel menampilkan satu baris yang bergulir ke samping, dan roda mouse langsung memilih saat bergulir. Grid menampilkan 7 per baris dan roda mouse menggulir per baris tanpa memilih, jadi lebih cepat kalau karakternya banyak.", // SettingsGameOverlayCharacterLayoutTooltip
 ];

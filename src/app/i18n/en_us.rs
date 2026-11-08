@@ -1024,4 +1024,8 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Mod info", // GameOverlayHintInfo
     "Next source", // GameOverlayHintNextSource
     "Back", // GameOverlayHintTurnBack
+    "Character layout:", // SettingsGameOverlayCharacterLayout
+    "Carousel (horizontal)", // SettingsGameOverlayCharacterLayoutCarousel
+    "Grid (vertical)", // SettingsGameOverlayCharacterLayoutGrid
+    "Carousel shows one row that scrolls sideways, and the mouse wheel picks as it goes. Grid shows 7 per row and the wheel scrolls whole rows without picking, which is quicker with many characters.", // SettingsGameOverlayCharacterLayoutTooltip
 ];

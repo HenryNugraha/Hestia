@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AppLanguage, OverlayHotkey};
+use crate::model::{AppLanguage, OverlayCharacterLayout, OverlayHotkey};
 
 pub(crate) const OVERLAY_ARG: &str = "--overlay";
 
@@ -80,6 +80,7 @@ pub(crate) struct Settings {
     pub key_hints: bool,
     pub opacity_slider: bool,
     pub pin_button: bool,
+    pub character_layout: OverlayCharacterLayout,
     pub zoom: f32,
 }
 
@@ -95,6 +96,7 @@ impl Default for Settings {
             key_hints: true,
             opacity_slider: true,
             pin_button: true,
+            character_layout: OverlayCharacterLayout::default(),
             zoom: 1.0,
         }
     }
@@ -404,6 +406,7 @@ mod tests {
                     key_hints: false,
                     opacity_slider: false,
                     pin_button: true,
+                    character_layout: OverlayCharacterLayout::Grid,
                     zoom: 1.2,
                 },
                 library: library(),

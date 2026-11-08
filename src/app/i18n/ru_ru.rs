@@ -1023,4 +1023,8 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Описание мода", // GameOverlayHintInfo
     "Следующий источник", // GameOverlayHintNextSource
     "Назад", // GameOverlayHintTurnBack
+    "Расположение персонажей:", // SettingsGameOverlayCharacterLayout
+    "Карусель (горизонтально)", // SettingsGameOverlayCharacterLayoutCarousel
+    "Сетка (вертикально)", // SettingsGameOverlayCharacterLayoutGrid
+    "Карусель показывает один ряд, который листается вбок, и колесо мыши сразу выбирает персонажа. Сетка показывает по 7 в ряд, а колесо листает ряды целиком без выбора, так быстрее, когда персонажей много.", // SettingsGameOverlayCharacterLayoutTooltip
 ];

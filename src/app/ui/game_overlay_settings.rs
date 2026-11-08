@@ -107,6 +107,14 @@ impl HestiaApp {
                     )
                     .changed();
                 ui.add_space(8.0);
+                static_label(ui, text.get(TextKey::SettingsGameOverlayCharacterLayout));
+                ui.add_space(-4.0);
+                should_save |= character_layout_picker(
+                    ui,
+                    text,
+                    &mut prefs.game_overlay_character_layout,
+                );
+                ui.add_space(8.0);
                 static_label(ui, text.get(TextKey::SettingsGameOverlayComponents));
                 ui.add_space(-4.0);
                 let left_width = settings_column_width(
@@ -157,6 +165,31 @@ impl HestiaApp {
         ui.add_space(24.0);
         should_save
     }
+}
+
+fn character_layout_picker(
+    ui: &mut Ui,
+    text: TextCatalog,
+    layout: &mut crate::model::OverlayCharacterLayout,
+) -> bool {
+    use crate::model::OverlayCharacterLayout;
+    let label = |layout| {
+        text.get(match layout {
+            OverlayCharacterLayout::Carousel => TextKey::SettingsGameOverlayCharacterLayoutCarousel,
+            OverlayCharacterLayout::Grid => TextKey::SettingsGameOverlayCharacterLayoutGrid,
+        })
+    };
+    let before = *layout;
+    egui::ComboBox::from_id_salt("settings_game_overlay_character_layout")
+        .selected_text(label(*layout))
+        .show_ui(ui, |ui| {
+            for option in [OverlayCharacterLayout::Carousel, OverlayCharacterLayout::Grid] {
+                ui.selectable_value(layout, option, label(option));
+            }
+        })
+        .response
+        .on_hover_text(text.get(TextKey::SettingsGameOverlayCharacterLayoutTooltip));
+    *layout != before
 }
 
 fn settings_cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {

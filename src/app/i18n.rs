@@ -1017,10 +1017,14 @@ pub(crate) enum TextKey {
     GameOverlayHintInfo,
     GameOverlayHintNextSource,
     GameOverlayHintTurnBack,
+    SettingsGameOverlayCharacterLayout,
+    SettingsGameOverlayCharacterLayoutCarousel,
+    SettingsGameOverlayCharacterLayoutGrid,
+    SettingsGameOverlayCharacterLayoutTooltip,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::GameOverlayHintTurnBack as usize + 1;
+    const COUNT: usize = Self::SettingsGameOverlayCharacterLayoutTooltip as usize + 1;
 }
 
 include!("i18n/en_us.rs");

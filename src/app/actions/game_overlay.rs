@@ -398,6 +398,7 @@ impl HestiaApp {
             key_hints: prefs.game_overlay_key_hints,
             opacity_slider: prefs.game_overlay_opacity_slider,
             pin_button: prefs.game_overlay_pin_button,
+            character_layout: prefs.game_overlay_character_layout,
             zoom: prefs.interface_zoom,
         }
     }

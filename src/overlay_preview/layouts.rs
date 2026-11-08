@@ -17,6 +17,7 @@ use super::gamebanana::{self, GameBanana, InstallNews, ListKey, StatusCard};
 use super::text;
 use super::thumbnails::ThumbnailCache;
 use crate::app::TextKey;
+use crate::model::OverlayCharacterLayout;
 use crate::overlay_protocol::{
     BrowseMod, ChangeAction, FromOverlay, InstallStage, ModHotkeys, ModInfo, SameNameChoice,
     Selection, ToOverlay, UNCATEGORIZED_ID, names_character,
@@ -33,6 +34,8 @@ const CATEGORY_ITEM_HEIGHT: f32 = 64.0;
 const CATEGORY_ITEM_WIDTH: f32 = 64.0;
 const CATEGORY_NAV_WIDTH: f32 = 40.0;
 const CATEGORY_GAP: f32 = 6.0;
+const CATEGORY_GRID_COLUMNS: usize = 7;
+const CATEGORY_GRID_SCROLL_SECS: f32 = 0.1;
 const ACCENT: Color32 = Color32::from_rgb(196, 91, 52);
 const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
 const CROSSING_SECS: f64 = 0.5;
@@ -378,6 +381,8 @@ pub(super) struct Layouts {
     active_images: Vec<Option<PathBuf>>,
     thumbnails: ThumbnailCache,
     reveal_category: bool,
+    character_layout: OverlayCharacterLayout,
+    category_grid_row: usize,
     category_wheel_accum: f32,
     category_wheel_last_event_at: f64,
     category_wheel_last_step_at: f64,
@@ -441,6 +446,8 @@ impl Layouts {
             active_images,
             thumbnails,
             reveal_category: true,
+            character_layout: OverlayCharacterLayout::default(),
+            category_grid_row: 0,
             category_wheel_accum: 0.0,
             category_wheel_last_event_at: f64::NEG_INFINITY,
             category_wheel_last_step_at: f64::NEG_INFINITY,
@@ -491,6 +498,13 @@ impl Layouts {
             waiting.insert(request.mod_id.clone());
         }
         self.requests.push(request);
+    }
+
+    pub(super) fn set_character_layout(&mut self, layout: OverlayCharacterLayout) {
+        if self.character_layout != layout {
+            self.character_layout = layout;
+            self.reveal_category = true;
+        }
     }
 
     pub(super) fn set_gamebanana(&mut self, enabled: bool, all_characters: bool) {
@@ -682,7 +696,7 @@ impl Layouts {
         let selection = self.selection();
         let query = std::mem::take(&mut self.filter.query);
         self.filter = Filter::new(&self.catalog, &query, &self.gamebanana);
-        self.apply_selection(&selection, category_index);
+        self.reselect_keeping_grid_row(&selection, category_index);
         let from = from
             .into_iter()
             .filter_map(|(id, mut placement)| {
@@ -928,8 +942,22 @@ impl Layouts {
         self.active_feedback_costume = None;
         self.boundary_feedback_until = f64::NEG_INFINITY;
         self.boundary_feedback_edge = None;
-        self.apply_selection(&selection, previous_index);
+        self.reselect_keeping_grid_row(&selection, previous_index);
         self.forget_used_new_mods();
+    }
+
+    fn reselect_keeping_grid_row(&mut self, selection: &Selection, fallback_category: usize) {
+        let reveal = self.reveal_category;
+        self.apply_selection(selection, fallback_category);
+        let stayed = self
+            .catalog
+            .categories
+            .get(self.selected_category)
+            .map(|category| &category.id)
+            == selection.category_id.as_ref();
+        if stayed && self.character_layout == OverlayCharacterLayout::Grid {
+            self.reveal_category = reveal;
+        }
     }
 
     fn apply_selection(&mut self, selection: &Selection, fallback_category: usize) {
@@ -2002,7 +2030,18 @@ impl Layouts {
                 CATEGORY_STRIP_HEIGHT.min(ui.available_height().max(1.0)),
             ),
         );
-        if let Some(index) = self.consume_category_wheel(ui, strip_rect, &visible_indices) {
+        let wheel = if visible_indices.is_empty() {
+            None
+        } else {
+            self.consume_category_wheel(ui, strip_rect)
+        };
+        if self.character_layout == OverlayCharacterLayout::Grid {
+            self.show_category_grid(ui, strip_rect, &visible_indices, wheel, overlay_opacity);
+            return;
+        }
+        if let Some(index) = wheel.and_then(|direction| {
+            next_visible_category(&visible_indices, self.selected_category, direction)
+        }) {
             self.select_category(index);
         }
 
@@ -2266,6 +2305,115 @@ impl Layouts {
         selected: bool,
         overlay_opacity: u8,
     ) {
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(CATEGORY_ITEM_WIDTH, CATEGORY_ITEM_HEIGHT),
+            Sense::click(),
+        );
+        if selected && self.reveal_category {
+            ui.scroll_to_rect(rect, Some(Align::Center));
+            self.reveal_category = false;
+        }
+        self.draw_category_item(ui, rect, response, index, selected, overlay_opacity);
+    }
+
+    fn show_category_grid(
+        &mut self,
+        ui: &mut Ui,
+        strip_rect: Rect,
+        visible_indices: &[usize],
+        wheel: Option<i32>,
+        overlay_opacity: u8,
+    ) {
+        let rows = visible_indices.len().div_ceil(CATEGORY_GRID_COLUMNS).max(1);
+        if std::mem::take(&mut self.reveal_category)
+            && let Some(position) = visible_indices
+                .iter()
+                .position(|&index| index == self.selected_category)
+        {
+            self.category_grid_row = position / CATEGORY_GRID_COLUMNS;
+        }
+        if let Some(direction) = wheel {
+            self.category_grid_row = self
+                .category_grid_row
+                .saturating_add_signed(direction as isize);
+        }
+        self.category_grid_row = self.category_grid_row.min(rows - 1);
+        let shown_row = ui.ctx().animate_value_with_time(
+            egui::Id::new("overlay-preview-category-grid-row"),
+            self.category_grid_row as f32,
+            CATEGORY_GRID_SCROLL_SECS,
+        );
+
+        let rail_rect = strip_rect.shrink2(Vec2::new(12.0, 0.0));
+        let column_width = rail_rect.width() / CATEGORY_GRID_COLUMNS as f32;
+        let row_height = strip_rect.height();
+        let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip_rect));
+        grid_ui.set_clip_rect(strip_rect.intersect(ui.clip_rect()));
+        for (position, &index) in visible_indices.iter().enumerate() {
+            let offset = (position / CATEGORY_GRID_COLUMNS) as f32 - shown_row;
+            if offset.abs() >= 1.0 {
+                continue;
+            }
+            let column = (position % CATEGORY_GRID_COLUMNS) as f32;
+            let rect = Rect::from_min_size(
+                egui::pos2(
+                    rail_rect.min.x + column_width * (column + 0.5) - CATEGORY_ITEM_WIDTH * 0.5,
+                    rail_rect.min.y + offset * row_height,
+                ),
+                Vec2::new(CATEGORY_ITEM_WIDTH, CATEGORY_ITEM_HEIGHT),
+            );
+            let response = grid_ui.interact(
+                rect,
+                egui::Id::new(("overlay-preview-category-grid-cell", index)),
+                Sense::click(),
+            );
+            let selected = self.selected_category == index;
+            self.draw_category_item(
+                &mut grid_ui,
+                rect,
+                response,
+                index,
+                selected,
+                overlay_opacity,
+            );
+        }
+
+        if rows > 1 {
+            let track = Rect::from_min_max(
+                egui::pos2(strip_rect.max.x - 7.0, rail_rect.min.y + 6.0),
+                egui::pos2(
+                    strip_rect.max.x - 4.0,
+                    rail_rect.min.y + CATEGORY_ITEM_HEIGHT - 6.0,
+                ),
+            );
+            ui.painter().rect_filled(
+                track,
+                CornerRadius::same(2),
+                white_alpha(30, overlay_opacity),
+            );
+            let thumb_height = (track.height() / rows as f32).max(6.0);
+            let travel = track.height() - thumb_height;
+            let thumb_top = track.min.y + travel * shown_row / (rows - 1) as f32;
+            ui.painter().rect_filled(
+                Rect::from_min_size(
+                    egui::pos2(track.min.x, thumb_top),
+                    Vec2::new(track.width(), thumb_height),
+                ),
+                CornerRadius::same(2),
+                content_gray(180, overlay_opacity),
+            );
+        }
+    }
+
+    fn draw_category_item(
+        &mut self,
+        ui: &mut Ui,
+        rect: Rect,
+        response: egui::Response,
+        index: usize,
+        selected: bool,
+        overlay_opacity: u8,
+    ) {
         let category_name = self.catalog.categories[index].name.clone();
         let extra = self.catalog.categories[index].extra;
         let picture_alpha = if extra {
@@ -2278,18 +2426,10 @@ impl Layouts {
             .image
             .clone()
             .or_else(|| self.active_images[index].clone());
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(CATEGORY_ITEM_WIDTH, CATEGORY_ITEM_HEIGHT),
-            Sense::click(),
-        );
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             self.select_category(index);
             ui.ctx().request_repaint();
-        }
-        if selected && self.reveal_category {
-            ui.scroll_to_rect(rect, Some(Align::Center));
-            self.reveal_category = false;
         }
         if !ui.is_rect_visible(rect) {
             return;
@@ -2999,15 +3139,7 @@ impl Layouts {
         direction
     }
 
-    fn consume_category_wheel(
-        &mut self,
-        ui: &mut Ui,
-        rect: Rect,
-        visible_indices: &[usize],
-    ) -> Option<usize> {
-        if visible_indices.is_empty() {
-            return None;
-        }
+    fn consume_category_wheel(&mut self, ui: &mut Ui, rect: Rect) -> Option<i32> {
         if !ui.rect_contains_pointer(rect) {
             self.category_wheel_accum = 0.0;
             return None;
@@ -3072,7 +3204,7 @@ impl Layouts {
         };
         self.category_wheel_accum = 0.0;
         self.category_wheel_last_step_at = now;
-        next_visible_category(visible_indices, self.selected_category, direction)
+        Some(direction)
     }
 
     fn apply_focused_costume_action(&mut self, action: ModAction, now: f64) {
@@ -4413,6 +4545,121 @@ mod tests {
         );
         assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
         assert!(layouts.held_preview.is_none());
+    }
+
+    #[test]
+    fn grid_wheel_scrolls_rows_without_picking() {
+        let mut layouts = test_layouts(20);
+        layouts.set_character_layout(OverlayCharacterLayout::Grid);
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 344.0);
+
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), true);
+        assert_eq!(layouts.category_grid_row, 0);
+        for (time, row) in [(1.2, 1), (1.4, 2), (1.6, 2)] {
+            run_layout_frame(
+                &context,
+                &mut layouts,
+                size,
+                time,
+                wheel_events(egui::pos2(280.0, 300.0), -1.0),
+                true,
+            );
+            assert_eq!(layouts.category_grid_row, row);
+            assert_eq!(layouts.selected_category, 0);
+        }
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            size,
+            1.8,
+            wheel_events(egui::pos2(280.0, 300.0), 1.0),
+            true,
+        );
+        assert_eq!(layouts.category_grid_row, 1);
+        assert_eq!(layouts.selected_category, 0);
+    }
+
+    #[test]
+    fn grid_keeps_its_row_when_the_list_changes() {
+        let mut layouts = test_layouts(20);
+        layouts.set_character_layout(OverlayCharacterLayout::Grid);
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 344.0);
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), true);
+        for time in [1.2, 1.4] {
+            run_layout_frame(
+                &context,
+                &mut layouts,
+                size,
+                time,
+                wheel_events(egui::pos2(280.0, 300.0), -1.0),
+                true,
+            );
+        }
+        assert_eq!(layouts.category_grid_row, 2);
+
+        layouts.replace_catalog(test_layouts(30).catalog);
+        run_layout_frame(&context, &mut layouts, size, 1.6, Vec::new(), true);
+        assert_eq!(layouts.selected_category, 0);
+        assert_eq!(layouts.category_grid_row, 2);
+
+        let mut catalog = test_layouts(30).catalog;
+        catalog.categories.remove(0);
+        layouts.replace_catalog(catalog);
+        run_layout_frame(&context, &mut layouts, size, 1.8, Vec::new(), true);
+        assert_eq!(layouts.category_grid_row, 0);
+    }
+
+    #[test]
+    fn grid_scrolls_to_a_new_selection() {
+        let mut layouts = test_layouts(20);
+        layouts.set_character_layout(OverlayCharacterLayout::Grid);
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 344.0);
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), true);
+
+        layouts.select_category(15);
+        run_layout_frame(&context, &mut layouts, size, 1.1, Vec::new(), true);
+        assert_eq!(layouts.category_grid_row, 2);
+
+        layouts.navigate_category(&context, -1);
+        layouts.navigate_category(&context, -1);
+        run_layout_frame(&context, &mut layouts, size, 1.2, Vec::new(), true);
+        assert_eq!(layouts.selected_category, 13);
+        assert_eq!(layouts.category_grid_row, 1);
+    }
+
+    #[test]
+    fn clicking_a_grid_cell_picks_it() {
+        let mut layouts = test_layouts(20);
+        layouts.set_character_layout(OverlayCharacterLayout::Grid);
+        let context = egui::Context::default();
+        let size = Vec2::new(560.0, 344.0);
+        let cell = |column: f32| egui::pos2(12.0 + 536.0 / 7.0 * (column + 0.5), 298.0);
+        run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), true);
+
+        let click = |pos| {
+            vec![
+                pointer_button_event(pos, true),
+                pointer_button_event(pos, false),
+            ]
+        };
+        run_layout_frame(&context, &mut layouts, size, 1.1, click(cell(3.0)), true);
+        assert_eq!(layouts.selected_category, 3);
+
+        run_layout_frame(
+            &context,
+            &mut layouts,
+            size,
+            1.3,
+            wheel_events(egui::pos2(280.0, 300.0), -1.0),
+            true,
+        );
+        run_layout_frame(&context, &mut layouts, size, 2.0, Vec::new(), true);
+        run_layout_frame(&context, &mut layouts, size, 2.1, click(cell(2.0)), true);
+        assert_eq!(layouts.selected_category, 9);
+        assert_eq!(layouts.category_grid_row, 1);
     }
 
     #[test]
