@@ -5035,10 +5035,27 @@ impl HestiaApp {
                     SettingsTab::About => {
                         static_label(ui, bold(APP_NAME, Some(16.0)).underline());
                         ui.indent("setting_about_app", |ui| {
-                            ui.add_space(-2.0);
-                            static_label(ui, text.about_by(APP_AUTHORS));
-                            ui.add_space(-8.0);
-                            ui.hyperlink("https://github.com/HenryNugraha/Hestia");
+                            let logo_size = 64.0;
+                            let author_link_gap = -8.0;
+                            ui.add_space(4.0);
+                            ui.horizontal_top(|ui| {
+                                if let Some(texture) = self.app_icon_texture.as_ref() {
+                                    ui.add(
+                                        egui::Image::new(texture)
+                                            .fit_to_exact_size(Vec2::splat(logo_size)),
+                                    );
+                                }
+                                ui.vertical(|ui| {
+                                    let row_height = ui.text_style_height(&egui::TextStyle::Body);
+                                    let block_height = row_height * 2.0
+                                        + ui.spacing().item_spacing.y
+                                        + author_link_gap;
+                                    ui.add_space(((logo_size - block_height) / 2.0).max(0.0));
+                                    static_label(ui, text.about_by(APP_AUTHORS));
+                                    ui.add_space(author_link_gap);
+                                    ui.hyperlink("https://github.com/HenryNugraha/Hestia");
+                                });
+                            });
                             ui.add_space(2.0);
                             ui.horizontal(|ui| {
                                 static_label(ui, text.about_version());
