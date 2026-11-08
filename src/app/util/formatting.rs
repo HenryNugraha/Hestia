@@ -140,7 +140,7 @@ fn mod_update_state_tooltip(state: ModUpdateState) -> &'static str {
     }
 }
 
-fn format_file_size(size: u64) -> String {
+pub(crate) fn format_file_size(size: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;

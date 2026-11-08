@@ -45,7 +45,7 @@ rpassword = "7.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 semver = "1.0"
-sevenz-rust = "0.6"
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["brotli", "bzip2", "deflate", "lz4", "ppmd", "zstd"] }
 shlex = "2.0"
 md-5 = "0.11"
 sha2 = "0.11"
@@ -55,7 +55,9 @@ tar = "0.4"
 zstd = { version = "0.14", features = ["zstdmt"] }
 num_cpus = "1.17"
 trash = "5"
-unrar = "0.5"
+unrar-ng = "0.7"
+unrar-ng-sys = { version = "0.7", default-features = false, features = ["std"] }
+widestring = "1.2"
 uuid = { version = "1.27", features = ["v4", "serde"] }
 walkdir = "2.5"
 lucide-icons = "1.54.0"
@@ -93,6 +95,9 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Globalizati
 
 [target.'cfg(not(windows))'.dependencies]
 font-kit = { version = "0.14.3", default-features = false, features = ["source", "source-fontconfig-dlopen"] }
+
+[dev-dependencies]
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["compress"] }
 
 [profile.release]
 lto = true

@@ -6,6 +6,7 @@ use std::{
     io::{self, Read},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -38,6 +39,13 @@ pub struct PreparedImport {
 
 const ZIP_COPY_BUFFER_BYTES: usize = 256 * 1024;
 const ZIP_EXTRACT_WORKERS: usize = 4;
+const UNPACK_RATIO_LIMIT: u64 = 100;
+const UNPACK_ALWAYS_ALLOWED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const RAR_HEADER_NAME_CAPACITY: usize = 1024;
+const RAR_REDIR_NAME_CAPACITY: usize = 2048;
+const RAR_REDIR_NONE: u32 = 0;
+const RAR_REDIR_HARDLINK: u32 = 4;
+const RAR_REDIR_FILECOPY: u32 = 5;
 
 static ZIP_EXTRACT_POOL: Lazy<ThreadPool> = Lazy::new(|| {
     let worker_count = std::thread::available_parallelism()
@@ -486,22 +494,77 @@ fn extract_split_archive(
     extract_archive_impl(&joined, destination, cancel)
 }
 
-fn zip_top_level_sanitize_map(
-    archive: &mut zip::ZipArchive<fs::File>,
+#[derive(Clone)]
+struct ArchiveListing {
+    name: String,
+    is_directory: bool,
+    size: u64,
+}
+
+struct PlannedArchiveEntry {
+    index: usize,
+    outpath: PathBuf,
+    is_directory: bool,
+    size: u64,
+}
+
+struct ArchivePlan {
+    entries: Vec<PlannedArchiveEntry>,
+    unpacked_bytes: u64,
+    has_conflicting_paths: bool,
+}
+
+fn plan_archive_extraction(listing: &[ArchiveListing], destination: &Path) -> Result<ArchivePlan> {
+    let sanitized_top_level = archive_top_level_sanitize_map(listing)?;
+    let mut entries = Vec::new();
+    let mut unpacked_bytes = 0u64;
+    let mut known_output_kinds = HashMap::<String, bool>::new();
+    let mut has_conflicting_paths = false;
+    for (index, item) in listing.iter().enumerate() {
+        let parts = archive_entry_parts(&item.name)?;
+        if archive_entry_is_ignored_metadata(&parts) {
+            continue;
+        }
+        let relative =
+            archive_entry_relative_path(&item.name, &parts, sanitized_top_level.as_ref())?;
+        let outpath = destination.join(relative);
+        if !register_archive_output(&mut known_output_kinds, &outpath, item.is_directory) {
+            has_conflicting_paths = true;
+        }
+        if !item.is_directory {
+            unpacked_bytes = unpacked_bytes.saturating_add(item.size);
+        }
+        entries.push(PlannedArchiveEntry {
+            index,
+            outpath,
+            is_directory: item.is_directory,
+            size: item.size,
+        });
+    }
+    if archive_outputs_overlap(&known_output_kinds) {
+        has_conflicting_paths = true;
+    }
+    Ok(ArchivePlan {
+        entries,
+        unpacked_bytes,
+        has_conflicting_paths,
+    })
+}
+
+fn archive_top_level_sanitize_map(
+    listing: &[ArchiveListing],
 ) -> Result<Option<HashMap<OsString, OsString>>> {
     let mut has_top_level_dir = false;
     let mut has_top_level_file = false;
     let mut original_names = HashMap::<OsString, OsString>::new();
     let mut sanitized_keys = HashMap::<String, OsString>::new();
-    for index in 0..archive.len() {
-        let entry = archive.by_index(index)?;
-        let name = entry.name()?;
-        let parts = zip_entry_parts(&name)?;
-        if zip_entry_is_ignored_metadata(&parts) {
+    for item in listing {
+        let parts = archive_entry_parts(&item.name)?;
+        if archive_entry_is_ignored_metadata(&parts) {
             continue;
         }
         let first = OsStr::new(parts[0]);
-        if parts.len() > 1 || entry.name_raw().ends_with(b"/") {
+        if parts.len() > 1 || item.is_directory {
             has_top_level_dir = true;
             let original = first.to_os_string();
             if !original_names.contains_key(&original) {
@@ -530,7 +593,7 @@ fn zip_top_level_sanitize_map(
     }
 }
 
-fn zip_entry_parts(name: &str) -> Result<Vec<&str>> {
+fn archive_entry_parts(name: &str) -> Result<Vec<&str>> {
     let invalid = || anyhow!("archive contains invalid path: {name}");
     if name.contains('\0') {
         return Err(invalid());
@@ -551,7 +614,7 @@ fn zip_entry_parts(name: &str) -> Result<Vec<&str>> {
     Ok(parts)
 }
 
-fn zip_entry_relative_path(
+fn archive_entry_relative_path(
     name: &str,
     parts: &[&str],
     sanitized_top_level: Option<&HashMap<OsString, OsString>>,
@@ -575,8 +638,44 @@ fn zip_entry_relative_path(
     Ok(out)
 }
 
-fn zip_entry_is_ignored_metadata(parts: &[&str]) -> bool {
+fn archive_entry_is_ignored_metadata(parts: &[&str]) -> bool {
     parts.first() == Some(&"__MACOSX")
+}
+
+fn check_unpacked_size(packed_bytes: u64, unpacked_bytes: u64, destination: &Path) -> Result<()> {
+    let probe = destination
+        .ancestors()
+        .find(|path| path.exists())
+        .unwrap_or(destination);
+    let free_bytes = fs2::available_space(probe).ok();
+    check_unpack_limits(packed_bytes, unpacked_bytes, free_bytes)
+}
+
+fn check_unpack_limits(
+    packed_bytes: u64,
+    unpacked_bytes: u64,
+    free_bytes: Option<u64>,
+) -> Result<()> {
+    let ratio_limit = packed_bytes
+        .saturating_mul(UNPACK_RATIO_LIMIT)
+        .max(UNPACK_ALWAYS_ALLOWED_BYTES);
+    if unpacked_bytes > ratio_limit {
+        bail!(
+            "archive would unpack to {} from {}, more than {UNPACK_RATIO_LIMIT} times its size",
+            crate::app::format_file_size(unpacked_bytes),
+            crate::app::format_file_size(packed_bytes)
+        );
+    }
+    if let Some(free_bytes) = free_bytes
+        && unpacked_bytes > free_bytes
+    {
+        bail!(
+            "not enough free disk space: unpacking needs {}, only {} is free",
+            crate::app::format_file_size(unpacked_bytes),
+            crate::app::format_file_size(free_bytes)
+        );
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -847,12 +946,6 @@ fn extract_zip(archive: &Path, destination: &Path) -> Result<()> {
     extract_zip_with_cancel(archive, destination, None)
 }
 
-#[derive(Clone)]
-struct ZipFileEntry {
-    index: usize,
-    outpath: PathBuf,
-}
-
 fn extract_zip_with_cancel(
     archive_path: &Path,
     destination: &Path,
@@ -864,59 +957,36 @@ fn extract_zip_with_cancel(
 
     let file = fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
-    let sanitized_top_level = zip_top_level_sanitize_map(&mut archive)?;
-    let mut directories = HashSet::new();
-    let mut files = Vec::new();
-    let mut known_output_kinds = HashMap::<String, bool>::new();
-    let mut has_conflicting_paths = false;
-
-    for index in 0..archive.len() {
-        if let Some(cancel) = cancel {
-            check_cancel(cancel)?;
-        }
-        let entry = archive.by_index(index)?;
-        let name = entry.name()?;
-        let parts = zip_entry_parts(&name)?;
-        if zip_entry_is_ignored_metadata(&parts) {
-            continue;
-        }
-        let relative = zip_entry_relative_path(&name, &parts, sanitized_top_level.as_ref())?;
-        let outpath = destination.join(relative);
-        if entry.name_raw().ends_with(b"/") {
-            if !register_zip_output(&mut known_output_kinds, &outpath, true) {
-                has_conflicting_paths = true;
-            }
-            directories.insert(outpath);
-        } else {
-            if let Some(parent) = outpath.parent() {
-                directories.insert(parent.to_path_buf());
-            }
-            if !register_zip_output(&mut known_output_kinds, &outpath, false) {
-                has_conflicting_paths = true;
-            }
-            files.push(ZipFileEntry { index, outpath });
-        }
-    }
-
-    if zip_outputs_overlap(&known_output_kinds) {
-        has_conflicting_paths = true;
-    }
-
-    if has_conflicting_paths {
-        return extract_zip_serial(
-            archive_path,
-            destination,
-            sanitized_top_level.as_ref(),
-            cancel,
-        );
-    }
+    let listing = zip_listing(&mut archive, cancel)?;
+    let plan = plan_archive_extraction(&listing, destination)?;
+    check_unpacked_size(
+        fs::metadata(archive_path)?.len(),
+        plan.unpacked_bytes,
+        destination,
+    )?;
 
     let mut created_dirs = HashSet::new();
     ensure_directory(destination, &mut created_dirs)?;
-    for directory in directories {
-        ensure_directory(&directory, &mut created_dirs)?;
+    if plan.has_conflicting_paths {
+        return extract_zip_serial(&mut archive, &plan.entries, &mut created_dirs, cancel);
     }
 
+    for planned in &plan.entries {
+        let directory = if planned.is_directory {
+            Some(planned.outpath.as_path())
+        } else {
+            planned.outpath.parent()
+        };
+        if let Some(directory) = directory {
+            ensure_directory(directory, &mut created_dirs)?;
+        }
+    }
+
+    let files: Vec<&PlannedArchiveEntry> = plan
+        .entries
+        .iter()
+        .filter(|planned| !planned.is_directory)
+        .collect();
     if files.is_empty() {
         return Ok(());
     }
@@ -927,19 +997,38 @@ fn extract_zip_with_cancel(
         files.par_chunks(chunk_size).try_for_each(|chunk| {
             let file = fs::File::open(archive_path)?;
             let mut archive = zip::ZipArchive::new(file)?;
-            for work in chunk {
+            for planned in chunk {
                 if let Some(cancel) = cancel {
                     check_cancel(cancel)?;
                 }
-                let mut entry = archive.by_index(work.index)?;
-                copy_zip_entry(&mut entry, &work.outpath, cancel)?;
+                let mut entry = archive.by_index(planned.index)?;
+                copy_archive_entry(&mut entry, planned, cancel)?;
             }
             Ok(())
         })
     })
 }
 
-fn register_zip_output(
+fn zip_listing(
+    archive: &mut zip::ZipArchive<fs::File>,
+    cancel: Option<&CancelFlag>,
+) -> Result<Vec<ArchiveListing>> {
+    let mut listing = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        if let Some(cancel) = cancel {
+            check_cancel(cancel)?;
+        }
+        let entry = archive.by_index(index)?;
+        listing.push(ArchiveListing {
+            name: entry.name()?.into_owned(),
+            is_directory: entry.name_raw().ends_with(b"/"),
+            size: entry.size(),
+        });
+    }
+    Ok(listing)
+}
+
+fn register_archive_output(
     outputs: &mut HashMap<String, bool>,
     path: &Path,
     is_directory: bool,
@@ -948,7 +1037,7 @@ fn register_zip_output(
     outputs.insert(key, is_directory).is_none()
 }
 
-fn zip_outputs_overlap(outputs: &HashMap<String, bool>) -> bool {
+fn archive_outputs_overlap(outputs: &HashMap<String, bool>) -> bool {
     outputs.iter().any(|(path, is_directory)| {
         let prefix = format!("{path}{}", std::path::MAIN_SEPARATOR);
         !is_directory && outputs.keys().any(|other| other.starts_with(&prefix))
@@ -956,46 +1045,36 @@ fn zip_outputs_overlap(outputs: &HashMap<String, bool>) -> bool {
 }
 
 fn extract_zip_serial(
-    archive_path: &Path,
-    destination: &Path,
-    sanitized_top_level: Option<&HashMap<OsString, OsString>>,
+    archive: &mut zip::ZipArchive<fs::File>,
+    entries: &[PlannedArchiveEntry],
+    created_dirs: &mut HashSet<PathBuf>,
     cancel: Option<&CancelFlag>,
 ) -> Result<()> {
-    let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut created_dirs = HashSet::new();
-    ensure_directory(destination, &mut created_dirs)?;
-    for index in 0..archive.len() {
+    for planned in entries {
         if let Some(cancel) = cancel {
             check_cancel(cancel)?;
         }
-        let mut entry = archive.by_index(index)?;
-        let name = entry.name()?.into_owned();
-        let parts = zip_entry_parts(&name)?;
-        if zip_entry_is_ignored_metadata(&parts) {
+        if planned.is_directory {
+            ensure_directory(&planned.outpath, created_dirs)?;
             continue;
         }
-        let relative = zip_entry_relative_path(&name, &parts, sanitized_top_level)?;
-        let outpath = destination.join(relative);
-        if entry.name_raw().ends_with(b"/") {
-            ensure_directory(&outpath, &mut created_dirs)?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                ensure_directory(parent, &mut created_dirs)?;
-            }
-            copy_zip_entry(&mut entry, &outpath, cancel)?;
+        if let Some(parent) = planned.outpath.parent() {
+            ensure_directory(parent, created_dirs)?;
         }
+        let mut entry = archive.by_index(planned.index)?;
+        copy_archive_entry(&mut entry, planned, cancel)?;
     }
     Ok(())
 }
 
-fn copy_zip_entry<R: Read>(
+fn copy_archive_entry<R: Read + ?Sized>(
     entry: &mut R,
-    outpath: &Path,
+    planned: &PlannedArchiveEntry,
     cancel: Option<&CancelFlag>,
-) -> Result<()> {
-    let mut outfile = create_file_with_parent_recovery(outpath)?;
+) -> Result<fs::File> {
+    let mut outfile = create_file_with_parent_recovery(&planned.outpath)?;
     let mut buffer = vec![0; ZIP_COPY_BUFFER_BYTES];
+    let mut written = 0u64;
     loop {
         if let Some(cancel) = cancel {
             check_cancel(cancel)?;
@@ -1004,9 +1083,13 @@ fn copy_zip_entry<R: Read>(
         if bytes_read == 0 {
             break;
         }
+        written = written.saturating_add(bytes_read as u64);
+        if written > planned.size {
+            bail!("archive entry is larger than its listed size");
+        }
         std::io::Write::write_all(&mut outfile, &buffer[..bytes_read])?;
     }
-    Ok(())
+    Ok(outfile)
 }
 
 fn ensure_directory(path: &Path, created_dirs: &mut HashSet<PathBuf>) -> Result<()> {
@@ -1031,15 +1114,114 @@ fn create_file_with_parent_recovery(path: &Path) -> Result<fs::File> {
 }
 
 fn extract_7z_with_cancel(
-    archive: &Path,
+    archive_path: &Path,
     destination: &Path,
     cancel: Option<&CancelFlag>,
 ) -> Result<()> {
-    sevenz_rust::decompress_file(archive, destination).context("failed to extract .7z archive")?;
     if let Some(flag) = cancel {
         check_cancel(flag)?;
     }
+    let mut reader =
+        sevenz_rust2::ArchiveReader::open(archive_path, sevenz_rust2::Password::empty())
+            .context("failed to open .7z archive")?;
+    let listing: Vec<ArchiveListing> = reader
+        .archive()
+        .files
+        .iter()
+        .filter(|entry| !entry.is_anti_item())
+        .map(|entry| ArchiveListing {
+            name: entry.name().to_string(),
+            is_directory: entry.is_directory(),
+            size: entry.size(),
+        })
+        .collect();
+    let plan = plan_archive_extraction(&listing, destination)?;
+    check_unpacked_size(
+        fs::metadata(archive_path)?.len(),
+        plan.unpacked_bytes,
+        destination,
+    )?;
+    let planned_by_name: HashMap<&str, &PlannedArchiveEntry> = plan
+        .entries
+        .iter()
+        .map(|planned| (listing[planned.index].name.as_str(), planned))
+        .collect();
+
+    let mut created_dirs = HashSet::new();
+    ensure_directory(destination, &mut created_dirs)?;
+    let mut failure = None;
+    let result = reader.for_each_entries_with_decision(|entry, data| {
+        if entry.is_anti_item() {
+            return Ok(sevenz_rust2::EntryDecision::Continue);
+        }
+        let Some(planned) = planned_by_name.get(entry.name()) else {
+            return Ok(sevenz_rust2::EntryDecision::Continue);
+        };
+        match write_7z_entry(entry, data, planned, &mut created_dirs, cancel) {
+            Ok(()) => Ok(sevenz_rust2::EntryDecision::Continue),
+            Err(err) => {
+                failure = Some(err);
+                Ok(sevenz_rust2::EntryDecision::Stop)
+            }
+        }
+    });
+    if let Some(err) = failure {
+        return Err(err);
+    }
+    result.context("failed to extract .7z archive")?;
     Ok(())
+}
+
+fn write_7z_entry(
+    entry: &sevenz_rust2::ArchiveEntry,
+    data: &mut dyn Read,
+    planned: &PlannedArchiveEntry,
+    created_dirs: &mut HashSet<PathBuf>,
+    cancel: Option<&CancelFlag>,
+) -> Result<()> {
+    if planned.is_directory {
+        return ensure_directory(&planned.outpath, created_dirs);
+    }
+    if let Some(parent) = planned.outpath.parent() {
+        ensure_directory(parent, created_dirs)?;
+    }
+    let file = copy_archive_entry(data, planned, cancel)?;
+    let _ = file.set_times(seven_zip_file_times(entry));
+    Ok(())
+}
+
+fn seven_zip_file_times(entry: &sevenz_rust2::ArchiveEntry) -> fs::FileTimes {
+    let mut times = fs::FileTimes::new();
+    if entry.has_access_date
+        && let Some(time) = nt_time_to_system_time(entry.access_date())
+    {
+        times = times.set_accessed(time);
+    }
+    if entry.has_last_modified_date
+        && let Some(time) = nt_time_to_system_time(entry.last_modified_date())
+    {
+        times = times.set_modified(time);
+    }
+    #[cfg(windows)]
+    if entry.has_creation_date
+        && let Some(time) = nt_time_to_system_time(entry.creation_date())
+    {
+        times = std::os::windows::fs::FileTimesExt::set_created(times, time);
+    }
+    times
+}
+
+fn nt_time_to_system_time(time: sevenz_rust2::NtTime) -> Option<SystemTime> {
+    const TICKS_PER_SECOND: u64 = 10_000_000;
+    const SECONDS_FROM_1601_TO_1970: u64 = 11_644_473_600;
+    let ticks = u64::from(time);
+    let since_1601 = Duration::new(
+        ticks / TICKS_PER_SECOND,
+        ((ticks % TICKS_PER_SECOND) * 100) as u32,
+    );
+    SystemTime::UNIX_EPOCH
+        .checked_sub(Duration::from_secs(SECONDS_FROM_1601_TO_1970))?
+        .checked_add(since_1601)
 }
 
 fn extract_rar_with_cancel(
@@ -1047,20 +1229,266 @@ fn extract_rar_with_cancel(
     destination: &Path,
     cancel: Option<&CancelFlag>,
 ) -> Result<()> {
-    match extract_rar_with_unrar(archive, destination, cancel) {
+    if let Some(flag) = cancel {
+        check_cancel(flag)?;
+    }
+    let entries = match rar_listing(archive) {
+        Ok(entries) => entries,
+        Err(unrar_err) => {
+            return extract_rar_with_7z_fallback(archive, destination, cancel, unrar_err);
+        }
+    };
+    let plan = plan_rar_extraction(&entries, destination)?;
+    check_unpacked_size(
+        rar_packed_size(archive)?,
+        plan.archive.unpacked_bytes,
+        destination,
+    )?;
+    match extract_rar_with_unrar(archive, &entries, &plan, cancel) {
         Ok(()) => Ok(()),
         Err(unrar_err) => extract_rar_with_7z_fallback(archive, destination, cancel, unrar_err),
     }
 }
 
+enum RarEntryKind {
+    Regular,
+    CopyOf(String),
+    Link,
+}
+
+struct RarListedEntry {
+    listing: ArchiveListing,
+    kind: RarEntryKind,
+}
+
+struct RarCopy {
+    source: PathBuf,
+    target: PathBuf,
+}
+
+struct RarPlan {
+    archive: ArchivePlan,
+    planned_index_by_entry: Vec<Option<usize>>,
+    copies: Vec<RarCopy>,
+}
+
+struct RarArchiveHandle(*const unrar_ng_sys::Handle);
+
+impl Drop for RarArchiveHandle {
+    fn drop(&mut self) {
+        unsafe {
+            unrar_ng_sys::RARCloseArchive(self.0);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "netbsd"))]
+fn rar_native_path(path: &Path) -> Result<std::ffi::CString> {
+    std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| anyhow!("archive path contains a nul character"))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "netbsd")))]
+fn rar_native_path(path: &Path) -> Result<widestring::WideCString> {
+    widestring::WideCString::from_os_str(path)
+        .map_err(|_| anyhow!("archive path contains a nul character"))
+}
+
+fn rar_wide_text<T>(text: *const T, capacity: usize) -> Result<String> {
+    let text = unsafe { widestring::WideCString::from_ptr_truncate(text.cast(), capacity) };
+    text.to_string()
+        .map_err(|_| anyhow!("archive contains invalid path: {}", text.display()))
+}
+
+fn rar_listing(archive: &Path) -> Result<Vec<RarListedEntry>> {
+    let archive_name = rar_native_path(archive)?;
+    let mut open_data = unrar_ng_sys::OpenArchiveDataEx::new(
+        archive_name.as_ptr().cast(),
+        unrar_ng_sys::RAR_OM_LIST,
+    );
+    let handle = unsafe { unrar_ng_sys::RAROpenArchiveEx(&raw mut open_data) };
+    let open_result = open_data.open_result;
+    if handle.is_null() {
+        bail!("failed to open .rar archive (unrar code {open_result})");
+    }
+    let handle = RarArchiveHandle(handle);
+    if open_result != unrar_ng_sys::ERAR_SUCCESS as u32 {
+        bail!("failed to open .rar archive (unrar code {open_result})");
+    }
+
+    let mut redir_name = vec![0 as widestring::WideChar; RAR_REDIR_NAME_CAPACITY];
+    let mut entries = Vec::new();
+    loop {
+        let mut header = Box::new(unrar_ng_sys::HeaderDataEx::default());
+        header.redir_name = redir_name.as_mut_ptr().cast();
+        header.redir_name_size = RAR_REDIR_NAME_CAPACITY as u32;
+        let read_result = unsafe { unrar_ng_sys::RARReadHeaderEx(handle.0, &raw mut *header) };
+        if read_result == unrar_ng_sys::ERAR_END_ARCHIVE {
+            break;
+        }
+        if read_result != unrar_ng_sys::ERAR_SUCCESS {
+            bail!("failed to read .rar header (unrar code {read_result})");
+        }
+        let name = rar_wide_text(&raw const header.filename_w, RAR_HEADER_NAME_CAPACITY)?;
+        let kind = match header.redir_type {
+            RAR_REDIR_NONE => RarEntryKind::Regular,
+            RAR_REDIR_HARDLINK | RAR_REDIR_FILECOPY => RarEntryKind::CopyOf(rar_wide_text(
+                redir_name.as_ptr(),
+                RAR_REDIR_NAME_CAPACITY,
+            )?),
+            _ => RarEntryKind::Link,
+        };
+        entries.push(RarListedEntry {
+            listing: ArchiveListing {
+                name,
+                is_directory: header.flags & unrar_ng_sys::RHDF_DIRECTORY != 0,
+                size: (u64::from(header.unp_size_high) << 32) | u64::from(header.unp_size),
+            },
+            kind,
+        });
+        let skip_result = unsafe {
+            unrar_ng_sys::RARProcessFile(
+                handle.0,
+                unrar_ng_sys::RAR_SKIP,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if skip_result != unrar_ng_sys::ERAR_SUCCESS {
+            bail!("failed to read .rar archive (unrar code {skip_result})");
+        }
+    }
+    Ok(entries)
+}
+
+fn plan_rar_extraction(entries: &[RarListedEntry], destination: &Path) -> Result<RarPlan> {
+    let plannable: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| !matches!(entry.kind, RarEntryKind::Link))
+        .map(|(index, _)| index)
+        .collect();
+    let listing: Vec<ArchiveListing> = plannable
+        .iter()
+        .map(|&index| entries[index].listing.clone())
+        .collect();
+    let archive = plan_archive_extraction(&listing, destination)?;
+
+    let mut planned_index_by_entry = vec![None; entries.len()];
+    let mut outpath_by_name = HashMap::new();
+    for (planned_index, planned) in archive.entries.iter().enumerate() {
+        let entry_index = plannable[planned.index];
+        planned_index_by_entry[entry_index] = Some(planned_index);
+        let key = archive_entry_parts(&entries[entry_index].listing.name)?.join("/");
+        outpath_by_name.insert(key, &planned.outpath);
+    }
+    let mut copies = Vec::new();
+    for (entry, planned_index) in entries.iter().zip(&planned_index_by_entry) {
+        let (RarEntryKind::CopyOf(source_name), Some(planned_index)) = (&entry.kind, planned_index)
+        else {
+            continue;
+        };
+        let source = outpath_by_name
+            .get(&archive_entry_parts(source_name)?.join("/"))
+            .ok_or_else(|| anyhow!("archive refers to a missing file: {source_name}"))?;
+        copies.push(RarCopy {
+            source: source.to_path_buf(),
+            target: archive.entries[*planned_index].outpath.clone(),
+        });
+    }
+    Ok(RarPlan {
+        archive,
+        planned_index_by_entry,
+        copies,
+    })
+}
+
+fn rar_packed_size(archive: &Path) -> Result<u64> {
+    let own_size = fs::metadata(archive)?.len();
+    let Some(volumes) = unrar_ng::Archive::new(archive).all_parts_option() else {
+        return Ok(own_size);
+    };
+    let (Some(folder), Some(pattern)) = (
+        volumes.parent(),
+        volumes.file_name().and_then(OsStr::to_str),
+    ) else {
+        return Ok(own_size);
+    };
+    let mut total = 0u64;
+    for entry in fs::read_dir(folder)? {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| matches_rar_volume_pattern(name, pattern))
+        {
+            total = total.saturating_add(entry.metadata()?.len());
+        }
+    }
+    Ok(total.max(own_size))
+}
+
+fn matches_rar_volume_pattern(name: &str, pattern: &str) -> bool {
+    name.chars().count() == pattern.chars().count()
+        && name
+            .chars()
+            .zip(pattern.chars())
+            .all(|(name_char, pattern_char)| {
+                pattern_char == '?' || name_char.eq_ignore_ascii_case(&pattern_char)
+            })
+}
+
+fn listing_with_7z(exe_path: &Path, archive: &Path) -> Result<Vec<ArchiveListing>> {
+    let output = Command::new(exe_path)
+        .arg("l")
+        .arg("-slt")
+        .arg("-sccUTF-8")
+        .arg(archive)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .with_context(|| format!("failed to run 7-Zip at {}", exe_path.display()))?;
+    if !output.status.success() {
+        bail!("7-Zip could not list the archive (status {})", output.status);
+    }
+    Ok(parse_7z_technical_listing(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_7z_technical_listing(text: &str) -> Vec<ArchiveListing> {
+    let mut listing: Vec<ArchiveListing> = Vec::new();
+    let mut lines = text.lines().skip_while(|line| *line != "----------");
+    lines.next();
+    for line in lines {
+        if let Some(path) = line.strip_prefix("Path = ") {
+            listing.push(ArchiveListing {
+                name: path.to_string(),
+                is_directory: false,
+                size: 0,
+            });
+        } else if let Some(entry) = listing.last_mut() {
+            if line == "Folder = +" {
+                entry.is_directory = true;
+            } else if let Some(size) = line.strip_prefix("Size = ") {
+                entry.size = size.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    listing
+}
+
 fn extract_rar_with_unrar(
-    archive: &Path,
-    destination: &Path,
+    archive_path: &Path,
+    entries: &[RarListedEntry],
+    plan: &RarPlan,
     cancel: Option<&CancelFlag>,
 ) -> Result<()> {
-    let mut archive = unrar::Archive::new(archive)
+    let mut created_dirs = HashSet::new();
+    let mut archive = unrar_ng::Archive::new(archive_path)
         .open_for_processing()
         .context("failed to open .rar archive")?;
+    let mut entry_index = 0;
     while let Some(header) = archive
         .read_header()
         .context("failed to read .rar header")?
@@ -1068,9 +1496,47 @@ fn extract_rar_with_unrar(
         if let Some(flag) = cancel {
             check_cancel(flag)?;
         }
-        archive = header
-            .extract_with_base(destination)
-            .context("failed to extract .rar entry")?;
+        let Some(entry) = entries
+            .get(entry_index)
+            .filter(|entry| OsStr::new(&entry.listing.name) == header.entry().filename.as_os_str())
+        else {
+            bail!(".rar entries did not match their listing");
+        };
+        let planned = plan.planned_index_by_entry[entry_index].map(|index| &plan.archive.entries[index]);
+        entry_index += 1;
+        archive = match planned {
+            Some(planned) if planned.is_directory => {
+                ensure_directory(&planned.outpath, &mut created_dirs)?;
+                header.skip().context("failed to read .rar entry")?
+            }
+            Some(planned) if matches!(entry.kind, RarEntryKind::Regular) => {
+                if let Some(parent) = planned.outpath.parent() {
+                    ensure_directory(parent, &mut created_dirs)?;
+                }
+                let next = header
+                    .extract_to(&planned.outpath)
+                    .context("failed to extract .rar entry")?;
+                if fs::metadata(&planned.outpath)?.len() > planned.size {
+                    bail!("archive entry is larger than its listed size");
+                }
+                next
+            }
+            _ => header.skip().context("failed to read .rar entry")?,
+        };
+    }
+    if entry_index != entries.len() {
+        bail!(".rar entries did not match their listing");
+    }
+    for copy in &plan.copies {
+        if let Some(parent) = copy.target.parent() {
+            ensure_directory(parent, &mut created_dirs)?;
+        }
+        fs::copy(&copy.source, &copy.target).with_context(|| {
+            format!(
+                "failed to copy {} inside the .rar archive",
+                copy.source.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -1091,6 +1557,11 @@ fn extract_rar_with_7z_fallback(
             unrar_error
         );
     };
+
+    let listing = listing_with_7z(&exe_path, archive)
+        .map_err(|list_err| anyhow!("{unrar_error:#}\n7-Zip fallback failed: {list_err:#}"))?;
+    let plan = plan_archive_extraction(&listing, destination)?;
+    check_unpacked_size(rar_packed_size(archive)?, plan.unpacked_bytes, destination)?;
 
     fs::create_dir_all(destination)?;
     let output = Command::new(&exe_path)
@@ -2176,7 +2647,7 @@ mod tests {
     }
 
     #[test]
-    fn zip_entry_parts_refuse_names_that_climb_out() {
+    fn archive_entry_parts_refuse_names_that_climb_out() {
         for name in [
             "../evil.txt",
             "Mod/../../evil.txt",
@@ -2186,14 +2657,14 @@ mod tests {
             ".",
             "Mod/a\0b.txt",
         ] {
-            assert!(zip_entry_parts(name).is_err(), "{name:?} should be refused");
+            assert!(archive_entry_parts(name).is_err(), "{name:?} should be refused");
         }
         assert_eq!(
-            zip_entry_parts("/Mod/./Sub/../readme.txt").unwrap(),
+            archive_entry_parts("/Mod/./Sub/../readme.txt").unwrap(),
             ["Mod", "readme.txt"]
         );
         assert_eq!(
-            zip_entry_parts("Mod\\Sub\\readme.txt").unwrap(),
+            archive_entry_parts("Mod\\Sub\\readme.txt").unwrap(),
             ["Mod", "Sub", "readme.txt"]
         );
     }
@@ -2234,6 +2705,559 @@ mod tests {
             err.to_string().contains("invalid file name"),
             "unexpected error: {err:#}"
         );
+    }
+
+    const TEST_MIB: u64 = 1024 * 1024;
+
+    #[test]
+    fn unpack_limits_allow_anything_under_two_gib() {
+        check_unpack_limits(TEST_MIB, 1500 * TEST_MIB, None).unwrap();
+        check_unpack_limits(1, UNPACK_ALWAYS_ALLOWED_BYTES, None).unwrap();
+        let err = check_unpack_limits(TEST_MIB, UNPACK_ALWAYS_ALLOWED_BYTES + 1, None).unwrap_err();
+        assert!(
+            err.to_string().contains("times its size"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn unpack_limits_allow_up_to_a_hundred_times_the_archive() {
+        let packed = 50 * TEST_MIB;
+        check_unpack_limits(packed, packed * UNPACK_RATIO_LIMIT, None).unwrap();
+        assert!(check_unpack_limits(packed, packed * UNPACK_RATIO_LIMIT + 1, None).is_err());
+        assert!(check_unpack_limits(u64::MAX, u64::MAX, None).is_ok());
+    }
+
+    #[test]
+    fn unpack_limits_only_refuse_installs_that_do_not_fit() {
+        let unpacked = 10 * TEST_MIB;
+        check_unpack_limits(unpacked, unpacked, Some(unpacked)).unwrap();
+        let err = check_unpack_limits(unpacked, unpacked, Some(unpacked - 1)).unwrap_err();
+        assert!(
+            err.to_string().contains("not enough free disk space"),
+            "unexpected error: {err:#}"
+        );
+        assert!(check_unpack_limits(unpacked, unpacked, Some(0)).is_err());
+        check_unpack_limits(unpacked, unpacked, None).unwrap();
+    }
+
+    #[test]
+    fn archive_plan_counts_only_extracted_files() {
+        let listing = [
+            ("Mod/", true, 0),
+            ("Mod/a.txt", false, 10),
+            ("Mod/sub/b.txt", false, 20),
+            ("__MACOSX/._a.txt", false, 5),
+        ]
+        .map(|(name, is_directory, size)| ArchiveListing {
+            name: name.to_string(),
+            is_directory,
+            size,
+        });
+        let destination = Path::new("extract");
+        let plan = plan_archive_extraction(&listing, destination).unwrap();
+        assert_eq!(plan.unpacked_bytes, 30);
+        assert_eq!(plan.entries.len(), 3);
+        assert_eq!(
+            plan.entries[2].outpath,
+            destination.join("Mod").join("sub").join("b.txt")
+        );
+    }
+
+    #[test]
+    fn copy_archive_entry_refuses_data_past_the_listed_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let planned = PlannedArchiveEntry {
+            index: 0,
+            outpath: temp.path().join("out.bin"),
+            is_directory: false,
+            size: 4,
+        };
+        let err = copy_archive_entry(&mut &b"0123456789"[..], &planned, None).unwrap_err();
+        assert!(
+            err.to_string().contains("larger than its listed size"),
+            "unexpected error: {err:#}"
+        );
+
+        copy_archive_entry(&mut &b"0123"[..], &planned, None).unwrap();
+        assert_eq!(fs::read(&planned.outpath).unwrap(), b"0123");
+    }
+
+    fn write_test_7z(path: &Path, entries: &[(&str, Option<&[u8]>)]) {
+        let mut writer = sevenz_rust2::ArchiveWriter::create(path).unwrap();
+        for (name, data) in entries {
+            match data {
+                Some(data) => {
+                    writer
+                        .push_archive_entry(sevenz_rust2::ArchiveEntry::new_file(name), Some(*data))
+                        .unwrap();
+                }
+                None => {
+                    writer
+                        .push_archive_entry(
+                            sevenz_rust2::ArchiveEntry::new_directory(name),
+                            None::<&[u8]>,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn seven_zip_extracts_nested_files_folders_and_empty_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("demo.7z");
+        write_test_7z(
+            &archive_path,
+            &[
+                ("Mod", None),
+                ("Mod/readme.txt", Some(b"hello")),
+                ("Mod/sub/data.ini", Some(b"[Constants]")),
+                ("Mod/empty.txt", Some(b"")),
+                ("Mod/textures", None),
+            ],
+        );
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        let root = destination.join("Mod");
+        assert_eq!(fs::read(root.join("readme.txt")).unwrap(), b"hello");
+        assert_eq!(
+            fs::read(root.join("sub").join("data.ini")).unwrap(),
+            b"[Constants]"
+        );
+        assert_eq!(fs::read(root.join("empty.txt")).unwrap(), b"");
+        assert!(root.join("textures").is_dir());
+    }
+
+    #[test]
+    fn seven_zip_extracts_every_supported_compression_method() {
+        let methods = [
+            sevenz_rust2::EncoderMethod::LZMA2,
+            sevenz_rust2::EncoderMethod::LZMA,
+            sevenz_rust2::EncoderMethod::BZIP2,
+            sevenz_rust2::EncoderMethod::DEFLATE,
+            sevenz_rust2::EncoderMethod::PPMD,
+            sevenz_rust2::EncoderMethod::ZSTD,
+            sevenz_rust2::EncoderMethod::BROTLI,
+            sevenz_rust2::EncoderMethod::LZ4,
+        ];
+        let payload = b"[TextureOverrideBody]\nhash = 0123abcd\n".repeat(64);
+        for method in methods {
+            let temp = tempfile::tempdir().unwrap();
+            let archive_path = temp.path().join("method.7z");
+            {
+                let mut writer = sevenz_rust2::ArchiveWriter::create(&archive_path).unwrap();
+                writer.set_content_methods(vec![method.into()]);
+                writer
+                    .push_archive_entry(
+                        sevenz_rust2::ArchiveEntry::new_file("Mod/mod.ini"),
+                        Some(&payload[..]),
+                    )
+                    .unwrap();
+                writer.finish().unwrap();
+            }
+
+            let destination = temp.path().join("extract");
+            extract_archive(&archive_path, &destination)
+                .unwrap_or_else(|err| panic!("{} failed: {err:#}", method.name()));
+            assert_eq!(
+                fs::read(destination.join("Mod").join("mod.ini")).unwrap(),
+                payload,
+                "{} unpacked the wrong bytes",
+                method.name()
+            );
+        }
+    }
+
+    #[test]
+    fn seven_zip_extract_keeps_the_stored_modified_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("times.7z");
+        let unix_seconds = 1_577_836_800u64;
+        let mut entry = sevenz_rust2::ArchiveEntry::new_file("Mod/readme.txt");
+        entry.has_last_modified_date = true;
+        entry.last_modified_date =
+            sevenz_rust2::NtTime::new((unix_seconds + 11_644_473_600) * 10_000_000);
+        {
+            let mut writer = sevenz_rust2::ArchiveWriter::create(&archive_path).unwrap();
+            writer.push_archive_entry(entry, Some(&b"demo"[..])).unwrap();
+            writer.finish().unwrap();
+        }
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        let modified = fs::metadata(destination.join("Mod").join("readme.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            modified,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(unix_seconds)
+        );
+        assert!(nt_time_to_system_time(sevenz_rust2::NtTime::new(u64::MAX)).is_none());
+    }
+
+    #[test]
+    fn seven_zip_extract_sanitizes_top_level_candidate_folder_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("bad-top.7z");
+        write_test_7z(&archive_path, &[("Bad:Name/readme.txt", Some(b"demo"))]);
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        assert!(destination.join("Bad_Name").join("readme.txt").exists());
+    }
+
+    #[test]
+    fn seven_zip_extract_refuses_entries_that_climb_out() {
+        for name in ["../evil.txt", "Mod/../../evil.txt", "Mod\\..\\..\\evil.txt"] {
+            let temp = tempfile::tempdir().unwrap();
+            let archive_path = temp.path().join("climb.7z");
+            write_test_7z(
+                &archive_path,
+                &[("Mod/readme.txt", Some(b"demo")), (name, Some(b"evil"))],
+            );
+
+            let destination = temp.path().join("extract");
+            let err = extract_archive(&archive_path, &destination).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid path"),
+                "unexpected error for {name:?}: {err:#}"
+            );
+            assert!(!temp.path().join("evil.txt").exists());
+            assert!(!destination.exists());
+        }
+    }
+
+    #[test]
+    fn seven_zip_extract_rejects_windows_invalid_payload_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("invalid-payload.7z");
+        write_test_7z(
+            &archive_path,
+            &[("GoodMod/Bad:Name/readme.txt", Some(b"demo"))],
+        );
+
+        let destination = temp.path().join("extract");
+        let err = extract_archive(&archive_path, &destination).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid file name"),
+            "unexpected error: {err:#}"
+        );
+        assert!(!destination.exists());
+    }
+
+    enum TestRarEntry<'a> {
+        File(&'a str, &'a [u8]),
+        Directory(&'a str),
+        Redirect {
+            name: &'a str,
+            redirect_type: u64,
+            target: &'a str,
+            unpacked_size: u64,
+        },
+    }
+
+    fn test_crc32(data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    fn push_rar_vint(out: &mut Vec<u8>, mut value: u64) {
+        loop {
+            let low_bits = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                out.push(low_bits);
+                return;
+            }
+            out.push(low_bits | 0x80);
+        }
+    }
+
+    fn rar_block(body: &[u8]) -> Vec<u8> {
+        let mut checked = Vec::new();
+        push_rar_vint(&mut checked, body.len() as u64);
+        checked.extend_from_slice(body);
+        let mut block = test_crc32(&checked).to_le_bytes().to_vec();
+        block.extend(checked);
+        block
+    }
+
+    fn write_test_rar(path: &Path, entries: &[TestRarEntry]) {
+        let mut out = b"Rar!\x1a\x07\x01\x00".to_vec();
+        out.extend(rar_block(&[1, 0, 0]));
+        for entry in entries {
+            let (name, data, is_directory, unpacked_size, redirect) = match *entry {
+                TestRarEntry::File(name, data) => (name, data, false, data.len() as u64, None),
+                TestRarEntry::Directory(name) => (name, &[][..], true, 0, None),
+                TestRarEntry::Redirect {
+                    name,
+                    redirect_type,
+                    target,
+                    unpacked_size,
+                } => (
+                    name,
+                    &[][..],
+                    false,
+                    unpacked_size,
+                    Some((redirect_type, target)),
+                ),
+            };
+            let mut extra = Vec::new();
+            if let Some((redirect_type, target)) = redirect {
+                let mut record = Vec::new();
+                push_rar_vint(&mut record, 5);
+                push_rar_vint(&mut record, redirect_type);
+                push_rar_vint(&mut record, 0);
+                push_rar_vint(&mut record, target.len() as u64);
+                record.extend_from_slice(target.as_bytes());
+                push_rar_vint(&mut extra, record.len() as u64);
+                extra.extend(record);
+            }
+            let mut body = Vec::new();
+            push_rar_vint(&mut body, 2);
+            let mut header_flags = 0;
+            if !extra.is_empty() {
+                header_flags |= 1;
+            }
+            if !data.is_empty() {
+                header_flags |= 2;
+            }
+            push_rar_vint(&mut body, header_flags);
+            if !extra.is_empty() {
+                push_rar_vint(&mut body, extra.len() as u64);
+            }
+            if !data.is_empty() {
+                push_rar_vint(&mut body, data.len() as u64);
+            }
+            let has_crc = redirect.is_none() && !is_directory;
+            push_rar_vint(
+                &mut body,
+                if is_directory {
+                    1
+                } else if has_crc {
+                    4
+                } else {
+                    0
+                },
+            );
+            push_rar_vint(&mut body, unpacked_size);
+            push_rar_vint(&mut body, if is_directory { 0x10 } else { 0x20 });
+            if has_crc {
+                body.extend(test_crc32(data).to_le_bytes());
+            }
+            push_rar_vint(&mut body, 0);
+            push_rar_vint(&mut body, 0);
+            push_rar_vint(&mut body, name.len() as u64);
+            body.extend_from_slice(name.as_bytes());
+            body.extend(extra);
+            out.extend(rar_block(&body));
+            out.extend_from_slice(data);
+        }
+        out.extend(rar_block(&[5, 0, 0]));
+        fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn rar_extracts_nested_files_and_folders() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("demo.rar");
+        write_test_rar(
+            &archive_path,
+            &[
+                TestRarEntry::Directory("Mod"),
+                TestRarEntry::File("Mod/readme.txt", b"hello"),
+                TestRarEntry::File("Mod/sub/data.ini", b"[Constants]"),
+                TestRarEntry::Directory("Mod/textures"),
+            ],
+        );
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        let root = destination.join("Mod");
+        assert_eq!(fs::read(root.join("readme.txt")).unwrap(), b"hello");
+        assert_eq!(
+            fs::read(root.join("sub").join("data.ini")).unwrap(),
+            b"[Constants]"
+        );
+        assert!(root.join("textures").is_dir());
+    }
+
+    #[test]
+    fn rar_extract_copies_file_references_and_never_creates_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("links.rar");
+        let outside = temp.path().join("outside.txt");
+        fs::write(&outside, b"original").unwrap();
+        write_test_rar(
+            &archive_path,
+            &[
+                TestRarEntry::File("Mod/readme.txt", b"hello"),
+                TestRarEntry::Redirect {
+                    name: "Mod/copy.txt",
+                    redirect_type: 5,
+                    target: "Mod/readme.txt",
+                    unpacked_size: 5,
+                },
+                TestRarEntry::Redirect {
+                    name: "Mod/hard.txt",
+                    redirect_type: 4,
+                    target: "Mod/readme.txt",
+                    unpacked_size: 5,
+                },
+                TestRarEntry::Redirect {
+                    name: "Mod/unix-link",
+                    redirect_type: 1,
+                    target: "../../outside.txt",
+                    unpacked_size: 0,
+                },
+                TestRarEntry::Redirect {
+                    name: "Mod/windows-link",
+                    redirect_type: 2,
+                    target: "..\\..\\outside.txt",
+                    unpacked_size: 0,
+                },
+                TestRarEntry::Redirect {
+                    name: "Mod/junction",
+                    redirect_type: 3,
+                    target: "C:\\Windows",
+                    unpacked_size: 0,
+                },
+            ],
+        );
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        let root = destination.join("Mod");
+        assert_eq!(fs::read(root.join("copy.txt")).unwrap(), b"hello");
+        assert_eq!(fs::read(root.join("hard.txt")).unwrap(), b"hello");
+        for link in ["unix-link", "windows-link", "junction"] {
+            assert!(
+                fs::symlink_metadata(root.join(link)).is_err(),
+                "{link} should not exist"
+            );
+        }
+        assert_eq!(fs::read(&outside).unwrap(), b"original");
+    }
+
+    #[test]
+    fn rar_extract_refuses_a_reference_to_a_missing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("missing.rar");
+        write_test_rar(
+            &archive_path,
+            &[
+                TestRarEntry::File("Mod/readme.txt", b"hello"),
+                TestRarEntry::Redirect {
+                    name: "Mod/copy.txt",
+                    redirect_type: 5,
+                    target: "../../secret.txt",
+                    unpacked_size: 5,
+                },
+            ],
+        );
+
+        let destination = temp.path().join("extract");
+        assert!(extract_archive(&archive_path, &destination).is_err());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn rar_extract_sanitizes_top_level_candidate_folder_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("bad-top.rar");
+        write_test_rar(
+            &archive_path,
+            &[TestRarEntry::File("Bad:Name/readme.txt", b"demo")],
+        );
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        assert!(destination.join("Bad_Name").join("readme.txt").exists());
+    }
+
+    #[test]
+    fn rar_extract_refuses_entries_that_climb_out() {
+        for name in ["../evil.txt", "Mod/../../evil.txt"] {
+            let temp = tempfile::tempdir().unwrap();
+            let archive_path = temp.path().join("climb.rar");
+            write_test_rar(
+                &archive_path,
+                &[
+                    TestRarEntry::File("Mod/readme.txt", b"demo"),
+                    TestRarEntry::File(name, b"evil"),
+                ],
+            );
+
+            let destination = temp.path().join("extract");
+            let err = extract_archive(&archive_path, &destination).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid path"),
+                "unexpected error for {name:?}: {err:#}"
+            );
+            assert!(!temp.path().join("evil.txt").exists());
+            assert!(!destination.exists());
+        }
+    }
+
+    #[test]
+    fn rar_extract_renames_windows_invalid_payload_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("invalid-payload.rar");
+        write_test_rar(
+            &archive_path,
+            &[TestRarEntry::File("GoodMod/Bad:Name/readme.txt", b"demo")],
+        );
+
+        let destination = temp.path().join("extract");
+        extract_archive(&archive_path, &destination).unwrap();
+        assert_eq!(
+            fs::read(destination.join("GoodMod").join("Bad_Name").join("readme.txt")).unwrap(),
+            b"demo"
+        );
+        assert_eq!(fs::read_dir(destination.join("GoodMod")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn seven_zip_technical_listing_reads_names_folders_and_sizes() {
+        let text = "7-Zip 25.01\r\n\r\nListing archive: demo.rar\r\n\r\n--\r\nPath = demo.rar\r\nType = Rar5\r\nPhysical Size = 900\r\n\r\n----------\r\nPath = Mod\\readme.txt\r\nFolder = -\r\nSize = 12\r\nPacked Size = 10\r\n\r\nPath = Mod\r\nFolder = +\r\nSize = 0\r\n\r\nPath = ..\\evil.txt\r\nFolder = -\r\nSize = 7\r\n";
+        let listing = parse_7z_technical_listing(text);
+        let summary: Vec<(&str, bool, u64)> = listing
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.is_directory, entry.size))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("Mod\\readme.txt", false, 12),
+                ("Mod", true, 0),
+                ("..\\evil.txt", false, 7)
+            ]
+        );
+        assert!(plan_archive_extraction(&listing, Path::new("extract")).is_err());
+    }
+
+    #[test]
+    fn rar_volume_pattern_matches_question_marks_and_ignores_case() {
+        assert!(matches_rar_volume_pattern("Mod.part01.rar", "Mod.part??.rar"));
+        assert!(matches_rar_volume_pattern("mod.PART12.RAR", "Mod.part??.rar"));
+        assert!(!matches_rar_volume_pattern("Mod.part1.rar", "Mod.part??.rar"));
+        assert!(!matches_rar_volume_pattern("Other.part01.rar", "Mod.part??.rar"));
+        assert!(!matches_rar_volume_pattern("Mod.part001.rar", "Mod.part??.rar"));
     }
 
     #[test]
