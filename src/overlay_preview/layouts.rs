@@ -196,9 +196,10 @@ pub(super) enum Space {
 /// GameBanana mods after its own, as cards numbered on from its own mods,
 /// then a card for the list's state while it loads, failed or is empty.
 /// GameBanana mods already installed are left out.  While GameBanana is
-/// enabled, linked categories stay visible for a search even when none of
-/// their local mods match, so the selected category can ask for remote-only
-/// results.
+/// enabled and nothing installed matches, neither a category's name nor a
+/// mod's, linked categories stay visible so the selected one can ask for
+/// remote-only results.  Otherwise they would keep the whole roster on the
+/// rail for every search.
 struct Filter {
     /// The search as typed.
     query: String,
@@ -209,6 +210,17 @@ struct Filter {
     /// Each category's visible cards, in order.  Indexed like the catalog,
     /// so a hidden category has an empty list.
     mods: Vec<Vec<usize>>,
+    /// How well each category's name matches, as `name_match` has it.
+    /// Indexed like the catalog, and all `None` for an empty search.
+    names: Vec<Option<NameMatch>>,
+}
+
+/// How a search matches a category's name.  A match at the start of a word
+/// beats one inside a word, so "lin" picks Linnea over Xiangling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum NameMatch {
+    Inside,
+    WordStart,
 }
 
 impl Filter {
@@ -220,11 +232,10 @@ impl Filter {
             .flat_map(|category| &category.costumes)
             .filter_map(|costume| costume.gamebanana_id)
             .collect();
-        let mut categories = Vec::new();
-        let mut mods = Vec::with_capacity(catalog.categories.len());
-        for (index, category) in catalog.categories.iter().enumerate() {
+        let mut names = Vec::with_capacity(catalog.categories.len());
+        let mut own = Vec::with_capacity(catalog.categories.len());
+        for category in &catalog.categories {
             let all = matches_category(category, &needle);
-            let linked = gamebanana.enabled() && category.character.is_some();
             let list = list_key(category, &needle).and_then(|key| gamebanana.list(&key));
             // A mod the overlay installs waits behind its card until the
             // card crosses.
@@ -234,7 +245,7 @@ impl Filter {
                         && list.is_some_and(|list| list.mods.iter().any(|item| item.id == id))
                 })
             };
-            let mut visible: Vec<usize> = category
+            let visible: Vec<usize> = category
                 .costumes
                 .iter()
                 .enumerate()
@@ -242,6 +253,18 @@ impl Filter {
                 .filter(|(_, costume)| !held(costume.gamebanana_id))
                 .map(|(costume_index, _)| costume_index)
                 .collect();
+            names.push(name_match(category, &needle));
+            own.push((all, list, visible));
+        }
+        let anything_installed_matches = names.iter().any(Option::is_some)
+            || own.iter().any(|(_, _, visible)| !visible.is_empty());
+        let mut categories = Vec::new();
+        let mut mods = Vec::with_capacity(catalog.categories.len());
+        for (index, (category, (all, list, mut visible))) in
+            catalog.categories.iter().zip(own).enumerate()
+        {
+            let linked =
+                gamebanana.enabled() && category.character.is_some() && !anything_installed_matches;
             if all || !visible.is_empty() || linked {
                 categories.push(index);
                 if let Some(list) = list {
@@ -267,7 +290,26 @@ impl Filter {
             needle,
             categories,
             mods,
+            names,
         }
+    }
+
+    /// The category a search names best, when the search should move there
+    /// from `selected`: the first visible one with the best name match,
+    /// unless `selected` matches as well.
+    fn named_category(&self, selected: usize) -> Option<usize> {
+        let best = self
+            .categories
+            .iter()
+            .filter_map(|&index| self.names[index])
+            .max()?;
+        if self.names.get(selected).copied().flatten() == Some(best) {
+            return None;
+        }
+        self.categories
+            .iter()
+            .copied()
+            .find(|&index| self.names[index] == Some(best))
     }
 }
 
@@ -275,6 +317,26 @@ impl Filter {
 /// matches the category's name.
 fn matches_category(category: &Category, needle: &str) -> bool {
     needle.is_empty() || search_key(character_name(&category.name)).contains(needle)
+}
+
+/// How a non-empty search matches a category's name, if it does.
+fn name_match(category: &Category, needle: &str) -> Option<NameMatch> {
+    if needle.is_empty() {
+        return None;
+    }
+    let name = search_key(character_name(&category.name));
+    let mut found = None;
+    for (at, _) in name.match_indices(needle) {
+        let word_start = name[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric());
+        if word_start {
+            return Some(NameMatch::WordStart);
+        }
+        found = Some(NameMatch::Inside);
+    }
+    found
 }
 
 /// The GameBanana list a category shows with the search `needle`: the
@@ -1703,8 +1765,10 @@ impl Layouts {
         }
     }
 
-    /// Show only what `query` matches.  Keeps the selected category and mod
-    /// while the search still shows them, otherwise moves to the first match.
+    /// Show only what `query` matches.  A search that names a character
+    /// moves to it, unless the selected category's name matches as well.
+    /// Otherwise keeps the selected category and mod while the search still
+    /// shows them, or moves to the first match.
     pub(super) fn set_search(&mut self, query: &str) {
         if self.filter.query == query {
             return;
@@ -1714,7 +1778,9 @@ impl Layouts {
         self.carousel_transition = None;
         self.carousel_pointer_press = None;
         self.held_preview = None;
-        if self.filter.categories.contains(&self.selected_category) {
+        if let Some(named) = self.filter.named_category(self.selected_category) {
+            self.select_category(named);
+        } else if self.filter.categories.contains(&self.selected_category) {
             self.carousel_focus = self.visible_focus(self.selected_category, self.carousel_focus);
             if let Some(focus) = self
                 .carousel_focus_by_category
@@ -5243,7 +5309,7 @@ mod tests {
                 ),
                 named("Endministrator", &[]),
                 named("Perlica", &["Night  Vow v1.2", "Classic"]),
-                named("Vow Keepers", &["Alpha", "Beta"]),
+                named("Keepers", &["Vow Alpha", "Beta"]),
             ],
             note: None,
         })
@@ -5257,7 +5323,7 @@ mod tests {
         // Case, underscores and repeated spaces do not matter.
         let vow = filter("VOW");
         assert_eq!(vow.categories, vec![0, 2, 3]);
-        assert_eq!(vow.mods, vec![vec![0, 2], vec![], vec![0], vec![0, 1]]);
+        assert_eq!(vow.mods, vec![vec![0, 2], vec![], vec![0], vec![0]]);
         assert_eq!(filter("beach day").mods[0], vec![1]);
         assert_eq!(filter("vow of").mods[0], vec![2]);
         assert_eq!(filter("night vow v1.2").mods[2], vec![0]);
@@ -5309,6 +5375,76 @@ mod tests {
         let local = Filter::new(&catalog, "match", &gamebanana);
         assert_eq!(local.categories, [0]);
         assert_eq!(local.mods, [vec![0]]);
+    }
+
+    #[test]
+    fn naming_a_character_hides_the_other_linked_characters() {
+        let linked = |name: &str, mods: &[&str], character: u64| {
+            let mut category = named(name, mods);
+            category.character = Some(character);
+            category
+        };
+        let mut layouts = Layouts::new(live_catalog(vec![
+            linked("Albedo", &["Furina Collab", "Classic"], 1),
+            linked("Furina", &["Summer"], 2),
+            linked("Neuvillette", &["Classic"], 3),
+            linked("Zhongli", &[], 4),
+        ]));
+        layouts.set_gamebanana(true, false);
+
+        // The named character and the mods that match, not the whole roster.
+        layouts.set_search("furi");
+        assert_eq!(layouts.filter.categories, [0, 1]);
+        assert_eq!(layouts.selected_category, 1);
+
+        // An installed mod's name narrows the rail the same way.
+        layouts.set_search("classic");
+        assert_eq!(layouts.filter.categories, [0, 2]);
+
+        // Only a search nothing installed matches keeps every linked
+        // character, so the selected one can ask GameBanana.
+        layouts.set_search("remote-only");
+        assert_eq!(layouts.filter.categories, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_search_that_names_a_character_moves_to_it() {
+        let mut layouts = search_layouts();
+
+        // Ardelia still shows by a mod's name, but Perlica is named, and
+        // Ardelia remembers the card the search left it on.
+        layouts.set_search("classic");
+        assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 3));
+        layouts.set_search("perl");
+        assert_eq!(layouts.selected_category, 2);
+        assert_eq!(layouts.carousel_focus_by_category[0], 3);
+
+        // Typing on stays on a named character, and so does clearing.
+        layouts.set_search("perlica");
+        assert_eq!(layouts.selected_category, 2);
+        layouts.set_search("");
+        assert_eq!(layouts.selected_category, 2);
+    }
+
+    #[test]
+    fn a_word_start_beats_a_match_inside_a_name() {
+        let mut layouts = Layouts::new(live_catalog(vec![
+            named("Albedo", &[]),
+            named("Xiangling", &[]),
+            named("Kamisato Ayaka", &[]),
+            named("Linnea", &[]),
+        ]));
+        layouts.set_search("lin");
+        assert_eq!(layouts.filter.categories, [1, 3]);
+        assert_eq!(layouts.selected_category, 3);
+
+        // A later word of the name counts as a start too.
+        layouts.set_search("ayaka");
+        assert_eq!(layouts.selected_category, 2);
+
+        // The selected category keeps its place when it matches as well.
+        layouts.set_search("a");
+        assert_eq!(layouts.selected_category, 2);
     }
 
     #[test]
