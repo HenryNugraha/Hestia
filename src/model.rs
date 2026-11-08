@@ -38,7 +38,6 @@ pub enum ReloadHotkeyTrigger {
     ProfileSwitch,
 }
 
-/// Operations that should ask XXMI to reload while the game is already running.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReloadHotkeyTriggers {
     #[serde(default = "serde_default_true")]
@@ -97,20 +96,12 @@ impl ReloadHotkeyTriggers {
     }
 }
 
-/// Remembered outer size and position of one floating window inside the workspace
-/// pane. `size` is the outer window size in egui points. `offset` is measured from
-/// the top-left of the pane's inset rect rather than the screen, so the window lands
-/// in the same spot relative to the workspace after the main window moves, resizes,
-/// or changes monitor; both are clamped to the pane again on restore.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FloatingWindowRect {
     pub offset: [f32; 2],
     pub size: [f32; 2],
 }
 
-/// Floating-window geometry that survives restarts. Corner-anchored windows (Log,
-/// Tasks, Tools) only remember their size and keep snapping to their default
-/// corner; the "arranged" windows (Settings, mod detail) remember size and position.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FloatingWindowLayouts {
     #[serde(default)]
@@ -139,8 +130,6 @@ pub struct FloatingWindowLayouts {
     pub browse_detail_user_layout: bool,
 }
 
-/// Static preferences that rarely change during runtime.
-/// Deserializing these separately reduces overhead when loading AppState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StaticPreferences {
     #[serde(default)]
@@ -151,16 +140,12 @@ pub struct StaticPreferences {
     pub hide_disabled: bool,
     #[serde(default)]
     pub hide_archived: bool,
-    /// Inline Hotkeys view mode: false = Raw (per-file sections), true = List
-    /// (simplified). Defaults to List.
     #[serde(default = "serde_default_true")]
     pub hotkeys_simplified: bool,
     #[serde(default)]
     pub scan_rabbitfx_requirement: bool,
     #[serde(default)]
     pub font_style: AppFontStyle,
-    /// How big Hestia draws, 1 being Normal.  Ctrl + = and Ctrl + - change
-    /// it in steps of 0.1.  The in-game overlay follows it.
     #[serde(default = "serde_default_interface_zoom")]
     pub interface_zoom: f32,
     #[serde(default)]
@@ -171,9 +156,6 @@ pub struct StaticPreferences {
     pub tool_launch_behavior: LaunchBehavior,
     #[serde(default)]
     pub after_install_behavior: AfterInstallBehavior,
-    /// The state assigned to a mod when an install finishes.  `Auto` keeps
-    /// the first mod in a category active and stages every other new mod
-    /// disabled until the category has been refreshed.
     #[serde(default)]
     pub mod_install_state: ModInstallState,
     #[serde(default)]
@@ -186,8 +168,6 @@ pub struct StaticPreferences {
     pub import_resolution: ImportResolution,
     #[serde(default)]
     pub delete_behavior: DeleteBehavior,
-    /// Preserve in-game XXMI mod settings (3DMigoto persistent variables) across rename,
-    /// disable/enable, archive/restore, delete, import-replace, and profile switches.
     #[serde(default = "serde_default_true")]
     pub preserve_mod_settings: bool,
     /// Legacy global default for per-game XXMI reload settings. Kept for migration and
@@ -196,30 +176,22 @@ pub struct StaticPreferences {
     pub send_reload_hotkey: bool,
     #[serde(default)]
     pub reload_hotkey_triggers: ReloadHotkeyTriggers,
-    /// Alt+H shows the in-game overlay while a supported game runs.
     #[serde(default = "serde_default_true")]
     pub game_overlay: bool,
-    /// The opacity the in-game overlay was left at.  None until it changes.
     #[serde(default)]
     pub game_overlay_opacity: Option<u8>,
     #[serde(default)]
     pub game_overlay_hotkey: OverlayHotkey,
-    /// The overlay's strip shows for a moment when a game starts.
     #[serde(default = "serde_default_true")]
     pub game_overlay_arrival_strip: bool,
-    /// The overlay lists GameBanana's mods after the installed ones.
     #[serde(default = "serde_default_true")]
     pub game_overlay_gamebanana: bool,
-    /// The overlay also lists GameBanana's characters that no category
-    /// stands for.
     #[serde(default)]
     pub game_overlay_all_characters: bool,
     #[serde(default = "serde_default_true")]
     pub game_overlay_key_hints: bool,
-    /// The overlay's header has its opacity slider.
     #[serde(default = "serde_default_true")]
     pub game_overlay_opacity_slider: bool,
-    /// The overlay has its pin buttons.
     #[serde(default = "serde_default_true")]
     pub game_overlay_pin_button: bool,
     #[serde(default)]
@@ -268,21 +240,15 @@ pub struct StaticPreferences {
     pub use_custom_proxy: bool,
     #[serde(default)]
     pub custom_proxy_url: String,
-    /// Internally selected endpoint for a bare proxy address. This never changes the text the
-    /// user entered, but lets the same detected protocol be used after a restart.
     #[serde(default)]
     pub custom_proxy_resolved_url: String,
     #[serde(default)]
     pub tool_blacklist: HashMap<String, Vec<String>>,
 }
 
-/// Expose the three explicit library views instead of the legacy grouping selector.
-/// The legacy grouping preference remains serialized for compatibility, but does not
-/// override the saved view.
 pub const HIDE_LEGACY_LIBRARY_GROUPING: bool = true;
 
 impl StaticPreferences {
-    /// Derive grouping from the saved view so folders can never be grouped by status.
     pub fn effective_library_group_mode(&self) -> LibraryGroupMode {
         match self.library_category_display_mode {
             LibraryCategoryDisplayMode::Folders | LibraryCategoryDisplayMode::GroupedSections => {
@@ -292,13 +258,10 @@ impl StaticPreferences {
         }
     }
 
-    /// Effective category layout used by all rendering, honoring the saved preference.
     pub fn effective_library_category_display_mode(&self) -> LibraryCategoryDisplayMode {
         self.library_category_display_mode
     }
 
-    /// Category order controls section order, or optional category-first sorting
-    /// within each status section.
     pub fn library_category_order_applies(&self) -> bool {
         self.effective_library_group_mode() == LibraryGroupMode::Category
             || self.library_sort_category_first
@@ -420,8 +383,6 @@ impl CustomProxyConfig {
             None => Self::AUTO_DETECT_PORTS.to_vec(),
         };
         let mut candidates = Vec::with_capacity(schemes.len() * ports.len());
-        // Port order is user-visible policy. Within each port, keep the DNS-safe SOCKS
-        // variants ahead of HTTP(S). An explicitly supplied scheme has one entry per port.
         for port in ports {
             for scheme in &schemes {
                 candidates.push(Self {
@@ -534,8 +495,6 @@ pub struct AppState {
     pub preferences_need_save: bool,
     #[serde(default)]
     pub last_update_check_time_by_game: HashMap<String, DateTime<Utc>>,
-    /// Profile catalogs are keyed by stable game definition id.  Payloads live in the game's
-    /// `Mods_Profiles` directory and are not embedded in the application state.
     #[serde(default)]
     pub profiles_by_game: HashMap<String, ProfileCatalog>,
     // Static preferences inlined for backward compatibility
@@ -577,24 +536,14 @@ impl Default for AppState {
     }
 }
 
-/// A profile's identity: 32 random bits, rendered as the 8 hex digits that appear in its storage
-/// name.
-///
-/// Deliberately short rather than a UUID. The value people actually see is the one in
-/// `Patch 1.4 [1fe9ec7a]`, and it exists to keep two profiles apart — most importantly two shared
-/// profiles that are both called "Default" — so the identity and the visible token are the same
-/// thing rather than one being a truncation of the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProfileId(u32);
 
 impl ProfileId {
     pub fn random() -> Self {
-        // Uuid v4 is already a dependency and is a cryptographically-seeded source; take 32 bits.
         Self(uuid::Uuid::new_v4().as_u128() as u32)
     }
 
-    /// A fresh id that no profile in `taken` is using, so ids never collide within one game even
-    /// though 32 bits alone would make it merely unlikely.
     pub fn random_unused(taken: &[ProfileId]) -> Self {
         loop {
             let candidate = Self::random();
@@ -649,8 +598,6 @@ mod profile_id_tests {
 
     #[test]
     fn a_uuid_from_older_state_keeps_the_id_its_storage_name_already_shows() {
-        // Files were already named from the leading hex, so reading a UUID this way leaves every
-        // existing profile pointing at the archive it always pointed at.
         let migrated: ProfileId = "1fe9ec7a-6ad1-46b6-9558-e8483dc62bcf".parse().unwrap();
 
         assert_eq!(migrated.to_string(), "1fe9ec7a");
@@ -704,8 +651,6 @@ mod profile_id_tests {
     }
 }
 
-/// Persisted profile catalog for one game. UUIDs are independent from display names so a rename
-/// never changes the archive identity.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileCatalog {
     #[serde(default)]
@@ -730,18 +675,10 @@ pub struct ProfileRecord {
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub portable_metadata: HashMap<String, serde_json::Value>,
-    /// Category definitions captured for this profile. `None` means this record predates
-    /// profile-scoped categories and should be migrated from the game's legacy global list.
     #[serde(default)]
     pub categories: Option<Vec<ModCategory>>,
-    /// Tools captured for this profile, including their launch options, titlebar pins, and
-    /// ordering. Every tool belongs to a profile regardless of where its executable lives, so
-    /// switching restores exactly the set that was active last time. `None` means this record
-    /// predates profile-scoped tools and should be migrated from the game's legacy global list.
     #[serde(default)]
     pub tools: Option<Vec<ToolEntry>>,
-    /// Auto-detected tool paths the user removed in this profile. Profile-scoped so hiding a
-    /// tool in one profile never hides a same-pathed tool in another.
     #[serde(default)]
     pub tool_blacklist: Option<Vec<String>>,
 }
@@ -1023,8 +960,6 @@ pub struct GameBananaCategoryLink {
 }
 
 impl ModCategory {
-    /// Custom local labels do not establish remote identity. Prefer an explicit
-    /// link, otherwise accept only consistent character metadata from this game.
     pub fn resolved_gamebanana_character<'a>(
         &self,
         snapshots: impl IntoIterator<Item = &'a GameBananaSnapshot>,
@@ -1199,8 +1134,6 @@ pub struct GameInstall {
     pub modded_exe_path_override: Option<PathBuf>,
     #[serde(default)]
     pub vanilla_exe_path_override: Option<PathBuf>,
-    /// Consent for Hestia to edit d3dx.ini (auto-save interval / foreground window) so
-    /// mod changes can be applied in-game. Off by default; the user opts in per game.
     #[serde(default)]
     pub apply_mod_changes_in_game: bool,
     pub enabled: bool,
@@ -1365,11 +1298,6 @@ pub enum ModStatus {
     Archived,
 }
 
-/// Which metadata source the mod-detail pane is currently showing. Persisted per
-/// mod so reopening restores the last-viewed source. `TextFile` is backed by the
-/// existing `extracted.readme_path` / `user.extracted_metadata_source_path`
-/// (personal note included); the others are self-describing. Resolved against live
-/// availability at render time, so a stale pick falls back gracefully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MetadataSourceKind {
     Description,
@@ -1557,7 +1485,6 @@ pub enum LibraryGroupMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum LibraryCategoryDisplayMode {
-    /// Preserve the serialized value used by the original category List view.
     GroupedSections,
     #[default]
     Folders,
@@ -1569,19 +1496,10 @@ pub struct ModSourceData {
     pub gamebanana: Option<GameBananaLink>,
     pub snapshot: Option<GameBananaSnapshot>,
     pub raw_profile_json: Option<String>,
-    /// Wall-clock time when this source snapshot/raw profile was cached.
-    /// Missing on legacy metadata; cache selection falls back to profile/file
-    /// timestamps in that case.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_cached_at: Option<DateTime<Utc>>,
-    /// The earliest time a transient GameBanana request failure may be retried
-    /// automatically. Terminal source states are represented by `MissingSource`
-    /// and are not retried by bulk update checks.
     #[serde(default)]
     pub update_check_retry_after: Option<DateTime<Utc>>,
-    /// GameBanana file IDs the user has explicitly dismissed from the passive
-    /// "new files" notice.  IDs are intentionally retained rather than a
-    /// boolean so a later upload can surface without another preference.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dismissed_newer_file_ids: Vec<u64>,
     pub file_set: FileSetRecipe,
@@ -1593,37 +1511,23 @@ pub struct ModSourceData {
     pub history: InstallHistory,
     pub baseline_content_mtime: Option<DateTime<Utc>>,
     pub baseline_ini_hash: Option<String>,
-    /// Set when the user chose "Ignore local changes" on a mod that diverged from
-    /// its install baseline. Records the on-disk fingerprint at that moment; the
-    /// baseline itself is left untouched so the choice can be undone. The mod
-    /// reads as unmodified only while its files still match this fingerprint,
-    /// so later edits surface as Modified again on their own. Cleared whenever
-    /// the baseline is rewritten (install, update, relink).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted_local_changes: Option<AcceptedLocalChanges>,
-    /// A Thalia answer whose files could not be put together (two merged files
-    /// writing the same path, or an archive without exactly one mod folder).
-    /// The same files would fail the same way every time, so while Thalia
-    /// keeps giving exactly this answer the user picks instead. Any other
-    /// answer is used as usual.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_thalia_answer: Option<RefusedThaliaAnswer>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct RefusedThaliaAnswer {
-    /// `update`, `merge` or `current`.
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<u64>,
-    /// Sorted by file; `requires` has no order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<RefusedThaliaRequiredFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct RefusedThaliaRequiredFile {
-    /// `merge` or `separate`.
     pub action: String,
     pub file: u64,
 }
@@ -1652,7 +1556,6 @@ pub struct GameBananaSnapshot {
     pub description: Option<String>,
     pub preview_urls: Vec<String>,
     pub files: Vec<GameBananaFileMeta>,
-    /// Complete optional release evidence, retained for offline update actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_history: Option<crate::integrations::gamebanana::UpdateHistory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1703,23 +1606,15 @@ pub struct FileSetRecipe {
 pub struct TrackedFileMeta {
     pub file_id: u64,
     pub file_name: String,
-    /// GameBanana archive size when it was observed. `None` means older
-    /// metadata never recorded it; zero is a valid observed value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_size: Option<u64>,
     pub date_added: i64,
     pub version: Option<String>,
     pub archived: bool,
-    /// GameBanana file label (`_sDescription`, e.g. "Main File" / "Experimental").
-    /// Labels are the only stable lineage signal when authors upload files with
-    /// meaningless names (RabbitFX ships `v24_<hash>.zip`-style names).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
-/// `label` and `file_size` are matching metadata, not file identity: persisted
-/// `ignored_update_signature`s predate these fields and must keep comparing
-/// equal to freshly computed signatures that now carry them.
 impl PartialEq for TrackedFileMeta {
     fn eq(&self, other: &Self) -> bool {
         self.file_id == other.file_id
@@ -1767,9 +1662,6 @@ pub struct ToolEntry {
     pub game_id: String,
     pub label: String,
     pub path: PathBuf,
-    /// Path relative to the game's mods root, when the tool lives inside it. `path` is absolute and
-    /// therefore only valid for one install; this is what lets a tool re-match itself after the
-    /// mods folder moves or a profile is carried to another machine.
     #[serde(default)]
     pub relative_path: Option<PathBuf>,
     #[serde(default)]
@@ -1848,11 +1740,6 @@ pub enum AfterInstallBehavior {
     OpenModDetail,
 }
 
-/// The requested state for a newly installed mod.
-///
-/// `Auto` is deliberately the persisted default.  It is resolved only after
-/// the destination category is known, so a batch can stage every candidate
-/// safely and enable one successful candidate after the refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModInstallState {
     Enabled,
@@ -1867,8 +1754,6 @@ impl Default for ModInstallState {
 }
 
 impl ModInstallState {
-    /// Status written by the installer before the library refresh.  Auto is
-    /// intentionally staged disabled and resolved only after categorization.
     pub fn staged_status(self) -> ModStatus {
         match self {
             Self::Enabled => ModStatus::Active,
@@ -1876,7 +1761,6 @@ impl ModInstallState {
         }
     }
 
-    /// Resolve Auto's category policy after the destination is known.
     pub fn resolve_auto(
         category_id: Option<&str>,
         category_has_active: bool,
@@ -1945,24 +1829,18 @@ impl Default for CacheSizeTier {
     }
 }
 
-/// The key that shows the in-game overlay: Alt or Ctrl, maybe with Shift,
-/// and a letter, digit or F key.  Saved as its name, like "Alt+H".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "String", into = "String")]
 pub struct OverlayHotkey {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
-    /// Windows' virtual key code.
     pub key: u8,
 }
 
-/// Why a key can't show the overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayHotkeyProblem {
-    /// Not Alt or Ctrl with a letter, digit or F key.
     NotAllowed,
-    /// Windows, the open overlay or XXMI uses it.
     Reserved,
 }
 
@@ -1979,13 +1857,10 @@ impl OverlayHotkey {
         key: b'H',
     };
 
-    /// The open overlay's own keys, and XXMI's reload key.
     const RESERVED_KEYS: [u8; 12] = [
         b'W', b'A', b'S', b'D', b'Q', b'E', b'Z', b'C', b'X', b'R', b'F', VK_F10,
     ];
 
-    /// Common app shortcuts are intercepted by the overlay's global
-    /// registration. Reserve their Ctrl forms unless Alt is also held.
     const GLOBAL_CTRL_KEYS: [u8; 14] = [
         b'B', b'G', b'H', b'I', b'J', b'K', b'L', b'N', b'O', b'P', b'T', b'U', b'V', b'Y',
     ];
@@ -1998,7 +1873,6 @@ impl OverlayHotkey {
         if !(ctrl || alt) || Self::key_label(key).is_none() {
             return Err(OverlayHotkeyProblem::NotAllowed);
         }
-        // Alt+F4 closes the window that has the keyboard.
         if Self::RESERVED_KEYS.contains(&key)
             || (alt && key == VK_F4)
             || (ctrl && !alt && Self::is_global_ctrl_key(key))
@@ -2013,7 +1887,6 @@ impl OverlayHotkey {
         })
     }
 
-    /// Reads a name like "Ctrl+Alt+H", ignoring case.
     pub fn parse(name: &str) -> Option<Self> {
         let (mut ctrl, mut alt, mut shift, mut key) = (false, false, false, None);
         for part in name.split('+').map(str::trim) {
@@ -2028,7 +1901,6 @@ impl OverlayHotkey {
         Self::new(ctrl, alt, shift, key?).ok()
     }
 
-    /// Windows' key code for a letter, digit or F1 to F12.
     pub fn key_code(name: &str) -> Option<u8> {
         let name = name.to_ascii_uppercase();
         match name.as_bytes() {
@@ -2041,7 +1913,6 @@ impl OverlayHotkey {
         }
     }
 
-    /// The name of a letter, digit or F key, from Windows' key code.
     fn key_label(key: u8) -> Option<String> {
         match key {
             b'A'..=b'Z' | b'0'..=b'9' => Some(char::from(key).to_string()),
@@ -2050,7 +1921,6 @@ impl OverlayHotkey {
         }
     }
 
-    /// The keys to press, like ["Ctrl", "Alt", "H"].
     pub fn parts(self) -> Vec<String> {
         let mut parts: Vec<String> = [
             (self.ctrl, "Ctrl"),
@@ -2065,7 +1935,6 @@ impl OverlayHotkey {
         parts
     }
 
-    /// Like "Ctrl+Alt+H".
     pub fn label(self) -> String {
         self.parts().join("+")
     }
@@ -2078,7 +1947,6 @@ impl Default for OverlayHotkey {
 }
 
 impl From<String> for OverlayHotkey {
-    /// A name it can't read, or a key it doesn't allow, is Alt+H.
     fn from(name: String) -> Self {
         Self::parse(&name).unwrap_or_default()
     }
@@ -2090,8 +1958,6 @@ impl From<OverlayHotkey> for String {
     }
 }
 
-/// The sizes Settings names.  Ctrl + = and Ctrl + - step between them, and
-/// the steps between are Custom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceSize {
     Small,
@@ -2102,8 +1968,6 @@ pub enum InterfaceSize {
 impl InterfaceSize {
     pub const ALL: [Self; 3] = [Self::Small, Self::Normal, Self::Large];
 
-    /// The zoom Hestia keeps to, so a slip of Ctrl + - or Ctrl + = can't
-    /// leave it unusable.
     pub const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
 
     pub fn zoom(self) -> f32 {
@@ -2114,7 +1978,6 @@ impl InterfaceSize {
         }
     }
 
-    /// `zoom` on a step of 0.1 and inside `ZOOM_RANGE`.
     pub fn snap_zoom(zoom: f32) -> f32 {
         if !zoom.is_finite() {
             return Self::Normal.zoom();
@@ -2122,7 +1985,6 @@ impl InterfaceSize {
         ((zoom * 10.0).round() / 10.0).clamp(*Self::ZOOM_RANGE.start(), *Self::ZOOM_RANGE.end())
     }
 
-    /// The named size at `zoom`, if it is one.
     pub fn at_zoom(zoom: f32) -> Option<Self> {
         Self::ALL
             .into_iter()
@@ -2238,20 +2100,12 @@ mod overlay_hotkey_tests {
     }
 }
 
-/// Which physical GPU an explicit renderer preference should target. Only
-/// meaningful on machines with more than one adapter; a single-GPU box resolves
-/// every value to that one GPU. `Auto` picks the GPU that drives the display the
-/// window opens on, so the present path never crosses adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuChoice {
     Integrated,
     Dedicated,
 }
 
-/// Rendering backend preference. The renderer is fixed at window creation, so
-/// a change takes effect on the next launch. Picks that make no sense on the
-/// current platform (e.g. Dx12 on Linux) behave like Auto.
-///
 /// The `Dx12`/`Vulkan` variants are retained for backward compatibility with
 /// configs written before the per-GPU split; they behave like `Auto`'s GPU
 /// choice (match the display) for their fixed API. New selections always name a
@@ -2270,8 +2124,6 @@ pub enum RendererPreference {
 }
 
 impl RendererPreference {
-    /// Proper API names, ignoring the GPU dimension; not translated. Used to
-    /// compare a selection against the API that is actually running.
     pub fn api_label(self) -> Option<&'static str> {
         match self {
             Self::Auto => None,
@@ -2282,9 +2134,6 @@ impl RendererPreference {
         }
     }
 
-    /// The GPU an explicit selection forces, or `None` when the choice is
-    /// automatic (Auto, or the API-only back-compat variants) or the API only
-    /// ever has one adapter to run on (Metal, OpenGL).
     pub fn gpu_choice(self) -> Option<GpuChoice> {
         match self {
             Self::Dx12Integrated | Self::VulkanIntegrated => Some(GpuChoice::Integrated),
@@ -2394,9 +2243,6 @@ pub struct BrowseDownloadTaskPayload {
     pub update_folder_name: Option<String>,
     #[serde(default)]
     pub update_target_mod_id: Option<String>,
-    /// The requested install state.  Old task records only have
-    /// `install_disabled`; that field is retained as an optional compatibility
-    /// shim and is converted by `effective_install_state`.
     #[serde(default)]
     pub install_state: ModInstallState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2407,19 +2253,12 @@ pub struct BrowseDownloadTaskPayload {
     pub post_install_rename_to: Option<String>,
     #[serde(default)]
     pub profile_json: Option<String>,
-    /// Observation time when the profile was fetched from the network. Cache
-    /// hits and fallback profiles leave this unset because their age is unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_cached_at: Option<DateTime<Utc>>,
-    /// Whether the GameBanana source is a Tool rather than a Mod.
     #[serde(default)]
     pub is_tool: bool,
-    /// A file-review action chosen by the user.  Normal browse installs leave
-    /// this unset so their configured conflict policy still applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explicit_resolution: Option<ImportResolution>,
-    /// Part of a Thalia bundle. Installing it alone would leave the mod with
-    /// only some of the files it needs, so it is never retried on its own.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thalia_bundle: bool,
 }
@@ -2614,9 +2453,6 @@ fn default_nte_bypasser_paths_from_exe(game_exe: &Path) -> Vec<PathBuf> {
     ]
 }
 
-/// Whether the process may create files or subdirectories inside `path`, walking up to the
-/// deepest existing ancestor when `path` itself does not exist yet (e.g. `~mods` before the
-/// first install).  Side-effect free: nothing is created on disk.
 pub fn path_allows_dir_creation(path: &Path) -> bool {
     for ancestor in path.ancestors() {
         if ancestor.is_dir() {
@@ -2630,10 +2466,6 @@ pub fn path_allows_dir_creation(path: &Path) -> bool {
 fn dir_allows_creation(dir: &Path) -> bool {
     use std::os::windows::fs::OpenOptionsExt;
 
-    // FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY ask only for create rights, and with no create
-    // disposition set the open maps to OPEN_EXISTING, so this evaluates the directory's ACL
-    // without touching its contents.  FILE_FLAG_BACKUP_SEMANTICS is required to open a
-    // directory handle at all.
     const FILE_ADD_FILE: u32 = 0x0002;
     const FILE_ADD_SUBDIRECTORY: u32 = 0x0004;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
@@ -3219,7 +3051,6 @@ fn registry_game_install_roots(game_id: &str) -> Vec<PathBuf> {
         "xxmi-launcher" => &["xxmi launcher"],
         _ => &[],
     };
-    // Short names that would also hit inside longer words ("nte" in "Intel").
     let word_needles: &[&str] = match game_id {
         "nte" => &["nte"],
         _ => &[],
@@ -3244,7 +3075,6 @@ fn registry_game_install_roots(_game_id: &str) -> Vec<PathBuf> {
     Vec::new()
 }
 
-/// `needles` match anywhere in the name; `word_needles` only as a whole word.
 #[cfg(any(windows, test))]
 fn display_name_matches(display_name: &str, needles: &[&str], word_needles: &[&str]) -> bool {
     let display_name = display_name.to_ascii_lowercase();
@@ -3337,7 +3167,6 @@ mod installed_program_name_tests {
 mod unreal_path_tests {
     use super::*;
 
-    // Path from the Chinese-server report (issue #21).
     #[test]
     fn nte_reported_chinese_path_is_a_candidate_with_matching_mod_paths() {
         let reported = Path::new(

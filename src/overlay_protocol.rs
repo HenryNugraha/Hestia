@@ -11,10 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{AppLanguage, OverlayHotkey};
 
-/// The command line flag that starts the overlay.
 pub(crate) const OVERLAY_ARG: &str = "--overlay";
 
-/// The category id Hestia gives its catch-all group of uncategorized mods.
 pub(crate) const UNCATEGORIZED_ID: &str = "hestia:uncategorized";
 
 /// The overlay's window title.  XXMI takes keys only from the game or a
@@ -32,90 +30,56 @@ pub(crate) const MAIN_WINDOW_TITLE: &str = "Hestia Mod Manager";
 /// match, so `MAIN_WINDOW_TITLE` and `OVERLAY_TITLE` don't count.
 pub(crate) const XXMI_TITLE: &str = "Hestia";
 
-/// Marks the keys Hestia presses for the game, so the overlay leaves them
-/// alone: the overlay may be in front while Hestia presses them.
 pub(crate) const HESTIA_INPUT_MARK: usize = 0x4845_5354;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ToOverlay {
-    /// Always the first line.
     Start(Start),
-    /// The library changed.
     Library(Library),
-    /// The game's processes changed, for example once the game has finished
-    /// starting.
-    GameProcesses { pids: Vec<u32> },
-    /// Hestia has made, or refused, a change the overlay asked for.  The
-    /// library with the change comes first.
+    GameProcesses {
+        pids: Vec<u32>,
+    },
     Changed(Changed),
-    /// One page of GameBanana mods the overlay asked for with
-    /// `FromOverlay::Browse`.
     BrowsePage(BrowsePage),
-    /// The game's GameBanana characters, which "Show all characters" adds to
-    /// the characters row.
     Characters {
         characters: Vec<Character>,
-        /// Why Hestia couldn't get them, so the overlay can ask again.
         #[serde(default)]
         error: Option<String>,
     },
-    /// GameBanana pictures Hestia has downloaded since it sent their mods or
-    /// characters, by GameBanana id.
     Pictures(Pictures),
-    /// How an install the overlay asked for with `FromOverlay::Install` goes,
-    /// or a GameBanana download Hestia's window started.
     Install(InstallUpdate),
-    /// A mod's hotkeys the overlay asked for with `FromOverlay::Hotkeys`.
     Hotkeys(ModHotkeys),
-    /// A mod's description and text files the overlay asked for with
-    /// `FromOverlay::Info`.
     Info(ModInfo),
-    /// Hestia has pressed, or couldn't press, a hotkey the overlay asked for
-    /// with `FromOverlay::PressHotkey`.
     HotkeyPressed {
         id: u64,
-        /// Why the game didn't get it, for the overlay's warning strip.
         error: Option<String>,
     },
-    /// Hestia's settings changed.
     Settings(Settings),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Start {
     pub host_pid: u32,
-    /// Hestia's main window, for the overlay's "open Hestia" button.
     pub host_window: Option<i64>,
-    /// The game's processes.  The overlay shows its strip once one of them
-    /// has the foreground.
     pub game_pids: Vec<u32>,
     pub settings: Settings,
     pub library: Library,
-    /// Where the overlay was left the last time it ran in this Hestia
-    /// session, if it did.
     pub selection: Option<Selection>,
 }
 
-/// The settings the overlay takes from Hestia.  Saved samples from before a
-/// setting existed read it as its default.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub language: AppLanguage,
-    /// The opacity the overlay was left at, once it was changed.
     pub opacity: Option<u8>,
     pub hotkey: OverlayHotkey,
-    /// Show the strip for a moment when the game starts.
     pub arrival_strip: bool,
     pub gamebanana: bool,
-    /// Also list GameBanana's characters that no category stands for.
     pub all_characters: bool,
     pub key_hints: bool,
     pub opacity_slider: bool,
     pub pin_button: bool,
-    /// Hestia's interface zoom, 1 being Normal.  The overlay draws
-    /// `OVERLAY_ZOOM` times bigger.
     pub zoom: f32,
 }
 
@@ -136,7 +100,6 @@ impl Default for Settings {
     }
 }
 
-/// The game's library, in the main window's order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Library {
     pub game_id: String,
@@ -148,11 +111,7 @@ pub(crate) struct Library {
 pub(crate) struct Category {
     pub id: String,
     pub name: String,
-    /// The linked character's picture.  Without one, the overlay shows the
-    /// active mod's picture.
     pub image: Option<PathBuf>,
-    /// The GameBanana character the category stands for, whose GameBanana
-    /// mods the overlay shows after the category's own.
     #[serde(default)]
     pub character: Option<u64>,
     pub mods: Vec<Mod>,
@@ -164,23 +123,15 @@ pub(crate) struct Mod {
     pub name: String,
     pub image: Option<PathBuf>,
     pub active: bool,
-    /// The library censors the mod's picture, so the overlay darkens it like
-    /// the library's cards.
     #[serde(default)]
     pub censored: bool,
-    /// The GameBanana mod it was installed from, so the overlay doesn't offer
-    /// that one again.
     #[serde(default)]
     pub gamebanana_id: Option<u64>,
 }
 
-/// The overlay's place in the library, by ids so it survives changes to the
-/// list.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Selection {
     pub category_id: Option<String>,
-    /// The focused mod of each category where it isn't the active one, by
-    /// category id.
     #[serde(default)]
     pub mods: BTreeMap<String, String>,
 }
@@ -189,61 +140,39 @@ pub(crate) struct Selection {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum FromOverlay {
     Selection(Selection),
-    /// Turn a mod on or off.  Hestia answers with `ToOverlay::Changed`.
     Change(Change),
-    /// Whether the search takes the keys, so Hestia doesn't reload with the
-    /// overlay titled `XXMI_TITLE` meanwhile.
     Typing {
         typing: bool,
     },
-    /// A page of a character's GameBanana mods.  Hestia answers with
-    /// `ToOverlay::BrowsePage`.
     Browse(Browse),
-    /// The game's GameBanana characters.  Hestia answers with
-    /// `ToOverlay::Characters`.
     ListCharacters,
-    /// Install a GameBanana mod, turned off.  Hestia answers with
-    /// `ToOverlay::Install` as it goes.
     Install(Install),
-    /// The file picked for an install that asked which one.
     PickFile {
         mod_id: u64,
         file_id: u64,
     },
-    /// What to do about the folder that has the install's name.
     SameName {
         mod_id: u64,
         choice: SameNameChoice,
     },
-    /// Stop an install that waits for an answer.
     CancelInstall {
         mod_id: u64,
     },
-    /// The opacity the overlay was left at, for Hestia to save.
     Opacity {
         opacity: u8,
     },
-    /// The header's "show all characters" button changed, for Hestia to save.
     AllCharacters {
         show: bool,
     },
-    /// A library mod's hotkeys.  Hestia answers with `ToOverlay::Hotkeys`.
     Hotkeys {
         mod_id: String,
     },
-    /// Press one of a mod's hotkeys in the game, like a click on it in
-    /// Hestia's hotkey list.  Hestia answers with `ToOverlay::HotkeyPressed`.
     PressHotkey {
-        /// The overlay's number for it, which the answer repeats.
         id: u64,
         mod_id: String,
-        /// Its place in the list Hestia sent.
         index: usize,
-        /// Its `ModHotkey::raw`, in case the list has changed since.
         key: String,
     },
-    /// A library mod's description and text files.  Hestia answers with
-    /// `ToOverlay::Info`.
     Info {
         mod_id: String,
     },
@@ -252,9 +181,7 @@ pub(crate) enum FromOverlay {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Browse {
     pub character: u64,
-    /// Search words, or empty for all the character's mods.
     pub query: String,
-    /// From 1.
     pub page: u32,
 }
 
@@ -263,11 +190,8 @@ pub(crate) struct BrowsePage {
     pub character: u64,
     pub query: String,
     pub page: u32,
-    /// In GameBanana's order, which follows the sort of Hestia's Browse page.
     pub mods: Vec<BrowseMod>,
-    /// Whether GameBanana has another page.
     pub more: bool,
-    /// Why Hestia couldn't get the page.
     pub error: Option<String>,
 }
 
@@ -275,9 +199,7 @@ pub(crate) struct BrowsePage {
 pub(crate) struct BrowseMod {
     pub id: u64,
     pub name: String,
-    /// None until Hestia has downloaded it, which `ToOverlay::Pictures` says.
     pub image: Option<PathBuf>,
-    /// GameBanana marks it for mature content, and the library censors that.
     #[serde(default)]
     pub censored: bool,
 }
@@ -289,8 +211,6 @@ pub(crate) struct Character {
     pub image: Option<PathBuf>,
 }
 
-/// Pairs of GameBanana id and picture.  Not maps: a tagged message can't
-/// read number keys back.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Pictures {
     #[serde(default)]
@@ -302,34 +222,23 @@ pub(crate) struct Pictures {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ModHotkeys {
     pub mod_id: String,
-    /// In the order of the library's hotkey list.  Empty for a mod without
-    /// any.
     pub hotkeys: Vec<ModHotkey>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ModHotkey {
-    /// The key as the library shows it, such as "Ctrl+H".
     pub key: String,
     pub label: String,
-    /// The key as the mod's file has it, such as "ctrl VK_H".
     #[serde(default)]
     pub raw: String,
-    /// The key does nothing in the game right now, because another of the
-    /// mod's settings has the wrong value for it.  Greyed out, not pressed.
     #[serde(default)]
     pub unavailable: bool,
 }
 
-/// What the source list of the mod details window has, besides the hotkeys,
-/// as plain text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ModInfo {
     pub mod_id: String,
-    /// The description first, then the personal note if there is one, then
-    /// the mod's own text files.
     pub sources: Vec<InfoSource>,
-    /// The one the details window shows, so the overlay starts on it.
     #[serde(default)]
     pub shown: usize,
 }
@@ -337,14 +246,10 @@ pub(crate) struct ModInfo {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InfoSource {
     pub kind: InfoKind,
-    /// The file's path in the mod's folder, which tells the sources apart.
-    /// Empty for the description.
     #[serde(default)]
     pub path: String,
-    /// What the list calls a text file.  The overlay names the others.
     #[serde(default)]
     pub label: String,
-    /// Empty for a mod without a description.
     pub text: String,
 }
 
@@ -359,21 +264,15 @@ pub(crate) enum InfoKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Install {
-    /// The GameBanana mod.
     pub mod_id: u64,
     pub name: String,
-    /// The library category the overlay showed it in, which gets it.  None
-    /// for a character without one, which gets a new category.
     pub category_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InstallUpdate {
-    /// The GameBanana mod.
     pub mod_id: u64,
     pub stage: InstallStage,
-    /// The mod's name, for a download Hestia's window started.  The overlay
-    /// shows that like an install of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
@@ -381,27 +280,12 @@ pub(crate) struct InstallUpdate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 pub(crate) enum InstallStage {
-    /// Hestia looks up the mod's files, or waits for its turn.
     Waiting,
-    /// In percent, when GameBanana gave the size.
-    Downloading {
-        percent: Option<u8>,
-    },
+    Downloading { percent: Option<u8> },
     Installing,
-    /// GameBanana has several files for the mod.  The overlay answers with
-    /// `FromOverlay::PickFile` or `FromOverlay::CancelInstall`.
-    ChooseFile {
-        files: Vec<InstallFile>,
-    },
-    /// A folder already has the install's name.  The overlay answers with
-    /// `FromOverlay::SameName` or `FromOverlay::CancelInstall`.
-    SameName {
-        folder: String,
-    },
-    /// Installed and turned off, as these library mods.
-    Installed {
-        mods: Vec<String>,
-    },
+    ChooseFile { files: Vec<InstallFile> },
+    SameName { folder: String },
+    Installed { mods: Vec<String> },
     Failed,
     Canceled,
 }
@@ -425,7 +309,6 @@ pub(crate) enum SameNameChoice {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Change {
-    /// The overlay's number for it, which the answer repeats.
     pub id: u64,
     pub mod_id: String,
     pub action: ChangeAction,
@@ -434,8 +317,6 @@ pub(crate) struct Change {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ChangeAction {
-    /// Turn it on and the other mods of its category off.  In Uncategorized,
-    /// whose mods have nothing to do with each other, only turn it on.
     Use,
     TurnOn,
     TurnOff,
@@ -444,15 +325,11 @@ pub(crate) enum ChangeAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Changed {
     pub id: u64,
-    /// Why Hestia didn't make the change, for the overlay's warning strip.
     pub error: Option<String>,
-    /// The game's reload key, such as "F10", when the reload settings leave
-    /// pressing it to the user.
     #[serde(default)]
     pub press_key: Option<String>,
 }
 
-/// One message as a line, without the line break.
 pub(crate) fn encode<T: Serialize>(message: &T) -> serde_json::Result<String> {
     serde_json::to_string(message)
 }
@@ -461,9 +338,6 @@ pub(crate) fn decode<'a, T: Deserialize<'a>>(line: &'a str) -> serde_json::Resul
     serde_json::from_str(line.trim_end())
 }
 
-/// Whether a category without a GameBanana link stands for `character` by
-/// its name.  "Ardelia" and "Operators: Ardelia", the way Hestia's Browse page
-/// names the categories it makes, both stand for "Ardelia".
 pub(crate) fn names_character(category: &str, character: &str) -> bool {
     fn leaf(name: &str) -> String {
         let name = name.trim();

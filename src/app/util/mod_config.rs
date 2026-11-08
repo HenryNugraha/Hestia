@@ -1,64 +1,30 @@
-// Read-only extraction of a mod's user-facing 3DMigoto config (keybinds/toggles).
-//
-// "Related lines" means the keybind sections of a mod's `.ini` files: the
-// `[Key...]`-style sections 3DMigoto recognizes by the presence of a `key =`
-// assignment, together with the lines inside them a user actually tweaks (the
-// bound key, the cycled variable and its values, the activation condition).
-// Everything else in the ini (`TextureOverride`/`Resource`/hash boilerplate) is
-// deliberately dropped so the viewer shows only the lines that matter.
-
-/// One keybind/toggle section worth surfacing to the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ModConfigSection {
-    /// Section header exactly as written, e.g. `[KeySwapBody]`.
     header: String,
-    /// The meaningful (non-comment, non-blank) lines inside the section.
     lines: Vec<String>,
 }
 
-/// One `[Constants]` variable declaration, e.g. `global persist $swapvar = 0`.
-///
-/// Only the flags that decide whether a variable can be read back live matter here:
-/// `global` (addressable cross-namespace, so the live-state helper can mirror it) and
-/// `persist` (3DMigoto already saves it to `d3dx_user.ini`, so no mirror is needed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ModConfigConstant {
-    /// Variable name without the leading `$`, as written.
     name: String,
-    /// Declared `global` — required for the live-state helper to read it via `$\ns\var`.
     global: bool,
-    /// Declared `persist` — 3DMigoto saves it to `d3dx_user.ini` without a mirror.
     persist: bool,
-    /// The starting value as written (`= 0`), if any. Stands in for the current value
-    /// until the game has saved one.
     value: Option<String>,
 }
 
-/// The config-relevant sections found in a single `.ini` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ModConfigIni {
-    /// Path relative to the mod root, using `/` separators.
     rel_path: String,
-    /// Explicit `namespace = …` from the ini preamble (before the first section),
-    /// verbatim-trimmed. `None` means the default namespace (the ini's relative path).
     namespace: Option<String>,
-    /// `[Constants]` variable declarations found in this ini, used to resolve a shown
-    /// hotkey variable's `global`/`persist` flags for the live-state helper.
     constants: Vec<ModConfigConstant>,
     sections: Vec<ModConfigSection>,
 }
 
-/// True when a section body line binds a key (`key = ...`). 3DMigoto identifies an
-/// interactive key binding by this assignment, not by the section's name, so this is
-/// what decides whether a section is "config" the user can change.
 fn ini_line_is_key_binding(line: &str) -> bool {
     line.split_once('=')
         .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("key"))
 }
 
-/// Extract keybind sections from one ini's text. A section is kept only when it
-/// contains a `key =` line; within a kept section, blank lines and comments are
-/// dropped and every other line is preserved verbatim (trimmed).
 fn parse_ini_keybind_sections(text: &str) -> Vec<ModConfigSection> {
     let mut sections = Vec::new();
     let mut header: Option<String> = None;
@@ -105,10 +71,6 @@ fn parse_ini_keybind_sections(text: &str) -> Vec<ModConfigSection> {
     sections
 }
 
-/// Parse an ini's preamble `namespace = …` (if any) and its `[Constants]` variable
-/// declarations. 3DMigoto lowercases keys at parse time, so keyword matching here is
-/// case-insensitive; the variable name is kept as written (the live-state helper
-/// lowercases it when it builds the mirror name).
 fn parse_ini_namespace_and_constants(text: &str) -> (Option<String>, Vec<ModConfigConstant>) {
     let mut namespace: Option<String> = None;
     let mut constants: Vec<ModConfigConstant> = Vec::new();
@@ -148,9 +110,6 @@ fn parse_ini_namespace_and_constants(text: &str) -> (Option<String>, Vec<ModConf
     (namespace, constants)
 }
 
-/// Parse one `[Constants]` line into a declaration. The recognized shape is
-/// `[global] [persist] $name [= value]`; the keyword order is not fixed. Lines without a
-/// `$name` token (blank assignments, `run =` plumbing, etc.) yield `None`.
 fn parse_constant_declaration(line: &str) -> Option<ModConfigConstant> {
     let (head, value) = line
         .split_once('=')
@@ -181,9 +140,6 @@ fn parse_constant_declaration(line: &str) -> Option<ModConfigConstant> {
     })
 }
 
-/// Walk a mod root and collect the keybind sections of every `.ini` it contains,
-/// skipping Hestia's own metadata directory. Files with no keybind sections are
-/// omitted entirely. Purely read-only; nothing is written back.
 fn parse_mod_config_inis(root: &Path) -> Vec<ModConfigIni> {
     let mut out = Vec::new();
     for entry in WalkDir::new(root).max_depth(8) {
@@ -338,11 +294,9 @@ local $ignored = 4
         let (namespace, _) = parse_ini_namespace_and_constants(with_ns);
         assert_eq!(namespace.as_deref(), Some("my\\space"));
 
-        // A `namespace =` after the first section is not a preamble directive.
         let after = "[Constants]\nnamespace = late\nglobal $x = 0\n";
         let (namespace, constants) = parse_ini_namespace_and_constants(after);
         assert_eq!(namespace, None);
-        // `namespace = late` has no `$` token, so it is not a variable declaration.
         assert_eq!(constants.len(), 1);
         assert_eq!(constants[0].name, "x");
     }
@@ -382,7 +336,6 @@ $swapvar = 0,1,2
 
     #[test]
     fn toggles_that_run_a_command_list_are_still_listed() {
-        // From DannTheMann's Tangtang mod: every toggle redraws through a command list.
         let rows = rows_from(
             "\
 [Constants]
@@ -410,7 +363,6 @@ run = CommandListProcessToggles
 
     #[test]
     fn a_command_fed_by_one_fixed_value_is_an_action() {
-        // From the same mod's Master.ini: `$direction` is the command's input, not a toggle.
         let rows = rows_from(
             "\
 [KeyNextVariant]
@@ -433,7 +385,6 @@ run = CommandListNavigate
 
     #[test]
     fn rows_sharing_a_key_wait_on_the_toggle_their_condition_checks() {
-        // From Gilberta: Alt+Up changes a different setting for each Body value.
         let ini = "\
 [Constants]
 global persist $body = 0
@@ -465,7 +416,6 @@ $dressnude = 0,1,2
             hotkey_row_unavailable(row(var), &rows, values)
         };
 
-        // Nothing saved yet: Body starts at 0 from [Constants].
         let unsaved = HashMap::new();
         assert!(!unavailable("dressleotard", &unsaved));
         assert!(unavailable("dressnude", &unsaved));
@@ -518,8 +468,6 @@ $dressnude = 0,1,2
         let mods_path = importer.path().join("Mods");
         let mod_root = mods_path.join("Arcane");
         fs::create_dir_all(&mod_root).unwrap();
-        // `swapvar` is a shown, `global`, non-`persist` cycle var → mirrored.
-        // `saved` is `global persist` → 3DMigoto already flushes it, so no mirror.
         fs::write(
             mod_root.join("mod.ini"),
             "\

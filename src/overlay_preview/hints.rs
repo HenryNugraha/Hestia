@@ -13,34 +13,23 @@ pub(super) enum Hint {
     Categories,
     Exclusive,
     Toggle,
-    /// R turns the focused card over to its hotkeys.
     Hotkeys,
-    /// I turns the focused card over to its info.
     Info,
-    /// Esc turns a card showing its hotkeys or info back to its picture.
     TurnBack,
     Search,
-    /// Enter while typing a search.
     TypedExclusive,
-    /// Shift+Enter while typing a search.
     TypedToggle,
     DoneTyping,
     EditSearch,
     ClearSearch,
 }
 
-/// Which keys the hints describe.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Mode {
-    /// The normal keys.
     #[default]
     Normal,
-    /// Typing a search: letters and Space type.
     Typing,
-    /// The normal keys, on search results.
     Results,
-    /// The focused card shows its hotkeys or info, which keep only a few
-    /// keys.
     Back,
 }
 
@@ -132,7 +121,6 @@ impl Hint {
         })
     }
 
-    /// Whether the keys do anything right now.  Dimmed otherwise.
     pub(super) fn enabled(self, available: ShortcutAvailability) -> bool {
         match self {
             Self::Navigate => available.categories || available.mods,
@@ -151,7 +139,6 @@ impl Hint {
     }
 }
 
-/// A letter gets a square keycap, a key name a wider one.
 pub(super) fn key_width(key: &str) -> f32 {
     if key.chars().count() == 1 { 19.0 } else { 36.0 }
 }
@@ -172,8 +159,6 @@ pub(super) struct Frame {
 }
 
 impl Ticker {
-    /// Starts the hints from the first one when the overlay opens, and again
-    /// when they change.
     pub fn update(&mut self, expanded: bool, mode: Mode, now: f64) {
         if !expanded || mode != self.mode {
             self.opened_at = None;

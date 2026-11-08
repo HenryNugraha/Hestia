@@ -517,8 +517,6 @@ fn resolve_nte_launch_command(game: &GameInstall) -> Result<UnrealLaunchCommand>
         return Ok(command);
     }
 
-    // Installs without the NTEGlobal wrapper or launcher (the Chinese server) start the
-    // picked executable itself.
     let working_dir = configured_path
         .parent()
         .map(Path::to_path_buf)
@@ -667,8 +665,6 @@ fn nte_install_root_from_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Launcher folders beside `Client` that carry the publisher's `Config\Config.ini`. Global
-/// names its folder NTEGlobal; other regions may not, so any folder with that config counts.
 fn nte_launcher_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = fs::read_dir(root)
         .into_iter()
@@ -694,8 +690,6 @@ impl UnrealLaunchCommand {
 }
 
 fn nte_launcher_command(root: &Path, launcher_dirs: &[PathBuf]) -> Option<UnrealLaunchCommand> {
-    // The config names its own launcher ([General] Launcher=); the Global names stay as a
-    // fallback for installs whose config lacks it.
     let configured = launcher_dirs.iter().flat_map(|dir| {
         fs::read_to_string(dir.join("Config").join("Config.ini"))
             .ok()
@@ -723,7 +717,6 @@ fn launch_unreal_command(command: &UnrealLaunchCommand) -> Result<()> {
         Ok(()) => Ok(()),
         Err(err) if err.raw_os_error() == Some(740) => {
             let Some(fallback) = command.fallback_on_elevation.as_deref() else {
-                // No unelevated launcher to hand off to, so let the shell raise the game.
                 let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
                 return crate::integrations::xxmi::launch_executable_with_args(
                     &command.executable,
@@ -1367,7 +1360,6 @@ mod tests {
         assert_eq!(fallback.working_dir, root);
     }
 
-    // Layout from the Chinese-server report (issue #21): only Client, no NTEGlobal.
     #[test]
     fn nte_launch_command_starts_ht_game_without_global_wrapper() {
         let temp = tempfile::tempdir().unwrap();

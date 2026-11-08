@@ -1,15 +1,6 @@
-// GameBanana for the in-game overlay: Hestia gets the pages and characters
-// the overlay asks for through Browse's caches, then downloads their pictures
-// and sends those as they arrive.
-
-/// Pictures that failed to download, after the client's own retries, get
-/// this many more tries, this long apart.  GameBanana's picture server can
-/// turn many requests at once away for a while.
 const OVERLAY_PICTURE_RETRIES: usize = 1;
 const OVERLAY_PICTURE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// What the overlay's GameBanana requests need, taken from the app when one
-/// arrives.
 #[derive(Clone)]
 struct OverlayBrowse {
     runtime: RuntimeServices,
@@ -22,8 +13,6 @@ struct OverlayBrowse {
 }
 
 impl OverlayBrowse {
-    /// Answers with `ToOverlay::BrowsePage`, then the pictures Hestia hasn't
-    /// downloaded yet.
     fn fetch_page(self, request: overlay_protocol::Browse) {
         let runtime = self.runtime.clone();
         runtime.spawn(async move {
@@ -91,7 +80,6 @@ impl OverlayBrowse {
             page,
             self.browse_sort,
         );
-        // Like Browse: GameBanana first, the saved page when it can't answer.
         let (envelope, warning) = load_browse_page_with_cache(
             &self.portable,
             self.runtime.custom_proxy(),
@@ -112,8 +100,6 @@ impl OverlayBrowse {
         Ok(envelope)
     }
 
-    /// Answers with `ToOverlay::Characters`, then the icons Hestia hasn't
-    /// downloaded yet.
     fn list_characters(self) {
         let runtime = self.runtime.clone();
         runtime.spawn(async move {
@@ -169,8 +155,6 @@ impl OverlayBrowse {
         Ok(characters)
     }
 
-    /// Downloads pictures into Browse's image cache, and sends each one as it
-    /// lands.  The ones that fail get another try a little later.
     async fn download_pictures(&self, mut missing: Vec<(u64, String)>, characters: bool) {
         for round in 0..=OVERLAY_PICTURE_RETRIES {
             if missing.is_empty() {
@@ -207,7 +191,6 @@ impl OverlayBrowse {
         }
     }
 
-    /// Downloads one picture into Browse's image cache.
     fn download_picture(
         &self,
         url: String,
@@ -238,7 +221,6 @@ impl OverlayBrowse {
     }
 }
 
-/// Where Browse saved the picture at `url`, if it has.
 fn downloaded_picture(url: Option<&str>) -> Option<PathBuf> {
     url.map(|url| persistence::cache_file_path(&HestiaApp::browse_image_cache_key(url)))
         .filter(|path| path.is_file())

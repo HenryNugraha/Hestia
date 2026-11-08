@@ -1,8 +1,4 @@
 impl HestiaApp {
-    /// Resolve the download/install payload from the authoritative GameBanana
-    /// profile. A translated profile may change presentation fields such as a
-    /// file name, but it must never change the archive identity or URL used by
-    /// the download queue.
     fn authoritative_browse_file<'a>(
         detail: &'a BrowseDetailCache,
         display_file: &gamebanana::ModFile,
@@ -287,7 +283,6 @@ impl HestiaApp {
                         }
                     });
 
-                    // Floating Header Label: Disappears if expanded
                     let header_visibility = 1.0 - how_expanded;
                     if header_visibility > 0.01 {
                         ui.add_space(-4.0 * header_visibility);
@@ -593,8 +588,6 @@ impl HestiaApp {
             let columns = ((max_card_width + 8.0) / (BROWSE_PANEL_CARD_WIDTH + 8.0))
                 .floor()
                 .max(1.0) as usize;
-            // Keep filtering and layout calculations lightweight. The cards themselves are
-            // cloned only for rows that are close enough to the viewport to be rendered.
             let card_indices = self.browse_card_indices_for_display();
 
             if card_indices.is_empty() && self.browse_state.loading_page {
@@ -609,32 +602,25 @@ impl HestiaApp {
                 });
             }
 
-            // Viewport culling for browse cards
             let viewport = ui.clip_rect();
             let viewport_top = viewport.top();
             let viewport_bottom = viewport.bottom();
             let card_spacing = 8.0;
             let row_height = BROWSE_CARD_HEIGHT + card_spacing;
-            let buffer_rows = 2; // Render 2 extra rows above/below for smooth scrolling
-            // Delay these model/readiness scans until a row is actually rendered. Loading and
-            // empty states still need the footer/sentinel below, but have no card controls that
-            // need the snapshots.
+            let buffer_rows = 2;
             let mut installed_mod_snapshot = BrowseInstalledModSnapshot::default();
             let mut readiness_initialized = false;
             let mut selected_game_ready = false;
             let mut selected_game_setup_message = String::new();
 
             for row_indices in card_indices.chunks(columns) {
-                // Calculate row position
                 let row_top = ui.cursor().top();
                 let row_bottom = row_top + row_height;
                 
-                // Check if row is visible (with buffer)
                 let is_visible = row_bottom >= viewport_top - (buffer_rows as f32 * row_height)
                     && row_top <= viewport_bottom + (buffer_rows as f32 * row_height);
                 
                 if !is_visible {
-                    // Just allocate space for invisible rows
                     ui.add_space(row_height);
                     continue;
                 }
@@ -645,9 +631,6 @@ impl HestiaApp {
                     readiness_initialized = true;
                 }
 
-                // Borrowing cards while rendering also mutates app state for image requests,
-                // detail opens, and install actions. Clone only this visible row to keep those
-                // mutations borrow-safe without copying cards in culled rows.
                 let row: Vec<BrowseCard> = row_indices
                     .iter()
                     .filter_map(|index| self.browse_state.cards.get(*index).cloned())
@@ -694,12 +677,6 @@ impl HestiaApp {
                                         let is_visible = rect.intersects(clip);
                                         let priority = if is_visible { 2 } else { 1 };
 
-                                        // PageLoaded queues card thumbs once at background
-                                        // priority (50), which the pointer-motion throttle
-                                        // defers; at low frame rates the pointer never
-                                        // reads as idle, so visible cards would starve
-                                        // forever. Re-request at interactive priority every
-                                        // frame while missing (dedupe makes this cheap).
                                         if is_visible {
                                             self.queue_browse_image_with_profile(
                                                 url.clone(),
@@ -710,7 +687,6 @@ impl HestiaApp {
                                             );
                                         }
 
-                                        // Owned, so its censored copy can be looked up.
                                         if let Some(texture) =
                                             self.get_browse_thumb_texture(&key, priority).cloned()
                                         {
@@ -1330,8 +1306,6 @@ impl HestiaApp {
                 .collect()
         };
 
-        // Enter in the filter field selects the first matching character and
-        // closes the popup (only once at least one character was typed).
         if filter_enter_pressed && !filter_query.is_empty() {
             if let Some(first) = categories.first().cloned() {
                 self.select_browse_character_category(first);
@@ -1567,8 +1541,6 @@ impl HestiaApp {
 
         let details_rect = pane_rect.shrink2(egui::vec2(12.0, 12.0));
         let details_offset = egui::vec2(0.0, 32.0);
-        // Same restore/record scheme as the MY MODS detail window; each keeps its
-        // own saved rect because egui also keeps their in-session rects apart.
         let (details_pos, details_size) = restore_floating_window_rect(
             self.state.static_prefs.floating_windows.browse_detail,
             details_rect.min + details_offset,
@@ -1585,7 +1557,7 @@ impl HestiaApp {
             egui::Rect::from_min_size(pos, size)
         };
         let mut browse_detail_open = self.browse_detail_open;
-        let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, text.browse_mod_detail(), 14.0, 14.0)) // BROWSE view's mod detail GUI
+        let response = egui::Window::new(icon_text_sized(Icon::PackageSearch, text.browse_mod_detail(), 14.0, 14.0))
             .id(egui::Id::new((BROWSE_DETAIL_WINDOW_ID, self.browse_detail_window_nonce)))
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
@@ -1594,9 +1566,6 @@ impl HestiaApp {
             .min_height(320.0)
             .open(&mut browse_detail_open)
             .title_bar(true)
-            // Mirrors the MY MOD detail window: resizable with the old `max_width`
-            // cap dropped so it can widen; the body scrolls vertically and its
-            // rail keys off live `available_width()`, so it reflows cleanly.
             .resizable(true)
             .collapsible(true)
             .movable(true)
@@ -1616,7 +1585,6 @@ impl HestiaApp {
                         .details
                         .get(&mod_id)
                         .and_then(|detail| {
-                            // If translation is active, use translated name
                             if detail.translation_lang.is_some() {
                                 detail.translated_profile.as_ref().map(|p| p.name.clone())
                             } else {
@@ -1653,7 +1621,6 @@ impl HestiaApp {
                 });
                 
                 if let Some(detail) = self.browse_state.details.get(&mod_id).cloned() {
-                    // Use translated profile if available, otherwise use original
                     let profile = browse_detail_profile(&detail);
                     
                     let browse_game_id = card
@@ -1822,7 +1789,6 @@ impl HestiaApp {
                             }
                         }
                         
-                        // Translation button
                         ui.add_space(-2.0);
                         if let Some(detail) = self.browse_state.details.get(&mod_id) {
                             let translation_loading = detail.translation_loading;
@@ -1935,13 +1901,11 @@ impl HestiaApp {
                                 .id_salt(scroll_id)
                                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
                             
-                            // Handle smooth scroll animation
                             if let Some((start_time, start_val, target_val)) = ui.data(|d| d.get_temp::<(f64, f32, f32)>(anim_id)) {
                                 let now = ui.input(|i| i.time);
-                                let duration = 0.35; // 350ms animation
+                                let duration = 0.35;
                                 let t = ((now - start_time) / duration).clamp(0.0, 1.0) as f32;
                                 
-                                // Cubic ease-out: 1 - (1 - t)^3
                                 let ease = 1.0 - (1.0 - t).powi(3);
                                 let current_val = start_val + (target_val - start_val) * ease;
                                 
@@ -2043,7 +2007,6 @@ impl HestiaApp {
                                 out
                             });
 
-                            // Overlay Navigation Buttons
                             let content_response = &output.inner.response;
                             let image_rects = &output.inner.inner;
                             let visible_rect = content_response.rect.intersect(ui.clip_rect());
@@ -2057,7 +2020,6 @@ impl HestiaApp {
                                 let button_size = Vec2::new(24.0, 64.0);
                                 let button_y = visible_rect.center().y - button_size.y / 2.0;
 
-                                // Left Button
                                 if current_offset > 1.0 {
                                     let left_rect = egui::Rect::from_min_size(
                                         egui::pos2(visible_rect.min.x + 16.0, button_y),
@@ -2069,7 +2031,6 @@ impl HestiaApp {
                                     ui.painter().text(left_rect.center(), egui::Align2::CENTER_CENTER, icon_char(Icon::ChevronLeft), egui::FontId::new(20.0, FontFamily::Name(LUCIDE_FAMILY.into())), Color32::WHITE);
                                     
                                     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                        // Find previous image start position
                                         let target = image_rects.iter()
                                             .rev()
                                             .map(|r| r.min.x - visible_rect.min.x + current_offset)
@@ -2085,7 +2046,6 @@ impl HestiaApp {
                                     }
                                 }
 
-                                // Right Button
                                 if current_offset < max_offset - 1.0 {
                                     let right_rect = egui::Rect::from_min_size(
                                         egui::pos2(visible_rect.max.x - button_size.x - 16.0, button_y),
@@ -2097,7 +2057,6 @@ impl HestiaApp {
                                     ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, icon_char(Icon::ChevronRight), egui::FontId::new(20.0, FontFamily::Name(LUCIDE_FAMILY.into())), Color32::WHITE);
 
                                     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                        // Find next image start position
                                         let target = image_rects.iter()
                                             .map(|r| r.min.x - visible_rect.min.x + current_offset)
                                             .find(|&off| off > current_offset + 5.0)
@@ -3044,9 +3003,6 @@ impl HestiaApp {
                             egui::Popup::menu(&arrow_response)
                                 .id(ui.id().with("file_review_install_menu"))
                                 .show(|ui| {
-                                    // Keep Update available in the menu when a
-                                    // recommended Merge is promoted to the
-                                    // primary action. Do not show Merge twice.
                                     if primary_is_merge {
                                         let update_enabled = prompt_lock_reason.is_none();
                                         let update_response = ui.add_enabled(
@@ -3236,9 +3192,6 @@ impl HestiaApp {
         let mut action = None;
 
         let text = self.text();
-        // While the context menu is up, the click or Escape that dismisses it
-        // still reaches the overlay below, so suppress the overlay's own input
-        // handling for that frame to avoid also closing or navigating it.
         let menu_open_flag_id = egui::Id::new("browse_screenshot_overlay_menu_open");
         let menu_was_open = ctx
             .data(|d| d.get_temp::<bool>(menu_open_flag_id))
@@ -3292,10 +3245,6 @@ impl HestiaApp {
                     });
                 }
 
-                // Read the raw wheel events instead of the frame scroll delta:
-                // egui smooths a single notch out over several frames, so a large
-                // system scroll step used to fire one step per frame and blow
-                // through the whole gallery on one flick.
                 let (wheel_lines, now) = ui.input(|i| {
                     let lines = i.events.iter().fold(0.0_f32, |acc, event| match event {
                         egui::Event::MouseWheel {
@@ -3340,8 +3289,6 @@ impl HestiaApp {
                         } else {
                             NavAction::Next
                         });
-                        // Drop the remainder so an oversized delta cannot queue up
-                        // extra steps on the following frames.
                         self.browse_state.overlay_scroll_accum = 0.0;
                         self.browse_state.overlay_scroll_last_step_at = now;
                     } else {
@@ -3517,8 +3464,6 @@ impl HestiaApp {
                     ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
                     ui.style_mut().visuals.widgets.active.corner_radius = radius;
                     ui.style_mut().visuals.widgets.open.corner_radius = radius;
-                    // Pager row: the arrows navigate without closing the menu,
-                    // so the indicator refreshes in place.
                     ui.horizontal(|ui| {
                         let arrow_size = Vec2::new(24.0, 20.0);
                         let icon_color = Color32::from_rgb(225, 229, 233);
@@ -3538,10 +3483,6 @@ impl HestiaApp {
                         {
                             action = Some(NavAction::Prev);
                         }
-                        // Derived from the menu's fixed 156px width, not from
-                        // available_width(): sizing against the measured width
-                        // feeds the popup's auto-size back into itself and the
-                        // menu grows without bound.
                         let label_width = (156.0
                             - 2.0 * (arrow_size.x + ui.spacing().item_spacing.x))
                             .max(0.0);
@@ -3605,8 +3546,6 @@ impl HestiaApp {
                     .data_mut(|d| d.insert_temp(menu_open_flag_id, menu_open_now));
             });
 
-        // Polled every overlay frame so the held-state edge tracking stays
-        // accurate even on frames where another action already won.
         let ctrl_c_pressed = self.poll_windows_ctrl_c_edge(ctx);
         if ctrl_c_pressed && !menu_was_open && action.is_none() {
             action = Some(NavAction::CopyImage);

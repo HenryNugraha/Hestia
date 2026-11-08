@@ -3,23 +3,12 @@ fn initial_candidate_install_status(
     preserved: Option<ModStatus>,
 ) -> ModStatus {
     match preserved {
-        // Archived XXMI updates are staged in the archive root, where the scan supplies the
-        // final Archived status.  The worker still needs an active physical layout so a stale
-        // DISABLED_BY_HESTIA container is not carried forward.
         Some(ModStatus::Archived) => ModStatus::Active,
         Some(status) => status,
         None => requested.staged_status(),
     }
 }
 
-/// Rebase an identity-targeted install onto the physical parent of its existing mod.
-///
-/// XXMI keeps active and disabled content in the same mod directory, so a nested
-/// target must keep its category/grouping parent for Replace, Merge, and retry
-/// installs. Unreal stores disabled mods in a separate root; only its archived
-/// targets use the existing parent-root behavior. Unreal live/disabled targets
-/// rebase both roots together so the worker can still detect conflicts across
-/// its paired active and disabled locations.
 fn update_target_roots_for_existing_mod(
     target_root: PathBuf,
     disabled_target_root: Option<PathBuf>,
@@ -88,11 +77,6 @@ fn find_existing_install_target<'a>(
     })
 }
 
-/// Return whether an install would replace an active Unreal mod while the game is running.
-///
-/// An update target is an identity, so its current physical root and status decide whether the
-/// game lock applies. In particular, a disabled target may share a relative folder name with an
-/// active mod in the paired root without touching that active mod.
 fn install_targets_active_mod(
     mods: &[ModEntry],
     game_id: &str,
@@ -320,8 +304,6 @@ impl HestiaApp {
     }
 
     fn begin_import(&mut self, job: InstallJob) -> Result<()> {
-        // A slow download can outlive the Browse detail (a new search clears
-        // them all), so fall back to the profile the task saved when queued.
         let gb_profile = if let Some(meta) = self.pending_browse_install_meta.get(&job.id) {
             self.browse_state
                 .details
@@ -394,9 +376,6 @@ impl HestiaApp {
             .pending_browse_install_meta
             .get(&job_id)
             .and_then(|meta| meta.update_folder_name.as_deref());
-        // An explicit review action targets an existing identity.  If that
-        // identity disappeared while its archive was downloading, never fall
-        // back to a fresh install or silently create a new mod.
         let explicit_target_valid = update_target_mod_id.as_deref().is_some_and(|target_id| {
             self.state.mods.iter().any(|mod_entry| {
                 mod_entry.id == target_id
@@ -500,8 +479,6 @@ impl HestiaApp {
             current.preserved_states = preserved_states.clone();
         }
         if self.thalia_bundle_target_changed_before_install(job_id) {
-            // Changed by hand while the update was getting ready. Writing over
-            // it now would lose that change, so the whole update stops.
             let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
             self.pending_imports.retain(|pending| pending.job_id != job_id);
             self.pending_conflicts
@@ -577,9 +554,6 @@ impl HestiaApp {
         }
     }
 
-    /// A file Thalia said goes in its own folder is already in Mods under the
-    /// same name. Installing it again would leave two copies, which such
-    /// libraries break on, so the existing one is kept.
     fn keep_existing_thalia_separate_copy(&mut self, job_id: u64, folder_name: &str) {
         let _ = self.install_request_tx.send(InstallRequest::Drop { job_id });
         self.pending_browse_install_meta.remove(&job_id);
@@ -596,16 +570,12 @@ impl HestiaApp {
             .iter_mut()
             .find(|bundle| bundle.members.contains(&job_id))
         {
-            // Counted as done, but nothing was written.
             bundle.finished.insert(job_id);
         }
         self.set_message_ok(self.text().thalia_required_copy_kept(folder_name));
         self.update_task_status(job_id, TaskStatus::Completed);
     }
 
-    /// Folder of a mod in the game that declares exactly the same 3DMigoto
-    /// namespaces as the extracted files, which means the same library is
-    /// already installed under another folder name.
     fn installed_folder_with_same_namespaces(
         &mut self,
         game_id: &str,
@@ -726,18 +696,12 @@ impl HestiaApp {
         )
     }
 
-    /// Find an existing target in either Unreal storage root.  The dialog and
-    /// overlay review paths use this before presenting Replace/Merge choices;
-    /// a disabled Unreal mod lives beside the active root and still represents
-    /// the same logical target.
     fn existing_install_target(
         &self,
         game: &GameInstall,
         preferred_name: &str,
         job_id: u64,
     ) -> Option<PathBuf> {
-        // An update target is an identity, not a basename. Resolve the exact entry first so a
-        // same-name peer in another storage root cannot steal the conflict prompt or commit path.
         if let Some(meta) = self.pending_browse_install_meta.get(&job_id)
             && meta.game_id == game.definition.id
             && let Some(target_id) = meta.update_target_mod_id.as_deref()
@@ -816,9 +780,6 @@ impl HestiaApp {
         self.enqueue_install_sources_with_state_and_preserve(sources, state, true);
     }
 
-    /// Explicit install action used by the UI.  An explicit state overrides a
-    /// replacement target's old state; normal installs use the preference and
-    /// preserve an existing target during Replace/Merge.
     fn enqueue_install_sources_with_state(
         &mut self,
         sources: Vec<ImportSource>,
@@ -849,11 +810,6 @@ impl HestiaApp {
             self.install_batch_active = true;
         }
 
-        // External installs carry no GameBanana listing, so they normally land
-        // uncategorized. When the user is drilled into a category folder, treat
-        // that folder as the target so both the Install button and drag-and-drop
-        // drop the mod where the user is looking. Only meaningful in the library
-        // folder view; a drop from Browse/overview assigns nothing.
         let target_category_id = if self.current_view == ViewMode::Library
             && self.state.static_prefs.effective_library_group_mode() == LibraryGroupMode::Category
             && self.state.static_prefs.effective_library_category_display_mode()
@@ -866,8 +822,6 @@ impl HestiaApp {
 
         let mut added_any = false;
         for source in sources {
-            // Split archive volumes all normalize to their first part so the
-            // queue dedupe below collapses a multi-part set into one install.
             let source = match source {
                 ImportSource::Archive(path) => {
                     let path = importing::resolve_split_archive(&path).unwrap_or(path);
@@ -952,8 +906,6 @@ impl HestiaApp {
             install_state,
             preserve_existing_state,
             preserved_states: Vec::new(),
-            // Browse/update installs derive their category from the GameBanana
-            // listing (see apply_browse_download_category), so no folder capture.
             category_id: None,
         };
         self.install_queue.push_back(job.clone());
@@ -970,15 +922,10 @@ impl HestiaApp {
         while self.install_inflight.len() < max_parallel {
             let Some(job) = self.install_queue.pop_front() else { break; };
             if self.folder_batch_game_busy(&job.game_id) {
-                // Keep completed downloads queued until the folder batch releases the game;
-                // dropping them here would force an unnecessary re-download.
                 self.install_queue.push_front(job);
                 break;
             }
             if self.explicit_review_group_is_inflight(&job) {
-                // Multiple archives selected in one file-review action target
-                // the same identity. Keep them serial so Merge cannot inspect
-                // or publish against a stale/incomplete copy of its sibling.
                 self.install_queue.push_back(job);
                 blocked_review_jobs += 1;
                 if blocked_review_jobs >= initial_queue_len {

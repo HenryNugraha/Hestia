@@ -220,8 +220,6 @@ fn is_supported_archive_extension(ext: &str) -> bool {
         .any(|supported| ext.eq_ignore_ascii_case(supported))
 }
 
-/// Detects raw byte-split archive volumes like `mod.rar.0001` or `mod.7z.001`.
-/// Returns the base archive path (`mod.rar`) and the part number.
 fn numeric_split_part(path: &Path) -> Option<(PathBuf, u64)> {
     let suffix = path.extension()?.to_str()?;
     if suffix.is_empty()
@@ -236,8 +234,6 @@ fn numeric_split_part(path: &Path) -> Option<(PathBuf, u64)> {
     is_supported_archive_extension(base_ext).then_some((base, part))
 }
 
-/// Detects native RAR multi-volume naming like `mod.part2.rar`.
-/// Returns the stem before `.partN` and the part number.
 fn rar_part_number(path: &Path) -> Option<(String, u64)> {
     let ext = path.extension()?.to_str()?;
     if !ext.eq_ignore_ascii_case("rar") {
@@ -255,8 +251,6 @@ fn rar_part_number(path: &Path) -> Option<(String, u64)> {
     Some((stem[..idx].to_string(), digits.parse().ok()?))
 }
 
-/// Detects old-style RAR volume naming (`mod.r00`, `mod.r01`, ...).
-/// Returns the main `mod.rar` volume if it exists next to the part.
 fn rar_old_style_main_volume(path: &Path) -> Option<PathBuf> {
     let ext = path.extension()?.to_str()?.as_bytes();
     if !(ext.len() == 3
@@ -277,9 +271,6 @@ fn split_part_parent(path: &Path) -> PathBuf {
     }
 }
 
-/// If `path` is one volume of a split archive, returns the volume extraction
-/// should start from, so every part of a set maps to the same install source.
-/// Returns `None` when `path` is not a recognized split volume.
 pub fn resolve_split_archive(path: &Path) -> Option<PathBuf> {
     if let Some((base, _)) = numeric_split_part(path) {
         let first = collect_numeric_split_parts(&base)
@@ -311,16 +302,10 @@ pub fn resolve_split_archive(path: &Path) -> Option<PathBuf> {
     rar_old_style_main_volume(path)
 }
 
-/// File-picker extensions for the archive filter: the plain archive formats
-/// plus the first-part suffixes of split sets. Selecting part 1 is enough --
-/// the remaining volumes are picked up from the same folder automatically.
-/// The list must stay small: Windows' file dialog crashes on huge filters.
 pub fn archive_picker_extensions() -> &'static [&'static str] {
     &["zip", "rar", "7z", "001", "0001"]
 }
 
-/// Display name for an import source file: split volumes show the base
-/// archive name (`mod.7z.001` -> `mod.7z`, `mod.part2.rar` -> `mod.rar`).
 pub fn source_display_file_name(path: &Path) -> String {
     if let Some((base, _)) = numeric_split_part(path) {
         if let Some(name) = base.file_name().and_then(OsStr::to_str) {
@@ -338,7 +323,6 @@ pub fn source_display_file_name(path: &Path) -> String {
         .to_string()
 }
 
-/// Size of an archive source on disk; for split sets, the sum of all volumes.
 pub fn archive_source_total_size(path: &Path) -> Option<u64> {
     if numeric_split_part(path).is_some() {
         if let Some(parts) = resolve_split_archive(path)
@@ -376,12 +360,8 @@ pub fn archive_source_total_size(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|meta| meta.len())
 }
 
-/// Strip the "uuid_" prefix some download sources stamp on archive and folder
-/// names ("8b7f2df5-61b7-409f-93bf-7948fd407fd4_Name" -> "Name"), so the
-/// installed folder gets the human name. A 36-char parse only succeeds for the
-/// hyphenated 8-4-4-4-12 form, so ordinary names are never mistaken for one.
 fn strip_uuid_prefix(name: &str) -> &str {
-    const UUID_PREFIX_LEN: usize = 37; // hyphenated uuid + '_'
+    const UUID_PREFIX_LEN: usize = 37;
     if name.len() > UUID_PREFIX_LEN && name.is_char_boundary(UUID_PREFIX_LEN) {
         let (prefix, rest) = name.split_at(UUID_PREFIX_LEN);
         if prefix.ends_with('_') && uuid::Uuid::parse_str(&prefix[..UUID_PREFIX_LEN - 1]).is_ok() {
@@ -1209,8 +1189,6 @@ pub fn copy_dir_cancelable(
     })
 }
 
-/// `on_bytes` receives the running total of bytes copied so far, after each file. Returning an
-/// error from it aborts the copy, so it can double as an extra cancellation point.
 pub fn copy_dir_cancelable_with_progress(
     source: &Path,
     destination: &Path,
@@ -1280,11 +1258,11 @@ pub fn move_or_copy_archive_candidate_cancelable(
 fn is_cross_device_rename_error(err: &io::Error) -> bool {
     #[cfg(windows)]
     {
-        err.raw_os_error() == Some(17) // ERROR_NOT_SAME_DEVICE
+        err.raw_os_error() == Some(17)
     }
     #[cfg(not(windows))]
     {
-        err.raw_os_error() == Some(18) // EXDEV
+        err.raw_os_error() == Some(18)
     }
 }
 
@@ -1305,8 +1283,6 @@ pub fn install_candidate_cancelable(
         return match choice {
             ConflictChoice::Cancel => Ok(None),
             ConflictChoice::Replace => {
-                // Replace removes the destination outright; carry the ⬢HESTIA settings
-                // stash across so a hidden mod's saved in-game settings survive.
                 let preserved_stash =
                     crate::integrations::xxmi_persist::read_stash_bytes(&initial_target);
                 copy_dir_cancelable(candidate_path, &initial_target, true, cancel)?;
@@ -1340,10 +1316,6 @@ pub fn install_candidate_cancelable(
     Ok(Some(initial_target))
 }
 
-/// Publish one candidate with the state it should have when it first becomes visible to a game
-/// scan.  Staging happens in a sibling of the destination root so a partially copied candidate
-/// cannot be mistaken for a live mod.  XXMI represents a disabled mod as one folder containing
-/// `DISABLED_BY_HESTIA`; Unreal keeps disabled mods in its separate disabled root.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn install_candidate_with_state_cancelable(
@@ -1371,9 +1343,6 @@ pub fn install_candidate_with_state_cancelable(
     )
 }
 
-/// Same as [`install_candidate_with_state_cancelable`], and when `expected`
-/// is given the staged copy must hold exactly those files, or nothing is
-/// published.
 #[allow(clippy::too_many_arguments)]
 pub fn install_candidate_with_state_verified_cancelable(
     candidate_path: &Path,
@@ -1539,9 +1508,6 @@ pub fn install_candidate_with_state_verified_cancelable(
             let staged_final = stage.path().join("final");
             prepare_candidate_stage(&staged_candidate, &staged_final, backend, &status, cancel)?;
             check_cancel(cancel)?;
-            // A KeepBoth clone must be a new library identity. Preserve the
-            // candidate's metadata and source information, changing only the
-            // UUID that identifies the cloned library entry.
             let portable_state = staged_final
                 .join(MOD_META_DIR)
                 .join(crate::model::MOD_META_FILE);
@@ -1766,8 +1732,6 @@ fn atomic_publish_staged_dir(
     preserved_stash: Option<Vec<u8>>,
     preserved_state: Option<crate::model::PortableModState>,
 ) -> Result<()> {
-    // Complete the replacement payload while it is still outside every scan root.  This keeps
-    // the portable identity and the saved XXMI settings visible atomically with the content.
     crate::integrations::xxmi_persist::restore_stash_bytes(staged, &preserved_stash);
     if let Some(state) = &preserved_state {
         crate::persistence::save_portable_mod_state(staged, state).with_context(|| {
@@ -1838,16 +1802,10 @@ fn dispose_replaced_install_path(retired: &Path) {
     }
 }
 
-/// How deep below the mod root a named preview file is still considered part of
-/// this mod: covers `DISABLED_BY_HESTIA\<content>\preview.jpg` and a mixed-root
-/// install whose actual mod lives one folder down.
 const BUNDLED_PREVIEW_MAX_DEPTH: usize = 4;
 const BUNDLED_PREVIEW_MAX_IMAGES: usize = 10;
 const BUNDLED_PREVIEW_MAX_INI_BYTES: usize = 1024 * 1024;
 
-/// File-name conventions mod authors and other managers use for a bundled
-/// preview image: JASM's `.JASM_Cover`, MODORA's `.MODORA_Preview`, plain
-/// `preview`/`cover`/`thumbnail` files.
 fn is_bundled_preview_stem(stem: &str) -> bool {
     let stem = stem.trim_start_matches('.').to_ascii_lowercase();
     stem.contains("preview")
@@ -1869,9 +1827,6 @@ fn is_bundled_preview_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the lowercased ini blob mentions `file_name` as a standalone token.
-/// Plain `contains` would let a reference to `11.png` veto an unrelated
-/// `1.png`, so both neighbors must be non-alphanumeric.
 fn ini_blob_references_file(blob: &str, file_name: &str) -> bool {
     let needle = file_name.to_ascii_lowercase();
     if needle.is_empty() {
@@ -1889,13 +1844,6 @@ fn ini_blob_references_file(blob: &str, file_name: &str) -> bool {
     false
 }
 
-/// Find preview images a mod shipped with, best-candidate first.
-///
-/// Named preview files (`preview.*`, `.JASM_Cover.jpg`, ...) count anywhere
-/// within [`BUNDLED_PREVIEW_MAX_DEPTH`]. Loose images only count directly in
-/// the mod root or directly in the `DISABLED_BY_HESTIA` container, where a
-/// stray image is a preview by convention rather than a texture. Any image a
-/// `.ini` in the tree references is part of the mod itself and never adopted.
 pub fn discover_bundled_preview_images(mod_root: &Path) -> Vec<PathBuf> {
     let mut named: Vec<(usize, u8, PathBuf)> = Vec::new();
     let mut loose: Vec<PathBuf> = Vec::new();
@@ -1971,8 +1919,6 @@ pub fn discover_bundled_preview_images(mod_root: &Path) -> Vec<PathBuf> {
             b.2.to_string_lossy().to_ascii_lowercase(),
         ))
     });
-    // A numbered set sorts numerically (2.png before 10.png), everything else
-    // falls back to name order behind it.
     loose.sort_by_key(|path| {
         let stem = path
             .file_stem()
@@ -2010,12 +1956,10 @@ mod tests {
             strip_uuid_prefix("30AC753A-8368-4A58-81EB-4672DB2A7742_Name"),
             "Name"
         );
-        // Not a uuid: hyphens in the wrong spots.
         assert_eq!(
             strip_uuid_prefix("8b7f2df561-b7-409f-93bf-7948fd407fd4_Name"),
             "8b7f2df561-b7-409f-93bf-7948fd407fd4_Name"
         );
-        // A bare uuid keeps its name rather than becoming empty.
         assert_eq!(
             strip_uuid_prefix("8b7f2df5-61b7-409f-93bf-7948fd407fd4"),
             "8b7f2df5-61b7-409f-93bf-7948fd407fd4"
@@ -2324,7 +2268,6 @@ mod tests {
             "split demo payload"
         );
 
-        // Any part of the set resolves to the same full extraction.
         let from_second = temp.path().join("extract-second");
         extract_archive(&parts[1], &from_second).unwrap();
         assert!(from_second.join("Mod").join("readme.txt").exists());
@@ -3165,9 +3108,6 @@ mod tests {
         let destination = temp.path().join("disabled").join("New Mod");
         fs::create_dir_all(existing.join("nested")).unwrap();
         fs::write(existing.join("nested").join("old.ini"), b"old payload").unwrap();
-        // Windows can replace a regular file when renaming a directory over it;
-        // a non-empty destination directory gives the same blocking condition
-        // while keeping the regular file as an observable invariant.
         fs::create_dir_all(destination.join("blocking")).unwrap();
         let blocking_file = destination.join("blocking").join("file.txt");
         fs::write(&blocking_file, b"blocking file").unwrap();

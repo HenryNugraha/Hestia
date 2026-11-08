@@ -1,5 +1,3 @@
-//! Two-stage expansion within a fixed native canvas. Its bottom center never moves.
-
 #[derive(Clone, Copy)]
 struct Spring {
     value: f32,
@@ -8,8 +6,6 @@ struct Spring {
 
 impl Spring {
     fn advance(&mut self, target: f32, omega: f32, dt: f32) {
-        // Exact critically damped spring integration preserves velocity when
-        // Alt is released or pressed again halfway through a transition.
         let offset = self.value - target;
         let rate = self.velocity + omega * offset;
         let decay = (-omega * dt).exp();
@@ -52,7 +48,6 @@ impl ExpansionMotion {
             .map_or(0.0, |last| (now - last).clamp(0.0, 0.1) as f32);
         self.previous_time = Some(now);
         self.expanded = expanded;
-        // Open the strip first. On collapse, withdraw the cards before shrinking.
         let strip_target = if expanded || self.cards.value > 0.001 {
             1.0
         } else {
@@ -87,8 +82,6 @@ pub(super) struct StripGeometry {
     pub gallery: egui::Rect,
 }
 
-/// The strip at `progress` from idle to open.  A longer hotkey makes the idle
-/// strip `idle_width` wide.
 pub(super) fn geometry(bounds: egui::Rect, progress: f32, idle_width: f32) -> StripGeometry {
     let width = egui::lerp(idle_width..=super::EXPANDED_SIZE.x, progress).min(bounds.width());
     let height = egui::lerp(

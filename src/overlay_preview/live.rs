@@ -1,6 +1,3 @@
-//! The in-game overlay's link to Hestia, over its standard input and output.
-//! `crate::overlay_protocol` has the messages.
-
 use std::{
     collections::HashSet,
     io::{BufRead, Write},
@@ -17,29 +14,20 @@ use crate::overlay_protocol::{
     ToOverlay,
 };
 
-/// How long the strip shows after the overlay closes.
 const STRIP_SECONDS: f64 = 3.0;
 
-/// How long the strip shows when the game first comes to the front, long
-/// enough to notice Alt+H.
 const ARRIVAL_SECONDS: f64 = 7.0;
 
-/// How long the strip shows a change Hestia refused.
 pub(super) const WARNING_SECONDS: f64 = 6.0;
 
-/// How long the strip stays after the pointer leaves it.
 const HOVER_SECONDS: f64 = 1.5;
 
-/// The end of the strip's time, where it fades out.
 const FADE_SECONDS: f64 = 0.4;
 
-/// How long the overlay waits for Hestia to answer a change.
 const ANSWER_SECONDS: f64 = 10.0;
 
-/// How long the overlay waits for its window to close once Hestia is gone.
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 
-/// Reads the start message, which Hestia sends first.
 pub(super) fn read_start() -> anyhow::Result<Start> {
     let mut line = String::new();
     std::io::stdin()
@@ -60,23 +48,14 @@ struct Inbox {
     closed: bool,
 }
 
-/// What Hestia sent since the overlay last looked.
 #[derive(Default)]
 pub(super) struct News {
-    /// The newest settings.
     pub settings: Option<Settings>,
-    /// The newest library.
     pub library: Option<Library>,
-    /// Answers to changes, each after the library that has its change.
     pub answers: Vec<Changed>,
-    /// GameBanana pages, characters and pictures, in the order they came.
     pub gamebanana: Vec<ToOverlay>,
-    /// Mods' hotkeys, in the order they came.
     pub hotkeys: Vec<ModHotkeys>,
-    /// Mods' descriptions and text files, in the order they came.
     pub info: Vec<ModInfo>,
-    /// Answers to hotkey presses: the press's number, and why the game
-    /// didn't get it.
     pub pressed: Vec<(u64, Option<String>)>,
 }
 
@@ -86,13 +65,11 @@ pub(super) struct Link {
     host_window: Option<i64>,
     reported: Option<Selection>,
     typing: bool,
-    /// The opacity Hestia last knew.
     opacity: u8,
     closing: bool,
 }
 
 impl Link {
-    /// Starts reading Hestia's messages and writing the overlay's.
     pub(super) fn start(
         ctx: egui::Context,
         host_window: Option<i64>,
@@ -122,23 +99,18 @@ impl Link {
         self.host_window
     }
 
-    /// What Hestia sent since the last call.  Taken together, so an answer
-    /// never comes without the library that has its change.
     pub(super) fn take_news(&self) -> News {
         std::mem::take(&mut lock(&self.inbox).news)
     }
 
-    /// Asks Hestia for a change.
     pub(super) fn send_change(&self, change: Change) {
         let _ = self.outbox.send(FromOverlay::Change(change));
     }
 
-    /// Asks Hestia for GameBanana mods or characters.
     pub(super) fn ask(&self, request: FromOverlay) {
         let _ = self.outbox.send(request);
     }
 
-    /// Whether Hestia has closed the link.  True once.
     pub(super) fn take_closed(&mut self) -> bool {
         if self.closing || !lock(&self.inbox).closed {
             return false;
@@ -147,12 +119,10 @@ impl Link {
         true
     }
 
-    /// Whether the overlay is closing because Hestia closed the link.
     pub(super) fn closing(&self) -> bool {
         self.closing
     }
 
-    /// Tells Hestia where the overlay is in the library, when that changed.
     pub(super) fn report(&mut self, selection: Selection) {
         if self.reported.as_ref() != Some(&selection) {
             let _ = self.outbox.send(FromOverlay::Selection(selection.clone()));
@@ -160,7 +130,6 @@ impl Link {
         }
     }
 
-    /// Tells Hestia whether the search takes the keys, when that changed.
     pub(super) fn report_typing(&mut self, typing: bool) {
         if self.typing != typing {
             let _ = self.outbox.send(FromOverlay::Typing { typing });
@@ -168,7 +137,6 @@ impl Link {
         }
     }
 
-    /// Tells Hestia the opacity to save, when that changed.
     pub(super) fn report_opacity(&mut self, opacity: u8) {
         if self.opacity != opacity {
             let _ = self.outbox.send(FromOverlay::Opacity { opacity });
@@ -176,12 +144,10 @@ impl Link {
         }
     }
 
-    /// Notes an opacity that came from Hestia, so it isn't sent back.
     pub(super) fn received_opacity(&mut self, opacity: u8) {
         self.opacity = opacity;
     }
 
-    /// Tells Hestia to save the header's "show all characters" button.
     pub(super) fn report_all_characters(&self, show: bool) {
         let _ = self.outbox.send(FromOverlay::AllCharacters { show });
     }
@@ -243,7 +209,6 @@ fn read_messages(inbox: &Mutex<Inbox>, ctx: &egui::Context) {
     tracing::info!("Hestia closed the overlay's link");
     lock(inbox).closed = true;
     ctx.request_repaint();
-    // The window closes on its next frame.  Leave anyway if it can't.
     thread::sleep(EXIT_GRACE);
     tracing::warn!("The overlay window did not close, exiting");
     std::process::exit(0);
@@ -263,25 +228,17 @@ fn write_messages(outgoing: &mpsc::Receiver<FromOverlay>) {
     }
 }
 
-/// When the in-game overlay's strip shows.  It shows for a few seconds when
-/// the game first comes to the front and after the overlay closes, then fades
-/// out, and the window hides until Alt+H.
 #[derive(Debug, Default)]
 pub(super) struct Strip {
-    /// Until when the strip shows, in egui time.
     until: f64,
-    /// The strip's X hid it, so the pointer still resting there doesn't keep
-    /// it.
     dismissed: bool,
 }
 
 impl Strip {
-    /// Shows the strip for its full time from now.
     pub(super) fn show(&mut self, now: f64) {
         self.show_for(now, STRIP_SECONDS);
     }
 
-    /// Shows the strip for the game's first time in front.
     pub(super) fn arrive(&mut self, now: f64) {
         self.show_for(now, ARRIVAL_SECONDS);
     }
@@ -291,19 +248,16 @@ impl Strip {
         self.dismissed = false;
     }
 
-    /// Shows the strip long enough to read a warning.
     pub(super) fn warn(&mut self, now: f64) {
         self.show_for(now, WARNING_SECONDS);
     }
 
-    /// Keeps the strip a little longer while the pointer is on it.
     pub(super) fn hover(&mut self, now: f64) {
         if !self.dismissed {
             self.until = self.until.max(now + HOVER_SECONDS);
         }
     }
 
-    /// Hides the strip now.
     pub(super) fn dismiss(&mut self) {
         self.until = f64::NEG_INFINITY;
         self.dismissed = true;
@@ -313,13 +267,10 @@ impl Strip {
         self.until > now
     }
 
-    /// 1 while the strip shows, falling to 0 as it fades out.
     pub(super) fn opacity(&self, now: f64) -> f32 {
         ((self.until - now) / FADE_SECONDS).clamp(0.0, 1.0) as f32
     }
 
-    /// When the next frame is needed: now while fading, at the start of the
-    /// fade before that, and never once the strip is gone.
     pub(super) fn next_frame(&self, now: f64) -> Option<Duration> {
         let fade_start = self.until - FADE_SECONDS;
         if !self.shown(now) {
@@ -332,13 +283,8 @@ impl Strip {
     }
 }
 
-/// The changes to mods the overlay asked Hestia for.  A change shows at once
-/// and stays while Hestia works on it, so a library Hestia sent before making
-/// it doesn't undo it on screen.  Once Hestia answers, its library shows.
 pub(super) struct Changes {
-    /// The newest library from Hestia.
     library: Library,
-    /// What the overlay shows: the library with the changes still waiting.
     shown: Library,
     asked: Vec<Asked>,
     next_id: u64,
@@ -346,10 +292,8 @@ pub(super) struct Changes {
 
 struct Asked {
     id: u64,
-    /// When the overlay asked, in egui time.
     at: f64,
     mod_id: String,
-    /// The mods the change turned on or off on screen.
     states: Vec<(String, bool)>,
 }
 
@@ -363,7 +307,6 @@ impl Changes {
         }
     }
 
-    /// Asks Hestia for a change the overlay already shows.
     pub(super) fn ask(&mut self, request: ModRequest, now: f64) -> Change {
         self.next_id += 1;
         self.asked.push(Asked {
@@ -384,21 +327,18 @@ impl Changes {
         self.library = library;
     }
 
-    /// Takes Hestia's answer.  The error says why Hestia refused the change.
     pub(super) fn answer(&mut self, answer: Changed) -> Option<String> {
         let index = self.asked.iter().position(|asked| asked.id == answer.id)?;
         self.asked.remove(index);
         answer.error
     }
 
-    /// Gives up on changes Hestia hasn't answered in time.  True if any.
     pub(super) fn expire(&mut self, now: f64) -> bool {
         let before = self.asked.len();
         self.asked.retain(|asked| now - asked.at < ANSWER_SECONDS);
         self.asked.len() != before
     }
 
-    /// The library to show, when it's not the one showing.
     pub(super) fn take_update(&mut self) -> Option<Library> {
         let shown = self.with_asked();
         (shown != self.shown).then(|| {
@@ -407,9 +347,6 @@ impl Changes {
         })
     }
 
-    /// The mods whose change waits for Hestia.  Their cards show it from the
-    /// start: Hestia often takes longer than a moment, and a card that looked
-    /// done, then waiting, then done again flickered.
     pub(super) fn waiting(&self) -> HashSet<String> {
         self.asked
             .iter()
@@ -417,7 +354,6 @@ impl Changes {
             .collect()
     }
 
-    /// When a change runs out of time.
     pub(super) fn next_frame(&self, now: f64) -> Option<Duration> {
         self.asked
             .iter()
@@ -495,12 +431,9 @@ mod tests {
         let change = changes.ask(use_b(), 1.0);
         assert_eq!(change.mod_id, "b");
         assert_eq!(change.action, ChangeAction::Use);
-        // The overlay already shows the change, so nothing to update.
         assert_eq!(changes.take_update(), None);
-        // Its card shows that it waits from the start.
         assert_eq!(changes.waiting(), HashSet::from(["b".to_owned()]));
 
-        // A library Hestia sent before making the change doesn't undo it.
         changes.receive(library(&["a", "c"]));
         assert_eq!(active(&changes.take_update().unwrap()), ["b", "c"]);
 
@@ -529,7 +462,6 @@ mod tests {
         });
         assert_eq!(error.as_deref(), Some("Mods are locked"));
         assert_eq!(active(&changes.take_update().unwrap()), ["a"]);
-        // An answer to nothing the overlay asked is ignored.
         assert_eq!(
             changes.answer(Changed {
                 id: 99,
@@ -567,7 +499,6 @@ mod tests {
             strip.next_frame(1.0),
             Some(Duration::from_secs_f64(STRIP_SECONDS - FADE_SECONDS))
         );
-        // Halfway through the fade.
         let fading = 1.0 + STRIP_SECONDS - FADE_SECONDS / 2.0;
         assert!((strip.opacity(fading) - 0.5).abs() < 1e-6);
         assert_eq!(strip.next_frame(fading), Some(Duration::ZERO));
@@ -583,7 +514,6 @@ mod tests {
         strip.arrive(0.0);
         assert!(strip.shown(ARRIVAL_SECONDS - 0.1));
         assert!(!strip.shown(ARRIVAL_SECONDS));
-        // Closing the overlay soon after doesn't cut it short.
         strip.show(1.0);
         assert!(strip.shown(ARRIVAL_SECONDS - 0.1));
     }
@@ -594,7 +524,6 @@ mod tests {
         strip.show(0.0);
         strip.hover(0.0);
         assert!(strip.shown(STRIP_SECONDS - 0.1));
-        // Near the end, the pointer on the strip holds it a little longer.
         strip.hover(STRIP_SECONDS - 0.1);
         assert!(strip.shown(STRIP_SECONDS + HOVER_SECONDS - 0.2));
         assert!(!strip.shown(STRIP_SECONDS + HOVER_SECONDS));
@@ -607,7 +536,6 @@ mod tests {
         strip.dismiss();
         assert!(!strip.shown(0.0));
         assert_eq!(strip.opacity(0.0), 0.0);
-        // The pointer is still on the X that was just clicked.
         strip.hover(0.1);
         assert!(!strip.shown(0.1));
         strip.show(1.0);

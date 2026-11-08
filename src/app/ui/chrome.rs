@@ -827,10 +827,6 @@ impl HestiaApp {
                     let response = egui::Area::new(egui::Id::new(("toast", index)))
                         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, next_y))
                         .fixed_pos(egui::pos2(center_x, panel_rect.top()))
-                        // Above Order::Foreground so toasts stay visible over
-                        // the fullview image overlay; plain toasts are not
-                        // interactable so they never swallow clicks meant for
-                        // what is beneath them. Toasts with a button must be.
                         .order(egui::Order::Tooltip)
                         .interactable(toast.action.is_some())
                         .show(ui.ctx(), |ui| {
@@ -1278,8 +1274,6 @@ fn paint_game_switcher_dim_overlay(ctx: &egui::Context) {
     egui::Area::new(layer.id)
         .order(layer.order)
         .fixed_pos(screen_rect.min)
-        // Interactable so the dim swallows hover and clicks meant for the library beneath
-        // it; the pointer passes straight through non-interactable areas.
         .interactable(true)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(screen_rect.size(), Sense::hover());
@@ -1288,8 +1282,6 @@ fn paint_game_switcher_dim_overlay(ctx: &egui::Context) {
         });
 }
 
-/// A click on the dim raises it like any interactable area, which would leave the menu under
-/// the dim the next time the switcher opens. Keep the menu directly above it while open.
 fn keep_game_switcher_menu_above_dim(ctx: &egui::Context, popup_id: egui::Id) {
     ctx.set_sublayer(
         game_switcher_dim_layer(),
@@ -1332,8 +1324,6 @@ mod game_switcher_dim_tests {
         }
     }
 
-    /// One frame wired like the top bar: the switcher button, a library row the dim covers,
-    /// then the dim, the switcher menu with one game tile, and the menu kept above the dim.
     fn run_switcher_frame(ctx: &egui::Context, input: egui::RawInput) -> SwitcherFrame {
         let frame = std::cell::Cell::new(None);
         ctx.run_ui(input, |ui| {
@@ -1377,7 +1367,6 @@ mod game_switcher_dim_tests {
         run_switcher_frame(ctx, pointer_input(pos, Some(false)))
     }
 
-    /// Opens the switcher, then lets the menu finish the sizing pass it runs on every reopen.
     fn open_switcher(ctx: &egui::Context, switcher: egui::Pos2) -> SwitcherFrame {
         run_switcher_frame(ctx, pointer_input(switcher, None));
         click(ctx, switcher);
@@ -1394,7 +1383,6 @@ mod game_switcher_dim_tests {
         let switcher = first.switcher.center();
         let library = first.library.right_bottom() - egui::vec2(20.0, 20.0);
 
-        // Repeat so a dismiss click on the dim can never leave a later menu buried under it.
         for round in 1..=3 {
             let open = open_switcher(&ctx, switcher);
             assert!(

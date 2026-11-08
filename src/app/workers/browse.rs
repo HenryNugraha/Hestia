@@ -28,9 +28,6 @@ fn spawn_browse_worker(
                     search_sort,
                     force_refresh,
                 } => {
-                    // Browse list queries are interactive and deliberately bypass the shared
-                    // JSON limiter used by background update/profile work. Keep exactly one
-                    // active query; a newer search, filter, or sort cancels the older request.
                     if let Ok(mut active_task) = active_page_task.lock() {
                         if let Some(task) = active_task.take() {
                             task.abort();
@@ -62,7 +59,6 @@ fn spawn_browse_worker(
                             }
                         };
 
-                        // Show known-good cached data immediately, then refresh it below.
                         if force_refresh {
                             if let Ok(Some(cached)) =
                                 cache_get_blocking(page_portable.clone(), cache_key.clone()).await
@@ -307,9 +303,6 @@ fn spawn_browse_worker(
     });
 }
 
-/// Race up to three equivalent interactive JSON requests. The second request starts after
-/// two seconds; the third starts two seconds later with a cache-busting query parameter.
-/// The first valid response wins and all slower attempts are aborted.
 async fn race_interactive_json<T, F, Fut>(cache_bust_first: bool, fetch: F) -> Result<T>
 where
     T: Send + 'static,
@@ -371,8 +364,6 @@ mod browse_worker_tests {
 
     #[test]
     fn fresh_profile_keeps_saved_lists_of_deleted_files() {
-        // 661936 replaced file 1858820 with a renamed 1871047; only the saved
-        // profile still has the deleted file's list.
         let saved = r#"{"_idRow":661936,"file_listings":{
             "1858820":["TangtangMod/Master.ini"],
             "1871047":["old/answer.ini"]}}"#;
@@ -430,13 +421,10 @@ mod browse_worker_tests {
 
     #[test]
     fn my_mod_updates_freshness_window_bounds() {
-        // Fresh: from the moment it was fetched up to (but not including) the TTL.
         assert!(my_mod_updates_cache_fresh(0));
         assert!(my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS - 1));
-        // Stale: at and beyond the 30-minute window -> triggers a refresh.
         assert!(!my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS));
         assert!(!my_mod_updates_cache_fresh(MY_MOD_UPDATES_TTL_SECS + 1));
-        // Clock skew (future timestamp) -> treated as stale, never pinned open.
         assert!(!my_mod_updates_cache_fresh(-1));
     }
 
@@ -465,8 +453,6 @@ mod browse_worker_tests {
     }
 }
 
-/// The stalled-request race must not queue behind the shared application's HTTP/1.1 pool.
-/// Each attempt gets an isolated client and therefore its own connection pool/socket.
 fn isolated_browse_json_client(
     custom_proxy: &Option<CustomProxyConfig>,
 ) -> Result<ClientWithMiddleware> {
@@ -651,11 +637,6 @@ fn cached_detail_profile(raw: Option<&str>, mod_id: u64) -> Option<gamebanana::P
     (profile.id == mod_id).then_some(profile)
 }
 
-/// The update check may have fetched archive lists for files the author has
-/// since deleted. Those are no longer on the page, so only the saved profile
-/// still has them, and without them the update matcher loses a renamed file
-/// it already paired. A file's contents never change, so an old list stays
-/// valid.
 fn carry_over_file_listings(
     profile: &mut gamebanana::ProfileResponse,
     cached_profile_json: Option<&str>,
@@ -782,23 +763,12 @@ async fn load_updates_with_cache(
     }
 }
 
-/// MY MODS freshness window: within this many seconds of the last successful fetch,
-/// the cached update log is served without touching the network.
 const MY_MOD_UPDATES_TTL_SECS: i64 = 30 * 60;
 
-/// Whether a MY MODS update-log cache fetched `age_secs` ago is still fresh. A negative
-/// age (a future `fetched_at` from clock skew) is treated as stale, so a bad clock can't
-/// pin a cache open indefinitely.
 fn my_mod_updates_cache_fresh(age_secs: i64) -> bool {
     (0..MY_MOD_UPDATES_TTL_SECS).contains(&age_secs)
 }
 
-/// Load a MY MODS update log with a persisted 30-minute freshness window.
-///
-/// A cache newer than [`MY_MOD_UPDATES_TTL_SECS`] is returned as-is (no network). A
-/// stale or missing cache triggers a fresh fetch; on success the timestamped envelope
-/// is rewritten, and on a fetch failure the last cached copy is returned as a
-/// transparent fallback — only a failure with no cache at all surfaces as an error.
 async fn load_my_mod_updates(
     portable: &PortablePaths,
     client: &ClientWithMiddleware,

@@ -52,8 +52,6 @@ fn browse_exact_source_matches(
         }
     };
 
-    // Metadata is the newest persisted representation and may be the only identity available
-    // for installs created before the legacy id/name fields were written.
     for tracked in &file_set.selected_files_meta {
         if let Some(found) = selectable
             .iter()
@@ -75,10 +73,6 @@ fn browse_exact_source_matches(
     matches
 }
 
-/// Returns whether a file is already part of the installed recipe for the
-/// review picker. Nonzero IDs are authoritative; legacy names are consulted
-/// only when the recipe has no authoritative IDs at all, so a new upload that
-/// reuses an old filename remains visible.
 fn browse_review_file_is_installed(file: &gamebanana::ModFile, file_set: &FileSetRecipe) -> bool {
     if file.id != 0
         && (file_set.selected_file_ids.contains(&file.id)
@@ -518,8 +512,6 @@ impl HestiaApp {
         self.requeue_browse_download_task(task_id, false)
     }
 
-    /// `in_bundle` lets a live Thalia bundle restart one member's download,
-    /// which a proxy change does. A user never retries one member alone.
     fn requeue_browse_download_task(&mut self, task_id: u64, in_bundle: bool) -> bool {
         let Some(task) = self.state.tasks.iter().find(|task| task.id == task_id) else {
             return false;
@@ -563,8 +555,6 @@ impl HestiaApp {
                 &payload,
                 self.cache_limit_bytes.load(Ordering::Relaxed),
             ));
-        // The task graduates to Install once its download completes; a retry
-        // restarts from the download phase, so the kind must follow it back.
         if let Some(task) = self.state.tasks.iter_mut().find(|task| task.id == task_id) {
             task.kind = TaskKind::Download;
         }
@@ -626,8 +616,6 @@ impl HestiaApp {
             .as_ref()
             .map(|category| category.id);
         if page == 1 {
-            // Page-one refreshes establish their own response context. This keeps Retry,
-            // Reload, search, sorting, and filtering on the same deterministic path.
             self.browse_state.active_game_id = Some(game.definition.id.clone());
             self.browse_state.active_query = query.clone();
             self.browse_state.active_character_category_id = character_category_id;
@@ -712,9 +700,6 @@ impl HestiaApp {
     }
 
     fn enforce_browse_request_timeouts(&mut self) {
-        // The browse worker normally reports every request back, but a wedged or dead
-        // worker would leave these loading flags set forever, which keeps the idle
-        // repaint poll alive. Drop requests that outlive any legitimate lifetime.
         const BROWSE_REQUEST_HARD_TIMEOUT: Duration = Duration::from_secs(90);
 
         let timed_out: Vec<u64> = self
@@ -768,9 +753,6 @@ impl HestiaApp {
     }
 
     fn enforce_browse_image_timeouts(&mut self) {
-        // The image worker has its own network timeouts and reports failures back, so a
-        // request that lives this long means the worker died or hung. Stuck entries both
-        // occupy download slots forever and keep the idle repaint poll alive.
         const BROWSE_IMAGE_HARD_TIMEOUT: Duration = Duration::from_secs(120);
 
         let timed_out: Vec<String> = self
@@ -886,10 +868,6 @@ impl HestiaApp {
         self.request_browse_detail_with_mode(mod_id, false);
     }
 
-    /// Revalidate an already-open (or immediately opening) detail profile in
-    /// the background. Keep the current profile visible while the request is
-    /// in flight; the worker still uses it as the first fallback if the
-    /// network request fails.
     fn request_browse_detail_revalidate(&mut self, mod_id: u64) {
         let now = Utc::now();
         if self.browse_state.details.get(&mod_id).is_some_and(|detail| {
@@ -933,9 +911,6 @@ impl HestiaApp {
         is_recent
     }
 
-    /// Request a detail profile while preserving the cache for ordinary Browse navigation.
-    /// Update actions use the refresh form below so a stale cached profile cannot be mistaken
-    /// for the current file list.
     fn request_browse_detail_with_mode(&mut self, mod_id: u64, force_refresh: bool) {
         self.request_browse_detail_with_mode_internal(mod_id, force_refresh, false);
     }
@@ -947,9 +922,6 @@ impl HestiaApp {
         preserve_existing_detail: bool,
     ) {
         if force_refresh {
-            // Replacing the nonce is enough to invalidate responses already in flight. Normal
-            // forced requests clear the detail so the next response owns the state; an explicit
-            // Browse open keeps the current detail visible while it revalidates in the worker.
             if !preserve_existing_detail {
                 self.browse_state.details.remove(&mod_id);
                 self.browse_state.loading_details.remove(&mod_id);
@@ -964,8 +936,6 @@ impl HestiaApp {
         if !force_refresh && self.detail_request_attempt_is_recent(mod_id) {
             return;
         }
-        // A cache-only lookup is not a network attempt and must not delay
-        // revalidation when the detail is subsequently opened.
         if force_refresh || self.browse_state.refresh_page_cache_for_session {
             self.browse_state
                 .detail_request_attempts
@@ -1016,8 +986,6 @@ impl HestiaApp {
         }).flatten();
         let cached_profile_json =
             if let Some(source) = update_source {
-                // A forced refresh still goes to the network first. Keep the
-                // last checked profile as fallback if that request fails.
                 source_profile_for_compare(source)
                     .and_then(|profile| serde_json::to_string(&profile).ok())
             } else if force_refresh {
@@ -1112,9 +1080,6 @@ impl HestiaApp {
         }
     }
 
-    /// Convert a fetched GameBanana update envelope into display entries, dropping
-    /// private/trashed/withheld records. Shared by the Browse Updates section and the
-    /// ported MY MODS one so both format identically.
     fn updates_to_entries(
         &self,
         updates: gamebanana::ApiEnvelope<gamebanana::UpdateRecord>,
@@ -1150,11 +1115,6 @@ impl HestiaApp {
             .collect()
     }
 
-    /// Freshness/retry gate for the MY MODS update log. Called each frame the Updates
-    /// section is visible for a GameBanana-linked mod; fires a fetch only when the mod
-    /// is unseen, its in-memory copy aged past the 30-minute window, or a prior
-    /// failure's retry cooldown elapsed. `my_mod_updates_inflight` blocks duplicate
-    /// concurrent fetches (e.g. a refresh that would otherwise fire every frame).
     fn ensure_my_mod_updates(&mut self, mod_id: u64) {
         if mod_id == 0 {
             return;
@@ -1177,8 +1137,6 @@ impl HestiaApp {
         if !self.my_mod_updates_inflight.insert(mod_id) {
             return;
         }
-        // Only show a bare Loading state on the first fetch; a refresh keeps the
-        // current entries visible until the new ones arrive.
         if !matches!(
             self.my_mod_updates.get(&mod_id),
             Some(MyModUpdatesState::Ready { .. }) | Some(MyModUpdatesState::Empty { .. })
@@ -1275,12 +1233,6 @@ impl HestiaApp {
         self.pending_browse_open_mod_id = Some(mod_id);
     }
 
-    /// Open the passive "new files" notice's picker for an installed mod.
-    ///
-    /// This path intentionally does not go through the ordinary Browse install
-    /// resolver: that resolver creates a fresh install unless it is given an
-    /// update target, and it also applies the smart matcher.  A file review is
-    /// an explicit replacement of this exact installed source instead.
     fn open_mod_file_review(&mut self, mod_entry_id: &str) {
         let Some(mod_entry) = self
             .state
@@ -1304,9 +1256,6 @@ impl HestiaApp {
         self.browse_state.file_prompt = None;
         self.browse_state.pending_file_review = None;
 
-        // The grouped update cache owns the canonical profile used by the smart
-        // check. Reuse it, including its observation timestamp, so opening the
-        // picker never manufactures a newer profile observation.
         if let Some(evidence) = self.cached_grouped_evidence_for_mod(&mod_entry) {
             if let Some(profile) = evidence.profile {
                 self.seed_browse_detail_profile(
@@ -1326,9 +1275,6 @@ impl HestiaApp {
             }
         }
 
-        // A detail already loaded for the Browse window is still safe to reuse.
-        // Otherwise fetch it and resume only the review after the response; no
-        // download task is created while metadata is loading.
         let is_tool = gamebanana::is_tool_url(&link.url);
         let detail_kind_matches = self
             .browse_state
@@ -1355,9 +1301,6 @@ impl HestiaApp {
                 || self.browse_state.details.contains_key(&link.mod_id)
                 || self.browse_state.loading_details.contains_key(&link.mod_id)
             {
-                // A Mod and Tool may share a numeric ID. Invalidate any
-                // in-flight/default-kind detail before requesting the typed
-                // profile.
                 self.request_browse_detail_refresh(link.mod_id);
             } else {
                 self.request_browse_detail(link.mod_id);
@@ -1442,8 +1385,6 @@ impl HestiaApp {
 
         let canonical_profile = matcher_adapter::canonicalize_profile(&detail.profile).profile;
         let evidence = self.cached_grouped_evidence_for_mod(&target);
-        // Files other mods from this page have stay in the list, tagged with
-        // that mod's name instead of New.
         let other_mods_files: HashSet<u64> = evidence
             .iter()
             .flat_map(|evidence| evidence.other_mods_files.iter().copied())
@@ -1504,11 +1445,6 @@ impl HestiaApp {
                 .then_with(|| right.id.cmp(&left.id))
         });
 
-        // A confirmed Thalia merge is still a file-review decision. Keep the
-        // factual blue notice and the full candidate list visible, but make
-        // the recommended patch the selected file and preserve Merge as the
-        // default action. Any stale, missing, or non-merge answer is ignored;
-        // the normal blue picker remains the fallback.
         let recommendation =
             self.thalia_recommendation_for_profile(&pending.mod_entry_id, &canonical_profile);
         let recommended_merge_id =
@@ -1563,8 +1499,6 @@ impl HestiaApp {
             update_folder_name: Some(target.folder_name.clone()),
             update_target_mod_id: Some(target.id.clone()),
             post_install_rename_to: None,
-            // Auto plus preserve_existing_state makes finalization retain the
-            // target's current enabled/disabled state.
             install_state: ModInstallState::Auto,
             preserve_existing_state: true,
             file_review: Some(FileReviewContext {
@@ -1698,37 +1632,26 @@ impl HestiaApp {
             self.browse_image_retry_after.remove(&hash_key);
         }
 
-        // 1. If we need texture and thumb already exists, done.
         if !skip_texture && self.browse_thumb_textures.contains_key(&thumb_texture_key) {
             return;
         }
 
-        // 2. If we just want cache and file exists, done.
         if skip_texture && persistence::cache_exists(&self.portable, &cache_key).unwrap_or(false) {
             return;
         }
 
-        // 3. Check inflight
-        if let Some(inflight) = self.browse_image_inflight.get(&hash_key) {
-            if skip_texture {
-                // Any inflight job will download the file.
-                return;
-            } else if !inflight.skip_texture && !inflight.load_full {
-                // We need texture, and inflight job is loading texture.
-                return;
-            }
-            // If we need texture but inflight is download-only, we must proceed to queue/add
-            // to ensure we get a loaded texture result.
+        if let Some(inflight) = self.browse_image_inflight.get(&hash_key)
+            && (skip_texture || (!inflight.skip_texture && !inflight.load_full))
+        {
+            return;
         }
 
-        // 4. Check queue
         if let Some(existing) = self
             .browse_image_queue
             .iter_mut()
             .find(|j| j.texture_key == hash_key)
         {
             if !skip_texture && existing.skip_texture {
-                // Upgrade existing download-only job to load texture
                 existing.skip_texture = false;
             }
             existing.priority = existing.priority.min(priority);
@@ -1936,7 +1859,7 @@ impl HestiaApp {
                                 None,
                                 false,
                                 ThumbnailProfile::Card,
-                                50, // Base grid priority
+                                50,
                             );
                         }
                         self.browse_state.cards.push(BrowseCard {
@@ -2063,12 +1986,6 @@ impl HestiaApp {
                     }
                     self.browse_detail_request_nonces.remove(&mod_id);
                     self.browse_state.loading_details.remove(&mod_id);
-                    // let html = profile.html_text.as_deref().unwrap_or_default();
-                    // // Clean up HTML: Remove detective placeholder and strip attributes from img tags to ensure markdown conversion
-                    // let placeholder_re = Regex::new(r#"<img[^>]+src="https://images.gamebanana.com/static/img/mascots/detective.png"[^>]*>"#).unwrap();
-                    // let img_attr_re = Regex::new(r#"(?i)<img\s+[^>]*?src=(["'])(.+?)\1[^>]*?>"#).unwrap();
-                    // let sanitized_html = img_attr_re.replace_all(&placeholder_re.replace_all(html, ""), r#"<img src="$2">"#);
-                    // let markdown = html2md::parse_html(&sanitized_html);
                     let markdown = prepare_markdown_for_display(
                         profile.html_text.as_deref().unwrap_or_default(),
                         None,
@@ -2091,7 +2008,7 @@ impl HestiaApp {
                                     url.to_string(),
                                     Some(self.browse_detail_generation),
                                     true,
-                                    100, // Description images background
+                                    100,
                                 );
                             }
                         }
@@ -2245,10 +2162,6 @@ impl HestiaApp {
                 }
                 BrowseEvent::MyModUpdatesFailed { mod_id, error, .. } => {
                     self.my_mod_updates_inflight.remove(&mod_id);
-                    // Reaching here means the fetch failed with no disk cache to fall
-                    // back to. Keep any entries already on screen (resetting their window
-                    // so we retry in 30 min, not every frame); otherwise show the inline
-                    // "couldn't load" state. No toast: MY MODS updates are a passive read.
                     match self.my_mod_updates.remove(&mod_id) {
                         Some(MyModUpdatesState::Ready { entries, .. }) => {
                             self.my_mod_updates.insert(
@@ -2287,7 +2200,6 @@ impl HestiaApp {
     }
 
     fn process_browse_image_queue(&mut self, ctx: &egui::Context) {
-        // CONTEXTUAL THROTTLING: Suspend background work to prioritize current user focus
         let now = Instant::now();
         self.browse_image_retry_after
             .retain(|_, retry_after| *retry_after > now);
@@ -2299,7 +2211,6 @@ impl HestiaApp {
             focus_mode = true;
             allowed_keys.insert(overlay.texture_key.clone());
 
-            // Allow neighbors for hi-res preloading (Browse view)
             if let Some(mod_id) = self.browse_state.selected_mod_id {
                 if let Some(detail) = self.browse_state.details.get(&mod_id) {
                     if let Some(preview) = &detail.profile.preview_media {
@@ -2322,7 +2233,6 @@ impl HestiaApp {
                     }
                 }
             }
-            // Allow neighbors for local hi-res preloading (My Mods view)
             if let Some(mod_id) = &self.selected_mod_id {
                 let prefix = format!("my-mod-shot-{mod_id}-");
                 if overlay.texture_key.starts_with(&prefix) {
@@ -2357,7 +2267,6 @@ impl HestiaApp {
             }
         }
 
-        // Prioritize the queue based on UI proximity
         self.browse_image_queue.sort_by_key(|j| {
             let class = if j.skip_texture {
                 2_u8
@@ -2832,9 +2741,6 @@ impl HestiaApp {
             .filter(|file| file.download_url.is_some())
             .cloned()
             .collect();
-        // Check if this is an update for the exact existing mod that requested it.
-        // Same GameBanana-ID siblings can track different source files, so they must
-        // not be used as a fallback target here.
         let existing_mod = pending.update_target_id.as_deref().and_then(|target_id| {
             self.state
                 .mods
@@ -2854,10 +2760,6 @@ impl HestiaApp {
             return;
         }
         if let Some(existing_mod) = existing_mod {
-            // A queued AI plan is tied to the exact mod recipe, root, source,
-            // and active profile it observed. Revalidate that identity before
-            // the local matcher can win; otherwise a target changed while
-            // the detail request was in flight could update the wrong tree.
             if let Some(plan) = pending.thalia_plan.as_ref()
                 && !plan.matches_target(
                     &existing_mod,
@@ -2913,11 +2815,6 @@ impl HestiaApp {
                     .and_then(|idx| evaluations.get(idx))
                     .map(|evaluation| evaluation.state);
 
-                // The local matcher remains authoritative whenever it found
-                // a replacement. A Thalia plan is considered only for a
-                // genuinely unresolved target, and its file ID is validated
-                // against this freshly loaded active profile before any
-                // download is queued.
                 let validated_thalia_file = pending.thalia_plan.as_ref().and_then(|plan| {
                     self.validate_thalia_install_plan(plan, &existing_mod, &detail.profile)
                 });
@@ -2932,8 +2829,6 @@ impl HestiaApp {
                                 update_folder_name.clone(),
                                 preferred_update_folder_name.as_deref(),
                             );
-                        // A rename still pending after the update would move
-                        // the folder a merged file has to land in.
                         let merge_needs_stable_folder = post_install_rename_to.is_some()
                             && validated.requires.iter().any(|(action, _)| {
                                 *action == thalia::UpdateMatchRequiredAction::Merge
@@ -2974,10 +2869,6 @@ impl HestiaApp {
                         return;
                     }
 
-                    // Do not fall through to the exact-installed-file branch:
-                    // an accepted AI plan that no longer validates must expose
-                    // the factual file picker instead of reinstalling the
-                    // currently installed archive.
                     self.remove_task(pending.task_id);
                     if let Some(target_id) = pending.update_target_id.as_deref() {
                         self.open_mod_file_review(target_id);
@@ -3221,10 +3112,6 @@ impl HestiaApp {
         self.set_message_ok(self.text().resolving_download(&title));
     }
 
-    /// Queues what Thalia decided, with no prompt. `update` replaces the mod
-    /// and `merge` adds the file to it, exactly like the file review buttons.
-    /// Extra files go into one bundle so nothing is installed until all of
-    /// them downloaded.
     fn queue_thalia_install(
         &mut self,
         pending: &PendingBrowseInstall,
@@ -3241,7 +3128,6 @@ impl HestiaApp {
         let main_resolution = (action == ThaliaRecommendationAction::Merge)
             .then_some(ImportResolution::Merge);
         if requires.is_empty() && file.is_none() {
-            // `current` whose extra files are all in place already.
             self.remove_task(pending.task_id);
             return;
         }
@@ -3302,8 +3188,6 @@ impl HestiaApp {
             );
             members.push(task_id);
         }
-        // Explicit, so the installs share one serial lane in the install
-        // queue and run in the order released below.
         if let Some(file) = file {
             self.queue_browse_download_with_resolution(
                 pending.game_id.clone(),
@@ -3322,8 +3206,6 @@ impl HestiaApp {
             members.push(pending.task_id);
             main = Some(pending.task_id);
         }
-        // With `current` there is no main download, so the update task is
-        // reused by the first extra file instead of left hanging.
         let mut spare_task_id = (!members.contains(&pending.task_id)).then_some(pending.task_id);
         for (_, required) in requires
             .iter()
@@ -3397,15 +3279,11 @@ impl HestiaApp {
         self.update_task_retry_payload(task_id, Some(TaskRetryPayload::BrowseDownload(payload)));
     }
 
-    /// A fingerprint of the mod's folder as it is now, `None` when it is gone
-    /// or cannot be read.
     fn thalia_bundle_target_state(&self, mod_id: &str) -> Option<u64> {
         let entry = self.state.mods.iter().find(|entry| entry.id == mod_id)?;
         importing::bundle::mod_folder_state(&entry.root_path)
     }
 
-    /// True while the mod a bundle updates looks the same on disk as when the
-    /// update was queued.
     fn thalia_bundle_target_unchanged(&self, index: usize) -> bool {
         self.thalia_install_bundles[index]
             .target
@@ -3415,8 +3293,6 @@ impl HestiaApp {
             })
     }
 
-    /// Checked right before the mod itself is written. Separate folders do
-    /// not touch the mod, so only the mod's own install is stopped.
     fn thalia_bundle_target_changed_before_install(&mut self, job_id: u64) -> bool {
         let Some(index) = self.thalia_install_bundles.iter().position(|bundle| {
             bundle.members.contains(&job_id) && !bundle.separate.contains(&job_id)
@@ -3439,8 +3315,6 @@ impl HestiaApp {
             || self.install_inflight.contains_key(&task_id)
     }
 
-    /// Keeps a finished bundle download back until its siblings finished.
-    /// Returns false when the task is not part of a bundle.
     fn hold_thalia_bundle_download(
         &mut self,
         task_id: u64,
@@ -3474,8 +3348,6 @@ impl HestiaApp {
         true
     }
 
-    /// Every file is downloaded. They are checked and the mod's folder is
-    /// built in a scratch folder before anything is installed.
     fn start_thalia_bundle_prepare(&mut self, index: usize) {
         if !self.thalia_bundle_target_unchanged(index) {
             self.thalia_install_bundles[index].target_changed = true;
@@ -3489,8 +3361,6 @@ impl HestiaApp {
             .filter_map(|member| {
                 let (_, title, archive) = bundle.downloaded.get(member)?;
                 let meta = self.pending_browse_install_meta.get(member);
-                // With `merge` the update itself is added to the installed
-                // folder like any merged file, so it gets no say over them.
                 let replaces = meta.is_none_or(|meta| {
                     meta.explicit_resolution != Some(ImportResolution::Merge)
                 });
@@ -3527,9 +3397,6 @@ impl HestiaApp {
         });
     }
 
-    /// The files are checked and combined. Files merged into the mod now live
-    /// in one folder, so their tasks fold into the first one, which records
-    /// all of them. Separate folders install first, the mod last.
     fn thalia_bundle_prepared(
         &mut self,
         key: u64,
@@ -3614,8 +3481,6 @@ impl HestiaApp {
         self.fail_thalia_bundle(index, None, Some(failure));
     }
 
-    /// A bundle member that is downloaded and waiting, or being checked, sits
-    /// in no queue of its own, so canceling it stops the whole bundle.
     fn cancel_waiting_thalia_bundle_member(&mut self, task_id: u64) -> bool {
         let waiting = self.thalia_install_bundles.iter().any(|bundle| {
             bundle.members.contains(&task_id)
@@ -3627,9 +3492,6 @@ impl HestiaApp {
         waiting
     }
 
-    /// Called for every task that reached a final status. A finished member
-    /// counts toward its bundle; a failed or canceled one stops the rest so a
-    /// mod is never left with only some of the files Thalia said it needs.
     fn note_thalia_bundle_task_finished(&mut self, task_id: u64, status: TaskStatus) {
         if status == TaskStatus::Canceled && self.proxy_requeue_browse_downloads.contains(&task_id)
         {
@@ -3661,10 +3523,6 @@ impl HestiaApp {
         self.fail_thalia_bundle(index, Some(task_id), None);
     }
 
-    /// Stops a bundle: `ended_task` is the member that failed or was
-    /// canceled, `failure` what went wrong while the files were checked.
-    /// Only separate folders can be installed by then, since the mod itself
-    /// is always written last.
     fn fail_thalia_bundle(
         &mut self,
         index: usize,
@@ -3708,7 +3566,6 @@ impl HestiaApp {
             TaskStatus::Canceled
         };
         for member in bundle.members.iter().copied() {
-            // Retrying one member alone would install it without the rest.
             self.update_task_retry_payload(member, None);
             self.thalia_separate_install_jobs.remove(&member);
             self.thalia_bundle_manifests.remove(&member);
@@ -3716,7 +3573,6 @@ impl HestiaApp {
                 continue;
             }
             if !self.task_is_running(member) {
-                // Downloaded and waiting for the others, or being checked.
                 self.pending_browse_install_meta.remove(&member);
                 self.pending_browse_install_safety.remove(&member);
                 if Some(member) != ended_task {
@@ -3735,8 +3591,6 @@ impl HestiaApp {
         if let Some(root) = bundle.prepared_root.as_ref() {
             let _ = fs::remove_dir_all(root);
         }
-        // Thalia's answer itself did not fit, so asking the same question
-        // again would only fail again. The user picks instead.
         if matches!(
             failure,
             Some(BundleFailure::Layout { .. } | BundleFailure::Clash { .. })
@@ -3895,9 +3749,6 @@ impl HestiaApp {
                 .map(|detail| detail.unsafe_content)
                 .unwrap_or(false);
             let selected_set = if explicit_resolution == Some(ImportResolution::Merge) {
-                // Each archive gets its own retry payload so a partial merge
-                // records only the archive that actually finished.  Ordinary
-                // updates retain their existing all-selected-files behavior.
                 vec![file.clone()]
             } else {
                 browse_selected_files_for_queued_download(
@@ -4144,8 +3995,6 @@ mod browse_file_prompt_tests {
             .get("game")
             .is_some_and(|ids| ids.contains(&202)));
 
-        // A new frame receives a new snapshot, so model changes are reflected without
-        // requiring persistent-index invalidation.
         let refreshed_cards = vec![BrowseCard {
             id: 202,
             ..cards[0].clone()
@@ -4263,8 +4112,6 @@ mod browse_file_prompt_tests {
         let page_cards: Vec<BrowseCard> = cards.iter().take(24).cloned().collect();
 
         fn old_pass(cards: &[BrowseCard], local_links: &[(String, u64)]) -> (Vec<u64>, Vec<bool>) {
-            // Baseline shape: deep-copy every displayed card and scan local links for every
-            // visible card.
             let displayed: Vec<BrowseCard> = cards
                 .iter()
                 .filter(|card| !card.unsafe_content)
@@ -4284,8 +4131,6 @@ mod browse_file_prompt_tests {
         }
 
         fn new_pass(cards: &[BrowseCard], local_links: &[(String, u64)]) -> (Vec<u64>, Vec<bool>) {
-            // Current shape: retain indices, snapshot membership once, and copy only visible
-            // cards.
             let indices = browse_card_indices_for_display(cards, UnsafeContentMode::HideShowCounter);
             let visible_cards: Vec<BrowseCard> = indices
                 .iter()
@@ -4643,9 +4488,6 @@ async fn sleep_cancelable(delay: Duration, cancel: &Arc<AtomicBool>) -> Result<(
     }
 }
 
-/// A finished download that is not the file GameBanana lists (damaged on the
-/// way, or a cached or partial copy changed on disk) is thrown away, so a
-/// retry downloads it fresh.
 async fn verify_browse_download_md5(
     portable: &PortablePaths,
     job: &BrowseDownloadJob,

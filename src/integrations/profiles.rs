@@ -1,11 +1,3 @@
-//! Per-game profile storage and `.tzst` archive primitives.
-//!
-//! The active profile is represented by the live game directories. Inactive profiles normally
-//! live in tar+zstd archives below a backend-specific `Mods_Profiles` directory; a
-//! `<uuid>.profile` container is the crash-safe authoritative copy while background compression
-//! is pending. This module deliberately contains no UI or switching policy; callers can compose
-//! the primitives into a transactional switch operation.
-
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
@@ -33,9 +25,6 @@ pub const PROFILE_METADATA_FILE: &str = "profile.json";
 pub const PROFILE_README_FILE: &str = "readme.txt";
 pub const PROFILE_STAGING_DIR: &str = ".staging";
 pub const PROFILE_ARCHIVE_RESERVED_ARCHIVED_ROOT: &str = "Archived";
-// Written verbatim into the profile storage folder, so it is the only explanation a user gets
-// while browsing there. Keep it in step with the actual layout: the naming lines change when
-// storage names gain readable labels.
 pub const PROFILE_README_CONTENT: &str = "\
 This folder stores inactive Hestia profiles in either of these forms:
 - Folder: \"<name> [<id>]\"
@@ -51,49 +40,26 @@ This is your Mods folder compressed into one .tzst archive file (tar + zstd). Yo
 - 7-Zip
 ";
 
-/// Length of the short profile id embedded in storage names.
 pub const PROFILE_SHORT_ID_LEN: usize = 8;
-/// Longest label allowed in a storage name, ellipsis included.
 pub const PROFILE_LABEL_MAX_LEN: usize = 24;
-/// Used when a profile name sanitizes away to nothing, so a storage name never starts with the
-/// marker's leading space.
 const PROFILE_LABEL_FALLBACK: &str = "Profile";
-/// Single character, deliberately not `...`: Windows silently strips trailing dots, so an ASCII
-/// ellipsis would be eaten by the filesystem and the label would look arbitrarily cut instead of
-/// visibly shortened.
 const PROFILE_LABEL_ELLIPSIS: char = '…';
 
-/// Invisible or direction-controlling characters. They are legal in filenames but let a stored
-/// name render as something other than what it is, so they are dropped rather than substituted —
-/// substituting would turn an invisible character into visible noise.
 fn is_invisible_or_bidi(character: char) -> bool {
     matches!(
         character,
-        '\u{00AD}'                  // soft hyphen
-            | '\u{200B}'..='\u{200F}' // zero-width spaces and joiners, LRM/RLM
-            | '\u{202A}'..='\u{202E}' // bidi embedding and override
-            | '\u{2066}'..='\u{2069}' // bidi isolates
-            | '\u{FEFF}' // zero-width no-break space
+        '\u{00AD}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}'
     )
 }
 
-/// The id as it appears in storage names. The id *is* the eight hex digits, so this is only a
-/// rendering, not a truncation.
 pub fn profile_short_id(profile_id: ProfileId) -> String {
     profile_id.to_string()
 }
 
-/// Reduce a profile name to a filesystem-safe label.
-///
-/// This is the user-visible storage label for an inactive profile. It can become the recovered
-/// display name when app state is rebuilt, so lossy substitution is kept to the minimum needed for a
-/// stable filename. Names are user-supplied and localized, so only genuinely unsafe characters are
-/// touched: the set Windows rejects (a superset of what Linux and macOS reject), control
-/// characters, and invisible or bidi-control characters that would let a stored name render as
-/// something it is not.
-///
-/// Reserved device names (`CON`, `NUL`, `COM1`…) need no special handling because the ` [id]`
-/// marker is always appended, so the stem is never exactly a reserved name.
 pub fn sanitize_profile_label(name: &str) -> String {
     let mut label = String::with_capacity(name.len());
     for character in name.chars() {
@@ -104,8 +70,6 @@ pub fn sanitize_profile_label(name: &str) -> String {
             character => label.push(character),
         }
     }
-    // Windows silently drops trailing dots and spaces, which would make the stored label disagree
-    // with what was written.
     let trim = |value: &str| value.trim_start().trim_end_matches(['.', ' ']).to_string();
     let label = trim(&label);
     if label.is_empty() {
@@ -114,8 +78,6 @@ pub fn sanitize_profile_label(name: &str) -> String {
     if label.chars().count() <= PROFILE_LABEL_MAX_LEN {
         return label;
     }
-    // Count the ellipsis against the budget so the label never exceeds the cap, and take whole
-    // characters so a multi-byte name is never split mid-character.
     let mut clamped: String = label
         .chars()
         .take(PROFILE_LABEL_MAX_LEN.saturating_sub(1))
@@ -128,7 +90,6 @@ pub fn sanitize_profile_label(name: &str) -> String {
     clamped
 }
 
-/// Storage stem for a profile: `<label> [<short id>]`.
 pub fn profile_storage_stem(display_name: &str, profile_id: ProfileId) -> String {
     format!(
         "{} [{}]",
@@ -137,14 +98,8 @@ pub fn profile_storage_stem(display_name: &str, profile_id: ProfileId) -> String
     )
 }
 
-/// Split a storage stem into its label and short id.
-///
-/// Anchored at the right across a fixed-width marker, so a label containing brackets or spaces
-/// round-trips: `Weird [name] [1fe9ec7a]` yields `("Weird [name]", "1fe9ec7a")`. The label is
-/// returned for display and staleness checks only — it is never an identity. Short ids compare
-/// case-insensitively, since a hand-renamed file is still the same profile.
 pub fn parse_profile_storage_stem(stem: &str) -> Option<(&str, &str)> {
-    let marker_len = PROFILE_SHORT_ID_LEN + 3; // " [" + id + "]"
+    let marker_len = PROFILE_SHORT_ID_LEN + 3;
     let boundary = stem.len().checked_sub(marker_len)?;
     if !stem.is_char_boundary(boundary) {
         return None;
@@ -163,15 +118,11 @@ pub fn parse_profile_storage_stem(stem: &str) -> Option<(&str, &str)> {
     (!label.is_empty()).then_some((label, short_id))
 }
 
-/// Whether a stem's short id refers to this profile. Case-insensitive so a file renamed in
-/// Explorer still resolves.
 pub fn profile_storage_stem_matches(stem: &str, profile_id: ProfileId) -> bool {
     parse_profile_storage_stem(stem)
         .is_some_and(|(_, short_id)| short_id.eq_ignore_ascii_case(&profile_short_id(profile_id)))
 }
 
-/// The live roots captured by a profile archive.  XXMI uses `archived`; Unreal uses `disabled`
-/// and reserves `Archived` in the archive layout for future support.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileRoots {
     pub profiles_dir: PathBuf,
@@ -185,30 +136,21 @@ impl ProfileRoots {
         self.profiles_dir.join(PROFILE_STAGING_DIR)
     }
 
-    /// Loose profile container path (`<label> [<short id>]`).
-    ///
-    /// Resolves to whatever is already on disk for this profile, whatever its label, so a folder
-    /// renamed by hand still round-trips. Falls back to the canonical name when nothing exists yet,
-    /// which is what a caller creating a container wants.
     pub fn profile_path(&self, profile_id: ProfileId) -> PathBuf {
         self.find_profile_storage(profile_id, false)
             .unwrap_or_else(|| self.profile_path_for(profile_id, PROFILE_LABEL_FALLBACK))
     }
 
-    /// Compressed profile archive path (`<label> [<short id>].tzst`), resolved like
-    /// [`Self::profile_path`].
     pub fn archive_path(&self, profile_id: ProfileId) -> PathBuf {
         self.find_profile_storage(profile_id, true)
             .unwrap_or_else(|| self.archive_path_for(profile_id, PROFILE_LABEL_FALLBACK))
     }
 
-    /// Canonical container path for a profile carrying this display name.
     pub fn profile_path_for(&self, profile_id: ProfileId, display_name: &str) -> PathBuf {
         self.profiles_dir
             .join(profile_storage_stem(display_name, profile_id))
     }
 
-    /// Canonical archive path for a profile carrying this display name.
     pub fn archive_path_for(&self, profile_id: ProfileId, display_name: &str) -> PathBuf {
         self.profiles_dir.join(format!(
             "{}.{PROFILE_ARCHIVE_EXTENSION}",
@@ -216,10 +158,6 @@ impl ProfileRoots {
         ))
     }
 
-    /// Existing storage for a profile, matched on the short id rather than the label.
-    ///
-    /// The label is only ever decoration, so it is never part of the match — the authoritative
-    /// identity lives in the entry's own `profile.json`.
     pub fn find_profile_storage(&self, profile_id: ProfileId, archive: bool) -> Option<PathBuf> {
         let entries = fs::read_dir(&self.profiles_dir).ok()?;
         let mut best: Option<PathBuf> = None;
@@ -239,7 +177,6 @@ impl ProfileRoots {
             if entry.file_type().is_ok_and(|kind| kind.is_dir()) == archive {
                 continue;
             }
-            // Deterministic when a hand-made copy leaves two candidates, so repeated runs agree.
             if best.as_ref().is_none_or(|current| entry.path() < *current) {
                 best = Some(entry.path());
             }
@@ -247,18 +184,15 @@ impl ProfileRoots {
         best
     }
 
-    /// Sibling path used while atomically writing a profile archive.
     pub fn archive_part_path(&self, profile_id: ProfileId) -> PathBuf {
         archive_sidecar_path(&self.archive_path(profile_id), "part")
     }
 
-    /// Sibling backup path used while atomically replacing a profile archive.
     pub fn archive_backup_path(&self, profile_id: ProfileId) -> PathBuf {
         archive_sidecar_path(&self.archive_path(profile_id), "bak")
     }
 }
 
-/// Ensure the persistent profile storage directory and its user-facing archive note exist.
 pub fn ensure_profile_storage_layout(roots: &ProfileRoots) -> Result<()> {
     fs::create_dir_all(&roots.profiles_dir).with_context(|| {
         format!(
@@ -276,7 +210,6 @@ pub fn ensure_profile_storage_layout(roots: &ProfileRoots) -> Result<()> {
     Ok(())
 }
 
-/// Derive backend-safe profile directories from the game's current mod roots.
 pub fn profile_roots(game: &GameInstall, use_default_mods_path: bool) -> Result<ProfileRoots> {
     let mods = game
         .mods_path(use_default_mods_path)
@@ -294,9 +227,6 @@ pub fn profile_roots(game: &GameInstall, use_default_mods_path: bool) -> Result<
             disabled: None,
         }),
         GameBackend::UnrealEngine => {
-            // NTE's live path is HT/Content/Paks/~mods.  Keep profile archives outside Paks so
-            // Unreal never attempts to load them.  Custom non-Paks paths use their parent as the
-            // content-like root, preserving the same safety property.
             let content_root = if parent
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -319,8 +249,6 @@ pub fn profile_roots(game: &GameInstall, use_default_mods_path: bool) -> Result<
     }
 }
 
-/// Return free bytes on the volume hosting profile storage.  Callers should invoke this before
-/// staging a switch, reserving space for both the extracted target and the outgoing archive.
 pub fn available_profile_space(path: &Path) -> Result<u64> {
     let probe = if path.exists() {
         path
@@ -356,7 +284,6 @@ pub struct ProfileArchiveMetadata {
     pub uncompressed_size: u64,
     #[serde(default)]
     pub file_count: u64,
-    /// Metadata that is portable across machines and survives profile renames.
     #[serde(default)]
     pub portable_metadata: std::collections::HashMap<String, serde_json::Value>,
     /// Profile-owned category definitions. `None` preserves compatibility with archives
@@ -368,10 +295,8 @@ pub struct ProfileArchiveMetadata {
     /// empty.
     #[serde(default)]
     pub tools: Option<Vec<ToolEntry>>,
-    /// Profile-owned blacklist of auto-detected tool paths the user removed.
     #[serde(default)]
     pub tool_blacklist: Option<Vec<String>>,
-    /// Fingerprint of the source roots used to create the archive. Older archives omit it.
     #[serde(default)]
     pub source_fingerprint: Option<String>,
 }
@@ -384,7 +309,6 @@ pub struct ArchiveResult {
     pub file_count: u64,
 }
 
-/// Archive or extraction progress measured against the uncompressed profile payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ArchiveProgress {
     pub files_processed: u64,
@@ -395,7 +319,6 @@ pub struct ArchiveProgress {
 
 pub type ProgressCallback<'a> = &'a mut dyn FnMut(ArchiveProgress) -> Result<()>;
 
-/// Progress while reading a compressed profile archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ArchiveReadProgress {
     pub bytes_read: u64,
@@ -465,7 +388,6 @@ impl<R: Read> Read for ProfileArchiveProgressReader<'_, R> {
     }
 }
 
-/// Create a profile archive atomically through a sibling `.profile.tzst.part` file.
 #[cfg(test)]
 pub fn create_profile_archive_with_progress(
     roots: &ProfileRoots,
@@ -481,8 +403,6 @@ pub fn create_profile_archive_with_progress(
     create_profile_archive_from_inventory_with_progress(&inventory, metadata, destination, progress)
 }
 
-/// Create an archive from a previously inspected source inventory without walking the source
-/// roots again. The inventory can be reused for fingerprint/reuse decisions before writing.
 pub fn create_profile_archive_from_inventory_with_progress(
     inventory: &ProfileSourceInventory,
     metadata: &ProfileArchiveMetadata,
@@ -527,8 +447,6 @@ pub fn create_profile_archive_from_inventory_with_progress(
     let file = File::create(&staging)
         .with_context(|| format!("failed to create {}", staging.display()))?;
     let mut encoder = Encoder::new(file, -1).context("failed to initialize zstd encoder")?;
-    // Keep compression single-core for background profile operations. Level -1 is zstd's
-    // fast mode 1, preserving the previous throughput-oriented compression setting.
     encoder
         .multithread(1)
         .context("failed to configure zstd worker threads")?;
@@ -586,9 +504,6 @@ pub fn create_profile_archive_from_inventory_with_progress(
     })
 }
 
-/// Extract a `.tzst` archive into a new empty staging directory, validating every path before
-/// writing.  Absolute paths, traversal, special files, and links escaping the destination are
-/// rejected.
 pub fn extract_profile_archive(
     archive_path: &Path,
     destination: &Path,
@@ -596,9 +511,6 @@ pub fn extract_profile_archive(
     extract_profile_archive_with_progress(archive_path, destination, None)
 }
 
-/// Progress/cancellation-aware extraction variant. Validation and extraction happen in one
-/// decompression pass. Callers should use a disposable staging directory because an error can
-/// leave already-validated entries in the destination.
 pub fn extract_profile_archive_with_progress(
     archive_path: &Path,
     destination: &Path,
@@ -665,8 +577,6 @@ fn extract_profile_archive_impl(
                 .set(progress_state.raw_bytes_read.get());
             progress_state.payload_total.set(parsed.uncompressed_size);
             metadata = Some(parsed);
-            // Keep profile.json in the extracted loose container. It is part of the container's
-            // self-contained metadata even though it is excluded from payload counts.
             fs::write(destination.join(PROFILE_METADATA_FILE), &bytes)
                 .with_context(|| "failed to materialize extracted profile.json")?;
             continue;
@@ -694,13 +604,10 @@ fn extract_profile_archive_impl(
     drop(archive);
     io::copy(&mut progress_reader, &mut io::sink())?;
     let decoder = progress_reader.finish();
-    // Finishing the decoder forces zstd to verify its frame checksum and trailing input.
     let _ = decoder.finish();
     Ok(metadata)
 }
 
-/// Read the embedded profile manifest without materializing payload files. Full entry validation
-/// is performed by extraction.
 pub fn read_profile_archive_metadata(archive_path: &Path) -> Result<ProfileArchiveMetadata> {
     ensure_tzst_path(archive_path)?;
     let mut decoder = Decoder::new(File::open(archive_path)?)?;
@@ -766,8 +673,6 @@ struct SourceInventory {
     bytes: u64,
 }
 
-/// Opaque, validated inventory of all source roots that will be written to a profile archive.
-/// The inventory owns no source files; it retains paths and metadata for reuse by callers.
 #[derive(Debug)]
 pub struct ProfileSourceInventory {
     mods: SourceInventory,
@@ -820,8 +725,6 @@ impl SourceStats {
     }
 }
 
-/// Validate and inventory one live root. The resulting entries are reused for archive writing,
-/// so source paths/types are not walked a second time.
 fn inventory_source_tree(path: &Path, archive_name: &str) -> Result<SourceInventory> {
     let root_metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -874,8 +777,6 @@ fn inventory_source_tree(path: &Path, archive_name: &str) -> Result<SourceInvent
                 item.path().display()
             );
         };
-        // Windows can update directory mtimes lazily after child creation. Directory mtimes are
-        // not payload content, so only regular-file mtimes participate in the stable fingerprint.
         let modified = (kind == SourceEntryKind::File)
             .then(|| source_metadata.modified().ok())
             .flatten()
@@ -938,9 +839,6 @@ fn append_fingerprint_records(records: &mut Vec<String>, inventory: &SourceInven
     records.extend(entries);
 }
 
-/// Compute the stable filesystem fingerprint used in profile archive metadata.
-///
-/// A `None` fingerprint in an older archive means callers cannot safely skip recompression.
 pub fn inspect_profile_source(roots: &ProfileRoots) -> Result<ProfileSourceInventory> {
     let mods = inventory_source_tree(&roots.mods, "Mods")?;
     let archived = roots
@@ -1205,7 +1103,6 @@ mod storage_name_tests {
 
     #[test]
     fn a_name_that_looks_like_a_marker_does_not_confuse_the_parser() {
-        // The right anchor must win, so the trailing marker is the one that counts.
         let stem = profile_storage_stem("Backup [deadbeef]", id("1fe9ec7a"));
         assert_eq!(stem, "Backup [deadbeef] [1fe9ec7a]");
         assert_eq!(
@@ -1304,7 +1201,6 @@ mod storage_name_tests {
             "___",
             "an all-illegal name still yields a usable, distinguishable stem"
         );
-        // The fallback is only for names that reduce to nothing at all.
         assert_eq!(sanitize_profile_label("  "), "Profile");
         assert_eq!(sanitize_profile_label(""), "Profile");
         assert_eq!(sanitize_profile_label("..."), "Profile");
@@ -1336,7 +1232,6 @@ mod storage_name_tests {
 
     #[test]
     fn a_reserved_device_name_is_neutralized_by_the_marker() {
-        // "CON" alone is unusable on Windows; "CON [1fe9ec7a]" is not.
         let stem = profile_storage_stem("CON", id("1fe9ec7a"));
         assert_eq!(stem, "CON [1fe9ec7a]");
         assert_eq!(parse_profile_storage_stem(&stem), Some(("CON", "1fe9ec7a")));
@@ -1391,14 +1286,12 @@ mod tests {
             disabled: None,
         };
         let profile_id: ProfileId = "00000000".parse().unwrap();
-        // With nothing on disk, the resolver falls back to the canonical shape.
         assert_eq!(
             roots.profile_path(profile_id),
             roots.profiles_dir.join("Profile [00000000]")
         );
         let archive = roots.archive_path(profile_id);
         assert_eq!(archive, roots.profiles_dir.join("Profile [00000000].tzst"));
-        // A caller that knows the profile's name gets it in the storage name.
         assert_eq!(
             roots.profile_path_for(profile_id, "Patch 1.4"),
             roots.profiles_dir.join("Patch 1.4 [00000000]")
@@ -1407,7 +1300,6 @@ mod tests {
             roots.archive_path_for(profile_id, "Patch 1.4"),
             roots.profiles_dir.join("Patch 1.4 [00000000].tzst")
         );
-        // Existing data wins over the fallback, whatever it is labelled.
         fs::create_dir_all(&roots.profiles_dir).unwrap();
         let existing = roots.profiles_dir.join("Renamed By Hand [00000000].tzst");
         fs::write(&existing, b"archive").unwrap();

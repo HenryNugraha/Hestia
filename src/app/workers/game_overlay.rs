@@ -1,25 +1,13 @@
-// The in-game overlay's side in Hestia: a thread that watches for supported
-// games, and the overlay process with the threads that talk to it.  The
-// overlay is `hestia --overlay`; `crate::overlay_protocol` has the messages.
-
 use std::io::BufRead as _;
 
 use crate::overlay_protocol;
 
-/// How long the game watcher waits between looks at the running processes.
 const GAME_WATCH_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// How long the overlay gets to close after Hestia asks, before Hestia ends
-/// it.
 const GAME_OVERLAY_CLOSE_GRACE: Duration = Duration::from_secs(3);
 
-/// Unreal Engine names a game's process after its project, so other games
-/// can have these names too.  They count only when they run from the game's
-/// folder.
 const SHARED_GAME_PROCESS_NAMES: &[&str] = &["client-win64-shipping.exe"];
 
-/// Processes a game runs as besides its exe, lowercase.  Wuthering Waves' exe
-/// starts the game as another process.
 fn other_game_process_names(game_id: &str) -> &'static [&'static str] {
     match game_id {
         "wuwa" => &["client-win64-shipping.exe"],
@@ -27,22 +15,15 @@ fn other_game_process_names(game_id: &str) -> &'static [&'static str] {
     }
 }
 
-/// A supported game Hestia watches for, to show the in-game overlay while it
-/// runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WatchedGame {
     id: String,
-    /// The game's own process names, lowercase.  Never its launcher's.
     exe_names: Vec<String>,
-    /// The ones other games use too.
     shared_names: Vec<String>,
-    /// The folder of the game's exe, when Hestia knows it.
     folder: Option<PathBuf>,
 }
 
 impl WatchedGame {
-    /// None for a game without the overlay: a disabled one, or one Hestia
-    /// doesn't mod with XXMI.
     fn for_game(game: &GameInstall) -> Option<Self> {
         if !game.enabled || !game.is_xxmi() {
             return None;
@@ -97,16 +78,12 @@ fn lowercase_file_name(path: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// A watched game that runs now.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RunningGame {
     id: String,
-    /// In ascending order.
     pids: Vec<u32>,
 }
 
-/// The watched games that run now.  `processes` pairs each process id with
-/// its lowercase name, in id order.  `exe_of` finds where a process runs from.
 fn match_running_games(
     watched: &[WatchedGame],
     processes: &[(u32, String)],
@@ -119,7 +96,6 @@ fn match_running_games(
             if !game.exe_names.contains(name) {
                 continue;
             }
-            // A game may not say where it runs from.  Count it then.
             if game.shared_names.contains(name)
                 && let Some(folder) = &game.folder
                 && exe_of(*pid).is_some_and(|exe| !path_is_within(&exe, folder))
@@ -138,7 +114,6 @@ fn match_running_games(
     running
 }
 
-/// Whether `path` is in `folder`, ignoring case like Windows does.
 fn path_is_within(path: &Path, folder: &Path) -> bool {
     let mut parts = path.components();
     folder.components().all(|part| {
@@ -149,8 +124,6 @@ fn path_is_within(path: &Path, folder: &Path) -> bool {
 }
 
 fn running_games(watched: &[WatchedGame]) -> Vec<RunningGame> {
-    // A fresh list each time: sysinfo keeps a process's first name, so a
-    // reused process id would keep a game's name.
     let mut system = sysinfo::System::new_with_specifics(
         sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
     );
@@ -179,8 +152,6 @@ fn running_games(watched: &[WatchedGame]) -> Vec<RunningGame> {
     })
 }
 
-/// Watches for the supported games on its own thread, and reports the ones
-/// that run whenever that changes.
 struct GameWatcher {
     games: Arc<Mutex<Vec<WatchedGame>>>,
     running: std::sync::mpsc::Receiver<Vec<RunningGame>>,
@@ -231,8 +202,6 @@ fn watch_games(
     }
 }
 
-/// The library for the in-game overlay, before its pictures are found.
-/// Building it reads no files, so Hestia can compare it every few frames.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct OverlayLibraryDraft {
     game_id: String,
@@ -244,8 +213,6 @@ struct OverlayLibraryDraft {
 struct OverlayCategoryDraft {
     id: String,
     name: String,
-    /// The GameBanana character the category stands for, whose icon is its
-    /// picture.
     character: Option<u64>,
     mods: Vec<OverlayModDraft>,
 }
@@ -256,9 +223,7 @@ struct OverlayModDraft {
     name: String,
     active: bool,
     pictures: OverlayModPictures,
-    /// An unsafe mod the library censors.
     censored: bool,
-    /// The GameBanana mod it was installed from.
     gamebanana_id: Option<u64>,
 }
 
@@ -268,12 +233,10 @@ struct OverlayModPictures {
     cover: Option<String>,
     screenshots: Vec<String>,
     gamebanana_preview: Option<String>,
-    /// When Hestia last made the mod's thumbnails, so new ones get sent.
     thumbnails: [Option<DateTime<Utc>>; 2],
 }
 
 impl OverlayLibraryDraft {
-    /// Finds the pictures, which reads the disk.
     fn resolve(self) -> overlay_protocol::Library {
         let characters = if self
             .categories
@@ -291,7 +254,6 @@ impl OverlayLibraryDraft {
                 .categories
                 .into_iter()
                 .map(|category| {
-                    // Without a link, the character the name stands for.
                     let character = match category.character {
                         Some(id) => characters.iter().find(|character| character.id == id),
                         None if category.id == overlay_protocol::UNCATEGORIZED_ID => None,
@@ -349,8 +311,6 @@ impl OverlayModDraft {
     }
 }
 
-/// The game's GameBanana characters, from what Hestia saved when Browse or
-/// the overlay listed them.  Empty until one has.
 fn saved_characters(game_id: &str) -> Vec<gamebanana::CharacterCategory> {
     let Some(super_category) = gamebanana::character_super_category_id_for_hestia(game_id) else {
         return Vec::new();
@@ -371,7 +331,6 @@ fn saved_characters(game_id: &str) -> Vec<gamebanana::CharacterCategory> {
     characters
 }
 
-/// What the overlay needs first.
 struct OverlayStartDraft {
     host_window: Option<i64>,
     game_pids: Vec<u32>,
@@ -380,18 +339,13 @@ struct OverlayStartDraft {
     selection: Option<overlay_protocol::Selection>,
 }
 
-/// What Hestia has for the overlay that isn't written yet.  Only the newest
-/// library matters, so a new one replaces one still waiting.  Answers go
-/// after the library, so the overlay has the change when its answer arrives.
 #[derive(Default)]
 struct OverlayOutgoing {
     start: Option<OverlayStartDraft>,
     library: Option<OverlayLibraryDraft>,
     game_pids: Option<Vec<u32>>,
     answers: Vec<overlay_protocol::Changed>,
-    /// GameBanana pages and characters, in the order Hestia got them.
     messages: Vec<overlay_protocol::ToOverlay>,
-    /// GameBanana pictures downloaded since the last write.
     pictures: overlay_protocol::Pictures,
     closed: bool,
 }
@@ -437,12 +391,10 @@ impl OverlayOutbox {
         });
     }
 
-    /// Ends the link, which tells the overlay to close.
     fn close(&self) {
         self.update(|pending| pending.closed = true);
     }
 
-    /// Waits for something to write.
     fn take(&self) -> OverlayOutgoing {
         let mut pending = self
             .pending
@@ -460,11 +412,9 @@ impl OverlayOutbox {
 
 enum OverlayEvent {
     Message(overlay_protocol::FromOverlay),
-    /// The overlay's output closed, which happens when it exits.
     Exited,
 }
 
-/// The in-game overlay, a second Hestia process that shows over one game.
 struct OverlayProcess {
     game_id: String,
     game_pids: Vec<u32>,
@@ -472,26 +422,19 @@ struct OverlayProcess {
     child: std::process::Child,
     outbox: Arc<OverlayOutbox>,
     events: std::sync::mpsc::Receiver<OverlayEvent>,
-    /// Mods whose hotkeys or info the overlay asked for.
     reads: std::sync::mpsc::Sender<OverlayReadRequest>,
 }
 
 enum OverlayReadRequest {
-    /// A mod, its folder, and the values its hotkeys have now, which decide
-    /// the ones that do nothing in the game at the moment.
     Hotkeys(String, PathBuf, HashMap<String, String>),
     Info(OverlayInfoDraft),
 }
 
-/// A mod's description and text files as the library has them, which the
-/// worker turns into plain text.
 struct OverlayInfoDraft {
     mod_id: String,
     description_html: Option<String>,
-    /// The personal note's path in the mod's folder.
     note_path: String,
     text_sources: Vec<crate::model::ExtractedMetadataTextSource>,
-    /// The source the details window was left on.
     selected: Option<MetadataSourceKind>,
     readme_path: Option<String>,
 }
@@ -511,7 +454,6 @@ impl OverlayInfoDraft {
     fn resolve(self) -> overlay_protocol::ModInfo {
         use overlay_protocol::{InfoKind, InfoSource};
 
-        /// Long readmes are cut, the overlay being no place to read them.
         const MAX_CHARS: usize = 20_000;
         let clip = |text: String| match text.char_indices().nth(MAX_CHARS) {
             Some((end, _)) => format!("{}…", &text[..end]),
@@ -528,7 +470,6 @@ impl OverlayInfoDraft {
             label: String::new(),
             text: clip(description),
         }];
-        // The note, then the files, like the details window's list.
         let mut files = self.text_sources;
         files.sort_by_key(|source| source.path != self.note_path);
         for source in files {
@@ -560,7 +501,6 @@ impl OverlayInfoDraft {
             Some(MetadataSourceKind::TextFile) => readme,
             _ => None,
         }
-        // The details window's own fallback, without the hotkeys.
         .or_else(|| (!sources[0].text.is_empty()).then_some(0))
         .or(readme)
         .or_else(|| sources.iter().position(|source| !source.text.is_empty()))
@@ -580,7 +520,6 @@ impl OverlayProcess {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
-            // A profile capture is of the main window.
             .env_remove("HESTIA_PROFILE_DUMP")
             .spawn()?;
         let outbox = Arc::new(OverlayOutbox::default());
@@ -637,7 +576,6 @@ impl OverlayProcess {
             .update(|pending| pending.library = Some(library));
     }
 
-    /// Answers a change, after the library when there is one.
     fn answer(&self, library: Option<OverlayLibraryDraft>, answer: overlay_protocol::Changed) {
         self.outbox.update(|pending| {
             if library.is_some() {
@@ -647,21 +585,18 @@ impl OverlayProcess {
         });
     }
 
-    /// Reads the mod's hotkeys and sends them to the overlay.
     fn send_hotkeys(&self, mod_id: String, root: PathBuf, values: HashMap<String, String>) {
         let _ = self
             .reads
             .send(OverlayReadRequest::Hotkeys(mod_id, root, values));
     }
 
-    /// Sends the overlay the mod's description and text files.
     fn send_info(&self, entry: &ModEntry) {
         let _ = self
             .reads
             .send(OverlayReadRequest::Info(OverlayInfoDraft::new(entry)));
     }
 
-    /// Answers a hotkey press the overlay asked for.
     fn answer_hotkey(&self, id: u64, error: Option<String>) {
         self.outbox
             .send(overlay_protocol::ToOverlay::HotkeyPressed { id, error });
@@ -677,13 +612,10 @@ impl OverlayProcess {
         self.outbox.update(|pending| pending.game_pids = Some(pids));
     }
 
-    /// Asks the overlay to close, and ends it if it hasn't after a moment.
     fn close(self) {
         xxmi_persist::set_game_overlay_process(None);
         self.outbox.close();
         let mut child = self.child;
-        // Without this thread the overlay still closes, since it exits by
-        // itself once Hestia's link ends.
         let _ = std::thread::Builder::new()
             .name("hestia-overlay-close".to_owned())
             .spawn(move || {
@@ -700,7 +632,6 @@ impl OverlayProcess {
             });
     }
 
-    /// Ends the overlay now.
     fn end(mut self) {
         xxmi_persist::set_game_overlay_process(None);
         self.outbox.close();
@@ -712,7 +643,6 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
     loop {
         let pending = outbox.take();
         if pending.closed {
-            // Dropping stdin ends the link.
             return;
         }
         let pictures = pending.pictures;
@@ -756,9 +686,6 @@ fn write_to_overlay(outbox: &OverlayOutbox, mut stdin: std::process::ChildStdin)
     }
 }
 
-/// Reads mods' hotkeys, the way the library lists them, and their info, one
-/// mod at a time, so the last answer about a mod is about it as it is now.
-/// Ends with the overlay.
 fn read_mods(outbox: &OverlayOutbox, requests: &std::sync::mpsc::Receiver<OverlayReadRequest>) {
     for request in requests {
         let (mod_id, root, values) = match request {
@@ -850,8 +777,6 @@ mod game_overlay_watch_tests {
             Some(Path::new(r"D:\Genshin Impact\Genshin Impact Game"))
         );
 
-        // Pointed at the launcher by mistake, and a modded exe with another
-        // name: neither is taken for the game.
         let endfield = game(
             "endfield",
             GameBackend::Xxmi,
@@ -899,7 +824,6 @@ mod game_overlay_watch_tests {
             12 => Some(PathBuf::from(
                 r"E:\Other Game\Client\Binaries\Win64\Client-Win64-Shipping.exe",
             )),
-            // Where it runs from is unknown.
             _ => None,
         });
         assert_eq!(

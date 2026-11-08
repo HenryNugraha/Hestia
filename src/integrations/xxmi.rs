@@ -24,9 +24,6 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
 const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x08000000;
 
-/// A marker in the existing Hestia metadata directory identifying a directory
-/// that Hestia already treats as one mod root.  The marker is needed for
-/// multipart mods whose active payload has no `.ini` directly at the root.
 const MOD_ROOT_MARKER: &str = "mod-root";
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -57,8 +54,6 @@ use crate::{
     persistence,
 };
 
-/// Read file with platform-specific optimizations.
-/// On Windows, hints to the OS that sequential access is expected.
 #[cfg(windows)]
 fn read_file_optimized(path: &Path) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -79,7 +74,6 @@ fn read_file_optimized(path: &Path) -> Result<Vec<u8>> {
 pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Result<()> {
     let mut newly_scanned = Vec::new();
 
-    // Determine which games to scan
     let games_to_scan: Vec<GameInstall> = match target_game_id {
         Some(id) => state
             .games
@@ -91,7 +85,6 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
     };
 
     for game in &games_to_scan {
-        // Auto-create mods directory if the backend's required executable exists but folder is missing
         if let Some(mods_path) = game.mods_path(state.static_prefs.use_default_mods_path) {
             if !mods_path.exists() {
                 let vanilla_exists = game
@@ -140,8 +133,6 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
     repair_duplicate_scanned_mod_ids(&mut newly_scanned, state, target_game_id);
 
     for discovered in &mut newly_scanned {
-        // Hydrate from existing memory state to preserve non-portable flags (like update_state)
-        // and ensure we don't overwrite portable flags with defaults if they aren't in the JSON yet.
         let backend = state
             .games
             .iter()
@@ -161,11 +152,9 @@ pub fn refresh_state(state: &mut AppState, target_game_id: Option<&str>) -> Resu
     }
 
     if let Some(id) = target_game_id {
-        // Selective refresh: only replace mods for the target game
         state.mods.retain(|m| m.game_id != id);
         state.mods.extend(newly_scanned);
     } else {
-        // Full refresh (e.g. on startup)
         state.mods = newly_scanned;
     }
 
@@ -416,9 +405,6 @@ pub fn archive_mod(
     mod_entry.updated_at = Utc::now();
     let metadata_result = (|| {
         write_portable_metadata(mod_entry)?;
-        // Archiving is an explicit selection of this directory as one mod,
-        // including legacy payloads without a direct ini.  Keep that choice
-        // stable if the archive is scanned after a restart.
         mark_mod_root(&destination)
     })();
     if let Err(err) = metadata_result {
@@ -488,8 +474,6 @@ pub fn restore_mod(
     mod_entry.updated_at = Utc::now();
     let metadata_result = (|| {
         write_portable_metadata(mod_entry)?;
-        // Restore is also an explicit selection of the archived directory as
-        // one mod, including legacy non-ini payloads.
         mark_mod_root(&destination)
     })();
     if let Err(err) = metadata_result {
@@ -518,8 +502,6 @@ pub fn restore_mod(
     Ok(destination)
 }
 
-/// Move an XXMI mod's disabled payload into its live root.  Every destination is checked before
-/// the first move, and a failed move is rolled back so callers never observe a half-enabled tree.
 fn move_disabled_contents_to_active(root: &Path) -> Result<()> {
     let disabled_root = root.join(DISABLED_CONTAINER);
     if !disabled_root.is_dir() {
@@ -529,9 +511,6 @@ fn move_disabled_contents_to_active(root: &Path) -> Result<()> {
         bail!("cannot enable mod with content already in its live root");
     }
 
-    // A disabled imported multipart mod exposes no direct ini while its
-    // payload is in DISABLED_BY_HESTIA.  Preserve that root when enabling so
-    // nested discovery does not reinterpret its component folders as mods.
     if !directory_has_direct_ini(&disabled_root)? {
         mark_mod_root(root)?;
     }
@@ -604,8 +583,6 @@ fn path_is_within(root: &Path, candidate: &Path) -> bool {
     }
 }
 
-/// Recreate an XXMI disabled container from a live root.  This is used only to roll back a
-/// successful filesystem move when writing portable metadata fails.
 fn move_active_contents_to_disabled(root: &Path) -> Result<()> {
     let disabled_root = root.join(DISABLED_CONTAINER);
     fs::create_dir_all(&disabled_root)?;
@@ -643,14 +620,6 @@ pub fn send_to_recycle_bin(mod_entry: &ModEntry) -> Result<()> {
     recycle_path(&mod_entry.root_path)
 }
 
-/// Send `path` to the recycle bin, retrying briefly and then falling back to
-/// the native shell operation on Windows.
-///
-/// `trash` collapses every shell-side refusal into a bare "Some operations
-/// were aborted": a file the game still holds open, a volume whose recycle bin
-/// is disabled or too small for the folder, an over-long path. A single
-/// attempt is therefore never a reliable verdict, and callers that can keep
-/// working without the bin should treat a failure here as non-fatal.
 pub fn recycle_path(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -869,7 +838,6 @@ fn shell_execute(
         .map(|dir| wide_null(&dir.display().to_string()))
         .unwrap_or_else(|| vec![0]);
 
-    // SAFETY: All pointers are valid null-terminated UTF-16 strings for the duration of the call.
     let result = unsafe {
         ShellExecuteW(
             None,
@@ -971,7 +939,6 @@ pub(crate) fn scan_live_mods(
 
     let mod_dirs = collect_scannable_mod_dirs(&root)?;
 
-    // Process each mod directory in parallel
     let mods: Result<Vec<ModEntry>> = mod_dirs
         .par_iter()
         .map(|path| load_mod_entry(game, path.clone(), false, scan_rabbitfx_requirement))
@@ -998,7 +965,6 @@ fn scan_archived_mods(
         .mods_path(use_default_path)
         .ok_or_else(|| anyhow!("game has no live mods path"))?;
 
-    // Process each mod directory in parallel
     let mods: Result<Vec<ModEntry>> = mod_dirs
         .par_iter()
         .map(|path| {
@@ -1035,10 +1001,6 @@ fn archived_path_relative_destination(
     Some(live_root.join(relative))
 }
 
-/// Scratch folders an install leaves behind when it is interrupted or when the
-/// old folder could not be disposed of. They still hold a full mod payload, so
-/// without this they would scan as duplicate mods — and 3dmigoto would load
-/// them alongside the real one.
 fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
     let name = path.file_name().and_then(OsStr::to_str)?;
     if name.starts_with(".hestia_old_") || name.starts_with(".hestia-retired-") {
@@ -1051,11 +1013,7 @@ fn install_scratch_kind(path: &Path) -> Option<InstallScratch> {
 }
 
 enum InstallScratch {
-    /// The old payload of a Replace install. Its matching stage may still
-    /// need it for rollback; disposal can finish once that stage is gone.
     Retired,
-    /// An install may still be copying into it right now, so only sweep it once
-    /// it has clearly been abandoned.
     Staging,
 }
 
@@ -1101,9 +1059,6 @@ fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
         let mut explicit_roots = Vec::new();
         collect_explicit_mod_roots(&path, &mut explicit_roots)?;
         if explicit_roots.is_empty() {
-            // Legacy XXMI mods did not require an ini at the root.  Keep the
-            // entire top-level directory together when no stronger nested
-            // boundaries identify child mods.
             if has_real_scan_payload(&path)? {
                 mod_dirs.push(path);
             } else {
@@ -1116,9 +1071,6 @@ fn collect_scannable_mod_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(mod_dirs)
 }
 
-/// Find boundaries that identify actual mod roots.  A directory with no
-/// direct ini is an organizational container, so its non-ini child folders
-/// are not independently treated as mods merely because they contain files.
 fn collect_explicit_mod_roots(path: &Path, roots: &mut Vec<PathBuf>) -> Result<()> {
     if is_scan_helper_dir(path) || skip_install_scratch_dir(path) || path_is_link(path) {
         return Ok(());
@@ -1409,10 +1361,6 @@ fn write_portable_metadata(mod_entry: &ModEntry) -> Result<()> {
     Ok(())
 }
 
-/// Mark a completed XXMI payload as one managed mod root.  This is separate
-/// from the portable JSON because a multipart root can have no direct `.ini`,
-/// while legacy container metadata must remain insufficient to suppress
-/// nested discovery.
 pub(crate) fn mark_mod_root(root: &Path) -> Result<()> {
     let metadata_dir = root.join(MOD_META_DIR);
     fs::create_dir_all(&metadata_dir)?;
@@ -1687,7 +1635,6 @@ fn extract_metadata(
                     }
                 }
 
-                // Always scan all text-like files for hotkeys
                 for line in trimmed.lines() {
                     if line.to_ascii_lowercase().contains("hotkey") {
                         hotkeys.push(line.trim().to_string());
@@ -2394,7 +2341,6 @@ mod tests {
         assert_eq!(entry.archive_original_path, original_path);
         fs::remove_dir_all(&root).unwrap();
 
-        // A conflicting live payload inside the archived tree must not be partially normalized.
         fs::write(archived_path.join("mod.ini"), "conflict").unwrap();
         assert!(restore_mod(&mut entry, &game, false).is_err());
         assert_eq!(entry.status, ModStatus::Archived);

@@ -1,11 +1,3 @@
-//! Getting every file of one Thalia update ready before anything reaches the
-//! Mods folder.
-//!
-//! Each archive is checked against GameBanana's checksum and unpacked first.
-//! Files that go into the mod's own folder are combined into one folder here,
-//! so the install that follows swaps the mod in a single step, and two merged
-//! files that write the same path stop the update before anything changed.
-
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -26,18 +18,14 @@ use super::{
 use crate::model::{DISABLED_CONTAINER, ImportSource, MOD_META_DIR};
 use crate::persistence;
 
-/// Name prefix of the scratch folder one bundle is built in.
 pub const BUNDLE_DIR_PREFIX: &str = "thalia-bundle-";
 
 const READ_BUFFER_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundlePartRole {
-    /// Installed as its own mod.
     Separate,
-    /// The update itself. Always the first part of the mod's folder.
     Main,
-    /// Added to the mod's folder.
     Merge,
 }
 
@@ -46,7 +34,6 @@ pub struct BundlePart {
     pub job_id: u64,
     pub file_name: String,
     pub archive: PathBuf,
-    /// GameBanana's MD5 for the archive, when it lists one.
     pub md5: Option<String>,
     pub role: BundlePartRole,
 }
@@ -54,19 +41,14 @@ pub struct BundlePart {
 #[derive(Debug, Clone)]
 pub struct PreparedBundleFolder {
     pub job_id: u64,
-    /// Folder holding exactly one mod folder, ready to install.
     pub source: PathBuf,
-    /// What that mod folder held when it was checked.
     pub manifest: FolderManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BundleFailure {
-    /// The archive is not the file GameBanana lists.
     Checksum { file_name: String },
-    /// The archive does not hold exactly one mod folder.
     Layout { file_name: String },
-    /// Two merged files write the same path with different contents.
     Clash { path: String },
     Canceled,
     Other {
@@ -75,13 +57,9 @@ pub enum BundleFailure {
     },
 }
 
-/// Every file in a folder with its size and a hash of its contents.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FolderManifest(BTreeMap<String, (u64, u64)>);
 
-/// Checks, unpacks and combines `parts` in a new scratch folder. Separate
-/// parts come back first, in order, then the one combined mod folder (its
-/// job is the first main or merge part). On failure nothing is left behind.
 pub fn prepare_bundle(
     game_id: &str,
     parts: &[BundlePart],
@@ -129,8 +107,6 @@ fn prepare_into(
     };
     let mut prepared = Vec::new();
     let mut mod_folder: Option<(u64, PathBuf)> = None;
-    // Which merge part last wrote each path; `None` is the main file, which
-    // merged files may overwrite.
     let mut writers: HashMap<String, Option<usize>> = HashMap::new();
     for (index, part) in parts.iter().enumerate() {
         check_cancel(cancel).map_err(failed(part))?;
@@ -221,9 +197,6 @@ impl From<std::io::Error> for MergeError {
     }
 }
 
-/// Copies one merged file's contents into the mod folder. It may overwrite
-/// the main file, which it was made for, but not another merged file: the
-/// two have no order, so a different copy of the same path is a clash.
 fn merge_into(
     source: &Path,
     dest: &Path,
@@ -286,7 +259,6 @@ fn folder_label(label: &str) -> String {
     }
 }
 
-/// Windows paths are case-insensitive, so `A.ini` and `a.ini` are one path.
 fn path_key(rel: &Path) -> String {
     display_path(rel).to_lowercase()
 }
@@ -381,8 +353,6 @@ pub fn folder_manifest(root: &Path, cancel: &CancelFlag) -> Result<FolderManifes
     Ok(FolderManifest(files))
 }
 
-/// Fails unless `root` holds exactly what was checked, so files changed in
-/// the scratch folder after the check never reach the Mods folder.
 pub fn verify_folder_manifest(
     root: &Path,
     expected: &FolderManifest,
@@ -394,10 +364,6 @@ pub fn verify_folder_manifest(
     Ok(())
 }
 
-/// A cheap fingerprint of a mod folder as it is on disk: every file's path,
-/// size and modification time. Hestia's own metadata folder is left out, and
-/// so is the disabled container, so turning the mod on or off does not count
-/// as a change. `None` when the folder cannot be read.
 pub fn mod_folder_state(root: &Path) -> Option<u64> {
     let mut files = Vec::new();
     for entry in WalkDir::new(root).min_depth(1) {
@@ -436,8 +402,6 @@ pub fn mod_folder_state(root: &Path) -> Option<u64> {
     Some(hasher.digest())
 }
 
-/// Scratch folders of bundles that never finished, left by a crash or a
-/// closed Hestia. A bundle is never resumed, so they are only removed.
 pub fn remove_stale_bundle_dirs() {
     let Ok(entries) = fs::read_dir(persistence::runtime_temp_extract_dir()) else {
         return;
@@ -496,17 +460,13 @@ mod bundle_tests {
             .map(|key| (key, None))
             .collect();
 
-        // Overwriting the main file is what a merge is for.
         merge(dir.path(), 1, &mut writers, &[("main.ini", "addon")]).unwrap();
         assert_eq!(fs::read_to_string(folder.join("Main.ini")).unwrap(), "addon");
-        // Another merged file with the same copy is fine.
         merge(dir.path(), 2, &mut writers, &[("MAIN.ini", "addon"), ("b.ini", "b")]).unwrap();
-        // A different copy of a path another merged file wrote is not.
         assert_eq!(
             merge(dir.path(), 3, &mut writers, &[("Main.ini", "other")]),
             Err("Main.ini".to_string())
         );
-        // Nor is a folder where a file is.
         assert_eq!(
             merge(dir.path(), 4, &mut writers, &[("b.ini/x.ini", "x")]),
             Err("b.ini".to_string())
@@ -587,7 +547,6 @@ mod bundle_tests {
         write(&root, &format!("{MOD_META_DIR}/state.json"), "{}");
         assert_eq!(mod_folder_state(&root), Some(before));
 
-        // Turning the mod off moves its files into the disabled container.
         let disabled = root.join(DISABLED_CONTAINER);
         fs::create_dir_all(&disabled).unwrap();
         fs::rename(root.join("a.ini"), disabled.join("a.ini")).unwrap();
@@ -651,7 +610,6 @@ mod bundle_tests {
         verify_folder_manifest(&combined, &folders[1].manifest, &cancel()).unwrap();
         fs::remove_dir_all(root).unwrap();
 
-        // A file that is not the one GameBanana lists stops everything.
         let mut tampered = parts.clone();
         tampered[2].md5 = Some("0".repeat(32));
         assert_eq!(

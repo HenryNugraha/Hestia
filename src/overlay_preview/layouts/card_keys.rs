@@ -1,12 +1,3 @@
-//! The back of the focused mod card, which shows its hotkeys or its info.
-//! Hestia reads a mod's hotkeys and info once its card is focused, and the
-//! card gets a keys button when it has hotkeys and an info button beside it
-//! when it has info.  A button, a click on the back, or R for the keys and I
-//! for the info turns the card over.  A click on a key, or Space on the one W
-//! and S picked, has Hestia press it in the game.  A key that does nothing in
-//! the game right now is greyed out and can't be pressed.  The info side is
-//! in `info`.
-
 mod info;
 
 use std::collections::HashMap;
@@ -23,38 +14,26 @@ use super::{
 use crate::app::TextKey;
 use crate::overlay_protocol::{FromOverlay, ModHotkey, ModHotkeys, ModInfo};
 
-/// How long a card takes to turn over.
 const FLIP_SECS: f64 = 0.24;
 const BUTTON_SIZE: f32 = 21.0;
-/// Between the keys and info buttons.
 const BUTTON_GAP: f32 = 4.0;
-/// How long the keys button takes to slide its label out.
 const LABEL_SECS: f32 = 0.12;
-/// Before the keys button's label.
 const LABEL_PADDING: f32 = 5.0;
-/// Between the label and the icon's box, which has a margin of its own.
 const LABEL_GAP: f32 = 2.0;
-/// From the card's edges to its badges.
 const INSET: f32 = 8.0;
 const PADDING: f32 = 10.0;
-/// The mod's name above the list.
 const HEADER_HEIGHT: f32 = 37.0;
 const ROW_HEIGHT: f32 = 24.0;
 const KEYCAP_HEIGHT: f32 = 18.0;
-/// How long a key stays lit after the game got it.
 const LIT_SECS: f64 = 0.6;
-/// How long a key shows it waits for Hestia's answer, at most.
 const ANSWER_SECS: f64 = 20.0;
 
-/// What the back of a card shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Side {
     Keys,
     Info,
 }
 
-/// Which side of a card shows, and how wide it is while it turns, 1 being
-/// its full width.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Face {
     pub back: bool,
@@ -67,21 +46,16 @@ impl Face {
         width: 1.0,
     };
 
-    /// Not turning.
     pub(super) fn settled(self) -> bool {
         self.width >= 1.0
     }
 }
 
-/// A card's keys and info buttons this frame, worked out before what's
-/// under them is painted.
 pub(super) struct Buttons {
-    /// From the right: the keys button first, when the mod has hotkeys.
     list: Vec<BackButton>,
 }
 
 impl Buttons {
-    /// How far a label is out, from 0 to 1.
     pub(super) fn open(&self) -> f32 {
         self.list
             .iter()
@@ -89,12 +63,10 @@ impl Buttons {
             .fold(0.0, f32::max)
     }
 
-    /// The room they take from the NEW tag beside them, labels in.
     pub(super) fn room(&self) -> f32 {
         self.list.len() as f32 * BUTTON_ROOM
     }
 
-    /// Where the leftmost one starts, however far its label is out.
     fn left(&self) -> Option<f32> {
         self.list.last().map(|button| button.rect.min.x)
     }
@@ -103,31 +75,21 @@ impl Buttons {
 struct BackButton {
     side: Side,
     id: egui::Id,
-    /// The back shows its side.
     lit: bool,
     rect: Rect,
     label: Arc<Galley>,
-    /// How far the label has slid out, from 0 to 1.
     open: f32,
 }
 
-/// A button's label, out while the button is hovered.
 #[derive(Default)]
 struct Label {
-    /// The button it was last on.
     id: Option<egui::Id>,
-    /// How far it's out, from 0 to 1, before easing.
     open: f32,
-    /// The pass it was last updated in.  A button that wasn't there the pass
-    /// before starts with it in.
     pass: u64,
-    /// A turn keeps it in until the pointer leaves the button, which is
-    /// still under the pointer that clicked it.
     held: bool,
 }
 
 impl Label {
-    /// How far it was out, eased, which is where the button still is.
     fn shown(&self, id: egui::Id, pass: u64) -> f32 {
         if self.id == Some(id) && self.pass + 1 >= pass {
             egui::emath::easing::cubic_out(self.open)
@@ -136,8 +98,6 @@ impl Label {
         }
     }
 
-    /// Moves it out while the button is hovered, or back in, by `dt`
-    /// seconds.  How far it's out, eased.
     fn update(&mut self, id: egui::Id, hovered: bool, pass: u64, dt: f32) -> f32 {
         if self.id != Some(id) || self.pass + 1 < pass {
             self.open = 0.0;
@@ -158,7 +118,6 @@ impl Label {
         self.open > 0.0 && self.open < 1.0
     }
 
-    /// Keeps it in until the pointer leaves the button.
     fn hold(&mut self) {
         self.held = true;
         self.open = 0.0;
@@ -167,18 +126,14 @@ impl Label {
 
 struct Flip {
     mod_id: String,
-    /// The card shows, or turns to, its back.
     back: bool,
     side: Side,
     started_at: f64,
-    /// The first row, or line of the info, the back shows.
     scroll: usize,
-    /// The row Space presses.
     selected: usize,
 }
 
 impl Flip {
-    /// How far the card has turned, from its front at 0 to its back at 1.
     fn turn(&self, now: f64) -> f32 {
         let progress = ((now - self.started_at) / FLIP_SECS).clamp(0.0, 1.0) as f32;
         if self.back { progress } else { 1.0 - progress }
@@ -189,7 +144,6 @@ impl Flip {
     }
 }
 
-/// A key Hestia was asked to press and hasn't answered about.
 struct Press {
     id: u64,
     mod_id: String,
@@ -197,7 +151,6 @@ struct Press {
     sent_at: f64,
 }
 
-/// A key the game got, lit for a moment.
 struct Lit {
     mod_id: String,
     index: usize,
@@ -206,28 +159,19 @@ struct Lit {
 
 #[derive(Default)]
 pub(super) struct CardKeys {
-    /// Mods' hotkeys, by id, once Hestia has sent them.
     hotkeys: HashMap<String, Vec<ModHotkey>>,
     info: info::CardInfo,
-    /// The library each mod was last asked about in.  A new library asks
-    /// again, since the mod may have changed.
     asked: HashMap<String, u64>,
     library: u64,
     requests: Vec<FromOverlay>,
     flip: Option<Flip>,
-    /// The button and the back painted this frame, and last frame.  The
-    /// carousel leaves presses on them to their own clicks.
     own_clicks: Vec<Rect>,
     last_own_clicks: Vec<Rect>,
-    /// The settled back painted this frame, and last frame, with how many
-    /// of its rows or lines didn't fit.
     back: Option<Rect>,
     last_back: Option<Rect>,
     hidden_rows: usize,
-    /// How many rows the settled back fits.
     fit: usize,
     wheel: f32,
-    /// The keys button's, then the info button's.
     labels: [Label; 2],
     presses: Vec<Press>,
     next_press: u64,
@@ -235,7 +179,6 @@ pub(super) struct CardKeys {
 }
 
 impl CardKeys {
-    /// Asks Hestia for the mod's hotkeys and info, once per library.
     pub(super) fn ask(&mut self, mod_id: &str) {
         if self.asked.get(mod_id) != Some(&self.library) {
             self.asked.insert(mod_id.to_owned(), self.library);
@@ -248,7 +191,6 @@ impl CardKeys {
         }
     }
 
-    /// What to ask Hestia for since the last call.
     pub(super) fn take_requests(&mut self) -> Vec<FromOverlay> {
         std::mem::take(&mut self.requests)
     }
@@ -268,8 +210,6 @@ impl CardKeys {
         self.info.receive(answer);
     }
 
-    /// Hestia sent a new library.  The hotkeys known so far still show
-    /// until Hestia sends them again.
     pub(super) fn library_changed(&mut self) {
         self.library += 1;
     }
@@ -280,7 +220,6 @@ impl CardKeys {
             .is_some_and(|list| !list.is_empty())
     }
 
-    /// The mod has a description, a personal note or a text file to show.
     pub(super) fn has_info(&self, mod_id: &str) -> bool {
         self.info.has(mod_id)
     }
@@ -292,9 +231,6 @@ impl CardKeys {
         }
     }
 
-    /// Turns the mod's card over to `side`, or back when it shows that
-    /// already.  A card showing its other side shows this one at once.
-    /// Nothing for a mod without anything for that side.
     pub(super) fn toggle(&mut self, mod_id: &str, side: Side, now: f64) {
         let has = self.has_side(mod_id, side);
         match &mut self.flip {
@@ -317,7 +253,6 @@ impl CardKeys {
                         flip.selected = 0;
                     }
                 }
-                // Midway, it turns back from where it is.
                 let turn = flip.turn(now);
                 flip.back = !flip.back;
                 let remaining = if flip.back { 1.0 - turn } else { turn };
@@ -337,7 +272,6 @@ impl CardKeys {
         }
         self.info.close_menu();
         if side == Side::Info && self.showing_info(mod_id) {
-            // The note may have changed in Hestia's window since.
             self.requests.push(FromOverlay::Info {
                 mod_id: mod_id.to_owned(),
             });
@@ -345,7 +279,6 @@ impl CardKeys {
         self.labels[side as usize].hold();
     }
 
-    /// Shows the front of every card again.
     pub(super) fn reset(&mut self) {
         self.flip = None;
         self.back = None;
@@ -353,8 +286,6 @@ impl CardKeys {
         self.info.close_menu();
     }
 
-    /// Only the focused card turns over.  One that lost the focus shows its
-    /// front again.
     pub(super) fn keep_focused(&mut self, focused: Option<&str>) {
         if self
             .flip
@@ -374,7 +305,6 @@ impl CardKeys {
             self.reset();
             return Face::FRONT;
         }
-        // Each side narrows to nothing, or widens from it, for half the time.
         let angle = turn * std::f32::consts::PI;
         Face {
             back: turn >= 0.5,
@@ -386,17 +316,14 @@ impl CardKeys {
         self.flip.as_ref().is_some_and(|flip| flip.turning(now))
     }
 
-    /// The side the turned card shows, or turns to.
     pub(super) fn side(&self) -> Side {
         self.flip.as_ref().map_or(Side::Keys, |flip| flip.side)
     }
 
-    /// Whether the mod's card shows its hotkeys, or turns to them.
     pub(super) fn showing(&self, mod_id: &str) -> bool {
         self.showing_side(mod_id, Side::Keys)
     }
 
-    /// Whether the mod's card shows its info, or turns to it.
     pub(super) fn showing_info(&self, mod_id: &str) -> bool {
         self.showing_side(mod_id, Side::Info)
     }
@@ -407,9 +334,6 @@ impl CardKeys {
             .is_some_and(|flip| flip.mod_id == mod_id && flip.back && flip.side == side)
     }
 
-    /// Moves the back's selection a row up for a negative direction, or down,
-    /// and scrolls it into view.  The info scrolls a few lines instead.
-    /// False when there's no row, or no more lines, that way.
     pub(super) fn select(&mut self, direction: i32) -> bool {
         let Some(flip) = self.flip.as_mut().filter(|flip| flip.back) else {
             return false;
@@ -440,7 +364,6 @@ impl CardKeys {
         true
     }
 
-    /// Asks Hestia to press the selected key of the card showing its keys.
     pub(super) fn press_selected(&mut self, now: f64) {
         if let Some(flip) = self
             .flip
@@ -480,8 +403,6 @@ impl CardKeys {
         });
     }
 
-    /// Hestia answered a press.  Lights its key when the game got it.  Gives
-    /// back why it didn't, for the warning strip.
     pub(super) fn pressed(&mut self, id: u64, error: Option<String>, now: f64) -> Option<String> {
         if let Some(at) = self.presses.iter().position(|press| press.id == id) {
             let press = self.presses.remove(at);
@@ -496,20 +417,15 @@ impl CardKeys {
         error
     }
 
-    /// Call before anything reads `owns_press` this frame.
     pub(super) fn begin_frame(&mut self) {
         self.last_own_clicks = std::mem::take(&mut self.own_clicks);
         self.last_back = self.back.take();
     }
 
-    /// Whether a press there belongs to a button or the back, not to the
-    /// carousel.
     pub(super) fn owns_press(&self, pos: egui::Pos2) -> bool {
         self.last_own_clicks.iter().any(|rect| rect.contains(pos))
     }
 
-    /// Scrolls a back whose rows or lines don't fit with the wheel over it,
-    /// which then doesn't move the carousel.
     pub(super) fn scroll_with_wheel(&mut self, ui: &mut Ui) {
         let (Some(flip), Some(back)) = (&mut self.flip, self.last_back) else {
             return;
@@ -554,11 +470,6 @@ impl CardKeys {
         }
     }
 
-    /// The keys button in the corner of `card`, when the mod has hotkeys,
-    /// and the info button left of it, when it has info.  On the back, the
-    /// one for the side it shows is lit.  Hovered, a button slides out what
-    /// it does to its left, and the info button moves aside for the keys
-    /// button's.  None for a mod with neither.
     pub(super) fn buttons(
         &mut self,
         ui: &Ui,
@@ -600,8 +511,6 @@ impl CardKeys {
                     },
                 ),
             };
-            // Clear of the tick box in the other corner, and of the buttons
-            // still to come.
             let others = (sides.len() - index - 1) as f32 * BUTTON_ROOM;
             let label = elided_galley(
                 ui,
@@ -645,7 +554,6 @@ impl CardKeys {
         Some(Buttons { list })
     }
 
-    /// Paints the buttons.  The side whose button was clicked.
     pub(super) fn paint_buttons(
         &mut self,
         ui: &Ui,
@@ -662,7 +570,6 @@ impl CardKeys {
         clicked
     }
 
-    /// True when it was clicked.
     fn paint_button(&mut self, ui: &Ui, button: BackButton, overlay_opacity: u8) -> bool {
         let BackButton {
             side,
@@ -715,10 +622,6 @@ impl CardKeys {
         response.clicked()
     }
 
-    /// The back of the mod's card: its name, then its hotkeys, or its info.
-    /// `card` is where the whole card goes, `shown` the part that shows
-    /// while it turns.  `selecting` marks the row Space presses.  The side
-    /// whose button was clicked.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn paint_back(
         &mut self,
@@ -747,7 +650,6 @@ impl CardKeys {
             fade(rgba_alpha(24, 24, 24, 242, overlay_opacity)),
         );
         let inner = card.shrink(PADDING);
-        // Up to the buttons, however far their labels are out.
         let header = Rect::from_min_max(
             egui::pos2(inner.min.x, card.min.y + INSET),
             egui::pos2(
@@ -817,13 +719,11 @@ impl CardKeys {
         );
         let clicked = buttons.and_then(|buttons| self.paint_buttons(ui, buttons, overlay_opacity));
         if side == Side::Info && settled {
-            // Over the buttons and the text, so its rows get the clicks.
             self.paint_info_menu(ui, id, card, header, mod_id, overlay_opacity);
         }
         clicked
     }
 
-    /// The hotkeys under the back's header, from the scrolled-to row.
     #[allow(clippy::too_many_arguments)]
     fn paint_key_rows(
         &mut self,
@@ -859,8 +759,6 @@ impl CardKeys {
         let key_font = FontId::proportional(11.0);
         let label_font = FontId::proportional(12.0);
         let key_color = fade(content_gray(235, overlay_opacity));
-        // The keys line up in a column as wide as the widest, up to half
-        // the card.
         let room = list.width() - if hidden > 0 { 6.0 } else { 0.0 };
         let column = rows
             .iter()
@@ -880,8 +778,6 @@ impl CardKeys {
                 egui::pos2(list.min.x - 4.0, y - ROW_HEIGHT * 0.5),
                 egui::pos2(list.min.x + room, y + ROW_HEIGHT * 0.5),
             );
-            // Above the card, so a click on a key presses it, not turns the
-            // card back.
             let hovered = settled && !row.unavailable && {
                 let response = ui
                     .interact(row_rect, id.with(index), Sense::click())
@@ -1003,8 +899,6 @@ impl CardKeys {
     }
 }
 
-/// A thin bar on the right of `list` that says where the `fit` rows or
-/// lines from `first` are among all `count`.
 #[allow(clippy::too_many_arguments)]
 fn paint_scrollbar(
     painter: &egui::Painter,
@@ -1040,7 +934,6 @@ fn paint_scrollbar(
     );
 }
 
-/// Where the keys button goes on a card.
 pub(super) fn button_rect(card: Rect) -> Rect {
     Rect::from_min_size(
         egui::pos2(card.max.x - INSET - BUTTON_SIZE, card.min.y + INSET),
@@ -1048,10 +941,8 @@ pub(super) fn button_rect(card: Rect) -> Rect {
     )
 }
 
-/// The room a button takes from the NEW tag beside it.
 const BUTTON_ROOM: f32 = BUTTON_SIZE + BUTTON_GAP;
 
-/// A card narrowed around its middle while it turns.
 pub(super) fn narrowed(card: Rect, width: f32) -> Rect {
     Rect::from_center_size(
         card.center(),
@@ -1083,7 +974,6 @@ mod tests {
         let mut label = Label::default();
         assert_eq!(label.update(id, true, 1, LABEL_SECS), 1.0);
         label.hold();
-        // The button comes back under the pointer once the card has turned.
         assert_eq!(label.update(id, true, 20, LABEL_SECS), 0.0);
         assert_eq!(label.update(id, true, 21, LABEL_SECS), 0.0);
         assert_eq!(label.update(id, false, 22, LABEL_SECS), 0.0);
@@ -1156,7 +1046,6 @@ mod tests {
         keys.toggle("some", Side::Info, FLIP_SECS);
         assert!(keys.showing_info("some") && !keys.showing("some"));
         assert!(keys.face("some", FLIP_SECS).back, "it stays turned");
-        // Opening the info asks again, for a note written since.
         assert_eq!(
             keys.take_requests(),
             vec![FromOverlay::Info {
@@ -1210,7 +1099,6 @@ mod tests {
         let after = keys.face("some", quarter);
         assert!(!before.back && !after.back);
         assert!((before.width - after.width).abs() < 1e-4);
-        // It's back on its front a quarter of the time later.
         assert_eq!(keys.face("some", quarter * 2.0 + 1e-6), Face::FRONT);
         assert!(keys.flip.is_none());
     }
@@ -1234,7 +1122,6 @@ mod tests {
         }
         let flip = keys.flip.as_ref().unwrap();
         assert_eq!((flip.selected, flip.scroll), (0, 0));
-        // A shorter list from Hestia keeps the selection on it.
         assert!(keys.select(1) && keys.select(1) && keys.select(1));
         keys.receive(answer("some", 2));
         assert_eq!(keys.flip.as_ref().unwrap().selected, 1);
@@ -1286,7 +1173,6 @@ mod tests {
         );
         assert_eq!(keys.lit.as_ref().unwrap().at, 2.0);
         assert!(keys.presses.is_empty());
-        // One Hestia never answered stops showing.
         keys.press_selected(3.0);
         keys.press_selected(3.0 + ANSWER_SECS);
         assert_eq!(keys.presses.len(), 1);

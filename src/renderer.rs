@@ -1,32 +1,9 @@
-//! Renderer and wgpu backend selection, plus the boot breadcrumb that demotes a
-//! renderer which dies before it can put frames on screen.
-//!
-//! wgpu is preferred over glow because eframe's glow backend rebinds the GL
-//! context twice per frame, and on Windows `wglMakeCurrent` flushes the
-//! pipeline: ~5 ms of CPU per repaint, most of the frame cost whenever the
-//! cursor moves over the window (egui #4173). Windows starts the ladder at
-//! DX12 because wgpu otherwise tends to pick Vulkan, whose swapchain bypasses
-//! DWM flip-model presentation and costs ~4x the GPU time per present
-//! (measured 11% vs 3% GPU while repainting maximized at 2560x1440).
-//!
-//! Selection walks a per-platform ladder and takes the first rung with a
-//! hardware adapter, so a machine without the preferred backend degrades one
-//! step at a time instead of dropping straight to glow. Each rung is probed
-//! with its own narrowly scoped `wgpu::Instance`, and probing stops at the
-//! first hit: the common Windows path never loads the Vulkan or GL loader,
-//! which keeps startup cheap and keeps overlay injectors (RTSS, Afterburner,
-//! Discord, XXMI) out of a code path we do not use.
-
 use crate::model::RendererPreference;
 use crate::persistence::{self, PortablePaths};
 use eframe::wgpu;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Which adapter a rung wants inside its backend. Explicit user picks force a
-/// device type; `MatchDisplay` (used by Auto) defers to the adapter that drives
-/// the window's monitor so the present never crosses adapters; `Any` takes the
-/// first hardware adapter (glow, env pins).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuTarget {
     Any,
@@ -36,8 +13,6 @@ pub enum GpuTarget {
 }
 
 impl GpuTarget {
-    /// Does this adapter satisfy the target? `Any`/`MatchDisplay` accept every
-    /// hardware adapter here; `MatchDisplay` is resolved later, in the selector.
     fn accepts(self, device_type: wgpu::DeviceType) -> bool {
         match self {
             GpuTarget::Integrated => device_type == wgpu::DeviceType::IntegratedGpu,
@@ -47,26 +22,16 @@ impl GpuTarget {
     }
 }
 
-/// Sits next to `hestia.toml`, so a portable install keeps its own record.
 const BREADCRUMB_FILE: &str = "hestia-renderer.toml";
 
-/// Number of completed egui passes that counts as "this renderer works". Frames
-/// are presented after the pass that built them, so reaching pass 3 means at
-/// least two presents survived the driver.
 const PASSES_TO_CONFIRM: u64 = 3;
 
-/// One rung of the fallback ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Rung {
-    /// Stable id recorded in the breadcrumb file. Never rename these.
     id: &'static str,
-    /// Fallback API name, used when no adapter was probed (glow) or the probed
-    /// backend is unrecognized.
     label: &'static str,
     renderer: eframe::Renderer,
-    /// Backends the wgpu instance is restricted to. Unused by the glow rung.
     backends: wgpu::Backends,
-    /// Which adapter within `backends` the rung wants.
     gpu: GpuTarget,
 }
 
@@ -126,8 +91,6 @@ const WGPU_GL: Rung = Rung {
     gpu: GpuTarget::Any,
 };
 
-/// Terminal rung: no adapter probe, always accepted. eframe ignores
-/// `wgpu_options` entirely when the renderer is glow.
 const GLOW: Rung = Rung {
     id: "glow",
     label: "OpenGL",
@@ -138,42 +101,25 @@ const GLOW: Rung = Rung {
 
 #[cfg(windows)]
 const AUTO_LADDER: &[Rung] = &[DX12, VULKAN, WGPU_GL, GLOW];
-/// wgpu builds no GL backend for macOS without the `angle` feature, so the
-/// ladder skips straight from Metal to glow.
 #[cfg(target_os = "macos")]
 const AUTO_LADDER: &[Rung] = &[METAL, GLOW];
 #[cfg(all(not(windows), not(target_os = "macos")))]
 const AUTO_LADDER: &[Rung] = &[VULKAN, WGPU_GL, GLOW];
 
-/// What [`select`] decided, plus everything the rest of the app needs to know
-/// about that decision.
 pub struct Selection {
     pub renderer: eframe::Renderer,
     pub backends: wgpu::Backends,
-    /// Which adapter within `backends` to run on. Consumed by [`pick_adapter`]
-    /// through eframe's `native_adapter_selector`.
     pub gpu: GpuTarget,
-    /// API name Auto resolves to on this machine. Settings compares it against
-    /// the active renderer so the restart button only appears for a selection
-    /// that would actually change something.
     pub auto_label: &'static str,
-    /// A breadcrumb was written and must be cleared once frames land; see
-    /// [`confirm_boot`]. False when an env override is pinning the renderer.
     pub breadcrumb_pending: bool,
 }
 
-/// Adapter probe with a memo, so overlapping ladders (the preference ladder and
-/// the Auto ladder) never enumerate the same backend/target twice.
 #[derive(Default)]
 struct Prober {
     memo: Vec<((wgpu::Backends, GpuTarget), Option<wgpu::Backend>)>,
 }
 
 impl Prober {
-    /// The backend of the first hardware adapter in `backends` that satisfies
-    /// `gpu`, or `None` when the machine has no such adapter. A `Dedicated`
-    /// probe therefore fails on an integrated-only box, letting the ladder fall
-    /// through to the next rung instead of forcing a GPU that is not there.
     fn hardware_backend(
         &mut self,
         backends: wgpu::Backends,
@@ -208,8 +154,6 @@ impl Prober {
     }
 }
 
-/// Proper API name for a backend; matches the mapping the settings window uses
-/// for the *active* renderer so the two strings can be compared.
 fn label_for_backend(backend: wgpu::Backend) -> Option<&'static str> {
     match backend {
         wgpu::Backend::Dx12 => Some("DirectX 12"),
@@ -220,9 +164,6 @@ fn label_for_backend(backend: wgpu::Backend) -> Option<&'static str> {
     }
 }
 
-/// First rung with a hardware adapter, labelled by the adapter actually found
-/// rather than by the rung, so a multi-backend rung (`WGPU_BACKEND`) still
-/// reports the truth.
 fn resolve(rungs: &[Rung], prober: &mut Prober) -> Option<(Rung, &'static str)> {
     for rung in rungs {
         if rung.renderer == eframe::Renderer::Glow {
@@ -252,8 +193,6 @@ fn preferred_rung(pref: RendererPreference) -> Option<Rung> {
     }
 }
 
-/// The preference first, then the Auto ladder as fallback. Platform-invalid
-/// preferences contribute nothing and behave like Auto.
 fn ladder(pref: RendererPreference) -> Vec<Rung> {
     let mut rungs: Vec<Rung> = Vec::with_capacity(AUTO_LADDER.len() + 1);
     if let Some(rung) = preferred_rung(pref) {
@@ -267,9 +206,6 @@ fn ladder(pref: RendererPreference) -> Vec<Rung> {
     rungs
 }
 
-/// `HESTIA_RENDERER` / `WGPU_BACKEND` pin the renderer for debugging. They win
-/// over the stored preference and bypass the breadcrumb entirely, so a crash
-/// under an override never demotes the user's normal boot.
 fn env_ladder() -> Option<Vec<Rung>> {
     let env_backends = wgpu::Backends::from_env();
     let pinned = |backends: wgpu::Backends| Rung {
@@ -290,7 +226,6 @@ fn env_ladder() -> Option<Vec<Rung>> {
                     .filter(|rung| rung.renderer != eframe::Renderer::Glow)
                     .collect(),
             };
-            // Still better to start on glow than not at all.
             rungs.push(GLOW);
             return Some(rungs);
         }
@@ -299,20 +234,12 @@ fn env_ladder() -> Option<Vec<Rung>> {
     env_backends.map(|backends| vec![pinned(backends), GLOW])
 }
 
-/// Persisted next to the config. Absent on a healthy machine that has finished
-/// booting at least once.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BootRecord {
-    /// Renderer id currently being tried. Still present at startup means the
-    /// previous launch never reached [`PASSES_TO_CONFIRM`] and didn't close
-    /// cleanly either.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     attempt: Option<String>,
-    /// Renderer ids that died before confirming. Skipped by the ladder.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     failed: Vec<String>,
-    /// App version that produced `failed`. A different version clears it: an
-    /// app or driver update is exactly when a broken backend can start working.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app_version: Option<String>,
 }
@@ -328,8 +255,6 @@ impl BootRecord {
         })
     }
 
-    /// Removed rather than written when there is nothing left worth keeping, so
-    /// the healthy case leaves no file behind.
     fn save(&self, path: &Path) -> anyhow::Result<()> {
         if self.attempt.is_none() && self.failed.is_empty() {
             if path.exists() {
@@ -356,7 +281,6 @@ impl BootRecord {
         self.app_version = Some(current.to_owned());
     }
 
-    /// An attempt still on record was never confirmed by a running window.
     fn demote_unconfirmed_attempt(&mut self) {
         let Some(attempt) = self.attempt.take() else {
             return;
@@ -377,12 +301,6 @@ fn breadcrumb_path(portable: &PortablePaths) -> PathBuf {
     }
 }
 
-/// Picks the renderer for this launch and records the attempt.
-///
-/// Priority: `HESTIA_RENDERER` / `WGPU_BACKEND` env overrides, then the user's
-/// stored preference, then Auto; at every step a rung known to have failed
-/// startup is skipped, and a rung with no hardware adapter falls through to the
-/// next.
 pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
     let mut prober = Prober::default();
 
@@ -393,13 +311,11 @@ pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
             renderer: rung.renderer,
             backends: rung.backends,
             gpu: rung.gpu,
-            // Nothing a restart could change while the override is set.
             auto_label: label,
             breadcrumb_pending: false,
         };
     }
 
-    // Probed even when the preference is explicit, for the settings comparison.
     let auto_label =
         resolve(&ladder(RendererPreference::Auto), &mut prober).map_or(GLOW.label, |(_, l)| l);
 
@@ -415,8 +331,6 @@ pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
         .filter(|rung| !record.failed.iter().any(|id| id == rung.id))
         .collect();
     if allowed.is_empty() {
-        // Every option has failed at some point. Wipe the slate rather than
-        // leave the app with nothing to start on.
         tracing::warn!(
             "every renderer has failed to start before; retrying the ladder from the top"
         );
@@ -445,17 +359,6 @@ pub fn select(portable: &PortablePaths, pref: RendererPreference) -> Selection {
     }
 }
 
-/// Chooses the adapter eframe should create the device on, honoring the rung's
-/// [`GpuTarget`]. Wired into `WgpuSetupCreateNew::native_adapter_selector`, which
-/// hands us the adapters already filtered to the selected backend plus the
-/// window's surface. Never fails: an unsatisfiable target falls back to the
-/// first hardware adapter so the app still boots (the ladder already refused a
-/// rung whose GPU is absent, so this only bites on a fresh enumeration mismatch).
-///
-/// `display_pci` is the `(vendor, device)` of the GPU driving the window's
-/// monitor, used only by [`GpuTarget::MatchDisplay`] to keep the present on a
-/// single adapter. `None` (detection failed, or non-Windows) degrades Match to
-/// "prefer integrated", which is the safe default next to a running game.
 pub fn pick_adapter(
     adapters: &[wgpu::Adapter],
     gpu: GpuTarget,
@@ -473,10 +376,6 @@ pub fn pick_adapter(
     Some(adapters[index].clone())
 }
 
-/// The adapter-choice logic behind [`pick_adapter`], split out to be testable
-/// without a live GPU. Never returns `None` for a non-empty list: an
-/// unsatisfiable target falls back to the first hardware adapter, then to the
-/// first adapter at all, so the app always has something to boot on.
 fn select_adapter_index(
     infos: &[wgpu::AdapterInfo],
     gpu: GpuTarget,
@@ -496,7 +395,6 @@ fn select_adapter_index(
                         && infos[i].device == device
                 })
             })
-            // No display match: keep off the discrete GPU a game may want.
             .or_else(|| first_of(wgpu::DeviceType::IntegratedGpu))
             .or_else(first_hw),
         GpuTarget::Any => first_hw(),
@@ -504,11 +402,6 @@ fn select_adapter_index(
     chosen.or_else(|| (!infos.is_empty()).then_some(0))
 }
 
-/// `(vendor, device)` PCI ids of the GPU that drives the monitor the window
-/// will open on, for [`GpuTarget::MatchDisplay`]. `window_pos` is the saved
-/// top-left in desktop coordinates; `None` (first run, or maximized) resolves to
-/// the primary monitor. Returns `None` if anything in the lookup fails, which
-/// [`pick_adapter`] treats as "prefer integrated".
 #[cfg(windows)]
 pub fn display_pci_for_window(window_pos: Option<(i32, i32)>) -> Option<(u32, u32)> {
     use windows::Win32::Foundation::POINT;
@@ -551,13 +444,10 @@ pub fn display_pci_for_window(_window_pos: Option<(i32, i32)>) -> Option<(u32, u
     None
 }
 
-/// True once enough passes have run that this renderer counts as working.
 pub fn boot_confirmed(ctx: &egui::Context) -> bool {
     ctx.cumulative_pass_nr() >= PASSES_TO_CONFIRM
 }
 
-/// Clears the boot breadcrumb: the renderer reached the screen, or the app
-/// closed cleanly before it had the chance.
 pub fn confirm_boot(portable: &PortablePaths) {
     let path = breadcrumb_path(portable);
     let mut record = BootRecord::load(&path);
@@ -609,8 +499,6 @@ mod tests {
             (RendererPreference::VulkanDedicated, VULKAN_DGPU),
         ];
         for (pref, rung) in cases {
-            // Only assert on platforms where the preference is valid; elsewhere
-            // it deliberately behaves like Auto (no preferred rung).
             if pref.valid_on_current_platform() {
                 assert_eq!(preferred_rung(pref), Some(rung));
                 assert_ne!(
@@ -644,8 +532,6 @@ mod tests {
             0x4680,
             "iGPU",
         )];
-        // No discrete adapter: fall back to the one hardware adapter rather than
-        // failing to boot.
         assert_eq!(
             select_adapter_index(&infos, GpuTarget::Dedicated, None),
             Some(0)
@@ -657,17 +543,14 @@ mod tests {
         let igpu = info(wgpu::DeviceType::IntegratedGpu, 0x8086, 0x4680, "iGPU");
         let dgpu = info(wgpu::DeviceType::DiscreteGpu, 0x10de, 0x2503, "dGPU");
         let infos = [igpu, dgpu];
-        // Window on the discrete GPU's monitor: render there, no cross-adapter.
         assert_eq!(
             select_adapter_index(&infos, GpuTarget::MatchDisplay, Some((0x10de, 0x2503))),
             Some(1)
         );
-        // Unknown display GPU: stay on the integrated adapter, off the game's GPU.
         assert_eq!(
             select_adapter_index(&infos, GpuTarget::MatchDisplay, None),
             Some(0)
         );
-        // Display GPU not among the backend's adapters: same integrated fallback.
         assert_eq!(
             select_adapter_index(&infos, GpuTarget::MatchDisplay, Some((0xdead, 0xbeef))),
             Some(0)
@@ -678,8 +561,6 @@ mod tests {
     fn explicit_preference_leads_then_falls_back_to_auto() {
         let rungs = ladder(RendererPreference::OpenGl);
         assert_eq!(rungs.first().map(|rung| rung.id), Some(GLOW.id));
-        // No duplicate rungs, so a preference that is also in the Auto ladder
-        // is not probed twice.
         for rung in &rungs {
             assert_eq!(rungs.iter().filter(|other| other.id == rung.id).count(), 1);
         }
@@ -709,7 +590,6 @@ mod tests {
         record.demote_unconfirmed_attempt();
         assert!(record.attempt.is_none());
         assert_eq!(record.failed, vec!["dx12".to_owned()]);
-        // Repeated failures do not pile up duplicates.
         record.attempt = Some("dx12".to_owned());
         record.demote_unconfirmed_attempt();
         assert_eq!(record.failed, vec!["dx12".to_owned()]);
@@ -738,9 +618,6 @@ mod tests {
         }
     }
 
-    /// Runs a real adapter probe on whatever machine the tests run on, so the
-    /// assertions are about the breadcrumb lifecycle rather than which backend
-    /// wins. A GPU-less runner simply lands on glow.
     #[test]
     fn breadcrumb_is_written_on_select_and_cleared_on_confirm() {
         let dir = tempfile::tempdir().unwrap();
@@ -759,8 +636,6 @@ mod tests {
         );
     }
 
-    /// The crash case: a breadcrumb survives the launch, so the next `select`
-    /// blames that renderer and refuses to pick it again.
     #[test]
     fn an_unconfirmed_launch_demotes_the_renderer_next_time() {
         let dir = tempfile::tempdir().unwrap();
@@ -771,15 +646,12 @@ mod tests {
         assert!(first.breadcrumb_pending);
         let crashed = BootRecord::load(&path).attempt.unwrap();
 
-        // No `confirm_boot`: stands in for a process that died before drawing.
         let second = select(&portable, RendererPreference::Auto);
         assert!(second.breadcrumb_pending);
         let record = BootRecord::load(&path);
         assert!(record.failed.contains(&crashed));
         assert_ne!(record.attempt, Some(crashed));
 
-        // Auto's advertised label ignores the demotion: it describes the
-        // hardware, not this machine's accumulated bad luck.
         assert_eq!(first.auto_label, second.auto_label);
     }
 

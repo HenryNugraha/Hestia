@@ -1,9 +1,3 @@
-//! Search state for the native overlay preview.
-//!
-//! Tab, F or Ctrl+F start typing.  Tab stops typing and keeps the results, so
-//! the normal keys work on them.  Esc clears the search, and Esc again closes
-//! the overlay.
-
 #[derive(Debug, Default)]
 pub(super) struct Search {
     query: String,
@@ -19,18 +13,14 @@ impl Search {
         &mut self.query
     }
 
-    /// Whether letters and Space type into the search instead of moving.
     pub(super) fn typing(&self) -> bool {
         self.typing
     }
 
-    /// Whether the search field shows: while typing, or while it filters.
     pub(super) fn active(&self) -> bool {
         self.typing || !self.query.is_empty()
     }
 
-    /// Tab, F or Ctrl+F.  F types while searching, so the keyboard only sends
-    /// this for it when typing is off.
     pub(super) fn toggle(&mut self) {
         self.typing = !self.typing;
     }
@@ -43,8 +33,6 @@ impl Search {
         self.typing = false;
     }
 
-    /// Clears an active search and returns true.  Returns false when there
-    /// was nothing to clear, so Esc can close the overlay instead.
     pub(super) fn escape(&mut self) -> bool {
         let active = self.active();
         self.clear();
@@ -72,7 +60,6 @@ mod tests {
         assert!(!search.typing());
         assert!(search.active());
         assert_eq!(search.query(), "vow");
-        // Tab again goes back to editing the same search.
         search.toggle();
         assert!(search.typing());
         assert_eq!(search.query(), "vow");
@@ -97,12 +84,10 @@ mod tests {
         assert_eq!(search.query(), "");
         assert!(!search.escape());
 
-        // Results that are no longer being typed clear the same way.
         search.query_mut().push_str("vow");
         assert!(search.escape());
         assert!(!search.escape());
 
-        // So does an empty search that is being typed.
         search.start_typing();
         assert!(search.escape());
         assert!(!search.typing());

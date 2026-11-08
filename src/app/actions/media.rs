@@ -174,9 +174,6 @@ impl HestiaApp {
         Ok(imported)
     }
 
-    /// Best-effort sibling of `import_manual_images_from_paths` for images a
-    /// mod shipped with: one unreadable file skips that file instead of
-    /// failing and rolling back the whole adoption.
     fn import_bundled_images_best_effort(mod_root: &Path, paths: Vec<PathBuf>) -> Vec<String> {
         let mut imported = Vec::new();
         for path in paths {
@@ -190,10 +187,6 @@ impl HestiaApp {
         imported
     }
 
-    /// After an external (non-Browse) install, adopt any preview image the mod
-    /// shipped with (preview.jpg, .JASM_Cover.jpg, a loose 1.png next to the
-    /// ini) as if the user had supplied it manually. Linked mods keep their
-    /// GameBanana images; a mod that already shows a screenshot is left alone.
     fn enqueue_adopt_bundled_preview_images(&mut self, mod_id: &str) {
         let Some(mod_entry) = self.state.mods.iter().find(|item| item.id == mod_id) else {
             return;
@@ -213,9 +206,6 @@ impl HestiaApp {
         self.manual_image_imports_pending = self.manual_image_imports_pending.saturating_add(1);
         self.runtime_services.spawn(async move {
             let result = handle.spawn_blocking(move || {
-                // A Replace install can leave screenshot entries whose files
-                // died with the old folder; only a screenshot that still
-                // exists on disk blocks adoption.
                 let has_live_screenshot = existing_screenshots
                     .iter()
                     .any(|rel| root_path.join(rel).exists());
@@ -226,8 +216,6 @@ impl HestiaApp {
                 Self::import_bundled_images_best_effort(&root_path, discovered)
             });
             let rel_paths = result.await.unwrap_or_default();
-            // Always send, even empty: the pending counter above must come
-            // back down exactly once per enqueue.
             let _ = tx.send(ManualImageEvent::BundledAdopted {
                 mod_id,
                 folder_name,
@@ -413,8 +401,6 @@ impl HestiaApp {
                             })
                             .await
                             .map_err(|err| anyhow!("image cache read worker failed: {err}"))?
-                            // A cache read failure is only a miss here; fall back
-                            // to downloading the image again.
                             .unwrap_or(None);
                         match cached {
                             Some(bytes) => bytes,
@@ -529,9 +515,6 @@ impl HestiaApp {
                             continue;
                         };
                         let old_cover = mod_entry.metadata.user.cover_image.clone();
-                        // Adoption only ran because no listed screenshot still
-                        // existed on disk; drop those dead entries so the
-                        // adopted previews become the visible set.
                         let root_path = mod_entry.root_path.clone();
                         mod_entry
                             .metadata
@@ -612,8 +595,6 @@ impl HestiaApp {
     }
 
     fn enqueue_cover_preload(&mut self) {
-        // The selected game's cover is loaded straight away when it is picked,
-        // but its blurred copy still comes from here, so it is not skipped.
         for game in &self.state.games {
             let game_id = &game.definition.id;
             if self.game_cover_backdrop_textures.contains_key(game_id) {
@@ -718,10 +699,6 @@ impl HestiaApp {
 
     fn resolve_mod_thumb_path(mod_root: &Path, profile: ThumbnailProfile) -> PathBuf {
         let file_name = match profile {
-            // `_v2` busts caches from before card thumbs were baked cover-cropped
-            // to the card aspect; the old letterboxed `card_thumb.png` files are
-            // valid by source-identity, so a filename change is what forces the
-            // one-time regeneration.
             ThumbnailProfile::Card => "card_thumb_v2.png",
             ThumbnailProfile::Rail => "rail_thumb.png",
             ThumbnailProfile::Icon => "icon_thumb.png",
@@ -883,9 +860,6 @@ impl HestiaApp {
             return CardThumbQueueOutcome::NotNeeded;
         }
         let (expected_meta, source_path, source_url) = Self::current_card_thumb_meta(mod_entry);
-        // A mod with no usable cover source would otherwise be re-requested on
-        // every frame that renders its card, and each empty result schedules the
-        // next frame — a self-sustaining loop for the whole session.
         if let Some(failure) = self.mod_thumb_unavailable.get(mod_id)
             && failure.still_applies(&expected_meta)
         {
@@ -933,7 +907,6 @@ impl HestiaApp {
             return;
         }
         if self.pending_mod_image_requests.contains(&texture_key) {
-            // allow mode upgrade via enqueue method
         } else {
             self.pending_mod_image_requests.insert(texture_key.clone());
         }
@@ -953,15 +926,10 @@ impl HestiaApp {
         if self.mod_full_textures.contains_key(&texture_key) {
             return;
         }
-        // Callers ask once per frame for as long as the texture is missing, and a
-        // full-size decode outlives many frames. `enqueue_local_mod_image_request`
-        // only dedupes against what is still queued, so a dispatched request has
-        // to be tracked here or the same image is decoded dozens of times over.
         if self.inflight_full_image_requests.contains(&texture_key) {
             return;
         }
         if self.pending_mod_image_requests.contains(&texture_key) {
-            // full will be retried on next frame if currently occupied by thumb request
         } else {
             self.pending_mod_image_requests.insert(texture_key.clone());
         }
@@ -1256,9 +1224,6 @@ impl HestiaApp {
         if self.pending_mod_image_queue.is_empty() {
             return;
         }
-        // A foreground profile operation renames the live mod roots wholesale, and on Windows
-        // any open handle below them, including this worker's own image reads, makes that rename
-        // fail. Hold the queue until the operation is over; nothing is dropped.
         if self.profile_operation_locks_app() {
             return;
         }
@@ -1270,13 +1235,11 @@ impl HestiaApp {
             LOCAL_IMAGE_DISPATCH_BATCH
         };
 
-        // CONTEXTUAL THROTTLING: Suspend background work to prioritize current user focus
         let mut allowed_mod_id = String::new();
         let mut focus_mode = false;
 
         if let Some(mod_id) = self.selected_mod_id.as_ref() {
             if self.mod_detail_open || self.browse_state.screenshot_overlay.is_some() {
-                // Only allow if the overlay/detail actually belongs to this local mod
                 let belongs = self
                     .browse_state
                     .screenshot_overlay
@@ -1292,10 +1255,9 @@ impl HestiaApp {
             }
         }
 
-        // If a browse overlay is active, suspend all local mod background work to free resources
         if !focus_mode && self.browse_state.screenshot_overlay.is_some() {
             focus_mode = true;
-            allowed_mod_id = "__NONE__".to_string(); // Effectively disallow all local mod images
+            allowed_mod_id = "__NONE__".to_string();
         }
 
         self.pending_mod_image_queue.sort_by_key(|req| {
@@ -1401,9 +1363,6 @@ impl HestiaApp {
                     }
                 }
             }
-            // Only card-thumb results carry the source identity they were built
-            // from. An empty one means that source has nothing to show, so record
-            // it and stop asking until the mod points at a different source.
             if let Some(meta) = result.thumb_meta.as_ref() {
                 if result.image_thumb.is_none() {
                     self.mod_thumb_unavailable.insert(
@@ -1459,10 +1418,8 @@ impl HestiaApp {
                     if self.pending_gif_animations.remove(&texture_key).is_none() {
                         continue;
                     }
-                    // Get current time for animation timing
                     let now = ctx.input(|i| i.time);
 
-                    // Load the first frame as an immediate texture
                     if let Some(first_frame) = animation.frames.first() {
                         let anim_texture_key = gif_animation_texture_key(&texture_key);
                         let texture = ctx.load_texture(
@@ -1478,7 +1435,6 @@ impl HestiaApp {
                         );
                     }
 
-                    // Store animation state
                     let state = AnimatedGifState {
                         animation,
                         current_frame: 0,
@@ -1507,8 +1463,6 @@ impl HestiaApp {
                 }
             }
         }
-        // Reset once per batch: the reset forces a full markdown re-layout, so doing
-        // it per event during a burst of GIF arrivals is wasted work.
         if markdown_relayout_needed {
             self.browse_commonmark_cache = CommonMarkCache::default();
         }
@@ -1613,11 +1567,6 @@ impl HestiaApp {
     }
 
     fn enforce_gif_work_timeouts(&mut self) {
-        // GIF workers report every request back, including cancelled ones, but a panicked
-        // or hung decode would leave its pending entry (and in-flight slot) held forever,
-        // which keeps the idle repaint poll alive. Drop requests that outlive any
-        // legitimate decode time. The event consumers tolerate a late reply for an
-        // already-dropped key, and the counters saturate at zero.
         const GIF_WORK_HARD_TIMEOUT: Duration = Duration::from_secs(60);
 
         let timed_out: Vec<String> = self
@@ -1671,16 +1620,13 @@ impl HestiaApp {
             };
             let elapsed_ms = ((now - state.frame_start_time) * 1000.0) as u32;
 
-            // Calculate total animation duration
             let total_duration_ms: u32 = state.animation.frames.iter().map(|f| f.delay_ms).sum();
             if total_duration_ms == 0 {
-                continue; // Skip animations with no valid timing
+                continue;
             }
 
-            // Normalize elapsed time to animation loop
             let loop_elapsed = elapsed_ms % total_duration_ms;
 
-            // Find which frame we should be on by accumulating delays
             let mut time_accum = 0u32;
             let mut new_frame = 0;
             for (i, frame) in state.animation.frames.iter().enumerate() {
@@ -1696,14 +1642,12 @@ impl HestiaApp {
                 }
             }
 
-            // Only queue texture update if frame actually changed
             if new_frame != state.current_frame {
                 state.current_frame = new_frame;
                 texture_updates.push((texture_key.clone(), new_frame));
             }
         }
 
-        // Apply texture updates (separate loop to avoid borrow conflicts)
         for (texture_key, frame_index) in texture_updates {
             if let Some(state) = self.animated_gif_state.get(&texture_key) {
                 if let Some(frame) = state.animation.frames.get(frame_index) {
@@ -1760,8 +1704,6 @@ impl HestiaApp {
             }
             ctx.request_repaint();
         }
-        // Reset once per batch: the reset forces a full markdown re-layout, so doing
-        // it per event during a burst of GIF arrivals is wasted work.
         if markdown_relayout_needed {
             self.browse_commonmark_cache = CommonMarkCache::default();
         }

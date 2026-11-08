@@ -1,5 +1,3 @@
-//! Strict Thalia update-matching transport and shared Altcha proof helpers.
-
 use std::{
     collections::HashSet,
     fmt,
@@ -24,13 +22,10 @@ use serde::{
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
-/// Failed or unavailable service responses leave local matching untouched.
 pub(crate) const THALIA_UPDATE_MATCHING_ENABLED: bool = true;
 const THALIA_UPDATE_MATCH_BASE_URL: &str = "https://thalia.hnawc.com";
 
 const THALIA_AUTH_URL: &str = "https://thalia.hnawc.com/auth";
-/// Thalia's worst case is about 23 s: a full queue, then GameBanana and the
-/// model. A request given up on still uses quota, so wait it out.
 const UPDATE_MATCH_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const TEST_UPDATE_MATCH_TIMEOUT: Duration = Duration::from_millis(200);
@@ -84,9 +79,6 @@ pub(crate) enum UpdateMatchAction {
     Uncertain,
 }
 
-/// How one extra file named in `requires` is installed: into the folder of
-/// the main file (the answer's `id`, or the installed file for `current`),
-/// or as its own mod.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum UpdateMatchRequiredAction {
     Merge,
@@ -103,7 +95,6 @@ pub(crate) struct UpdateMatchRequiredFile {
 pub(crate) struct UpdateMatchResponse {
     pub(crate) action: UpdateMatchAction,
     pub(crate) id: Option<u64>,
-    /// Missing on the wire means none.
     pub(crate) requires: Vec<UpdateMatchRequiredFile>,
 }
 
@@ -122,7 +113,6 @@ impl UpdateMatchResponse {
                 if self.id.is_some() {
                     return Err("current and uncertain require a null id".to_string());
                 }
-                // `current` may still need extra files for the installed one.
                 if self.action == UpdateMatchAction::Uncertain && !self.requires.is_empty() {
                     return Err("uncertain requires no extra files".to_string());
                 }
@@ -176,13 +166,10 @@ impl UpdateMatchError {
         matches!(self, Self::Cancelled)
     }
 
-    /// Thalia is busy or this address is over its limit; the same request
-    /// may be sent again after `retry_after`.
     pub(crate) fn is_rate_limited(&self) -> bool {
         matches!(self, Self::Http { status: 429, .. })
     }
 
-    /// Asking again gets the same refusal until the mod's page changes.
     pub(crate) fn is_permanent(&self) -> bool {
         matches!(
             self,
@@ -210,8 +197,6 @@ impl fmt::Display for UpdateMatchError {
 
 impl std::error::Error for UpdateMatchError {}
 
-/// Fetch an update classification. The application worker owns scheduling;
-/// this function performs one direct, unauthenticated request.
 pub(crate) async fn fetch_update_match(
     client: &reqwest::Client,
     request: UpdateMatchRequest,
@@ -401,7 +386,6 @@ fn proof_gate() -> Arc<AltchaProofGate> {
         .clone()
 }
 
-/// Foreground translation keeps the existing solver semantics.
 pub(crate) async fn solve_altcha_challenge_foreground(
     challenge: AltchaChallenge,
     cancellation: Arc<AtomicBool>,
@@ -461,8 +445,6 @@ async fn read_limited_body_anyhow(response: Response, limit: usize) -> Result<Ve
     Ok(body)
 }
 
-/// Existing Altcha challenge shape shared by the translation and matcher
-/// requests.  Keep the wire casing unchanged.
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct AltchaChallenge {
     parameters: AltchaParameters,
@@ -712,7 +694,6 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
     }
 }
 
-/// One `requires` entry, held to the same exact-shape rules as the response.
 struct StrictRequiredFile(UpdateMatchRequiredFile);
 
 impl<'de> Deserialize<'de> for StrictRequiredFile {

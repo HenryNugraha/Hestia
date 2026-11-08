@@ -26,8 +26,6 @@ enum FolderBatchAction {
     DeleteFoldersAndContents,
 }
 
-/// An invocation captures its category and member ids once. UI selection changes
-/// and newly installed members must not retarget an operation already in progress.
 #[derive(Debug, Clone)]
 struct FolderBatchTargets {
     game_id: String,
@@ -91,8 +89,6 @@ fn build_folder_batch_targets(
     })
 }
 
-/// Checkbox/Ctrl toggles; Shift replaces a range and Ctrl+Shift adds one.
-/// A missing or filtered-out anchor starts a new range at the clicked folder.
 fn select_visible_folder_range(
     selected: &mut HashSet<String>,
     anchor: Option<&str>,

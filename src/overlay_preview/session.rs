@@ -1,8 +1,3 @@
-//! Alt+H session rules for the native overlay preview.
-//!
-//! Alt+H opens the overlay with the keyboard.  Alt+H again, Esc, or a click
-//! on another window closes it.
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Session {
     #[default]
@@ -14,12 +9,7 @@ pub(super) enum Session {
 pub(super) enum Transition {
     None,
     Opened,
-    /// `return_focus` asks to hand the keyboard back, which is a no-op when
-    /// the overlay does not have it.  It is false when another window
-    /// already took the keyboard.
-    Closed {
-        return_focus: bool,
-    },
+    Closed { return_focus: bool },
 }
 
 impl Session {
@@ -27,7 +17,6 @@ impl Session {
         self == Self::Open
     }
 
-    /// Alt+H toggles.
     pub(super) fn hotkey(&mut self) -> Transition {
         if self.is_open() {
             self.close()
@@ -45,8 +34,6 @@ impl Session {
         }
     }
 
-    /// A click on the pinned overlay took the keyboard.  Unlike Alt+H, it
-    /// never closes.
     pub(super) fn clicked(&mut self) -> Transition {
         if self.is_open() {
             Transition::None
@@ -56,7 +43,6 @@ impl Session {
         }
     }
 
-    /// Another window took the keyboard, for example after a click on the game.
     pub(super) fn deactivated(&mut self) -> Transition {
         if self.is_open() {
             *self = Self::Closed;

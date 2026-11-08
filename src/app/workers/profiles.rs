@@ -61,8 +61,6 @@ fn spawn_profile_worker(
                             let _ = tx.send(ProfileEvent::Failed {
                                 operation_id,
                                 game_id,
-                                // Alternate formatting keeps the io cause ("Access is
-                                // denied") that plain Display drops with the context.
                                 error: format!("{err:#}"),
                                 recovery_blocking: err.recovery_blocking(),
                                 files_in_use: err.files_in_use().cloned(),
@@ -131,14 +129,10 @@ fn execute_profile_reconcile(
 > {
     let roots = profiles::profile_roots(&spec.game, spec.use_default_mods_path)
         .map_err(ProfileWorkerError::Other)?;
-    // No storage directory means nothing to reconcile — and creating one here would write
-    // into the game install, which fails on ACL-protected paths (e.g. Program Files).
     if !roots.profiles_dir.is_dir() {
         return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
     let mut warnings = Vec::new();
-    // Reconciliation only reads; a readme refresh failing on a read-only directory must
-    // not block it.
     if let Err(error) = profiles::ensure_profile_storage_layout(&roots) {
         warnings.push(format!("{error:#}"));
     }
@@ -273,8 +267,6 @@ const PROFILE_SWITCH_FINISH_PROGRESS_STEPS: u32 = 25;
 const PROFILE_SWITCH_DELAY_BYTES_PER_UNIT: u64 = 1024 * 1024 * 1024;
 const PROFILE_SWITCH_DELAY_MS_PER_UNIT: u64 = 200;
 const PROFILE_SWITCH_MAX_DELAY: Duration = Duration::from_millis(1_500);
-/// Preparing the target profile owns the 10..60 band, whether that means extracting an archive or
-/// copying a directory tree. The UI maps the same band onto one timeline row.
 const PROFILE_PREPARE_PROGRESS_START: u64 = 10;
 const PROFILE_PREPARE_PROGRESS_SPAN: u64 = 50;
 
@@ -283,8 +275,6 @@ enum ProfileWorkerError {
     Canceled,
     Other(anyhow::Error),
     RecoveryBlocked(anyhow::Error),
-    /// Another program holds files below a live mod root open, so the roots cannot be renamed.
-    /// Nothing was changed (or everything was rolled back); the user has to close the holder.
     FilesInUse(OpenHandleReport),
 }
 
@@ -346,8 +336,6 @@ impl ProfileStagingCleanup {
 
 impl Drop for ProfileStagingCleanup {
     fn drop(&mut self) {
-        // Extraction staging is disposable on every terminal outcome. Journals are preserved
-        // when recovery is still required, so only the extracting folder is removed here.
         let _ = std::fs::remove_dir_all(&self.extracting_dir);
         let _ = std::fs::remove_dir(&self.legacy_staging_dir);
     }
@@ -503,11 +491,6 @@ fn execute_profile_operation(
     let _staging_cleanup = ProfileStagingCleanup::new(&roots, &spec);
     match spec.kind {
         ProfileOperationKind::Recover => {
-            // A game that never used profiles has no storage directory, and recovery must
-            // not create one: that writes into the game install at startup, which fails on
-            // ACL-protected paths (e.g. Program Files) for a game the user may not even
-            // mod. There is also nothing to recover from an absent directory. The layout is
-            // created by user-initiated operations below instead.
             if !roots.profiles_dir.is_dir() {
                 return Ok(ProfileWorkerOutput {
                     kind: spec.kind,
@@ -523,8 +506,6 @@ fn execute_profile_operation(
                 });
             }
             let mut warnings = Vec::new();
-            // Recovery only needs to read and repair what already exists; a readme refresh
-            // failing on a read-only directory must not block it.
             if let Err(error) = profiles::ensure_profile_storage_layout(&roots) {
                 warnings.push(format!("{error:#}"));
             }
@@ -534,8 +515,6 @@ fn execute_profile_operation(
                 pending_profile_archive_jobs(&spec, &roots)
                     .map_err(ProfileWorkerError::into_recovery_blocking)?;
             warnings.extend(archive_warnings);
-            // After the recovery above, so legacy names and interrupted sidecars have already been
-            // normalized into their canonical form and are recognizable here.
             let (orphaned_profiles, renamed_profiles) =
                 discover_orphaned_profiles(&roots, &spec, &mut warnings)
                     .map_err(ProfileWorkerError::into_recovery_blocking)?;
@@ -569,10 +548,6 @@ fn execute_profile_operation(
             | ProfileOperationKind::Duplicate
             | ProfileOperationKind::Switch
     ) {
-        // Before preparing the target (which can mean extracting a large archive): the live
-        // roots are renamed wholesale at commit time, and on Windows that fails while any file
-        // below them is open. Finding the holder now costs a read-only walk and leaves nothing
-        // to roll back, where failing at commit would have wasted the whole preparation.
         update_profile_progress(&spec.progress, &spec.stage, 5, "Checking for files in use");
         ensure_live_roots_not_in_use(&roots, &spec.cancel)?;
     }
@@ -597,9 +572,6 @@ fn execute_profile_operation(
                 snapshot_enabled,
                 &mut warnings,
             )?;
-            // A brand-new empty profile must not inherit the previous profile's
-            // d3dx_user.ini: without this, switching away from it later would snapshot
-            // someone else's settings as its own.
             apply_incoming_user_ini_snapshot(
                 &roots,
                 snapshot_enabled
@@ -768,9 +740,6 @@ fn target_profile_marker(
     })
 }
 
-/// Adopt profile-owned data from the container/archive we are about to activate, for anything the
-/// request did not already supply. The catalog is authoritative when it has a value; this is the
-/// fallback that lets a profile recovered from disk carry its own categories and tools.
 fn backfill_target_profile_data(
     spec: &mut ProfileOperationSpec,
     metadata: &crate::integrations::profiles::ProfileArchiveMetadata,
@@ -974,8 +943,6 @@ fn prepare_duplicate_target(
 > {
     let _ = std::fs::remove_dir_all(staging);
     std::fs::create_dir_all(staging)?;
-    // Start at the floor of the preparation band, not above it: `extract_to_staging` sets the same
-    // floor when it takes over below, and a higher value here would make the bar jump backwards.
     update_profile_progress(
         &spec.progress,
         &spec.stage,
@@ -984,8 +951,6 @@ fn prepare_duplicate_target(
     );
 
     if spec.profile_id == Some(source_profile_id) {
-        // Claim the copy label before sizing the tree; on a large profile that walk alone takes
-        // long enough that the row would otherwise sit on the wrong wording.
         update_profile_progress(
             &spec.progress,
             &spec.stage,
@@ -1004,8 +969,6 @@ fn prepare_duplicate_target(
             &mut copy_progress_reporter(spec, total_bytes),
         )?;
         update_profile_progress(&spec.progress, &spec.stage, 60, "Selected profile prepared");
-        // A copy of the active profile carries no container metadata; d3dx_user.ini on
-        // disk already belongs to it, so there is nothing to apply after the swap either.
         return Ok((staging.to_path_buf(), None));
     }
 
@@ -1081,10 +1044,6 @@ fn prepare_duplicate_target(
     Ok((staging.to_path_buf(), Some(metadata)))
 }
 
-/// Write an incoming profile's `d3dx_user.ini` snapshot over the live file. Runs only
-/// after the swap has committed — never on a path that can still roll back, or a failed
-/// swap would leave the previous profile's mods with the incoming profile's settings.
-/// `None` (profile predates the feature, or feature off) leaves the current file alone.
 fn apply_incoming_user_ini_snapshot(
     roots: &crate::integrations::profiles::ProfileRoots,
     snapshot: Option<String>,
@@ -1113,8 +1072,6 @@ fn copy_profile_roots(
     cancel: &Arc<AtomicBool>,
     on_bytes: &mut dyn FnMut(u64) -> Result<()>,
 ) -> std::result::Result<(), ProfileWorkerError> {
-    // Each root restarts `copy_dir_cancelable_with_progress`'s own counter, so carry a running
-    // total across them or the caller's percentage would reset per root.
     let mut copied_before_root = 0u64;
     for ((_, source), (_, destination)) in root_locations(source)
         .into_iter()
@@ -1140,8 +1097,6 @@ fn copy_profile_roots(
     Ok(())
 }
 
-/// Feed the shared 10..60 preparation band from a byte count. `total_bytes` of 0 means the size
-/// probe found nothing to copy, so the band stays at its floor rather than dividing by zero.
 fn copy_progress_reporter<'a>(
     spec: &'a ProfileOperationSpec,
     total_bytes: u64,
@@ -1164,11 +1119,6 @@ fn copy_progress_reporter<'a>(
     }
 }
 
-/// Move a renamed profile's stored data to match its new name.
-///
-/// Best effort by design: the label is decoration and lookups key on the short id, so a failure
-/// here leaves a stale name and nothing more. The profile itself is renamed in the catalog either
-/// way, and the next compression writes the corrected name.
 fn rename_profile_storage_label(
     roots: &crate::integrations::profiles::ProfileRoots,
     profile_id: ProfileId,
@@ -1186,8 +1136,6 @@ fn rename_profile_storage_label(
         if canonical == current || canonical.exists() {
             continue;
         }
-        // Ignoring the error is deliberate: a locked file leaves a stale label, which costs
-        // nothing because lookups key on the short id.
         let _ = std::fs::rename(&current, &canonical);
     }
 }
@@ -1282,7 +1230,6 @@ fn remove_profile_storage_entries(
     roots: &crate::integrations::profiles::ProfileRoots,
     profile_id: ProfileId,
 ) -> std::io::Result<()> {
-    // Legacy fallback for records that predate exact storage filenames.
     let mut paths = vec![
         roots.archive_part_path(profile_id),
         roots.archive_backup_path(profile_id),
@@ -1494,8 +1441,6 @@ fn execute_profile_archive_job(
     let inventory = profiles::inspect_profile_source(&loose_roots)?;
     let fingerprint = inventory.fingerprint().to_owned();
     metadata.source_fingerprint = Some(fingerprint.clone());
-    // The container's own metadata is the authority on the label, so a profile renamed while it was
-    // loose gets the corrected name the moment it is compressed.
     let destination = roots.archive_path_for(job.profile_id, &metadata.display_name);
 
     if destination.exists() {
@@ -1628,9 +1573,6 @@ fn profile_archive_can_be_reused(
     current: &crate::integrations::profiles::ProfileArchiveMetadata,
     fingerprint: &str,
 ) -> bool {
-    // `display_name` is deliberately absent: the storage name carries the current name and is
-    // updated by the rename itself, so a rename must not cost a full recompression of the payload.
-    // The embedded name is only a fallback for a profile whose catalog record was lost.
     existing.source_fingerprint.as_deref() == Some(fingerprint)
         && existing.profile_id == current.profile_id
         && existing.game_id == current.game_id
@@ -1713,10 +1655,6 @@ fn create_empty_roots(
     Ok(())
 }
 
-/// Backoff between attempts to rename a live root. Short handles (an antivirus scan, a shell
-/// thumbnail extraction, one of Hestia's own image reads) release within a few hundred
-/// milliseconds; a handle still open after the whole schedule belongs to something the user has
-/// to close, and the caller reports it as such.
 const ROOT_RENAME_RETRY_DELAYS: [Duration; 6] = [
     Duration::from_millis(50),
     Duration::from_millis(100),
@@ -1726,9 +1664,6 @@ const ROOT_RENAME_RETRY_DELAYS: [Duration; 6] = [
     Duration::from_millis(650),
 ];
 
-/// `std::fs::rename` that rides out transient open handles below `from`: every in-use failure is
-/// retried on [`ROOT_RENAME_RETRY_DELAYS`] before the last error is returned. Any other error
-/// returns immediately.
 fn rename_root_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     rename_root_with_retry_schedule(from, to, &ROOT_RENAME_RETRY_DELAYS)
 }
@@ -1751,8 +1686,6 @@ fn rename_root_with_retry_schedule(
     }
 }
 
-/// Fails with [`ProfileWorkerError::FilesInUse`] when another program holds anything below one of
-/// the live roots open. Roots that do not exist have nothing to rename and are skipped.
 fn ensure_live_roots_not_in_use(
     roots: &crate::integrations::profiles::ProfileRoots,
     cancel: &Arc<AtomicBool>,
@@ -1770,9 +1703,6 @@ fn ensure_live_roots_not_in_use(
     check_profile_cancel(cancel)
 }
 
-/// The error a failed root rename becomes once the swap has been rolled back: an in-use failure
-/// is diagnosed into the paths and processes holding `renamed_root`, anything else is returned
-/// as the io error it was.
 fn root_rename_failure(renamed_root: &Path, error: std::io::Error) -> ProfileWorkerError {
     if io_error_is_file_in_use(&error)
         && let Some(report) = detect_open_handles(renamed_root, &AtomicBool::new(false))
@@ -1794,10 +1724,6 @@ fn swap_roots(
 ) -> std::result::Result<(), ProfileWorkerError> {
     let (outgoing_id, mut outgoing_metadata) = outgoing_profile
         .ok_or_else(|| anyhow::anyhow!("active profile is missing during profile switch"))?;
-    // Snapshot d3dx_user.ini off disk at this moment, not from the in-memory record clone
-    // the action layer sent: that clone is whatever was last persisted, and for a Default
-    // profile it is an empty map. This is the single point Create/Duplicate/Switch all
-    // funnel through, and it feeds both the loose container and the later compression.
     if user_ini_snapshot
         && outgoing_metadata.backend == crate::model::GameBackend::Xxmi
         && let Some(importer_root) =
@@ -1811,11 +1737,7 @@ fn swap_roots(
     }
     let journal = profile_journal_path(roots, marker);
     std::fs::create_dir_all(&roots.profiles_dir)?;
-    // Name the outgoing container from the profile being archived, not the resolver fallback:
-    // nothing exists on disk for it yet, so this is the moment its label is decided.
     let outgoing = roots.profile_path_for(outgoing_id, &outgoing_metadata.display_name);
-    // Match on the short id, not the label: data left by an earlier interrupted swap may carry a
-    // different label and would otherwise be silently overwritten.
     if let Some(existing) = roots
         .find_profile_storage(outgoing_id, false)
         .or_else(|| outgoing.exists().then(|| outgoing.clone()))
@@ -2041,24 +1963,14 @@ fn recover_profile_staging(
     Ok(recovered_active)
 }
 
-/// Classify a storage entry name, rejecting every sidecar and quarantine variant (`.part`, `.bak`,
-/// `.deleting`, `.conflict-*`) so only live profile data is considered.
-///
 fn classify_profile_storage(name: &str) -> Option<ProfileStorageKind> {
     use crate::integrations::profiles::{PROFILE_ARCHIVE_EXTENSION, parse_profile_storage_stem};
-    // Any archive counts: putting a .tzst in this folder is an unambiguous statement of intent, and
-    // its metadata is checked before anything is done with it. In-flight writes are `.part` and
-    // replaced originals are `.bak`, so anything still ending in .tzst is complete.
     if let Some(stem) = name.strip_suffix(&format!(".{PROFILE_ARCHIVE_EXTENSION}")) {
-        // Quarantined copies are excluded: they were set aside precisely because they did not
-        // belong where they were found, and re-adopting one would shadow the good copy.
         if stem.contains(".conflict-") {
             return None;
         }
         return Some(ProfileStorageKind::Archive);
     }
-    // Folders are stricter. Their dangerous lookalikes — `.deleting`, `.conflict-*` — hold valid
-    // metadata too, so content cannot clear them and only shapes we create ourselves are accepted.
     if parse_profile_storage_stem(name).is_some() {
         return Some(ProfileStorageKind::Container);
     }
@@ -2069,20 +1981,10 @@ fn classify_profile_storage(name: &str) -> Option<ProfileStorageKind> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ProfileStorageKind {
-    /// Loose `<label> [<id>]` directory: the crash-safe copy that exists while compression is
-    /// pending.
     Container,
-    /// Compressed `<label> [<id>].tzst`.
     Archive,
 }
 
-/// Move stored profile data to the name its own metadata says it should have, returning the new
-/// path when it moved.
-///
-/// This is what carries older `<uuid>.profile.tzst` data over to readable names, and what corrects
-/// a label left stale by a rename. It never overwrites: if the canonical name is taken by something
-/// else, the entry keeps the name it has, since a wrong label is cosmetic and a clobbered archive
-/// is not.
 fn rename_profile_storage_to_canonical(
     roots: &crate::integrations::profiles::ProfileRoots,
     path: &Path,
@@ -2090,9 +1992,6 @@ fn rename_profile_storage_to_canonical(
     is_archive: bool,
     warnings: &mut Vec<String>,
 ) -> Option<PathBuf> {
-    // Any readable storage name with a marker is current, because renames and manual copies keep
-    // their user-visible label there. Rewriting it from embedded metadata would undo an inactive
-    // rename or collapse an Explorer copy back onto the source profile.
     let stem = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -2109,8 +2008,6 @@ fn rename_profile_storage_to_canonical(
         return None;
     }
     if canonical.exists() {
-        // A user may have copied an archive and changed only the visible filename. Recovery will
-        // leave that readable storage name alone instead of warning about the mismatch.
         return None;
     }
     match std::fs::rename(path, &canonical) {
@@ -2132,17 +2029,11 @@ fn storage_profile_id_from_path(path: &Path) -> Option<ProfileId> {
         .and_then(|(_, short_id)| short_id.parse().ok())
 }
 
-/// Profile data present in storage that the catalog has no record of. Its embedded `profile.json`
-/// carries the profile-owned data, while the exact storage filename is used to address it until it
-/// cycles through the active profile again.
 #[derive(Clone)]
 struct OrphanedProfile {
     profile_id: ProfileId,
     metadata: crate::integrations::profiles::ProfileArchiveMetadata,
-    /// Name taken from the storage name, which a rename keeps current. The embedded name is only
-    /// what it was called when the archive was last written.
     label: Option<String>,
-    /// Exact storage entry name to use until the profile cycles through active storage again.
     storage_file_name: Option<String>,
     archive_size: Option<u64>,
     updated_at: Option<DateTime<Utc>>,
@@ -2160,9 +2051,6 @@ fn storage_file_name_is_known(spec: &ProfileOperationSpec, storage_file_name: &s
         .any(|known| known.eq_ignore_ascii_case(storage_file_name))
 }
 
-/// Find profile data whose storage entry is absent from the catalog. Without this an archive whose
-/// record is lost stays invisible forever while still occupying its full size on disk, with no way
-/// to reach or reclaim it from inside the app.
 fn discover_orphaned_profiles(
     roots: &crate::integrations::profiles::ProfileRoots,
     spec: &ProfileOperationSpec,
@@ -2194,9 +2082,6 @@ fn discover_orphaned_profiles(
         let metadata = match metadata {
             Ok(metadata) => metadata,
             Err(error) => {
-                // Unreadable data is left exactly where it is: it may still be salvageable by
-                // hand, and deleting or renaming someone's mods on a hunch is far worse than
-                // leaving an entry out of the list.
                 warnings.push(format!(
                     "Profile data at {} could not be read and was left untouched: {error}",
                     path.display()
@@ -2204,8 +2089,6 @@ fn discover_orphaned_profiles(
                 continue;
             }
         };
-        // Embedded ids are archive metadata, not recovery ownership. The filename determines which
-        // storage entry the user is looking at.
         if metadata.game_id != spec.game_id
             || metadata.backend != spec.game.definition.backend
             || metadata.format_version == 0
@@ -2257,7 +2140,6 @@ fn discover_orphaned_profiles(
             metadata,
         });
     }
-    // Stable order so repeated recoveries present the list the same way.
     found.sort_by(|a, b| {
         a.metadata
             .created_at
@@ -2304,8 +2186,6 @@ fn recovered_profile_labels_from_storage(
                 }
                 [] => {}
                 _ => {
-                    // Ambiguous same-kind storage entries keep their own names. Do not let an
-                    // arbitrary directory iteration order pick the existing app name.
                 }
             }
         }
@@ -2447,23 +2327,15 @@ fn recover_profile_archive_sidecars(
         }
         let name = entry.file_name().to_string_lossy().to_string();
         let path = entry.path();
-        // Not ours to manage any more, but a leftover `.part` must not be quarantined as an
-        // archive sidecar either.
         if name == "active_profile.json.part" || name == LEGACY_ACTIVE_PROFILE_MARKER_FILE {
             continue;
         }
-        // A sidecar is always `<final archive>.bak` / `.part`, so stripping the suffix gives the
-        // archive it belongs to whatever that archive is called. Rebuilding the name from an id
-        // instead would tie recovery to one naming scheme and, worse, to a directory lookup whose
-        // answer depends on what happens to exist at the time.
         if let Some(final_name) = name.strip_suffix(".bak") {
             let final_path = roots.profiles_dir.join(final_name);
             let Some(profile_id) = validated_profile_archive_metadata(&path)
                 .ok()
                 .map(|metadata| metadata.profile_id)
             else {
-                // Unreadable, so it can never be promoted. Quarantine rather than leave it: a
-                // stale sidecar would otherwise block the next atomic replace forever.
                 std::fs::rename(&path, next_archive_conflict_path(&final_path))?;
                 continue;
             };
@@ -2497,8 +2369,6 @@ fn recover_profile_archive_sidecars(
             .ok()
             .map(|metadata| metadata.profile_id)
         else {
-            // A partial write that never completed. Preserve the bytes under a conflict name
-            // instead of discarding them, but get them out of the canonical path.
             std::fs::rename(&path, next_archive_conflict_path(&roots.profiles_dir.join(final_name)))?;
             continue;
         };
@@ -2702,12 +2572,10 @@ fn pending_profile_archive_jobs(
     for entry in std::fs::read_dir(&roots.profiles_dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        // Containers only; an archive here is already compressed and needs no job.
         if classify_profile_storage(&name) != Some(ProfileStorageKind::Container) {
             continue;
         }
         let path = entry.path();
-        // The container's own metadata is the identity, so a hand-renamed folder still resolves.
         let container = read_profile_container_metadata(&path).ok().filter(|metadata| {
             metadata.game_id == spec.game_id
                 && metadata.backend == spec.game.definition.backend
@@ -3023,7 +2891,6 @@ mod profile_worker_tests {
             "Copying selected profile"
         );
 
-        // An empty profile still reports, and must stay inside the band.
         let empty = recovery_spec(xxmi_game(&dir.path().join("Mods")));
         copy_progress_reporter(&empty, 0)(0).unwrap();
         assert_eq!(empty.progress.load(Ordering::Relaxed), 10);
@@ -3041,7 +2908,6 @@ mod profile_worker_tests {
         );
     }
 
-    /// Write a loose profile container with valid embedded metadata.
     fn write_container(roots: &profiles::ProfileRoots, id: ProfileId, name: &str) -> PathBuf {
         let container = roots.profile_path(id);
         std::fs::create_dir_all(container.join("Mods")).unwrap();
@@ -3176,7 +3042,6 @@ mod profile_worker_tests {
         };
         std::fs::create_dir_all(&roots.profiles_dir).unwrap();
 
-        // Interrupted-operation leftovers: adopting these would resurrect half-written data.
         let sidecar_id = ProfileId::random();
         let container = write_container(&roots, sidecar_id, "Interrupted");
         for suffix in [
@@ -3194,7 +3059,6 @@ mod profile_worker_tests {
         .unwrap();
         std::fs::remove_dir_all(container).unwrap();
 
-        // Another game's profile that somehow shares the directory.
         let foreign_id = ProfileId::random();
         let foreign = roots.profile_path(foreign_id);
         std::fs::create_dir_all(&foreign).unwrap();
@@ -3202,8 +3066,6 @@ mod profile_worker_tests {
         foreign_metadata.game_id = "someone-else".to_string();
         write_profile_container_metadata(&foreign, &foreign_metadata).unwrap();
 
-        // Renamed by hand, so its label and marker disagree with its embedded identity. This one
-        // is adopted exactly as named on disk.
         let embedded_id = ProfileId::random();
         let renamed = roots.profiles_dir.join("Whatever I Called It [aaaaaaaa]");
         std::fs::create_dir_all(&renamed).unwrap();
@@ -3241,7 +3103,6 @@ mod profile_worker_tests {
         };
         std::fs::create_dir_all(&roots.profiles_dir).unwrap();
 
-        // Exactly what an existing install has on disk: `<uuid>.profile.tzst`, no readable name.
         let profile_id = ProfileId::random();
         let source = write_container(&roots, profile_id, "Patch 1.4");
         let legacy = roots.profiles_dir.join(format!("{profile_id}.profile.tzst"));
@@ -3296,7 +3157,6 @@ mod profile_worker_tests {
         .unwrap();
         std::fs::remove_dir_all(&source).unwrap();
 
-        // Renaming touches only the storage name; the payload is never rewritten.
         rename_profile_storage_label(&roots, profile_id, "Patch 1.5");
         let renamed = roots.archive_path_for(profile_id, "Patch 1.5");
         assert!(renamed.is_file());
@@ -3335,7 +3195,6 @@ mod profile_worker_tests {
         std::fs::create_dir_all(&roots.profiles_dir).unwrap();
         let profile_id = ProfileId::random();
         let short = profiles::profile_short_id(profile_id);
-        // Renamed in Explorer, keeping a valid marker so it still resolves.
         let hand_renamed = roots.profiles_dir.join(format!("aaaDefault [{short}].tzst"));
         std::fs::write(&hand_renamed, b"archive").unwrap();
 
@@ -3412,7 +3271,6 @@ mod profile_worker_tests {
         )
         .unwrap();
         std::fs::remove_dir_all(&source).unwrap();
-        // What copy-pasting an archive in Explorer leaves behind.
         std::fs::copy(
             roots.archive_path_for(profile_id, "Patch 1.4"),
             roots.profiles_dir.join("Patch 1.4 - Copy [aaaaaaaa].tzst"),
@@ -3517,7 +3375,6 @@ mod profile_worker_tests {
         for archive in [
             "Patch 1.4 [1fe9ec7a].tzst".to_string(),
             "Default [7a15244d].tzst".to_string(),
-            // Older layouts and hand-copied archives are archives too; their metadata decides.
             format!("{id}.profile.tzst"),
             format!("{id}.tzst"),
             "something anyone dropped here.tzst".to_string(),
@@ -3541,10 +3398,8 @@ mod profile_worker_tests {
         }
 
         for rejected in [
-            // In-flight and replaced writes never end in .tzst.
             format!("{id}.profile.tzst.part"),
             format!("{id}.profile.tzst.bak"),
-            // Quarantined copies were set aside deliberately; re-adopting one shadows the good copy.
             "Patch 1.4 [1fe9ec7a].conflict-000000000000007b.tzst".to_string(),
             "Patch 1.4 [1fe9ec7a].conflict-000000000000007b".to_string(),
             "Patch 1.4 [1fe9ec7a].extracting".to_string(),
@@ -3552,7 +3407,6 @@ mod profile_worker_tests {
             "Patch 1.4 [1fe9ec7a].journal.part".to_string(),
             format!("{id}.profile.deleting"),
             format!("{id}.profile.conflict-17"),
-            // A folder with no recognizable shape could be anything the user put here.
             "Some folder of mine".to_string(),
             "active_profile.json".to_string(),
             "readme.txt".to_string(),
@@ -3598,8 +3452,6 @@ mod profile_worker_tests {
             "{}.conflict-0000000000000001.tzst",
             profiles::profile_storage_stem("Patch 1.4.3", profile_id)
         ));
-        // A hand-made copy under a different label: deletion must sweep it too, or the profile
-        // returns on the next launch when the scan re-adopts it.
         let copy = roots.archive_path_for(profile_id, "Someone's backup");
         std::fs::create_dir_all(&loose).unwrap();
         std::fs::write(loose.join("payload.bin"), b"profile").unwrap();
@@ -4251,8 +4103,6 @@ mod profile_worker_tests {
         };
         std::fs::create_dir_all(&mods).unwrap();
         std::fs::create_dir_all(&profiles_dir).unwrap();
-        // Importer layout beside Mods: d3dx.ini anchors root discovery, d3dx_user.ini
-        // holds the live settings the outgoing profile must capture.
         std::fs::write(importer_root.join("d3dx.ini"), b"ini").unwrap();
         let live_settings =
             "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT\r\n[Constants]\r\n$\\mods\\a\\a.ini\\k = 1\r\n";
@@ -4268,8 +4118,6 @@ mod profile_worker_tests {
         std::fs::create_dir_all(target.join("Mods")).unwrap();
         let mut warnings = Vec::new();
 
-        // The outgoing metadata deliberately has an empty portable_metadata map — the
-        // stale-record shape a Default profile carries.
         swap_roots(
             &roots,
             &target,
@@ -4476,7 +4324,6 @@ mod profile_worker_tests {
 
     #[cfg(windows)]
     fn held_open(path: &Path) -> std::fs::File {
-        // A plain read handle with every share flag set, the kind any viewer or editor holds.
         std::fs::File::open(path).unwrap()
     }
 
@@ -4529,7 +4376,6 @@ mod profile_worker_tests {
         assert_eq!(report.paths, vec![held_path.clone()]);
         assert!(failure.to_string().contains("held.ini"), "{failure}");
 
-        // Anything other than an in-use code is passed through untouched.
         let other = root_rename_failure(&mods, std::io::Error::from_raw_os_error(2));
         assert!(other.files_in_use().is_none());
         drop(handle);
@@ -4548,8 +4394,6 @@ mod profile_worker_tests {
         std::fs::write(&held_path, b"x").unwrap();
         let current_id = ProfileId::random();
         let target_id = ProfileId::random();
-        // Deliberately not a valid archive: had preparation run, this would have been renamed to
-        // a conflict path. Its survival proves the check happened first.
         let archive = roots.archive_path(target_id);
         std::fs::write(&archive, b"not an archive").unwrap();
         let handle = held_open(&held_path);
@@ -4623,7 +4467,6 @@ mod profile_worker_tests {
             tools: None,
             tool_blacklist: None,
         };
-        // The handle opens after the preflight would have passed, mid-operation.
         let handle = held_open(&held_path);
         let mut warnings = Vec::new();
 

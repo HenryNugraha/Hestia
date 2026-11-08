@@ -19,14 +19,11 @@ const WORKSPACE_LEFT_PANE_RATIO: f32 = 0.515;
 
 // Outer chrome spacing and major titlebar/game art sizing.
 const WINDOW_INSET: i8 = 6;
-/// The smallest the main window goes at the Normal interface size.  Bigger
-/// sizes raise it.
 pub(crate) const MAIN_WINDOW_MIN_SIZE: egui::Vec2 = egui::vec2(1180.0, 760.0);
 const NAV_RAIL_WIDTH: f32 = 90.0;
 const GAME_ICON_TEXTURE_SIZE: u32 = 256;
 const TOOL_ICON_TEXTURE_SIZE: u32 = 96;
 const TOOL_ICON_FAILURE_RETRY_SECS: u64 = 60;
-/// Titlebar pin slots available per game.
 const TITLEBAR_TOOL_LIMIT: usize = 4;
 const TITLEBAR_GAME_ICON_SIZE: f32 = 96.0;
 const TITLEBAR_CONTROL_BUTTON_WIDTH: f32 = 32.0;
@@ -36,15 +33,12 @@ const MAXIMIZED_TITLEBAR_CONTROL_BUTTON_WIDTH: f32 = 40.0;
 const MAXIMIZED_TITLEBAR_CONTROL_BUTTON_HEIGHT: f32 = 30.0;
 const MAXIMIZED_TITLEBAR_CONTROL_ICON_SIZE: f32 = 18.0;
 const GAME_SWITCHER_GRID_ICON_SIZE: f32 = 256.0;
-/// How long the right pane takes to blur and darken behind a window, and to clear again.
 const RIGHT_PANE_BACKDROP_FADE_SECONDS: f32 = 0.35;
-/// How dark the right pane gets behind a window: a black layer at this opacity, out of 255.
 const RIGHT_PANE_BACKDROP_DIM_ALPHA: f32 = 128.0;
 
 // Toast notification limits, timing, and positioning.
 const TOAST_LIMIT: usize = 5;
 const TOAST_DURATION: f64 = 4.0;
-/// Toasts carrying a button need long enough to read and reach for it.
 const TOAST_ACTION_DURATION: f64 = 10.0;
 const TOAST_SPACING: f32 = 6.0;
 const TOAST_OFFSET: f32 = -108.0;
@@ -108,7 +102,7 @@ const MOD_DETAIL_RENAME_INPUT_ID: &str = "mod_detail_rename_input";
 // Browse view card/detail layout sizing.
 const BROWSE_PANEL_CARD_WIDTH: f32 = 220.0;
 const BROWSE_THUMBNAIL_HEIGHT: f32 = 130.0;
-const BROWSE_CARD_HEIGHT: f32 = 260.0; // Approximate total card height for viewport culling
+const BROWSE_CARD_HEIGHT: f32 = 260.0;
 const BROWSE_DETAIL_SIZE: egui::Vec2 = egui::vec2(420.0, 560.0);
 const BROWSE_CHARACTER_PICKER_WIDTH: f32 = 400.0;
 const BROWSE_CHARACTER_PICKER_HEIGHT: f32 = 452.0;
@@ -118,7 +112,7 @@ const BROWSE_CHARACTER_TILE_HEIGHT: f32 = 86.0;
 const BROWSE_CHARACTER_LABEL_CHARS_PER_LINE: usize = 18;
 
 // Batch action bar layout.
-const MAX_OPERATIONAL_BUTTONS_PER_ROW: usize = 6; // exceeding will go to next row
+const MAX_OPERATIONAL_BUTTONS_PER_ROW: usize = 6;
 const MAX_OPERATIONAL_BUTTONS_PER_ROW_WITH_SEARCHBAR: usize = 3;
 
 // Cached thumbnail output sizes by destination surface.
@@ -156,7 +150,6 @@ fn worker_channel<T>() -> (WorkerTx<T>, WorkerRx<T>) {
 
 // Markdown image extraction for GameBanana descriptions.
 static MARKDOWN_IMAGE_DEST_RE: Lazy<Regex> = Lazy::new(|| {
-    // Matches ![alt](dest) or ![alt](<dest>) handling nested parentheses and spaces
     Regex::new(r"!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)\s*\)").unwrap()
 });
 static MARKDOWN_IMAGE_URL_RE: Lazy<Regex> =

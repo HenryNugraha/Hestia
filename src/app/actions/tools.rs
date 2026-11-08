@@ -6,9 +6,6 @@ struct DiscoveredGameTool {
     source_mod_id: Option<String>,
 }
 
-/// Drop titlebar pins past the slot limit, keeping the lowest `titlebar_order` first. A profile
-/// restored on switch can exceed the limit because `selected_game_pinned_tools` only truncates for
-/// display, so the persisted flags have to be brought back into range explicitly.
 fn enforce_titlebar_pin_limit(tools: &mut [ToolEntry], game_id: &str) {
     let mut pinned: Vec<(String, Option<i32>, i32, DateTime<Utc>)> = tools
         .iter()
@@ -71,16 +68,12 @@ impl HestiaApp {
         self.tool_icon_textures.get(tool_id)
     }
 
-    /// Path relative to the mods root, when the tool lives inside it.
     fn tool_relative_path(mods_root: Option<&Path>, path: &Path) -> Option<PathBuf> {
         mods_root
             .and_then(|root| path.strip_prefix(root).ok())
             .map(Path::to_path_buf)
     }
 
-    /// Identity used to match a discovered tool against a stored one. Tools inside the mods folder
-    /// match on their position within it, so they survive the folder moving or the profile being
-    /// carried to another install; anything outside keeps its absolute path.
     fn tool_match_key(mods_root: Option<&Path>, path: &Path, relative: Option<&Path>) -> String {
         let relative = relative
             .map(Path::to_path_buf)
@@ -355,8 +348,6 @@ impl HestiaApp {
         items
     }
 
-    /// Rescans the selected game's mods folder for executables and returns the ids of tools that
-    /// were not known before this pass.
     fn sync_tools_for_selected_game(&mut self) -> Vec<String> {
         let Some(game) = self.selected_game().cloned() else {
             return Vec::new();
@@ -423,8 +414,6 @@ impl HestiaApp {
                         self.tool_icon_texture_failures.remove(&tool.id);
                     }
                     tool.label = discovered.label.clone();
-                    // Re-anchoring here is what carries launch options across a moved mods folder:
-                    // the stored path is stale but the position inside the folder still matches.
                     tool.path = discovered.path.clone();
                     tool.relative_path = discovered.relative_path.clone();
                     tool.source_mod_id = discovered.source_mod_id.clone();
@@ -478,14 +467,10 @@ impl HestiaApp {
         added_ids
     }
 
-    /// Surfaces tools that arrived with a just-finalized install: marks them "New" in the Tools
-    /// window and toasts once per mod with an Open Tools button. Discovery itself stays silent
-    /// everywhere else (startup, reload) so a fresh profile does not get a wall of badges.
     fn announce_installed_mod_tools(&mut self, new_tool_ids: &[String], installed_mod_ids: &[String]) {
         if new_tool_ids.is_empty() || installed_mod_ids.is_empty() {
             return;
         }
-        // (mod id, mod name, tool labels) in window order so the toast names the first card.
         let mut per_mod: Vec<(String, String, Vec<String>)> = Vec::new();
         for tool in &self.state.tools {
             if !tool.auto_detected || !new_tool_ids.contains(&tool.id) {
@@ -515,8 +500,6 @@ impl HestiaApp {
         if per_mod.is_empty() {
             return;
         }
-        // A button that opens an already-open window would do nothing visible; the badge carries
-        // the pointer in that case.
         let action = (!self.state.show_tools).then_some(ToastAction::OpenTools);
         for (_, mod_name, labels) in per_mod {
             let text = self.text();
@@ -540,8 +523,6 @@ impl HestiaApp {
         }
     }
 
-    /// The "New" badges only mean something while the user has not looked yet; once the Tools
-    /// window has been shown with them and then closed, they have done their job.
     fn settle_new_tool_badges(&mut self) {
         if self.state.show_tools {
             if !self.new_tool_ids.is_empty() {

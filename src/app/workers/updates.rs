@@ -1,11 +1,6 @@
-/// More missing lists than this and the path model is skipped for the mod;
-/// it needs every list of the group, so a partial fetch would be wasted.
 const FILE_LISTING_FETCH_LIMIT: usize = 30;
 const FILE_LISTING_FETCH_CONCURRENCY: usize = 4;
-/// Time allowed for all of one mod's missing lists.  Whatever is still
-/// unanswered then counts as a failure.
 const FILE_LISTING_FETCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
-/// A file whose list failed is not asked for again before this.
 const FILE_LISTING_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 static FILE_LISTING_FAILURES: std::sync::OnceLock<
@@ -54,8 +49,6 @@ async fn cached_file_listings(
         .unwrap_or_default()
 }
 
-/// Attach every archive list already cached for the profile's files, so a
-/// page loaded anywhere gives the matcher the same lists.
 async fn attach_cached_file_listings(
     portable: &PortablePaths,
     profile: &mut gamebanana::ProfileResponse,
@@ -77,10 +70,6 @@ async fn attach_cached_file_listings(
     }
 }
 
-/// Fetch the lists the matcher asked for, a few at a time.  Every final
-/// answer is cached by file id, since a file's contents never change; a
-/// failure is remembered for a while so later checks do not wait on it.
-/// Returns whether any list was attached.
 async fn attach_wanted_file_listings(
     client: &ClientWithMiddleware,
     portable: &PortablePaths,
@@ -111,8 +100,6 @@ async fn attach_wanted_file_listings(
         .into_iter()
         .filter(|id| !cached_ids.contains(id))
         .collect();
-    // The path model needs every list, so one that cannot be had makes the
-    // rest useless for now.
     if unavailable
         || to_fetch.is_empty()
         || to_fetch.iter().any(|id| file_listing_failed_recently(*id))

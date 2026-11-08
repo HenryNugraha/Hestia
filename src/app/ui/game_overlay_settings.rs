@@ -1,25 +1,15 @@
-/// What the in-game overlay's hotkey picker is doing.  Kept in egui's
-/// memory while Settings is open.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 enum HotkeyPicker {
     #[default]
     Idle,
-    /// Waiting for the keys.
     Listening,
-    /// The keys pressed last, like "Alt+Space", can't open the overlay.
     Refused(TextKey, String),
 }
 
 impl HestiaApp {
-    /// Settings > General > In-game Overlay.  Returns whether a setting
-    /// changed.
     fn game_overlay_settings_section(&mut self, ui: &mut Ui, text: TextCatalog) -> bool {
         let mut should_save = false;
-        // Only games Hestia mods with XXMI have the overlay, so like XXMI
-        // Features, the section is greyed out while another game is picked.
         let xxmi = self.selected_game().is_some_and(|game| game.is_xxmi());
-        // The preview shows the game picked in Hestia, or else the first one
-        // with the overlay.
         let watched = &self.game_overlay.watched;
         let preview_game = self
             .selected_game()
@@ -35,7 +25,6 @@ impl HestiaApp {
                 ui,
                 bold(text.settings_game_overlay(), Some(16.0)).underline(),
             );
-            // Sits 2pt low, in line with the heading's text.
             let switch_size = egui::vec2(32.0, 16.0);
             let (_, slot) = ui.allocate_space(switch_size);
             let mut switch_ui =
@@ -62,7 +51,6 @@ impl HestiaApp {
                 ui.add_space(-4.0);
                 should_save |=
                     game_overlay_hotkey_picker(ui, text, &mut prefs.game_overlay_hotkey, |ui| {
-                        // A way to work on the overlay without starting a game.
                         if !cfg!(debug_assertions) {
                             return;
                         }
@@ -121,7 +109,6 @@ impl HestiaApp {
                 ui.add_space(8.0);
                 static_label(ui, text.get(TextKey::SettingsGameOverlayComponents));
                 ui.add_space(-4.0);
-                // Two columns, lined up.
                 let left_width = settings_column_width(
                     ui,
                     &[
@@ -172,7 +159,6 @@ impl HestiaApp {
     }
 }
 
-/// Lays `add` out `width` wide, so the columns of the rows line up.
 fn settings_cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.allocate_ui_with_layout(
         egui::vec2(width, ui.spacing().interact_size.y),
@@ -185,7 +171,6 @@ fn settings_cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> 
     .inner
 }
 
-/// A checkbox and its tooltip.  Returns whether it changed.
 fn settings_checkbox(
     ui: &mut Ui,
     text: TextCatalog,
@@ -196,9 +181,6 @@ fn settings_checkbox(
         .changed()
 }
 
-/// "[Alt + H] [Reset]", then whatever `after` adds to the row.  Clicking the
-/// keys listens for new ones, and Esc, another click on them or a click
-/// anywhere else stops listening.  Returns whether the hotkey changed.
 fn game_overlay_hotkey_picker(
     ui: &mut Ui,
     text: TextCatalog,
@@ -208,9 +190,6 @@ fn game_overlay_hotkey_picker(
     let id = egui::Id::new("settings_game_overlay_hotkey_picker");
     let mut picker: HotkeyPicker = ui.data(|data| data.get_temp(id)).unwrap_or_default();
     let mut changed = false;
-    // Turning the overlay off or picking a game without it greys the picker
-    // out, and it stops listening.  So does closing Settings or leaving its
-    // tab.
     if picker == HotkeyPicker::Listening
         && (!ui.is_enabled() || !game_overlay_hotkey_listening(ui.ctx()))
     {
@@ -270,7 +249,6 @@ fn game_overlay_hotkey_picker(
         } else if listening && response.clicked_elsewhere() {
             picker = HotkeyPicker::Idle;
         }
-        // Only there when there is something to reset.
         if *hotkey != OverlayHotkey::DEFAULT
             && ui
                 .button(icon_rich(Icon::RotateCcw, 13.0, ui.visuals().text_color()))
@@ -307,24 +285,16 @@ fn game_overlay_hotkey_picker(
     changed
 }
 
-/// Where the hotkey picker notes the last frame it listened in.
 fn hotkey_listening_id() -> egui::Id {
     egui::Id::new("settings_game_overlay_hotkey_listening")
 }
 
-/// Whether the overlay's hotkey picker listened last frame.  Hestia's own
-/// shortcuts run before Settings is drawn, so they check this to leave the
-/// keys to it.
 fn game_overlay_hotkey_listening(ctx: &egui::Context) -> bool {
     let pass = ctx.cumulative_pass_nr();
     ctx.data(|data| data.get_temp::<u64>(hotkey_listening_id()))
         .is_some_and(|listened| listened + 1 >= pass)
 }
 
-/// The first key press this frame, taken out of the input so nothing else
-/// acts on it.  Ctrl, Alt, Shift and Windows on their own don't count, as
-/// they are pressed first.  egui turns Ctrl+C, Ctrl+X and Ctrl+V into copy,
-/// cut and paste, so those count as their keys.
 fn take_key_press(ui: &Ui) -> Option<(egui::Key, egui::Modifiers)> {
     ui.input_mut(|input| {
         let index = input.events.iter().position(|event| match event {
@@ -358,7 +328,6 @@ fn take_key_press(ui: &Ui) -> Option<(egui::Key, egui::Modifiers)> {
     })
 }
 
-/// The hotkey for a key press, or why it can't be one and the keys' name.
 fn pressed_hotkey(
     key: egui::Key,
     modifiers: egui::Modifiers,

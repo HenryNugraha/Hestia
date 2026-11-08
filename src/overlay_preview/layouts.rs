@@ -35,30 +35,18 @@ const CATEGORY_NAV_WIDTH: f32 = 40.0;
 const CATEGORY_GAP: f32 = 6.0;
 const ACCENT: Color32 = Color32::from_rgb(196, 91, 52);
 const CAROUSEL_TRANSITION_SECS: f64 = 0.14;
-/// How long an installed mod takes to cross from its GameBanana card to its
-/// place among the category's own.
 const CROSSING_SECS: f64 = 0.5;
 const ACTIVE_FEEDBACK_SECS: f64 = 0.15;
-/// A second click on the same card this soon is part of a double-click,
-/// which would otherwise turn a mod on and straight back off.
 const DOUBLE_CLICK_SECS: f64 = 0.35;
-/// How fast a card's badge pulses while its change waits for Hestia.
 const WAITING_PULSE_SPEED: f64 = 4.0;
 const CATEGORY_SPRITE_SIZE: f32 = 30.0;
 const CATEGORY_SELECTED_SPRITE_SIZE: f32 = 40.0;
 const CARD_TITLE_BOTTOM_PADDING: f32 = 8.0;
-/// The extra room between a category's own mods and its GameBanana mods,
-/// which holds the divider.
 const DIVIDER_ZONE: f32 = 30.0;
-/// Selection ids of GameBanana cards start with this.
 const GAMEBANANA_PREFIX: &str = "gamebanana:";
-/// The selection id of the card after a GameBanana list.
 const GAMEBANANA_END: &str = "gamebanana:end";
-/// Ids of the categories "Show all characters" adds start with this.
 const EXTRA_CATEGORY_PREFIX: &str = "gamebanana:character:";
 
-// Keep one physical wheel notch from selecting several entries when egui exposes its
-// smoothing tail over multiple frames.
 const WHEEL_POINTS_PER_STEP: f32 = 50.0;
 const WHEEL_IDLE_RESET_SECS: f64 = 0.35;
 const WHEEL_STEP_COOLDOWN_SECS: f64 = 0.12;
@@ -70,8 +58,6 @@ fn tooltip_suppress_id() -> egui::Id {
     egui::Id::new("overlay-preview-tooltip-suppress-until")
 }
 
-/// Add a delayed tooltip unless a scroll/collapse has just dismissed transient UI.
-/// egui still applies its normal still-pointer delay on top of this guard.
 pub(super) fn delayed_tooltip(
     response: egui::Response,
     text: impl Into<egui::WidgetText>,
@@ -88,7 +74,6 @@ pub(super) fn delayed_tooltip(
     }
 }
 
-/// Suppress transient tooltips for a short settling period after a scroll/collapse.
 pub(super) fn suppress_tooltips(ctx: &egui::Context) {
     let until = ctx.input(|input| input.time) + TOOLTIP_SUPPRESS_SECS;
     ctx.data_mut(|data| data.insert_temp(tooltip_suppress_id(), until));
@@ -106,13 +91,9 @@ struct CarouselCardPlacement {
     index: usize,
     rect: Rect,
     focused: bool,
-    /// Fixed visual slot: left, center, or right. This is carried through a
-    /// transition instead of being inferred from an interpolated rectangle.
     slot: usize,
 }
 
-/// The card that won the pointer press. Keep its original rectangle until release so a
-/// carousel transition cannot make a click activate a different card underneath the cursor.
 #[derive(Clone)]
 struct CarouselPointerPress {
     category_index: usize,
@@ -131,7 +112,6 @@ enum PendingCommand {
     Mod(i32),
     Category(i32),
     Action(ModAction),
-    /// Turn the focused card over to its hotkeys or info, or back.
     Flip(Side),
 }
 
@@ -141,17 +121,13 @@ pub(super) enum ModAction {
     Toggle,
 }
 
-/// A change to mods the overlay made on screen, for Hestia to make.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ModRequest {
     pub mod_id: String,
     pub action: ChangeAction,
-    /// The mods it turned on or off on screen.
     pub states: Vec<(String, bool)>,
 }
 
-/// The row that A/D and the side arrows move in. The overlay opens on the
-/// categories row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Row {
     Mods,
@@ -166,57 +142,29 @@ pub(super) struct ShortcutAvailability {
     pub exclusive: bool,
     pub toggle: bool,
     pub space: Space,
-    /// The focused card has hotkeys to turn over to.
     pub hotkeys: bool,
-    /// The focused card has info to turn over to.
     pub info: bool,
 }
 
-/// What Space does on the focused card.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Space {
-    /// Turns the mod on and the rest of its category off.
     #[default]
     Exclusive,
-    /// Uncategorized only turns the mod on.
     Enable,
     Install,
     TryAgain,
-    /// The card shows its hotkeys, and Space presses the selected one.
     PressHotkey,
-    /// The card shows its info, and Space shows the next source.
     NextSource,
 }
 
-/// What a search shows.  A category whose name matches shows all its mods,
-/// any other category shows only the mods that match, and categories with no
-/// match are hidden.  An empty search shows everything.
-///
-/// A category linked to a GameBanana character shows the character's
-/// GameBanana mods after its own, as cards numbered on from its own mods,
-/// then a card for the list's state while it loads, failed or is empty.
-/// GameBanana mods already installed are left out.  While GameBanana is
-/// enabled and nothing installed matches, neither a category's name nor a
-/// mod's, linked categories stay visible so the selected one can ask for
-/// remote-only results.  Otherwise they would keep the whole roster on the
-/// rail for every search.
 struct Filter {
-    /// The search as typed.
     query: String,
-    /// The search as `search_key` has it.
     needle: String,
-    /// Visible categories, in catalog order.
     categories: Vec<usize>,
-    /// Each category's visible cards, in order.  Indexed like the catalog,
-    /// so a hidden category has an empty list.
     mods: Vec<Vec<usize>>,
-    /// How well each category's name matches, as `name_match` has it.
-    /// Indexed like the catalog, and all `None` for an empty search.
     names: Vec<Option<NameMatch>>,
 }
 
-/// How a search matches a category's name.  A match at the start of a word
-/// beats one inside a word, so "lin" picks Linnea over Xiangling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum NameMatch {
     Inside,
@@ -237,8 +185,6 @@ impl Filter {
         for category in &catalog.categories {
             let all = matches_category(category, &needle);
             let list = list_key(category, &needle).and_then(|key| gamebanana.list(&key));
-            // A mod the overlay installs waits behind its card until the
-            // card crosses.
             let held = |gamebanana_id: Option<u64>| {
                 gamebanana_id.is_some_and(|id| {
                     gamebanana.holds(id)
@@ -294,9 +240,6 @@ impl Filter {
         }
     }
 
-    /// The category a search names best, when the search should move there
-    /// from `selected`: the first visible one with the best name match,
-    /// unless `selected` matches as well.
     fn named_category(&self, selected: usize) -> Option<usize> {
         let best = self
             .categories
@@ -313,13 +256,10 @@ impl Filter {
     }
 }
 
-/// Whether a search shows all of a category's mods: it's empty, or it
-/// matches the category's name.
 fn matches_category(category: &Category, needle: &str) -> bool {
     needle.is_empty() || search_key(character_name(&category.name)).contains(needle)
 }
 
-/// How a non-empty search matches a category's name, if it does.
 fn name_match(category: &Category, needle: &str) -> Option<NameMatch> {
     if needle.is_empty() {
         return None;
@@ -339,9 +279,6 @@ fn name_match(category: &Category, needle: &str) -> Option<NameMatch> {
     found
 }
 
-/// The GameBanana list a category shows with the search `needle`: the
-/// character's mods when the search shows all of the category's own,
-/// otherwise the ones that match.
 fn list_key(category: &Category, needle: &str) -> Option<ListKey> {
     Some(ListKey {
         character: category.character?,
@@ -353,7 +290,6 @@ fn list_key(category: &Category, needle: &str) -> Option<ListKey> {
     })
 }
 
-/// An answer in the panel that shows an install's question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Answer {
     File(u64),
@@ -361,7 +297,6 @@ enum Answer {
     Cancel,
 }
 
-/// How the question panel shows an answer.
 struct AnswerRow {
     label: String,
     detail: Option<String>,
@@ -369,7 +304,6 @@ struct AnswerRow {
 }
 
 impl AnswerRow {
-    /// `files` are the ones a file answer picks from.
     fn new(answer: Answer, files: &[crate::overlay_protocol::InstallFile]) -> Self {
         let (label, detail, size) = match answer {
             Answer::File(id) => match files.iter().find(|file| file.id == id) {
@@ -405,7 +339,6 @@ impl AnswerRow {
     }
 }
 
-/// The answers to the question an install asks at `stage`, then Cancel.
 fn answers(stage: &InstallStage) -> Vec<Answer> {
     let mut answers = match stage {
         InstallStage::ChooseFile { files } => {
@@ -422,7 +355,6 @@ fn answers(stage: &InstallStage) -> Vec<Answer> {
     answers
 }
 
-/// One card of the carousel.
 #[derive(Clone, Copy)]
 enum Card<'a> {
     Own(&'a Costume),
@@ -430,9 +362,6 @@ enum Card<'a> {
     Status(StatusCard),
 }
 
-/// Text as a search compares it: underscores read as spaces, runs of spaces
-/// count as one, and case does not matter.  A mod's raw name holds its
-/// displayed name, so matching the raw name also matches what is shown.
 fn search_key(text: &str) -> String {
     text.replace('_', " ")
         .split_whitespace()
@@ -441,7 +370,6 @@ fn search_key(text: &str) -> String {
         .to_lowercase()
 }
 
-/// In-memory state for the native costume switcher preview.
 pub(super) struct Layouts {
     catalog: Catalog,
     selected_category: usize,
@@ -460,7 +388,6 @@ pub(super) struct Layouts {
     carousel_wheel_suppress_until: f64,
     carousel_transition: Option<CarouselTransition>,
     carousel_pointer_press: Option<CarouselPointerPress>,
-    /// The card clicked last, by id, and when.
     last_card_click: Option<(String, f64)>,
     held_preview: Option<HeldPreview>,
     reveal_progress: f32,
@@ -472,30 +399,19 @@ pub(super) struct Layouts {
     pending_commands: VecDeque<PendingCommand>,
     row: Row,
     filter: Filter,
-    /// Changes made on screen since the last `take_requests`.
     requests: Vec<ModRequest>,
-    /// Mods whose change waits for Hestia, by id.  None in the preview, whose
-    /// changes are made on screen only.
     waiting: Option<HashSet<String>>,
     gamebanana: GameBanana,
-    /// "Show all characters" adds the game's GameBanana characters without
-    /// a category to the rail.
     show_all_characters: bool,
-    /// The highlighted answer in the question panel, and the mod whose
-    /// question it answers.
     question_row: usize,
     question_for: Option<u64>,
-    /// Mods the overlay installed, tagged NEW until they're used.
     new_mods: HashSet<String>,
-    /// "... is now with your mods", for the installed mods that crossed out
-    /// of sight since the last `take_arrivals`.
     arrivals: Vec<String>,
     keys: CardKeys,
 }
 
 impl Layouts {
     pub(super) fn new(catalog: Catalog) -> Self {
-        // Start at the leftmost category.
         let selected_category = 0;
         let carousel_focus = catalog
             .categories
@@ -558,25 +474,18 @@ impl Layouts {
         }
     }
 
-    /// The installed mods that crossed out of sight since the last call, by
-    /// name.
     pub(super) fn take_arrivals(&mut self) -> Vec<String> {
         std::mem::take(&mut self.arrivals)
     }
 
-    /// The changes made on screen since the last call, oldest first.
     pub(super) fn take_requests(&mut self) -> Vec<ModRequest> {
         std::mem::take(&mut self.requests)
     }
 
-    /// Shows which mods' changes wait for Hestia.  From then on, a change
-    /// shows that it waits in the frame it's made, before Hestia is asked.
     pub(super) fn set_waiting(&mut self, waiting: HashSet<String>) {
         self.waiting = Some(waiting);
     }
 
-    /// Asks Hestia for a change made on screen.  In the game, its card shows
-    /// that it waits at once, never done first.
     fn ask(&mut self, request: ModRequest) {
         if let Some(waiting) = &mut self.waiting {
             waiting.insert(request.mod_id.clone());
@@ -584,9 +493,6 @@ impl Layouts {
         self.requests.push(request);
     }
 
-    /// Shows GameBanana mods after the categories' own, which only the
-    /// in-game overlay can ask Hestia for, and with `all_characters`, the
-    /// characters no category stands for.  Or hides them.
     pub(super) fn set_gamebanana(&mut self, enabled: bool, all_characters: bool) {
         let show_all = enabled && all_characters;
         if self.gamebanana.enabled() == enabled && self.show_all_characters == show_all {
@@ -594,18 +500,14 @@ impl Layouts {
         }
         self.gamebanana.set_enabled(enabled);
         self.show_all_characters = show_all;
-        // The characters give the categories their pictures too.
         self.gamebanana.ask_characters();
         self.replace_catalog(self.own_catalog());
     }
 
-    /// What to ask Hestia for since the last call.
     pub(super) fn take_gamebanana_requests(&mut self) -> Vec<FromOverlay> {
         self.gamebanana.take_requests()
     }
 
-    /// The mods whose hotkeys and info to ask Hestia for since the last
-    /// call.
     pub(super) fn take_hotkey_requests(&mut self) -> Vec<FromOverlay> {
         self.keys.take_requests()
     }
@@ -622,8 +524,6 @@ impl Layouts {
         }
     }
 
-    /// Takes GameBanana pages, characters, pictures and installs from
-    /// Hestia.  Says what the installs' news tells.
     pub(super) fn receive_gamebanana(&mut self, messages: Vec<ToOverlay>) -> Vec<InstallNews> {
         let mut news = Vec::new();
         if messages.is_empty() {
@@ -651,8 +551,6 @@ impl Layouts {
                         _ => Vec::new(),
                     };
                     match self.gamebanana.receive_install(update) {
-                        // Hestia's window can install a mod turned on, which
-                        // is in use then, not new.
                         Some(InstallNews::Installed(name)) => {
                             let (on, off): (Vec<String>, Vec<String>) =
                                 mods.into_iter().partition(|id| self.mod_active(id));
@@ -670,7 +568,6 @@ impl Layouts {
             }
         }
         if characters_changed {
-            // Rebuilding the catalog rebuilds the lists' cards too.
             self.replace_catalog(self.own_catalog());
         } else if lists_changed {
             self.refresh_gamebanana();
@@ -682,8 +579,6 @@ impl Layouts {
         self.show_all_characters
     }
 
-    /// Adds the game's GameBanana characters without a category to the rail,
-    /// after the library's categories, or takes them away.
     pub(super) fn set_show_all_characters(&mut self, show: bool) {
         if self.show_all_characters == show || !self.gamebanana.enabled() {
             return;
@@ -695,17 +590,12 @@ impl Layouts {
         self.replace_catalog(self.own_catalog());
     }
 
-    /// The library without the categories "Show all characters" added.
     fn own_catalog(&self) -> Catalog {
         let mut catalog = self.catalog.clone();
         catalog.categories.retain(|category| !category.extra);
         catalog
     }
 
-    /// `catalog` with GameBanana's characters.  A category without a link
-    /// takes the character its name stands for, and the character's picture
-    /// in place of its mods'.  With "Show all characters" on, the characters
-    /// no category stands for come after the library's categories.
     fn with_characters(&self, mut catalog: Catalog) -> Catalog {
         let characters = self.gamebanana.characters();
         for category in &mut catalog.categories {
@@ -752,9 +642,6 @@ impl Layouts {
         catalog
     }
 
-    /// Rebuilds the cards after a GameBanana list changed, keeping the
-    /// focused card.  A card that went away leaves the focus on the card
-    /// before it.
     fn refresh_gamebanana(&mut self) {
         let query = std::mem::take(&mut self.filter.query);
         self.filter = Filter::new(&self.catalog, &query, &self.gamebanana);
@@ -778,10 +665,6 @@ impl Layouts {
         }
     }
 
-    /// Moves the cards of the installs that finished a moment ago into the
-    /// categories' own mods, each to its sorted place.  The focus stays on
-    /// the card it was on, so a focused card that crosses stays in the
-    /// middle while the others slide around it.
     fn cross_installs(&mut self, ctx: &egui::Context, carousel_rect: Rect, now: f64) {
         let (crossed, next) = self.gamebanana.cross_finished(now);
         if let Some(at) = next {
@@ -811,7 +694,6 @@ impl Layouts {
         if let Some(transition) = &mut self.carousel_transition {
             transition.seconds = CROSSING_SECS;
         }
-        // One that lands out of sight says where it went.
         let shown: Vec<usize> = self
             .target_placements(carousel_rect)
             .iter()
@@ -834,7 +716,6 @@ impl Layouts {
         }
     }
 
-    /// The GameBanana list the category shows with the current search.
     fn gamebanana_key(&self, category_index: usize) -> Option<ListKey> {
         let category = self.catalog.categories.get(category_index)?;
         list_key(category, &self.filter.needle)
@@ -844,8 +725,6 @@ impl Layouts {
         self.gamebanana.list(&self.gamebanana_key(category_index)?)
     }
 
-    /// The card at `index` in a category: its own mods, then its GameBanana
-    /// list's mods, then the list's state.
     fn card(&self, category_index: usize, index: usize) -> Option<Card<'_>> {
         let category = self.catalog.categories.get(category_index)?;
         if let Some(costume) = category.costumes.get(index) {
@@ -879,7 +758,6 @@ impl Layouts {
         }
     }
 
-    /// A card's selection id: its mod's, or one for GameBanana cards.
     fn card_id(&self, category_index: usize, index: usize) -> Option<String> {
         Some(match self.card(category_index, index)? {
             Card::Own(costume) => costume.id.clone(),
@@ -900,8 +778,6 @@ impl Layouts {
         let gamebanana_id: Option<u64> = id
             .strip_prefix(GAMEBANANA_PREFIX)
             .and_then(|id| id.parse().ok());
-        // A GameBanana mod that got installed is one of the category's own,
-        // once its card crossed.
         if let Some(position) = gamebanana_id
             .filter(|&gamebanana_id| !self.gamebanana.holds(gamebanana_id))
             .and_then(|gamebanana_id| {
@@ -924,8 +800,6 @@ impl Layouts {
             .map(|position| own + position)
     }
 
-    /// Where the category `id` is in the rail.  A category "Show all
-    /// characters" added is the category for its character once there is one.
     fn category_position(&self, id: &str) -> Option<usize> {
         let categories = &self.catalog.categories;
         categories
@@ -939,8 +813,6 @@ impl Layouts {
             })
     }
 
-    /// Starts the selected category's GameBanana list, or asks for its next
-    /// page, once the carousel nears the end of its cards.
     fn update_gamebanana(&mut self, ctx: &egui::Context, now: f64) {
         if !self.gamebanana.enabled() || !self.filter.categories.contains(&self.selected_category) {
             return;
@@ -964,10 +836,6 @@ impl Layouts {
         }
     }
 
-    /// Space or a click on a GameBanana card installs its mod into the
-    /// category, or into a new one for its character when the category is
-    /// one "Show all characters" added.  On the card after a list whose page
-    /// failed, any action asks again.
     fn activate_gamebanana(&mut self, category_index: usize, index: usize, install: bool) {
         match self.card(category_index, index) {
             Some(Card::GameBanana(item)) if install => {
@@ -989,8 +857,6 @@ impl Layouts {
         }
     }
 
-    /// What Space does on a focused GameBanana card: install it, or try
-    /// again after a failed install or list.  Nothing while it installs.
     fn gamebanana_space(&self) -> Option<Space> {
         if !self.visible_mods().contains(&self.carousel_focus) {
             return None;
@@ -1006,8 +872,6 @@ impl Layouts {
         }
     }
 
-    /// Where the overlay is, by ids: the selected category, and each
-    /// category's focused mod where it isn't the one a fresh start would pick.
     pub(super) fn selection(&self) -> Selection {
         let mods = self
             .catalog
@@ -1034,19 +898,12 @@ impl Layouts {
         }
     }
 
-    /// Go back to where `selection` left the overlay.  Without its category,
-    /// the overlay starts at the leftmost one.
     pub(super) fn restore_selection(&mut self, selection: &Selection) {
         self.apply_selection(selection, 0);
     }
 
-    /// Take a new library from Hestia and stay on the same category and mods,
-    /// by id.  If the selected category is gone, the selection stays at the
-    /// same place in the rail.  A category left on its active mod follows the
-    /// active mod, as it would on a fresh start.
     pub(super) fn replace_catalog(&mut self, catalog: Catalog) {
         self.keys.library_changed();
-        // Mods' folders and pictures may have changed with it.
         self.thumbnails.retry_failed();
         let selection = self.selection();
         let previous_index = self.selected_category;
@@ -1120,8 +977,6 @@ impl Layouts {
     pub(super) fn prepare_thumbnails(&mut self, ctx: &egui::Context) {
         self.thumbnails.poll(ctx);
         let mut paths = Vec::new();
-        // Prioritize the current carousel, then its next cards and adjacent
-        // characters. The mini strip also calls this to warm the first view.
         append_nearby_mod_images(
             &mut paths,
             self.visible_mods(),
@@ -1160,7 +1015,6 @@ impl Layouts {
         self.thumbnails.prefetch(ctx, paths);
     }
 
-    /// Draw the centered mod carousel. The parent reserves approximately 560x266 for it.
     pub(super) fn show_carousel(&mut self, ui: &mut Ui, overlay_opacity: u8) {
         self.visible_card_rects.clear();
         if self.catalog.categories.is_empty() {
@@ -1187,7 +1041,6 @@ impl Layouts {
         if let Some(mod_id) = &focused_mod {
             self.keys.ask(mod_id);
         }
-        // An install's question covers the carousel until it's answered.
         let question = self.current_question();
         if question.is_some() {
             self.cancel_pointer_interaction();
@@ -1227,13 +1080,10 @@ impl Layouts {
                         && !input.pointer.primary_released())
             })
         {
-            // A lost pointer cannot produce a trustworthy release target. Drop the capture so
-            // a later click after Alt/collapse cannot activate a stale card.
             self.cancel_pointer_interaction();
         }
         let mut placements = self.current_carousel_placements(carousel_rect, now);
         if let Some((mod_id, answers)) = question {
-            // The cards stay behind the panel, dimmed and out of reach.
             for placement in &placements {
                 let reveal = card_reveal_progress(placement, self.reveal_progress, &placements);
                 self.show_carousel_card(
@@ -1270,8 +1120,6 @@ impl Layouts {
                 && ui
                     .input(|input| input.pointer.primary_down() || input.pointer.primary_released())
             {
-                // Keep the pressed card under the cursor through release. This makes a concurrent
-                // repaint or carousel transition harmless to the pending click and its release frame.
                 if let Some(press) = &self.carousel_pointer_press {
                     placements = press.placements.clone();
                 }
@@ -1280,10 +1128,6 @@ impl Layouts {
 
         if self.held_preview.is_none() {
             for placement in &placements {
-                // The carousel is a visual slot layout: when the category changes, a
-                // different costume can occupy the same left/center/right rectangle. Use
-                // that stable slot for egui's interaction id so its widget-rect identity
-                // does not change underneath the pointer between passes.
                 let reveal = card_reveal_progress(placement, self.reveal_progress, &placements);
                 self.show_carousel_card(
                     ui,
@@ -1303,18 +1147,12 @@ impl Layouts {
                 self.release_carousel_press(ui, category_index, carousel_rect, now)
             && !self.repeated_click(category_index, costume_index, now)
         {
-            // A click activates in place. The focused card remains focused, so a side-card
-            // click never moves the target away from the pointer before the next action.
             self.activate_costume_in_place(category_index, costume_index, now);
             ui.ctx().request_repaint();
         }
         self.request_animation_repaint(ui.ctx(), now);
     }
 
-    /// Set the staged expansion progress used by the parent overlay animation.
-    /// The focused card appears first; neighbors are staggered by
-    /// `card_reveal_progress`. Invisible cards keep their stable slot IDs but do not
-    /// accept activation until they are almost fully revealed.
     pub(super) fn set_reveal(&mut self, progress: f32) {
         self.reveal_progress = progress.clamp(0.0, 1.0);
         if self.reveal_progress <= 0.0 {
@@ -1324,8 +1162,6 @@ impl Layouts {
         }
     }
 
-    /// Queue a mod navigation command for the next carousel pass, when its current geometry is
-    /// available. This keeps keyboard navigation on the same animated path as the wheel.
     pub(super) fn navigate_mod(&mut self, ctx: &egui::Context, direction: i32) {
         if direction == 0 || self.pointer_gesture_active_in_context(ctx) {
             return;
@@ -1335,7 +1171,6 @@ impl Layouts {
         ctx.request_repaint();
     }
 
-    /// Navigate categories using the same clamped order as the category wheel.
     pub(super) fn navigate_category(&mut self, ctx: &egui::Context, direction: i32) {
         if direction == 0
             || self.pointer_gesture_active_in_context(ctx)
@@ -1349,9 +1184,6 @@ impl Layouts {
         ctx.request_repaint();
     }
 
-    /// Queue an explicit action for the focused mod. The command is applied on the next
-    /// carousel pass, alongside ordinary activation, so navigation and actions retain FIFO order
-    /// and reveal/gesture guards.
     pub(super) fn apply_focused_action(&mut self, ctx: &egui::Context, action: ModAction) {
         if self.pointer_gesture_active_in_context(ctx) {
             return;
@@ -1361,24 +1193,18 @@ impl Layouts {
         ctx.request_repaint();
     }
 
-    /// Turns the focused card over to its hotkeys, or back, after the
-    /// commands queued before it.
     pub(super) fn flip_focused(&mut self, ctx: &egui::Context) {
         self.pending_commands
             .push_back(PendingCommand::Flip(Side::Keys));
         ctx.request_repaint();
     }
 
-    /// Turns the focused card over to its info, or back, after the commands
-    /// queued before it.
     pub(super) fn flip_focused_info(&mut self, ctx: &egui::Context) {
         self.pending_commands
             .push_back(PendingCommand::Flip(Side::Info));
         ctx.request_repaint();
     }
 
-    /// The focused card shows its hotkeys, or turns to them, and W, S and
-    /// Space work on them.
     pub(super) fn hotkeys_shown(&self) -> bool {
         self.row == Row::Mods
             && self
@@ -1386,27 +1212,19 @@ impl Layouts {
                 .is_some_and(|mod_id| self.keys.showing(&mod_id))
     }
 
-    /// The focused card shows its info, or turns to it, and W and S scroll
-    /// it and Space shows the next source.
     pub(super) fn info_shown(&self) -> bool {
         self.row == Row::Mods && self.info_open()
     }
 
-    /// The focused card shows its info, or turns to it, whichever row is
-    /// picked.
     fn info_open(&self) -> bool {
         self.focused_mod_id()
             .is_some_and(|mod_id| self.keys.showing_info(&mod_id))
     }
 
-    /// The focused card shows its hotkeys or info, so the overlay keeps only
-    /// the keys that work there.
     pub(super) fn back_shown(&self) -> bool {
         self.hotkeys_shown() || self.info_shown()
     }
 
-    /// Esc on a card showing its hotkeys or info: turns it back to its
-    /// picture.  False when no card shows its back.
     pub(super) fn turn_to_front(&mut self, ctx: &egui::Context, now: f64) -> bool {
         if !self.back_shown() {
             return false;
@@ -1420,9 +1238,6 @@ impl Layouts {
         true
     }
 
-    /// Moves through the focused card's hotkeys, or scrolls its info.  False
-    /// when neither shows or there's nothing more that way, so the key
-    /// switches rows.
     pub(super) fn select_hotkey(&mut self, ctx: &egui::Context, direction: i32) -> bool {
         if !self.hotkeys_shown() && !self.info_shown() {
             return false;
@@ -1431,8 +1246,6 @@ impl Layouts {
         self.keys.select(direction)
     }
 
-    /// Asks Hestia to press the focused card's selected hotkey in the game,
-    /// or shows the next source of its info.
     pub(super) fn press_hotkey(&mut self, ctx: &egui::Context, now: f64) {
         if self.hotkeys_shown() {
             self.keys.press_selected(now);
@@ -1443,8 +1256,6 @@ impl Layouts {
         }
     }
 
-    /// Hestia answered a hotkey press.  Gives back why the game didn't get
-    /// it.
     pub(super) fn hotkey_pressed(
         &mut self,
         id: u64,
@@ -1454,7 +1265,6 @@ impl Layouts {
         self.keys.pressed(id, error, now)
     }
 
-    /// The focused card's mod, when it's one of the library's.
     fn focused_mod_id(&self) -> Option<String> {
         match self.card(self.selected_category, self.carousel_focus)? {
             Card::Own(costume) if self.visible_mods().contains(&self.carousel_focus) => {
@@ -1464,14 +1274,10 @@ impl Layouts {
         }
     }
 
-    /// An install asks a question, which W/S, Space and Esc answer until
-    /// it's answered.
     pub(super) fn question_open(&self) -> bool {
         self.gamebanana.question().is_some()
     }
 
-    /// The install that asks, its answers, and the highlighted one kept on
-    /// them.  A new question starts on its first answer.
     fn current_question(&mut self) -> Option<(u64, Vec<Answer>)> {
         let (mod_id, install) = self.gamebanana.question()?;
         let answers = answers(&install.stage);
@@ -1483,7 +1289,6 @@ impl Layouts {
         Some((mod_id, answers))
     }
 
-    /// Up for a negative direction, down for a positive one.
     pub(super) fn move_question(&mut self, direction: i32) {
         if let Some((_, answers)) = self.current_question() {
             self.question_row = self
@@ -1493,7 +1298,6 @@ impl Layouts {
         }
     }
 
-    /// Gives the highlighted answer.
     pub(super) fn answer_question(&mut self) {
         let Some((mod_id, answers)) = self.current_question() else {
             return;
@@ -1506,7 +1310,6 @@ impl Layouts {
         }
     }
 
-    /// Stops the install that asks.  False without a question.
     pub(super) fn cancel_question(&mut self) -> bool {
         let Some((mod_id, _)) = self.gamebanana.question() else {
             return false;
@@ -1515,8 +1318,6 @@ impl Layouts {
         true
     }
 
-    /// The panel over the carousel with the question an install asks, and
-    /// its answers: Space or a click gives the highlighted one.
     fn show_question(
         &mut self,
         ui: &mut Ui,
@@ -1692,8 +1493,6 @@ impl Layouts {
         self.row
     }
 
-    /// Up to the mods row for a negative direction, down to the categories row
-    /// for a positive one.
     pub(super) fn switch_row(&mut self, direction: i32) {
         self.row = match direction.signum() {
             -1 => Row::Mods,
@@ -1732,8 +1531,6 @@ impl Layouts {
                 info: false,
             };
         };
-        // Exclusive also disables mods the search hides, so count them all.
-        // In Uncategorized it only enables.
         let active_count = category
             .costumes
             .iter()
@@ -1765,10 +1562,6 @@ impl Layouts {
         }
     }
 
-    /// Show only what `query` matches.  A search that names a character
-    /// moves to it, unless the selected category's name matches as well.
-    /// Otherwise keeps the selected category and mod while the search still
-    /// shows them, or moves to the first match.
     pub(super) fn set_search(&mut self, query: &str) {
         if self.filter.query == query {
             return;
@@ -1793,8 +1586,6 @@ impl Layouts {
         }
     }
 
-    /// What the carousel says when it has no cards.  A search that matches
-    /// nothing leaves the selection on a category it hides.
     fn empty_carousel_text(&self) -> &'static str {
         text(
             if self.filter.categories.contains(&self.selected_category) {
@@ -1805,7 +1596,6 @@ impl Layouts {
         )
     }
 
-    /// The selected category's mods that the search shows.
     fn visible_mods(&self) -> &[usize] {
         self.filter
             .mods
@@ -1814,8 +1604,6 @@ impl Layouts {
             .unwrap_or_default()
     }
 
-    /// `focus` when the search shows it in `category`, otherwise the first
-    /// mod the search shows there.
     fn visible_focus(&self, category: usize, focus: usize) -> usize {
         match self.filter.mods.get(category) {
             Some(visible) if !visible.is_empty() && !visible.contains(&focus) => visible[0],
@@ -1823,7 +1611,6 @@ impl Layouts {
         }
     }
 
-    /// Return the current painted card/preview bounds for the native click-through mask.
     pub(super) fn visible_card_rects(&self) -> &[Rect] {
         &self.visible_card_rects
     }
@@ -1837,8 +1624,6 @@ impl Layouts {
             || ctx.input(|input| input.pointer.any_down() || input.pointer.any_pressed())
     }
 
-    /// Clear press/preview state and defer transient tooltip display after collapse or mode
-    /// changes. Active costume state is deliberately untouched.
     pub(super) fn dismiss_transient_ui(&mut self, ctx: &egui::Context) {
         self.carousel_pointer_press = None;
         self.held_preview = None;
@@ -1848,8 +1633,6 @@ impl Layouts {
         suppress_tooltips(ctx);
     }
 
-    /// Paint the original image held by the secondary mouse button. The preview contains the
-    /// source image without cropping and marks only its actual image bounds.
     pub(super) fn show_held_preview(
         &mut self,
         ui: &mut Ui,
@@ -1876,8 +1659,6 @@ impl Layouts {
         let backdrop = image_rect.expand(10.0).intersect(available_rect);
         self.visible_card_rects.clear();
         self.visible_card_rects.push(backdrop);
-        // Keep the game visible through the preview. The margin is only a subtle boundary;
-        // filling it would effectively stack a second opaque window behind the image.
         ui.painter().rect_stroke(
             backdrop,
             CornerRadius::ZERO,
@@ -2003,8 +1784,6 @@ impl Layouts {
                 .or_else(|| input.pointer.latest_pos())
         });
         let can_click = ui.input(|input| input.pointer.could_any_button_be_click());
-        // Resume from the exact geometry shown while the button was held. This prevents a
-        // long-held press from snapping to a transition's settled destination on release.
         self.begin_carousel_transition(press.placements.clone(), carousel_rect, now);
         valid_carousel_release(&press, category_index, pointer_pos, can_click)
     }
@@ -2019,8 +1798,6 @@ impl Layouts {
         now: f64,
     ) -> Vec<CarouselCardPlacement> {
         if let Some(press) = &self.carousel_pointer_press {
-            // The pointer target owns the geometry until release, even if the original
-            // transition would have completed while the button was held.
             return press.placements.clone();
         }
         let target = self.target_placements(carousel_rect);
@@ -2052,10 +1829,7 @@ impl Layouts {
         current
     }
 
-    /// Where the cards settle.  GameBanana cards sit a divider's width away
-    /// from the category's own.
     fn target_placements(&self, carousel_rect: Rect) -> Vec<CarouselCardPlacement> {
-        // A linked category's GameBanana cards come as its list loads.
         let grows =
             self.gamebanana.enabled() && self.gamebanana_key(self.selected_category).is_some();
         let mut placements = visible_card_placements(
@@ -2204,8 +1978,6 @@ impl Layouts {
         self.active_feedback_costume = Some(costume_index);
     }
 
-    /// Whether a click on a card comes too soon after the last one on it to
-    /// be a click of its own, as in a double-click.  Every click counts.
     fn repeated_click(&mut self, category_index: usize, index: usize, now: f64) -> bool {
         let id = self.card_id(category_index, index);
         let repeated = matches!(
@@ -2216,7 +1988,6 @@ impl Layouts {
         repeated
     }
 
-    /// Draw the horizontally scrollable category strip. The parent paints its neutral base.
     pub(super) fn show_category_strip(&mut self, ui: &mut Ui, overlay_opacity: u8) {
         if self.catalog.categories.is_empty() {
             return;
@@ -2236,9 +2007,6 @@ impl Layouts {
         }
 
         let rail_rect = strip_rect.shrink2(Vec2::new(12.0, 0.0));
-        // Let the category rail run beneath the navigation controls. The controls are
-        // painted over the rail below, so reserving side gutters would leave an
-        // unnecessary gap before the first and after the last category.
         let scroll_rect = rail_rect;
         let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(scroll_rect));
         egui::ScrollArea::horizontal()
@@ -2249,8 +2017,6 @@ impl Layouts {
                     ui.set_height(CATEGORY_ITEM_HEIGHT);
                     let mut divided = false;
                     for (position, &index) in visible_indices.iter().enumerate() {
-                        // A line sets the added characters apart from the
-                        // library's categories.
                         if self.catalog.categories[index].extra && !divided {
                             divided = true;
                             if position > 0 {
@@ -2315,7 +2081,6 @@ impl Layouts {
         visible_indices: &[usize],
         overlay_opacity: u8,
     ) {
-        // At either end, leave the category beneath the unavailable control unobscured.
         if !enabled {
             return;
         }
@@ -2502,7 +2267,6 @@ impl Layouts {
         overlay_opacity: u8,
     ) {
         let category_name = self.catalog.categories[index].name.clone();
-        // A GameBanana character without a category shows faded, as a ghost.
         let extra = self.catalog.categories[index].extra;
         let picture_alpha = if extra {
             scaled_alpha(image_alpha(overlay_opacity), 0.5)
@@ -2540,7 +2304,6 @@ impl Layouts {
         };
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
         if selected && self.row == Row::Categories {
-            // The keyboard is on this row.  The focused card dims to match.
             ui.painter().rect_stroke(
                 rect,
                 CornerRadius::same(4),
@@ -2632,13 +2395,11 @@ impl Layouts {
                 let _ = delayed_tooltip(response, name.clone());
             }
         }
-        // A dot shows where a mod the overlay installed went.
         if self.catalog.categories[index]
             .costumes
             .iter()
             .any(|costume| self.new_mods.contains(&costume.id))
         {
-            // A dark ring keeps it apart from the picture.
             ui.painter().circle(
                 egui::pos2(rect.max.x - 9.0, rect.min.y + 8.0),
                 4.5,
@@ -2648,7 +2409,6 @@ impl Layouts {
         }
     }
 
-    /// Whether the library's mod `id` is on.
     fn mod_active(&self, id: &str) -> bool {
         self.catalog
             .categories
@@ -2657,7 +2417,6 @@ impl Layouts {
             .any(|costume| costume.id == id && costume.active)
     }
 
-    /// Mods tagged NEW lose the tag once they're used.
     fn forget_used_new_mods(&mut self) {
         if self.new_mods.is_empty() {
             return;
@@ -2726,7 +2485,6 @@ impl Layouts {
                 self.card(category_index, costume_index),
                 Some(Card::Own(costume)) if self.new_mods.contains(&costume.id)
             );
-        // A finished install glows until its card crosses.
         let installed = matches!(install, Some(InstallStage::Installed { .. }));
         let interactable = reveal >= REVEAL_INTERACTION_THRESHOLD;
         let response = ui
@@ -2759,8 +2517,6 @@ impl Layouts {
         } else {
             content_gray(82, overlay_opacity)
         };
-        // The focused card of a library mod can turn over to its hotkeys or
-        // info.
         let own_focused = match self.card(category_index, costume_index) {
             Some(Card::Own(costume)) if focused => Some(costume.id.clone()),
             _ => None,
@@ -2812,7 +2568,6 @@ impl Layouts {
         let image_rect = visual_rect.shrink(1.0);
         let texture = self.texture_for(ui, image.as_deref());
         if !face.settled() {
-            // Turning, only the picture shows.
             paint_thumbnail_squeezed(
                 ui,
                 full_rect.shrink(1.0),
@@ -2828,7 +2583,6 @@ impl Layouts {
             );
             return;
         }
-        // How the install goes, on a line under the name.
         let status = install
             .as_ref()
             .and_then(|stage| install_status(stage, focused))
@@ -2849,7 +2603,6 @@ impl Layouts {
             card_name_rect(image_rect, focused).translate(Vec2::new(0.0, -status_height));
         let (name_size, _) = measure_card_name(ui, name_rect, &name, overlay_opacity, focused);
         if installed {
-            // A soft orange glow until the card crosses.
             let glow = egui::epaint::Shadow {
                 offset: [0, 0],
                 blur: 18,
@@ -2921,7 +2674,6 @@ impl Layouts {
             if feedback {
                 self.request_animation_repaint(ui.ctx(), now);
             }
-            // While Hestia makes the change, the badge pulses with dots.
             let pulse = if waiting {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(33));
@@ -2959,7 +2711,6 @@ impl Layouts {
             paint_gamebanana_badge(ui, visual_rect, focused, installed, reveal, overlay_opacity);
         }
         if new {
-            // A button's label covers the tag while it's out.
             let (room, shown) = buttons
                 .as_ref()
                 .map_or((0.0, 1.0), |buttons| (buttons.room(), 1.0 - buttons.open()));
@@ -2990,8 +2741,6 @@ impl Layouts {
         }
     }
 
-    /// The card after a GameBanana list: a placeholder while it loads, or
-    /// why the list has no more mods.
     #[allow(clippy::too_many_arguments)]
     fn show_status_card(
         &mut self,
@@ -3057,7 +2806,6 @@ impl Layouts {
         );
         let text = match status {
             StatusCard::Loading => {
-                // Where the name will be.
                 let bottom = visual_rect.max.y - CARD_TITLE_BOTTOM_PADDING;
                 let height = if focused { 9.0 } else { 7.0 };
                 let width = visual_rect.width() - 24.0;
@@ -3108,9 +2856,6 @@ impl Layouts {
         ui.painter().galley(position, galley, color);
     }
 
-    /// The line before a category's GameBanana mods, while the first one
-    /// shows: between them and the category's own, or first in the row when
-    /// none of its own show.
     fn paint_gamebanana_divider(
         &mut self,
         ui: &Ui,
@@ -3133,9 +2878,6 @@ impl Layouts {
         let center_y = carousel_rect.center().y;
         let half = (NEIGHBOR_CARD_SIZE.y - 12.0) * 0.5;
         let reveal = self.reveal_progress;
-        // A dark backing like the header's, so the line reads over the game.
-        // The window shows only what's listed, and the gap between cards
-        // isn't.
         let backing = Rect::from_min_max(
             egui::pos2(x - 6.0, center_y - half - 6.0),
             egui::pos2(x + 20.0, center_y + half + 6.0),
@@ -3176,7 +2918,6 @@ impl Layouts {
                     ..Default::default()
                 },
             ));
-        // Turned to read upwards, the label's top edge faces the line.
         let position = egui::pos2(x + 4.0, center_y + galley.size().x * 0.5);
         ui.painter().add(
             egui::epaint::TextShape::new(position, galley, color)
@@ -3227,8 +2968,6 @@ impl Layouts {
         });
 
         if !hovered {
-            // A fractional notch belongs to the region where it started. Do not let it
-            // complete later after the pointer has moved to the rail or game window.
             self.carousel_wheel_accum = 0.0;
         }
         if consumed_wheel {
@@ -3270,7 +3009,6 @@ impl Layouts {
             return None;
         }
         if !ui.rect_contains_pointer(rect) {
-            // A partial wheel notch must never leak into the category rail after leaving it.
             self.category_wheel_accum = 0.0;
             return None;
         }
@@ -3358,7 +3096,6 @@ impl Layouts {
             };
             let action = match action {
                 ModAction::Exclusive => ChangeAction::Use,
-                // Enabling through the toggle keeps the others enabled.
                 ModAction::Toggle if costume.active => ChangeAction::TurnOff,
                 ModAction::Toggle => ChangeAction::TurnOn,
             };
@@ -3381,7 +3118,6 @@ impl Layouts {
     }
 }
 
-/// Queue the images of the mods the search shows around `focus`.
 fn append_nearby_mod_images(
     paths: &mut Vec<PathBuf>,
     visible: &[usize],
@@ -3449,8 +3185,6 @@ fn next_visible_category(
     visible_indices.get(target).copied()
 }
 
-/// The mod `direction` steps to among the mods a search shows.  Stops at
-/// either end, like the carousel without a search.
 fn next_visible_mod(visible: &[usize], focus: usize, direction: i32) -> Option<usize> {
     let first = *visible.first()?;
     let Some(position) = visible.iter().position(|&index| index == focus) else {
@@ -3478,8 +3212,6 @@ fn card_reveal_progress(
     cards: &[CarouselCardPlacement],
 ) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
-    // Reveal the focused card first, then bring in its neighbors with a small stagger.
-    // A pair of cards has no center slot, so its other card still appears promptly.
     let delay = if placement.focused {
         0.0
     } else if !cards.iter().any(|card| card.slot == 1) {
@@ -3503,13 +3235,10 @@ fn carousel_card_placements(
         return Vec::new();
     }
     let focus = focus.min(costume_count - 1);
-    // Two cards sit as a pair, unless more can come: then the focused card
-    // stays in the middle, so it doesn't move when they do.
     let pair = costume_count == 2 && !grows;
     let center_y = carousel_rect.center().y;
     let center_x = carousel_rect.center().x;
     let focused_center_x = if pair {
-        // Keep a two-card group centered as a whole, regardless of which card is focused.
         let offset = (CAROUSEL_CARD_GAP + NEIGHBOR_CARD_SIZE.x) * 0.5;
         if focus == 0 {
             center_x - offset
@@ -3563,8 +3292,6 @@ fn carousel_card_placements(
     placements
 }
 
-/// Card placements for the mods a search shows.  They sit side by side as if
-/// the hidden mods were not installed.
 fn visible_card_placements(
     carousel_rect: Rect,
     visible: &[usize],
@@ -3622,7 +3349,6 @@ fn active_costume_index(category: &Category) -> usize {
         .unwrap_or(0)
 }
 
-/// The pictures of the mods the library censors.
 fn censored_images(catalog: &Catalog) -> HashSet<PathBuf> {
     catalog
         .categories
@@ -3633,8 +3359,6 @@ fn censored_images(catalog: &Catalog) -> HashSet<PathBuf> {
         .collect()
 }
 
-/// The rail's picture for a category without its own: the active mod's, else
-/// the first mod's that has one.
 fn active_image(category: &Category) -> Option<PathBuf> {
     category
         .costumes
@@ -3654,8 +3378,6 @@ fn character_name(name: &str) -> &str {
     name.strip_prefix("Operators: ").unwrap_or(name)
 }
 
-/// Marks a mod the overlay installed, until it's used.
-/// `room` is what the keys button beside it takes.
 fn paint_new_tag(ui: &Ui, card: Rect, room: f32, reveal: f32, overlay_opacity: u8) {
     let color = scale_color_alpha(content_gray(27, overlay_opacity), reveal);
     let label = ui
@@ -3685,9 +3407,6 @@ fn paint_new_tag(ui: &Ui, card: Rect, room: f32, reveal: f32, overlay_opacity: u
         .galley(tag.center() - label.size() * 0.5, label, color);
 }
 
-/// Marks a GameBanana card, which isn't installed, or has an empty tick box
-/// once it is, since installs land turned off.  The focused card says where
-/// it's from.
 fn paint_gamebanana_badge(
     ui: &Ui,
     card: Rect,
@@ -3729,14 +3448,12 @@ fn paint_gamebanana_badge(
     }
 }
 
-/// What a GameBanana card says under its name while Hestia installs it.
 struct InstallStatus {
     text: String,
     color: Color32,
     bar: InstallBar,
 }
 
-/// The bar along the bottom of a card Hestia installs.
 enum InstallBar {
     Hidden,
     Moving,
@@ -3837,7 +3554,6 @@ fn paint_install_bar(
     );
 }
 
-/// `text` on one line, cut with an ellipsis to fit `width`.
 fn elided_galley(
     ui: &Ui,
     text: &str,
@@ -3852,7 +3568,6 @@ fn elided_galley(
     ui.painter().layout_job(job)
 }
 
-/// A download's size, as the question panel shows it.
 fn file_size_label(size: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -3922,8 +3637,6 @@ fn scaled_alpha(alpha: u8, factor: f32) -> u8 {
 }
 
 fn scale_color_alpha(color: Color32, factor: f32) -> Color32 {
-    // Color32 already stores premultiplied channels. Scale them together so
-    // a completed reveal is exactly the original color, without a second tint.
     color.gamma_multiply(factor.clamp(0.0, 1.0))
 }
 
@@ -4031,17 +3744,13 @@ fn paint_thumbnail_tinted(
     paint_fitted_image_tinted(ui, rect, Some(texture), tint_alpha);
 }
 
-/// The part of a picture that covers `size`.
 fn cover_uv(size: Vec2, source_size: Vec2) -> Rect {
     let scale = (size.x / source_size.x).max(size.y / source_size.y);
     let uv_size = size / (source_size * scale);
-    // Portrait covers tend to place faces above center; keep that region visible.
     let center_y = uv_size.y * 0.5 + (1.0 - uv_size.y) * 0.08;
     Rect::from_center_size(egui::pos2(0.5, center_y), uv_size)
 }
 
-/// A card's picture cropped for `full` and squeezed into `shown`, so a
-/// turning card keeps showing the same part of it.
 fn paint_thumbnail_squeezed(
     ui: &mut Ui,
     full: Rect,
@@ -4093,7 +3802,6 @@ fn paint_bottom_gradient(
     reveal: f32,
 ) {
     let gradient_height = (requested_height + 22.0).clamp(24.0, rect.height() * 0.56);
-    // Fade above the title block, keeping the title itself on a dark base.
     let fade_end = ((gradient_height - requested_height) / gradient_height).max(0.01);
     let stops: [(f32, u8); 4] = [(0.0, 0), (fade_end * 0.4, 20), (fade_end, 150), (1.0, 218)];
     let start_y = rect.max.y - gradient_height;
@@ -4190,8 +3898,6 @@ fn paint_card_name_revealed(
     elided
 }
 
-/// What a click on a costume does: one that's on turns off.  One that's off
-/// is used while at most one is on, otherwise it's turned on next to them.
 fn select_costume(category: &mut Category, index: usize) -> Option<ModRequest> {
     let costume = category.costumes.get(index)?;
     let active_count = category
@@ -4209,8 +3915,6 @@ fn select_costume(category: &mut Category, index: usize) -> Option<ModRequest> {
     change_costumes(category, index, action)
 }
 
-/// Makes a change on screen as Hestia will make it, and returns the request
-/// for Hestia when something changed.
 fn change_costumes(
     category: &mut Category,
     index: usize,
@@ -4247,8 +3951,6 @@ fn change_costumes(
     })
 }
 
-/// Uncategorized holds mods that have nothing to do with each other, so
-/// using one leaves the rest on.
 fn is_loose(category: &Category) -> bool {
     category.id == UNCATEGORIZED_ID
 }
@@ -4402,7 +4104,6 @@ mod tests {
         let context = egui::Context::default();
         let size = Vec2::new(560.0, 266.0);
 
-        // Different categories reuse the same two-card layout.
         run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), false);
         let left_before = context
             .read_response(carousel_slot_id(0))
@@ -4416,9 +4117,6 @@ mod tests {
         layouts.select_category(1);
         run_layout_frame(&context, &mut layouts, size, 1.1, Vec::new(), false);
 
-        // If IDs were based on category/costume indices, these responses would
-        // disappear when a different category replaced the cards in-place. This
-        // is the same stable-rect condition egui uses for its warning.
         let left_after = context
             .read_response(carousel_slot_id(0))
             .expect("left carousel slot id must survive category changes")
@@ -4578,7 +4276,6 @@ mod tests {
         assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![1]);
         click(&mut layouts, 1, 2.0);
         assert!(active_indices(&layouts.catalog.categories[0]).is_empty());
-        // Another card is a click of its own.
         click(&mut layouts, 0, 2.1);
         assert_eq!(active_indices(&layouts.catalog.categories[0]), vec![0]);
     }
@@ -4596,8 +4293,6 @@ mod tests {
             .iter()
             .find(|card| card.index == 2)
             .expect("visible side card");
-        // At this point the side card has cleared the focused card's hit rectangle. This
-        // keeps the fixture about frozen geometry rather than the topmost-overlap rule.
         let side_pos = side.rect.right_center() - Vec2::new(4.0, 0.0);
 
         run_layout_frame(
@@ -4847,8 +4542,6 @@ mod tests {
     ) -> Vec<egui::Event> {
         vec![
             egui::Event::PointerMoved(pos),
-            // Keep the constructor in one place so the routing test exercises the same event
-            // shape produced by winit, including a touch phase.
             egui::Event::MouseWheel {
                 unit,
                 delta: Vec2::new(0.0, delta_y),
@@ -5249,7 +4942,6 @@ mod tests {
         assert_eq!(layouts.selected_category, 1);
         assert_eq!(layouts.carousel_focus_by_category[0], 1);
 
-        // Enabling acts on the focused mod while the categories row is current.
         layouts.navigate_mod(&context, 1);
         layouts.apply_focused_action(&context, ModAction::Exclusive);
         run_layout_frame(
@@ -5320,7 +5012,6 @@ mod tests {
         let layouts = search_layouts();
         let filter = |query: &str| Filter::new(&layouts.catalog, query, &layouts.gamebanana);
 
-        // Case, underscores and repeated spaces do not matter.
         let vow = filter("VOW");
         assert_eq!(vow.categories, vec![0, 2, 3]);
         assert_eq!(vow.mods, vec![vec![0, 2], vec![], vec![0], vec![0]]);
@@ -5328,21 +5019,17 @@ mod tests {
         assert_eq!(filter("vow of").mods[0], vec![2]);
         assert_eq!(filter("night vow v1.2").mods[2], vec![0]);
 
-        // A matching category shows all its mods, even when it has none.
         let keepers = filter("keep");
         assert_eq!(keepers.categories, vec![3]);
         assert_eq!(keepers.mods[3], vec![0, 1]);
         assert_eq!(filter("endmin").categories, vec![1]);
 
-        // A mod name can match in several categories.
         let classic = filter("classic");
         assert_eq!(classic.categories, vec![0, 2]);
         assert_eq!(classic.mods, vec![vec![3], vec![], vec![1], vec![]]);
 
-        // The rail shows the character name, so the group prefix does not match.
         assert!(filter("operators").categories.is_empty());
 
-        // An empty search, or one of only spaces, shows everything.
         for query in ["", "   "] {
             let all = filter(query);
             assert_eq!(all.categories, vec![0, 1, 2, 3]);
@@ -5360,8 +5047,6 @@ mod tests {
         let catalog = live_catalog(vec![ardelia]);
         let mut gamebanana = GameBanana::default();
 
-        // GameBanana is disabled in the library preview, so an unrelated
-        // search keeps the normal local-only filtering.
         let disabled = Filter::new(&catalog, "remote", &gamebanana);
         assert!(disabled.categories.is_empty());
 
@@ -5370,8 +5055,6 @@ mod tests {
         assert_eq!(remote.categories, [0]);
         assert!(remote.mods[0].is_empty());
 
-        // A local match still shows only the matching local card until its
-        // selected category asks GameBanana for the remote query.
         let local = Filter::new(&catalog, "match", &gamebanana);
         assert_eq!(local.categories, [0]);
         assert_eq!(local.mods, [vec![0]]);
@@ -5392,17 +5075,13 @@ mod tests {
         ]));
         layouts.set_gamebanana(true, false);
 
-        // The named character and the mods that match, not the whole roster.
         layouts.set_search("furi");
         assert_eq!(layouts.filter.categories, [0, 1]);
         assert_eq!(layouts.selected_category, 1);
 
-        // An installed mod's name narrows the rail the same way.
         layouts.set_search("classic");
         assert_eq!(layouts.filter.categories, [0, 2]);
 
-        // Only a search nothing installed matches keeps every linked
-        // character, so the selected one can ask GameBanana.
         layouts.set_search("remote-only");
         assert_eq!(layouts.filter.categories, [0, 1, 2, 3]);
     }
@@ -5411,15 +5090,12 @@ mod tests {
     fn a_search_that_names_a_character_moves_to_it() {
         let mut layouts = search_layouts();
 
-        // Ardelia still shows by a mod's name, but Perlica is named, and
-        // Ardelia remembers the card the search left it on.
         layouts.set_search("classic");
         assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 3));
         layouts.set_search("perl");
         assert_eq!(layouts.selected_category, 2);
         assert_eq!(layouts.carousel_focus_by_category[0], 3);
 
-        // Typing on stays on a named character, and so does clearing.
         layouts.set_search("perlica");
         assert_eq!(layouts.selected_category, 2);
         layouts.set_search("");
@@ -5438,11 +5114,9 @@ mod tests {
         assert_eq!(layouts.filter.categories, [1, 3]);
         assert_eq!(layouts.selected_category, 3);
 
-        // A later word of the name counts as a start too.
         layouts.set_search("ayaka");
         assert_eq!(layouts.selected_category, 2);
 
-        // The selected category keeps its place when it matches as well.
         layouts.set_search("a");
         assert_eq!(layouts.selected_category, 2);
     }
@@ -5453,22 +5127,17 @@ mod tests {
         assert_eq!(layouts.selected_category, 0);
         layouts.carousel_focus = 2;
 
-        // Ardelia still shows the focused mod.
         layouts.set_search("vow");
         assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 2));
 
-        // Ardelia still shows, but not the focused mod.
         layouts.set_search("beach");
         assert_eq!((layouts.selected_category, layouts.carousel_focus), (0, 1));
         assert_eq!(layouts.carousel_focus_by_category[0], 1);
 
-        // Ardelia is hidden, so the first match takes over, and Perlica's
-        // remembered mod gives way to the one that matches.
         layouts.carousel_focus_by_category[2] = 1;
         layouts.set_search("night");
         assert_eq!((layouts.selected_category, layouts.carousel_focus), (2, 0));
 
-        // Clearing the search stays where the search led.
         layouts.set_search("");
         assert_eq!((layouts.selected_category, layouts.carousel_focus), (2, 0));
     }
@@ -5484,7 +5153,6 @@ mod tests {
         run_layout_frame(&context, &mut layouts, size, 1.0, Vec::new(), false);
         assert_eq!(layouts.carousel_focus, 2);
 
-        // The last match is an end, like the last mod.
         layouts.navigate_mod(&context, 1);
         run_layout_frame(&context, &mut layouts, size, 1.1, Vec::new(), false);
         assert_eq!(layouts.carousel_focus, 2);
@@ -5492,7 +5160,6 @@ mod tests {
         run_layout_frame(&context, &mut layouts, size, 1.2, Vec::new(), false);
         assert_eq!(layouts.carousel_focus, 0);
 
-        // Endministrator is hidden.
         layouts.navigate_category(&context, 1);
         run_layout_frame(&context, &mut layouts, size, 1.3, Vec::new(), false);
         assert_eq!(layouts.selected_category, 2);
@@ -5511,7 +5178,6 @@ mod tests {
         let mut layouts = search_layouts();
         let rect = Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(560.0, 266.0));
         layouts.set_search("vow");
-        // Two matches lay out like a two-mod carousel.
         let cards = layouts.current_carousel_placements(rect, 1.0);
         let mut shown = cards.iter().map(|card| card.index).collect::<Vec<_>>();
         shown.sort_unstable();
@@ -5565,7 +5231,6 @@ mod tests {
     #[test]
     fn shortcut_availability_follows_the_search() {
         let mut layouts = search_layouts();
-        // One category and one mod show, so there is nowhere to step.
         layouts.set_search("dawn");
         assert_eq!(
             layouts.shortcut_availability(),
@@ -5633,8 +5298,6 @@ mod tests {
             Vec::new(),
             false,
         );
-        // The window shows only these, and the line sits in the gap between
-        // Beach and Mod 1.
         let rects = layouts.visible_card_rects();
         let line = rects
             .iter()
@@ -5651,8 +5314,6 @@ mod tests {
         layouts.set_search("zzz");
         assert_eq!(layouts.empty_carousel_text(), "No matches");
 
-        // The selection stays put, the rail is empty, and the carousel shows
-        // only the notice.
         run_layout_frame(
             &context,
             &mut layouts,
@@ -5664,7 +5325,6 @@ mod tests {
         assert_eq!(layouts.selected_category, 0);
         assert_eq!(layouts.visible_card_rects().len(), 1);
 
-        // A category that matches by name but has no mods is still empty.
         layouts.set_search("endmin");
         assert_eq!(layouts.selected_category, 1);
         assert_eq!(layouts.empty_carousel_text(), "No installed mods");
@@ -5707,7 +5367,6 @@ mod tests {
             }
         );
 
-        // A new category sorts first and Ardelia gains a mod before Classic.
         layouts.replace_catalog(live_catalog(vec![
             named("Aglina", &["G1"]),
             named("Akekuri", &["A1", "A2"]),
@@ -5719,7 +5378,6 @@ mod tests {
         assert_eq!(layouts.carousel_focus_by_category[3], 1);
         assert!(layouts.reveal_category);
 
-        // Without Ardelia the selection stays at its place in the rail.
         layouts.replace_catalog(live_catalog(vec![
             named("Aglina", &["G1"]),
             named("Akekuri", &["A1", "A2"]),
@@ -5742,7 +5400,6 @@ mod tests {
         )]));
         assert_eq!(layouts.carousel_focus, 2);
 
-        // Once moved away from the active mod, the focus stays put.
         layouts.carousel_focus = 1;
         layouts.replace_catalog(live_catalog(vec![with_active(
             named("Ardelia", &["Vow", "Beach", "Classic"]),
@@ -5807,11 +5464,9 @@ mod tests {
         )]));
         layouts.carousel_focus = 1;
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
-        // Using the mod that is already the only one on changes nothing.
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
         layouts.apply_focused_costume_action(ModAction::Toggle, 1.0);
         layouts.activate_costume_in_place(0, 2, 1.0);
-        // A click on a mod that's on turns it off, even the only one.
         layouts.activate_costume_in_place(0, 2, 1.0);
         assert_eq!(
             layouts.take_requests(),
@@ -5836,7 +5491,6 @@ mod tests {
             "Vow",
         )]));
         layouts.carousel_focus = 1;
-        // The preview makes changes on screen only.
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
         assert_eq!(layouts.waiting, None);
         layouts.set_waiting(HashSet::new());
@@ -5861,9 +5515,7 @@ mod tests {
             layouts.take_requests(),
             [request("Shader", ChangeAction::Use, &[("Shader", true)])]
         );
-        // Both on now, so there is nothing left to use.
         assert!(!layouts.shortcut_availability().exclusive);
-        // A click turns one off and leaves the other on.
         layouts.activate_costume_in_place(0, 0, 1.0);
         assert_eq!(
             layouts.take_requests(),
@@ -5913,7 +5565,6 @@ mod tests {
         layouts.update_gamebanana(&context, 1.0);
         assert_eq!(layouts.take_gamebanana_requests().len(), 1);
         layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2, 3], false)]);
-        // Mod 2 is Beach, so the cards are Vow, Beach, Mod 1 and Mod 3.
         assert_eq!(layouts.visible_mods(), [0, 1, 2, 4]);
         layouts.carousel_focus = 4;
         let selection = layouts.selection();
@@ -5948,8 +5599,6 @@ mod tests {
             "before the remote list starts"
         );
 
-        // The selected linked category is kept in the filter, so the first
-        // frame creates its loading card instead of becoming a dead end.
         layouts.update_gamebanana(&context, 0.0);
         assert_eq!(layouts.visible_mods(), [1]);
         assert!(layouts.take_gamebanana_requests().is_empty());
@@ -5963,8 +5612,6 @@ mod tests {
             })]
         );
 
-        // The answer is remote-only: no local card matches the query, but
-        // the GameBanana card becomes visible and remains selectable.
         layouts.receive_gamebanana(vec![gamebanana_page_query(7, "remote-only", &[42], false)]);
         assert_eq!(layouts.visible_mods(), [1]);
         assert!(matches!(
@@ -6002,8 +5649,6 @@ mod tests {
             "an empty answer is terminal until explicitly retried"
         );
 
-        // A new search key starts a fresh list, whose failure remains visible
-        // as its retry card rather than hiding the linked category.
         layouts.set_search("remote-failure");
         layouts.update_gamebanana(&context, 2.0);
         layouts.update_gamebanana(&context, 3.0);
@@ -6083,7 +5728,6 @@ mod tests {
         };
         assert_eq!(names(&layouts), ["Ardelia", "Endministrator", "perlica"]);
         assert_eq!(layouts.catalog.categories[1].id, "gamebanana:character:8");
-        // An extra character without mods yet still shows, for its list.
         assert_eq!(layouts.filter.categories, [0, 1, 2]);
         layouts.set_show_all_characters(false);
         assert_eq!(names(&layouts), ["Ardelia"]);
@@ -6124,7 +5768,6 @@ mod tests {
         );
         assert_eq!(categories[1].id, "gamebanana:character:8");
 
-        // A new library from Hestia keeps both.
         layouts.replace_catalog(layouts.own_catalog());
         assert_eq!(layouts.catalog.categories[0].character, Some(7));
         assert_eq!(layouts.catalog.categories.len(), 2);
@@ -6160,7 +5803,6 @@ mod tests {
         layouts.update_gamebanana(&context, 1.0);
         layouts.take_gamebanana_requests();
         layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2], false)]);
-        // Vow, Zest, Mod 1, Mod 2.
         layouts.carousel_focus = 3;
         assert!(layouts.shortcut_availability().exclusive);
         assert_eq!(layouts.shortcut_availability().space, Space::Install);
@@ -6181,12 +5823,10 @@ mod tests {
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.5);
         assert_eq!(layouts.take_gamebanana_requests().len(), 1, "tried again");
 
-        // Hestia installs it in its sorted place, turned off.
         ardelia
             .costumes
             .insert(1, installed_from_gamebanana("Mod 2", 2));
         layouts.replace_catalog(live_catalog(vec![ardelia]));
-        // It waits behind its card: Vow, Zest, Mod 1, Mod 2.
         assert_eq!(layouts.visible_mods(), [0, 2, 3, 4]);
         assert_eq!(layouts.carousel_focus, 4);
         let news = layouts.receive_gamebanana(vec![install_update(
@@ -6231,7 +5871,6 @@ mod tests {
             window(2, InstallStage::Waiting),
         ]);
         assert!(news.is_empty());
-        // Vow, Zest, Mod 1, Mod 2.
         layouts.carousel_focus = 3;
         assert!(
             !layouts.shortcut_availability().exclusive,
@@ -6240,7 +5879,6 @@ mod tests {
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
         assert!(layouts.take_gamebanana_requests().is_empty());
 
-        // The window installed Mod 1 turned on, and Mod 2 turned off.
         let mut on = installed_from_gamebanana("Mod 1", 1);
         on.active = true;
         ardelia.costumes.push(on);
@@ -6314,7 +5952,6 @@ mod tests {
         )]);
         assert_eq!(news, [InstallNews::Question("Mod 5".into())]);
         assert!(layouts.question_open());
-        // Down past Cancel stays on it, then back up to the second file.
         for _ in 0..3 {
             layouts.move_question(1);
         }
@@ -6329,7 +5966,6 @@ mod tests {
         );
         assert!(!layouts.question_open());
 
-        // Hestia made a category for the character.
         let mut endministrator = named("Endministrator", &[]);
         endministrator.id = "new-category".into();
         endministrator.character = Some(8);
@@ -6345,7 +5981,6 @@ mod tests {
             layouts.selection().category_id.as_deref(),
             Some("new-category")
         );
-        // Still on its card, after the mod that waits behind it.
         assert_eq!(layouts.carousel_focus, 1);
         layouts.receive_gamebanana(vec![install_update(
             5,
@@ -6374,7 +6009,6 @@ mod tests {
         layouts.receive_gamebanana(vec![gamebanana_page(7, &[1, 2, 3, 4], false)]);
         layouts.carousel_focus = 5;
         layouts.apply_focused_costume_action(ModAction::Exclusive, 1.0);
-        // On to the last GameBanana card while it installs.
         layouts.carousel_focus = 8;
         ardelia
             .costumes
@@ -6390,7 +6024,6 @@ mod tests {
         layouts.cross_installs(&context, rect, 2.0);
         layouts.cross_installs(&context, rect, 3.0);
         assert_eq!(layouts.take_arrivals(), ["0 First"]);
-        // The focus stays on the card it was on.
         assert_eq!(
             layouts.card_id(0, layouts.carousel_focus).as_deref(),
             Some("gamebanana:4")

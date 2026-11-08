@@ -1,25 +1,9 @@
-// Finding files that other programs hold open below a directory tree.
-//
-// On Windows (NTFS) a directory cannot be renamed while any file or directory below it has an
-// open handle, whatever share mode that handle was opened with: the rename fails with
-// `ERROR_ACCESS_DENIED`. A profile switch renames the live mod roots wholesale, so the worker
-// probes the tree before mutating anything and again when a rename has failed. Opening an entry
-// with an exclusive share mode fails with a sharing violation exactly when some other handle is
-// open, which makes the probe cheap and side-effect free. The Restart Manager then names the
-// processes holding the reported files, which is what the user needs to unblock the switch.
-//
-// Other platforms rename freely around open handles, so the probe reports nothing there.
-
-/// A process holding one of the probed files open.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FileLockHolder {
     name: String,
     pid: u32,
 }
 
-/// Entries below `root` that other handles keep open, with the processes holding them. `holders`
-/// can be empty even when `paths` is not: directories held by a shell's working directory and
-/// files held by the kernel or a driver are not attributed by the Restart Manager.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct OpenHandleReport {
     root: PathBuf,
@@ -28,7 +12,6 @@ struct OpenHandleReport {
 }
 
 impl OpenHandleReport {
-    /// Distinct holder names in first-seen order.
     fn holder_names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = Vec::new();
         for holder in &self.holders {
@@ -39,7 +22,6 @@ impl OpenHandleReport {
         names
     }
 
-    /// The root's own folder name, which is what a user recognizes (`Mods`, `Mods_Archived`).
     fn root_label(&self) -> String {
         self.root
             .file_name()
@@ -72,21 +54,12 @@ impl std::fmt::Display for OpenHandleReport {
     }
 }
 
-/// How many held entries a report lists. Enough to tell the user what to close; the Restart
-/// Manager call that follows scales with this count, so it stays small.
 const OPEN_HANDLE_REPORT_LIMIT: usize = 16;
 
-/// Whether an io error means another handle is open on the path (or below it, for a directory
-/// rename) rather than a permissions problem. Only Windows reports these codes for open handles.
 fn io_error_is_file_in_use(error: &std::io::Error) -> bool {
-    // ERROR_ACCESS_DENIED is what a directory rename returns for an open handle below it;
-    // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION are what file opens and renames return.
     cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33))
 }
 
-/// Probes every entry below `root` (including `root` itself) and reports the ones another handle
-/// keeps open, with the processes holding them. `None` when nothing is held or when the platform
-/// does not care. Honors `cancel` between probes so a canceled operation returns promptly.
 fn detect_open_handles(root: &Path, cancel: &AtomicBool) -> Option<OpenHandleReport> {
     let paths = find_open_handles(root, OPEN_HANDLE_REPORT_LIMIT, cancel);
     if paths.is_empty() {
@@ -109,17 +82,11 @@ fn detect_open_handles(root: &Path, cancel: &AtomicBool) -> Option<OpenHandleRep
     })
 }
 
-/// Entries below `root` that some other handle keeps open, up to `limit`. The tree is listed
-/// first and probed afterwards: the directory iterator holds its own handle on every ancestor
-/// while walking, and probing during the walk would report those as held.
 #[cfg(windows)]
 fn find_open_handles(root: &Path, limit: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
     if limit == 0 || !root.exists() {
         return Vec::new();
     }
-    // Files first: they are what the Restart Manager can attribute, and the deepest held file
-    // is more useful to a user than the chain of directories above it. The walker already knows
-    // each entry's type; asking the filesystem again per entry would cost more than the probes.
     let mut entries: Vec<PathBuf> = Vec::new();
     let mut directories: Vec<PathBuf> = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter().flatten() {
@@ -130,9 +97,6 @@ fn find_open_handles(root: &Path, limit: usize, cancel: &AtomicBool) -> Vec<Path
         }
     }
     entries.append(&mut directories);
-    // Each probe is one open syscall that spends most of its time in filter drivers, so the
-    // walk is embarrassingly parallel; a big library probes in a fraction of a second instead
-    // of several. Threads stop as soon as the limit is reached or the operation is canceled.
     let threads = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
@@ -179,9 +143,6 @@ fn find_open_handles(_root: &Path, _limit: usize, _cancel: &AtomicBool) -> Vec<P
     Vec::new()
 }
 
-/// Opens `path` for read with no sharing. An existing handle with read, write or delete access
-/// makes that fail with a sharing violation; `FILE_FLAG_BACKUP_SEMANTICS` lets the same probe
-/// open directories. Access-denied (ACLs) and not-found are not "held" and are ignored.
 #[cfg(windows)]
 fn path_has_open_handle(path: &Path) -> bool {
     use std::os::windows::fs::OpenOptionsExt;
@@ -197,8 +158,6 @@ fn path_has_open_handle(path: &Path) -> bool {
     }
 }
 
-/// Asks the Restart Manager which processes hold `files` open. Best effort: any failure yields
-/// an empty list and the caller still reports the paths.
 #[cfg(windows)]
 fn lock_holders(files: &[PathBuf]) -> Vec<FileLockHolder> {
     use std::os::windows::ffi::OsStrExt;
@@ -225,7 +184,6 @@ fn lock_holders(files: &[PathBuf]) -> Vec<FileLockHolder> {
 
     let mut session = 0u32;
     let mut session_key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
-    // SAFETY: plain Win32 calls with valid, live buffers; the session is always ended below.
     unsafe {
         if RmStartSession(&mut session, None, PWSTR(session_key.as_mut_ptr())) != ERROR_SUCCESS {
             return Vec::new();
@@ -237,7 +195,6 @@ fn lock_holders(files: &[PathBuf]) -> Vec<FileLockHolder> {
             let mut reasons = 0u32;
             let mut infos: Vec<RM_PROCESS_INFO> = Vec::new();
             let mut status = RmGetList(session, &mut needed, &mut count, None, &mut reasons);
-            // The list can grow between the size query and the fetch; a few rounds cover it.
             for _ in 0..4 {
                 if status != ERROR_MORE_DATA {
                     break;
@@ -344,17 +301,13 @@ mod file_lock_tests {
         assert!(find_open_handles(&root, 16, &cancel).is_empty());
         assert!(detect_open_handles(&root, &cancel).is_none());
 
-        // A plain read handle, opened with every share flag, still counts: that is exactly the
-        // kind of handle that blocks the directory rename.
         let held = std::fs::File::open(root.join("Skin").join("held.ini")).unwrap();
         let report = detect_open_handles(&root, &cancel).expect("held file is reported");
         assert_eq!(report.root, root);
         assert_eq!(report.paths, vec![root.join("Skin").join("held.ini")]);
-        // Our own handle is filtered out of the holders, so nothing is attributed.
         assert!(report.holders.is_empty(), "{:?}", report.holders);
         drop(held);
 
-        // A directory handle (what a shell's working directory or a watcher holds).
         let watcher = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(0x0200_0000)

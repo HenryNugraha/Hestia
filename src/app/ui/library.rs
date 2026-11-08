@@ -48,9 +48,6 @@ fn mod_detail_snapshot_matches(left: &ModEntry, right: &ModEntry) -> bool {
         return false;
     }
 
-    // TrackedFileMeta intentionally ignores labels for persisted update-signature compatibility.
-    // Labels are still part of the detail snapshot, so account for them here and refresh after a
-    // metadata-only label update.
     let labels_match = |left: &[TrackedFileMeta], right: &[TrackedFileMeta]| {
         left.len() == right.len()
             && left
@@ -162,18 +159,9 @@ fn apply_vertical_scroll_navigation(
     }
 }
 
-/// Keep the library grid scrollable while a mod (or folder tile) drag is in progress.
-///
-/// egui's `ScrollArea` deliberately ignores the mouse wheel whenever something is being
-/// dragged (`dragged_id().is_some()` guard in `ScrollArea::end`), so without this a drop
-/// target that sits outside the viewport is unreachable. Two remedies, both only while
-/// `active` and the primary button is held: the wheel is forwarded by hand, and hovering
-/// within `EDGE_ZONE` of the viewport's top or bottom edge auto-scrolls, faster the
-/// closer the pointer is to the edge. The pointer only has to be inside the viewport
-/// horizontally, so dragging slightly past the edge keeps scrolling at full speed.
 fn apply_library_drag_auto_scroll(ui: &mut Ui, viewport_rect: egui::Rect, active: bool) {
     const EDGE_ZONE: f32 = 56.0;
-    const MAX_SPEED: f32 = 1100.0; // points per second when the pointer is at the edge
+    const MAX_SPEED: f32 = 1100.0;
 
     if !active {
         return;
@@ -193,22 +181,17 @@ fn apply_library_drag_auto_scroll(ui: &mut Ui, viewport_rect: egui::Rect, active
         return;
     }
 
-    // Apply deltas immediately: `scroll_with_delta` would otherwise route every per-frame
-    // nudge through the style's eased ScrollAnimation, and a chain of tiny 0.1s ease-in/outs
-    // restarting each frame reads as pulsing instead of a steady glide.
     let instant = egui::style::ScrollAnimation::none();
     if wheel_delta.y != 0.0 {
         ui.scroll_with_delta_animation(egui::vec2(0.0, wheel_delta.y), instant);
         ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
     }
 
-    // Positive delta scrolls toward the top (matches egui's wheel convention).
     let top_proximity = ((viewport_rect.top() + EDGE_ZONE - pointer_pos.y) / EDGE_ZONE).clamp(0.0, 1.0);
     let bottom_proximity =
         ((pointer_pos.y - (viewport_rect.bottom() - EDGE_ZONE)) / EDGE_ZONE).clamp(0.0, 1.0);
     let direction = top_proximity - bottom_proximity;
     if direction != 0.0 {
-        // Ease in so the first few points of the zone nudge gently instead of lurching.
         let speed = direction.abs().powi(2) * MAX_SPEED;
         let dt = dt.clamp(1.0 / 240.0, 1.0 / 30.0);
         ui.scroll_with_delta_animation(
@@ -235,9 +218,6 @@ struct CategoryFolderTile {
     representative_unsafe_content: bool,
 }
 
-/// Render the floating folder-selection checkbox while keeping its interaction geometry
-/// stable when it is visually hidden. A zero-sized response loses the release event if the
-/// child takes hover between the pointer-down and pointer-up frames.
 fn render_folder_selection_checkbox(ui: &mut Ui, checked: bool, visible: bool) -> egui::Response {
     if visible {
         larger_checkbox(ui, checked)
@@ -247,7 +227,6 @@ fn render_folder_selection_checkbox(ui: &mut Ui, checked: bool, visible: bool) -
     }
 }
 
-/// The mod detail window's name when not renaming.
 fn mod_detail_title_label(ui: &mut Ui, title: &str) -> egui::Response {
     ui.add(
         egui::Label::new(RichText::new(title).heading())
@@ -256,8 +235,6 @@ fn mod_detail_title_label(ui: &mut Ui, title: &str) -> egui::Response {
     )
 }
 
-/// The rename row that replaces [`mod_detail_title_label`]: the name input, then
-/// Cancel and Save. Returns `(input, cancel, save)`.
 fn mod_detail_title_input(
     ui: &mut Ui,
     name: &mut String,
@@ -273,12 +250,8 @@ fn mod_detail_title_input(
     });
     let input_width = title_size
         .x
-        .min(ui.available_width() - 60.0) // max width of whole width left, minus 60px for the Cancel & Save buttons
-        .max(ui.available_width() / 6.25); // min width of 16% from the whole width
-    // A frameless TextEdit has no inner margin, so its text lands on the label's
-    // pixels. Its height is the font's unrounded row height though (26.06 vs the
-    // label's 26 in some fonts), so it sits in a slot of the label's exact height
-    // to keep everything below from shifting.
+        .min(ui.available_width() - 60.0)
+        .max(ui.available_width() / 6.25);
     let (_, slot) = ui.allocate_space(egui::vec2(input_width, title_size.y));
     let input = ui
         .new_child(
@@ -299,9 +272,6 @@ fn mod_detail_title_input(
     (input, cancel, save)
 }
 
-/// Takes the same space and draws the icon in the same place as a frameless
-/// `Button`, but only a `hit_size` box centered on the drawn icon is clickable
-/// instead of the whole interact-height box.
 fn mod_detail_rename_icon_button(
     ui: &mut Ui,
     icon: Icon,
@@ -323,7 +293,6 @@ fn mod_detail_rename_icon_button(
         hit_size,
     );
     let response = ui.interact(hit_rect, slot_response.id.with("hit"), Sense::click());
-    // 70% opacity at rest, full while hovered or pressed.
     let opacity = if response.hovered() || response.is_pointer_button_down_on() {
         1.0
     } else {
@@ -338,8 +307,6 @@ fn mod_detail_rename_icon_button(
 mod mod_detail_title_tests {
     use super::*;
 
-    /// Lays out the title row the way the mod detail window does and returns the
-    /// name text's top-left corner plus the whole row's rect.
     fn title_row(ctx: &egui::Context, renaming: bool, width: f32) -> (egui::Pos2, egui::Rect) {
         let title = "Furina Swimsuit Retexture";
         let mut name = title.to_owned();
@@ -371,9 +338,6 @@ mod mod_detail_title_tests {
         (text_pos, row_rect)
     }
 
-    /// Lays out one rename icon, either as a plain frameless `Button` or as
-    /// [`mod_detail_rename_icon_button`], and returns where the icon is drawn, the
-    /// clickable rect and where the next widget would go.
     fn icon_row(
         ctx: &egui::Context,
         icon: Icon,
@@ -416,7 +380,6 @@ mod mod_detail_title_tests {
             (Icon::X, 14.0, egui::vec2(4.0, 6.0)),
             (Icon::Check, 16.0, egui::vec2(4.0, 6.0)),
         ] {
-            // Fonts load on the first frame; measure on the second.
             let _ = icon_row(&ctx, icon, size, hit_size, false);
             let button = icon_row(&ctx, icon, size, hit_size, false);
             let _ = icon_row(&ctx, icon, size, hit_size, true);
@@ -436,14 +399,12 @@ mod mod_detail_title_tests {
             AppFontStyle::Elegant,
             AppFontStyle::Traditional,
         ] {
-            // Interface sizes Small, Normal and Large.
             for zoom in [0.7, 1.0, 1.3] {
                 let ctx = egui::Context::default();
                 install_app_fonts(&ctx, style);
                 apply_theme(&ctx);
                 ctx.set_zoom_factor(zoom);
                 for width in [600.0, 260.0] {
-                    // Fonts load on the first frame; measure on the second.
                     let _ = title_row(&ctx, false, width);
                     let label = title_row(&ctx, false, width);
                     let _ = title_row(&ctx, true, width);
@@ -694,8 +655,6 @@ mod category_tests {
         }
     }
 
-    /// Drive the same parent tile and child checkbox interactions used by the live folder grid.
-    /// Returning both responses verifies that a checkbox click cannot also open or drag its tile.
     fn run_folder_checkbox_frame(
         ctx: &egui::Context,
         folder_ids: &[String],
@@ -746,8 +705,6 @@ mod category_tests {
                         opened_tiles.borrow_mut().push(folder_id.clone());
                     }
 
-                    // Keep distinct tile positions explicit: a regression that leaks one
-                    // checkbox response to a neighboring tile should fail this assertion.
                     assert_eq!(tile_rect.left(), index as f32 * (TILE_WIDTH + TILE_GAP));
                 }
             });
@@ -799,9 +756,6 @@ mod category_tests {
         let folder_ids = ids(&["alpha", "beta", "gamma"]);
         let mut selected = HashSet::new();
 
-        // Prime the widget IDs once while the pointer is elsewhere. The next frame combines
-        // the first hover and press, which is the fast path that previously had no stable
-        // checkbox response to carry into the release frame.
         let _ = run_folder_checkbox_frame(
             &ctx,
             &folder_ids,
@@ -809,8 +763,6 @@ mod category_tests {
             folder_checkbox_input(egui::pos2(400.0, 100.0), false, egui::Modifiers::NONE),
         );
 
-        // This starts with no selected folders and exercises the first hover+press frame. The
-        // release frame used to lose the zero-sized checkbox response and silently do nothing.
         let (clicked, opened) = click_folder_checkbox(
             &ctx,
             &folder_ids,
@@ -830,7 +782,6 @@ mod category_tests {
         ));
         assert_eq!(selected, HashSet::from(["alpha".to_owned()]));
 
-        // Clicking the only selected checkbox again must deselect it without opening the folder.
         let (clicked, opened) = click_folder_checkbox(
             &ctx,
             &folder_ids,
@@ -850,8 +801,6 @@ mod category_tests {
         ));
         assert!(selected.is_empty());
 
-        // A second and third folder must keep their own hit targets. Ctrl-click preserves the
-        // existing folder selection while still using the same floating checkbox helper.
         let (clicked, opened) = click_folder_checkbox(
             &ctx,
             &folder_ids,
@@ -995,8 +944,6 @@ pub(crate) fn sort_categories_with_counts<F>(
     }
 }
 
-/// How many of a game's mods a category has, as sorting, folder tiles, and
-/// category labels count them.
 pub(crate) fn category_member_count(
     categories: &[ModCategory],
     mods: &[ModEntry],
@@ -1011,10 +958,6 @@ pub(crate) fn category_member_count(
         .count()
 }
 
-/// Category id used for filtering/grouping. Falls back to matching the legacy
-/// plain-text category name against existing categories, mirroring
-/// `mod_category_label`, so name-only mods land in their category folder
-/// instead of silently dropping into the leftover bucket.
 fn effective_category_id<'a>(
     categories: &'a [ModCategory],
     mod_entry: &ModEntry,
@@ -1071,7 +1014,6 @@ fn rename_category_members(
     }
 }
 
-/// Compares two mods by the library's sort setting alone.
 fn compare_by_library_sort(sort: LibrarySort, a: &ModEntry, b: &ModEntry) -> std::cmp::Ordering {
     let display_name = |item: &ModEntry| {
         item.metadata
@@ -1121,16 +1063,6 @@ fn clamp_metadata_source_label(text: &str) -> String {
     clamped
 }
 
-/// Resolve which metadata source the detail pane actually shows, validating the
-/// persisted pick against live availability so a stale choice (removed keybinds,
-/// deleted readme, not-yet-wired Mod Data) degrades gracefully instead of showing
-/// an empty or broken view. `Description` is always available (it renders the
-/// "No description" + add-note state when empty), so it is the terminal fallback.
-///
-/// Auto-pick priority when there is no honored saved pick:
-/// legacy readme -> description -> readme -> keybinds -> empty description. Keybinds
-/// rank last so they only surface when the mod has nothing else worth showing (the
-/// common case being an unlinked mod with no description or readme but live hotkeys).
 fn effective_metadata_source(
     want: Option<MetadataSourceKind>,
     personal_note_editing: bool,
@@ -1140,19 +1072,15 @@ fn effective_metadata_source(
     legacy_explicit_readme: bool,
 ) -> MetadataSourceKind {
     use MetadataSourceKind::*;
-    // An active note edit owns the view so the editor renders; a fresh Add Note has
-    // no readme_path yet, so textfile_available may still be false here.
     if personal_note_editing {
         return TextFile;
     }
-    // Honor the saved pick only while it is still available.
     match want {
         Some(Hotkeys) if hotkeys_available => return Hotkeys,
         Some(TextFile) if textfile_available => return TextFile,
         Some(Description) => return Description,
         _ => {}
     }
-    // Priority fallback (also the None/legacy migration path).
     if legacy_explicit_readme {
         TextFile
     } else if has_description {
@@ -1160,10 +1088,6 @@ fn effective_metadata_source(
     } else if textfile_available {
         TextFile
     } else if hotkeys_available {
-        // No description and no readme, but the mod has parsed keybinds: land on
-        // them instead of dead-ending on the empty "No description" pane. Ranked
-        // below TextFile so a bundled readme (usually the "read me first" note)
-        // stays the preferred default when both exist.
         Hotkeys
     } else {
         Description
@@ -1277,7 +1201,7 @@ fn flush_preserved_spaces(output: &mut String, count: usize) {
         0 => {}
         1 => output.push(' '),
         n => {
-            output.reserve(n * 6); // "&nbsp;" is 6 bytes
+            output.reserve(n * 6);
             for _ in 0..n {
                 output.push_str("&nbsp;");
             }
@@ -1296,8 +1220,6 @@ fn soft_add_note_button(ui: &mut Ui, text: &str) -> egui::Response {
         .layout_no_wrap(text.to_string(), font_id.clone(), Color32::WHITE);
     let size = Vec2::new(galley.size().x, 16.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    // Hover tints green — the same green as the "+" overlay on the dropdown's
-    // "Add note…" glyph (mirrors how the List/Raw toggle tints rust on hover).
     let color = if response.hovered() || response.is_pointer_button_down_on() {
         Color32::from_rgb(110, 194, 132)
     } else {
@@ -1360,7 +1282,6 @@ mod metadata_source_resolver_tests {
     use super::*;
     use MetadataSourceKind::*;
 
-    /// Named wrapper so each case reads as fields instead of a wall of bools.
     struct Env {
         want: Option<MetadataSourceKind>,
         note_editing: bool,
@@ -1371,7 +1292,6 @@ mod metadata_source_resolver_tests {
     }
 
     impl Env {
-        /// Bare mod: nothing available, no saved pick, not editing a note.
         fn empty() -> Self {
             Self {
                 want: None,
@@ -1397,8 +1317,6 @@ mod metadata_source_resolver_tests {
 
     #[test]
     fn no_description_no_readme_with_hotkeys_lands_on_hotkeys() {
-        // The fix: an unlinked mod whose only content is its keybinds opens on
-        // Hotkeys instead of dead-ending on the empty "No description" pane.
         let env = Env {
             hotkeys: true,
             ..Env::empty()
@@ -1408,8 +1326,6 @@ mod metadata_source_resolver_tests {
 
     #[test]
     fn description_outranks_hotkeys() {
-        // A real write-up (including a persisted description on a mod detached from
-        // GameBanana) still wins over keybinds.
         let env = Env {
             has_description: true,
             hotkeys: true,
@@ -1455,8 +1371,6 @@ mod metadata_source_resolver_tests {
 
     #[test]
     fn stale_hotkeys_pick_falls_through_to_auto_priority() {
-        // Saved Hotkeys but the mod no longer has keybinds: don't get stuck on an
-        // empty Hotkeys view, fall through to the next available source.
         let env = Env {
             want: Some(Hotkeys),
             hotkeys: false,
@@ -1468,7 +1382,6 @@ mod metadata_source_resolver_tests {
 
     #[test]
     fn active_note_edit_owns_the_view() {
-        // An in-progress note edit forces TextFile even over a saved Hotkeys pick.
         let env = Env {
             want: Some(Hotkeys),
             note_editing: true,
@@ -1875,8 +1788,6 @@ fn paint_selected_mod_count_badge(ui: &mut Ui, text: TextCatalog, count: usize) 
     );
 }
 
-/// The mod context menu's 3px button corners.  A submenu opens in a Ui of its
-/// own that doesn't keep the menu's style, so it sets them again.
 fn set_mod_context_submenu_corner_radius(ui: &mut Ui) {
     let radius = egui::CornerRadius::same(3);
     let widgets = &mut ui.style_mut().visuals.widgets;
@@ -2035,10 +1946,6 @@ fn metadata_info_badge(ui: &mut Ui, text: &str) -> egui::Response {
         .inner
 }
 
-/// A keycap-style chip for the hotkey key column in the "List" view: bordered,
-/// squarer, and darker than the flat `metadata_info_badge`, so a key like `Alt+5`
-/// reads as a keyboard key rather than blending in with the source dropdown pill
-/// (`metadata_dropdown_badge`) above it.
 fn keycap_badge(ui: &mut Ui, text: &str) -> egui::Response {
     let font_id = egui::FontId::proportional(11.0);
     let galley = ui
@@ -2117,11 +2024,6 @@ fn hotkey_clear_confirm_label(ui: &mut Ui, text: &str, color: Color32) {
         .galley(rect.min + egui::vec2(0.0, 2.0), galley, color);
 }
 
-/// The metadata source selector. Styled like the old "Description" section heading
-/// (bold, underlined, gray-195) rather than a filled pill, with a small non-underlined
-/// caret marking it as a dropdown. No background, so it brightens on hover/press. The
-/// caller bakes the trailing " ▾" into `text`. Built as a manual galley (rather than a
-/// plain `bold()` label) precisely to get the hover recolor and the lighter caret.
 fn metadata_dropdown_badge(ui: &mut Ui, text: &str) -> egui::Response {
     let idle = Color32::from_gray(195);
     let hot = Color32::from_gray(235);
@@ -2129,7 +2031,6 @@ fn metadata_dropdown_badge(ui: &mut Ui, text: &str) -> egui::Response {
         Some(head) => (head.trim_end(), true),
         None => (text, false),
     };
-    // Header size. Mirrors `bold()`'s Russian down-scaling.
     let label_size = if current_language() == Some(AppLanguage::Russian) {
         20.0
     } else {
@@ -2199,26 +2100,18 @@ impl HestiaApp {
         response.changed()
     }
 
-    /// A modifier row for the sort menu: label on the left, a compact on/off pill switch
-    /// pinned to the right. Deliberately not a radio/checkbox — a switch reads as an
-    /// independent on/off state, so it doesn't blend into the mutually-exclusive radio
-    /// lists above it. On/off stays legible even at this size because the switch signals
-    /// two ways at once (knob position + green-on / red-off). The whole row is clickable.
     fn sort_menu_toggle(
         ui: &mut Ui,
         value: &mut bool,
         label: &str,
         tooltip: Option<&str>,
     ) -> bool {
-        // Very compact vs the default 32x16 switch, but the dual on/off cue keeps it clear.
         const TOGGLE_SIZE: Vec2 = Vec2::new(24.0, 14.0);
         let mut changed = false;
         ui.horizontal(|ui| {
             let mut switch_response = toggle_switch_sized(ui, value, TOGGLE_SIZE)
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            // Position the label directly off the switch rect so the gap/vertical are exact
-            // (item_spacing clamps at 0 and can't pull the label in any tighter than that).
-            const LABEL_GAP_X: f32 = 4.0; // horizontal gap from switch to label
+            const LABEL_GAP_X: f32 = 4.0;
             const LABEL_NUDGE_UP: f32 = 1.0;
             let text_color = ui.visuals().text_color();
             let galley = ui.painter().layout_no_wrap(
@@ -2235,7 +2128,6 @@ impl HestiaApp {
             let label_response = ui.allocate_rect(label_rect, Sense::click());
             ui.painter().galley(label_min, galley, text_color);
             let label_response = label_response.on_hover_cursor(egui::CursorIcon::PointingHand);
-            // Clicking the label toggles too (the switch already flipped `value` on its own click).
             if label_response.clicked() {
                 *value = !*value;
                 switch_response.mark_changed();
@@ -2473,7 +2365,6 @@ impl HestiaApp {
 
                 let mut should_save = false;
 
-                // Menu title, styled to match the filter menu's "Toggle Visibility".
                 ui.add_sized(
                     [ui.available_width(), 0.0],
                     egui::Label::new(
@@ -2494,15 +2385,10 @@ impl HestiaApp {
                 self.render_library_category_layout_radio_rows(ui);
                 menu_section_separator(ui);
 
-                // ===== SORT (mods) =====
                 menu_section_header(ui, text.library_sort_mods_heading(), &[]);
                 ui.add_space(-2.0);
                 should_save |= self.render_library_sort_radio_rows(ui);
-                // Tiny gap so the modifier switch detaches from the radio list above (no hairline).
                 ui.add_space(4.0);
-                // Status-first clusters mods by status within the chosen sort. StatusSections
-                // uses the category-first switch instead, so its category ordering remains
-                // available without restoring the legacy group selector.
                 let detail_changed = match self.state.static_prefs.effective_library_group_mode() {
                     LibraryGroupMode::Status => Self::sort_menu_toggle(
                         ui,
@@ -2521,8 +2407,6 @@ impl HestiaApp {
 
                 menu_section_separator(ui);
 
-                // Group-by (Category/Status/None) remains hidden by policy. Category layout is
-                // independent and remains available above.
                 if !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                     menu_section_header(ui, text.library_group_mods_heading(), &[]);
                     ui.add_space(-2.0);
@@ -2532,7 +2416,6 @@ impl HestiaApp {
                 }
 
                 if self.state.static_prefs.library_category_order_applies() {
-                    // ===== CATEGORIES (folder order) =====
                     menu_section_header(ui, text.library_sort_categories_heading(), &[]);
                     ui.add_space(-2.0);
                     let selected_game_id =
@@ -2540,7 +2423,6 @@ impl HestiaApp {
                     ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
                         if let Some(game_id) = selected_game_id.as_deref() {
                             let mut category_sort_mode = self.category_sort_mode_for_game(game_id);
-                            // Order: Name A-Z, Name Z-A, Most mods, Fewest mods, Manual (last).
                             should_save |= Self::sort_menu_radio(
                                 ui,
                                 &mut category_sort_mode,
@@ -2585,11 +2467,8 @@ impl HestiaApp {
                             }
                         }
                     });
-                    // Tiny gap so the modifier switch detaches from the category radio list (no hairline).
                     ui.add_space(4.0);
                 }
-                // Keep the mode-specific option compact: only the active layout's control is
-                // shown, while grouping still gates both controls if grouping is restored.
                 match self.state.static_prefs.effective_library_category_display_mode() {
                     LibraryCategoryDisplayMode::Folders => {
                         ui.add_enabled_ui(
@@ -2711,7 +2590,6 @@ impl HestiaApp {
         }
     }
 
-    /// See `effective_category_id`.
     fn effective_mod_category_id(&self, mod_entry: &ModEntry) -> Option<String> {
         effective_category_id(&self.state.categories, mod_entry).map(str::to_string)
     }
@@ -2955,8 +2833,6 @@ impl HestiaApp {
             .unwrap_or(mod_entry.update_state)
     }
 
-    /// Thalia has not answered yet for this mod's newer files, so its blue
-    /// notice is held back (see `overlay_thalia_update_evidence`).
     fn thalia_check_pending(&self, mod_entry: &ModEntry) -> bool {
         self.cached_grouped_evidence_for_mod(mod_entry)
             .is_some_and(|evidence| evidence.thalia_pending)
@@ -2964,11 +2840,6 @@ impl HestiaApp {
 
     fn mod_update_badge(&self, text: TextCatalog, mod_entry: &ModEntry) -> (&'static str, Color32) {
         let effective_state = self.effective_update_state_for_badge(mod_entry);
-        // A linked mod with no reconciled verdict yet (no cached snapshot to
-        // compare against -- never successfully checked, or awaiting the
-        // throttled network check) must never read as "Unlinked": the GameBanana
-        // source is right there. Show a neutral pending badge instead. The same
-        // applies while Thalia is still deciding about its newer files.
         if (effective_state == ModUpdateState::Unlinked
             && mod_entry
                 .source
@@ -3253,10 +3124,6 @@ impl HestiaApp {
         self.save_state();
     }
 
-    /// Shared tail for every "move mods into a folder" surface (drag-and-drop, card
-    /// context menu, batch menus). The mods leave the folder the user is looking at,
-    /// so they must not linger in the batch selection, and a detail window showing
-    /// one of them is now pinned to a mod that moved out from under it.
     fn finish_mod_category_move(&mut self, mod_ids: &[String], close_mod_detail: bool) {
         let detail_moved = close_mod_detail
             && self
@@ -3491,9 +3358,6 @@ impl HestiaApp {
         if self.folder_batch_game_busy(&game_id) {
             return;
         }
-        // Resolve legacy name-only and stale-ID assignments before changing the
-        // category name. Once the name changes, those entries can no longer be
-        // found through the fallback used by `effective_category_id`.
         let member_indices = category_member_indices_for_game(
             &self.state.categories,
             &self.state.mods,
@@ -3628,8 +3492,6 @@ impl HestiaApp {
                             CategoryPickerTarget::Single { mod_id, .. } => {
                                 let moved = mod_id.to_string();
                                 self.assign_mod_category(&moved, None);
-                                // This picker is anchored inside the mod detail window,
-                                // so keep it open — only drop the stale grid selection.
                                 self.finish_mod_category_move(&[moved], false);
                             }
                             CategoryPickerTarget::Bulk { .. } => {
@@ -4223,8 +4085,6 @@ impl HestiaApp {
         )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-        // Clicking Categories opens the mod's details with their category
-        // menu, for moving it with the details in view.
         if response.clicked() {
             self.open_mod_detail_category_picker(mod_id);
             ui.close();
@@ -4299,7 +4159,6 @@ impl HestiaApp {
         )
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-        // Clicking Open opens the mod's details.
         if response.clicked() {
             self.set_selected_mod_id(Some(mod_id.to_owned()));
             ui.close();
@@ -4447,9 +4306,6 @@ impl HestiaApp {
             return;
         }
 
-        // "Mark as not modified" only while the mod reads Modified; "Restore
-        // modification status" only while an acceptance is in effect. Neither
-        // shows otherwise. Sits above the ignore checkboxes.
         if let Some(mark_as_not_modified) =
             Self::local_changes_action_for_mod(&self.state.mods[index])
         {
@@ -4569,10 +4425,6 @@ impl HestiaApp {
         }
     }
 
-    /// Which local-changes action a mod offers right now: `Some(true)` for
-    /// "Mark as not modified" (the mod reads Modified), `Some(false)` for
-    /// "Restore modification status" (an acceptance is in effect), `None` when
-    /// neither applies.
     fn local_changes_action_for_mod(mod_entry: &ModEntry) -> Option<bool> {
         if mod_ignores_local_changes(mod_entry) {
             Some(false)
@@ -4837,8 +4689,6 @@ impl HestiaApp {
         let mut any_ignore_update_always = false;
         let mut all_ignore_update_always = true;
         let mut any_can_use_ignore_once = false;
-        // "Mark as not modified" shows when any selected mod reads Modified;
-        // "Restore modification status" when any carries an acceptance.
         let mut any_modified = false;
         let mut any_marked_not_modified = false;
 
@@ -4881,8 +4731,6 @@ impl HestiaApp {
         let ignore_update_always_mixed = any_ignore_update_always && !all_ignore_update_always;
         let text = self.text();
 
-        // Local-changes actions sit above the ignore checkboxes, same as the
-        // single-mod menu.
         let mut local_changes_action = None;
         if any_modified {
             if Self::local_changes_action_button(ui, text, 12.0,true).clicked() {
@@ -4932,9 +4780,6 @@ impl HestiaApp {
         true
     }
 
-    /// Bulk counterpart of the per-mod "Ignore local changes" toggle. Enabling
-    /// accepts the current files of every selected mod that is modified right
-    /// now; disabling clears the acceptance on every selected mod that has one.
     fn apply_selected_ignore_local_changes(&mut self, mod_ids: &[String], ignore: bool) {
         let mut touched = false;
         for mod_id in mod_ids {
@@ -4972,8 +4817,6 @@ impl HestiaApp {
         }
     }
 
-    /// Whether the mod's `.ini` files contain any 3DMigoto keybind section, cached
-    /// by `ini_hash` so the source picker doesn't walk the mod folder every frame.
     fn mod_has_keybinds(&mut self, mod_entry: &ModEntry) -> bool {
         if let Some((hash, has)) = self.mod_keybinds_available_cache.get(&mod_entry.id) {
             if *hash == mod_entry.ini_hash {
@@ -4986,10 +4829,6 @@ impl HestiaApp {
         has
     }
 
-    /// Body of the metadata source-picker popup (rendered inside its Frame): the
-    /// systemic sources up top, a divider, then the mod's own text files. Beyond
-    /// Personal Note, the systemic entries are stubs for now — visible with their
-    /// glyphs but not yet wired to data. Accent glyphs mark the user's own sources.
     fn render_metadata_source_list(
         &mut self,
         ui: &mut Ui,
@@ -5002,12 +4841,6 @@ impl HestiaApp {
         let accent = Color32::from_rgb(224, 130, 82);
         let neutral = Color32::from_gray(150);
 
-        // Systemic sources: GameBanana description, Mod keys, Mod config. Stubbed
-        // until wired, but tooltips already reflect real availability. Literal
-        // strings for now; localize once the wording/behavior settles.
-        // Description ("GameBanana" when linked to a GB page, otherwise the mod's own
-        // description). Always available and selectable — even when empty it renders the
-        // "No description" + add-note state, so you can always return to it.
         let gb_linked = selected
             .source
             .as_ref()
@@ -5042,8 +4875,6 @@ impl HestiaApp {
         };
         let hotkeys_selected = matches!(effective_source, MetadataSourceKind::Hotkeys);
         if metadata_source_row(ui, Icon::Keyboard, neutral, text.meta_source_hotkeys(), hotkeys_tooltip, hotkeys_selected, has_keybinds, false) {
-            // Show the mod's keybind config inline; persists the pick and warms the
-            // parsed-ini cache. Selecting any other source clears the view.
             self.select_hotkeys_source(selected);
             ui.close();
         }
@@ -5074,9 +4905,6 @@ impl HestiaApp {
         } else if can_offer_personal_note_choice
             && metadata_source_row(
                 ui,
-                // Base glyph stays normal (accent); the larger green "+" is overlaid
-                // separately (see `plus_overlay`). Strip the shared label's "+ " (the
-                // header button keeps it) and add "..." to signal it opens an editor.
                 Icon::File,
                 accent,
                 &format!("{}...", text.add_note().trim_start_matches("+ ")),
@@ -5090,7 +4918,6 @@ impl HestiaApp {
             ui.close();
         }
 
-        // The mod's own text files, below a divider.
         let file_sources: Vec<_> = selected
             .metadata
             .extracted
@@ -5163,15 +4990,9 @@ impl HestiaApp {
             self.personal_note_edit_text.clear();
         }
         self.save_state();
-        // This is the one select-helper that refreshes translation: it makes a text
-        // source the shown content, and translation keys off `readme_path`.
         self.handle_unlinked_metadata_source_changed(mod_id);
     }
 
-    /// Show the mod's primary description ("GameBanana"/user/snapshot) as the metadata
-    /// source. Does NOT call `handle_unlinked_metadata_source_changed`: description
-    /// translation flows through the primary `markdown` path, and `readme_path` may
-    /// still point at an unrelated text source.
     fn select_description_source(&mut self, mod_id: &str) {
         if self.folder_batch_blocks_mod(mod_id) {
             return;
@@ -5189,8 +5010,6 @@ impl HestiaApp {
         self.save_state();
     }
 
-    /// Show the mod's parsed keybind `.ini`s inline. Persists the pick and populates
-    /// the transient parsed-ini cache. Does NOT trigger readme translation.
     fn select_hotkeys_source(&mut self, selected: &ModEntry) {
         if self.folder_batch_blocks_mod(&selected.id) {
             return;
@@ -5216,12 +5035,6 @@ impl HestiaApp {
         self.personal_note_edit_text = initial_text;
     }
 
-    /// Render the ported "Updates" section for a GameBanana-linked MY MOD, shown inside
-    /// the Description source view. Mirrors the Browse Updates section: the collapsible
-    /// header appears only when there are update entries or a hard failure; the loading,
-    /// empty, and never-requested states render nothing. [`Self::ensure_my_mod_updates`]
-    /// drives the fetch and the 30-minute cache; a cache fallback after a failed refresh
-    /// lands transparently as `Ready`.
     fn render_my_mod_updates_section(&mut self, ui: &mut Ui, mod_id: u64) {
         self.ensure_my_mod_updates(mod_id);
         let Some(state) = self.my_mod_updates.get(&mod_id).cloned() else {
@@ -5287,9 +5100,6 @@ impl HestiaApp {
                     }
                     ui.add_space(1.0);
                 });
-                // Trailing gap so the description markdown that follows this section
-                // (see the Description arm in the detail pane) is not cramped against
-                // the collapsible. Mirrors Browse's post-Updates spacing.
                 ui.add_space(10.0);
             }
             MyModUpdatesState::Failed { message, .. } => {
@@ -5317,15 +5127,10 @@ impl HestiaApp {
     }
 
     fn render_personal_note_editor(&mut self, ui: &mut Ui, mod_id: &str) {
-        // Corner radius of the note input box. Raise this to round it more; the global
-        // input radius (12) lives in platform.rs `widgets.*.corner_radius`.
         const NOTE_INPUT_CORNER_RADIUS: u8 = 2;
-        // Inner padding between the box edge and the text (x = left/right, y = top/bottom).
         const NOTE_INPUT_PADDING_X: i8 = 8;
         const NOTE_INPUT_PADDING_Y: i8 = 6;
         let width = personal_note_content_width(ui);
-        // Scope the radius override so it only applies to this text box, not to
-        // widgets the caller renders afterwards in the same `ui`.
         let response = ui
             .scope(|ui| {
                 let radius = egui::CornerRadius::same(NOTE_INPUT_CORNER_RADIUS);
@@ -6068,7 +5873,7 @@ impl HestiaApp {
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
                 let header_response = ui.horizontal(|ui| {
-                    ui.set_height(41.0); // Lock height strictly to prevent expansion and jitter
+                    ui.set_height(41.0);
                     let is_empty = self.mods_search_query.trim().is_empty();
                     let expanded = self.mods_search_expanded;
                     let how_expanded = ui.ctx().animate_bool_with_time(ui.id().with("mods_search_anim"), expanded, 0.2);
@@ -6077,12 +5882,9 @@ impl HestiaApp {
                         || self.library_folder_selection_active();
                     let now = ui.input(|i| i.time);
                     if has_selection {
-                        // Continuously update the "last active" timestamp while selection is active
                         self.selection_empty_at = Some(now);
                     }
 
-                    // Folder actions can wrap at narrow widths, so snapping their header avoids
-                    // a transient mixed sort/bulk layout while the selection state changes.
                     let selection_anim = animate_library_selection(
                         ui.ctx(),
                         ui.id().with("batch_anim"),
@@ -6110,7 +5912,6 @@ impl HestiaApp {
                         let full_width = 240.0;
                         let current_width = icon_size + (full_width - icon_size) * how_expanded;
 
-                        // Allocate the space for the whole widget
                         let (rect, _area_resp) = ui.allocate_exact_size(Vec2::new(current_width, 41.0), Sense::hover());
                         mod_card_context_block_rects.push(rect);
                         if ui.ctx().input(|i| {
@@ -6122,7 +5923,6 @@ impl HestiaApp {
                             suppress_mod_card_context_menu = true;
                         }
                         
-                        // 1. Draw the background bar (completely hidden at 0 expansion)
                         if how_expanded > 0.0 {
                             let bg_alpha = (how_expanded * 255.0) as u8;
                             ui.painter().rect(
@@ -6134,7 +5934,6 @@ impl HestiaApp {
                             );
                         }
 
-                        // 2. Funnel Icon Graphic & Interaction
                         let icon_pos = rect.left_center() + egui::vec2(20.5, 0.0);
                         let icon_area = egui::Rect::from_center_size(icon_pos, egui::Vec2::splat(28.0));
                         let icon_resp = ui.interact(icon_area, ui.id().with("search_toggle"), Sense::click());
@@ -6153,7 +5952,7 @@ impl HestiaApp {
                             || !self.show_ignoring_update_mods;
 
                         let icon_color = if expanded || !is_empty || visibility_filtered { 
-                            Color32::from_rgb(214, 104, 58) // Accent color if active or filtered
+                            Color32::from_rgb(214, 104, 58)
                         } else if icon_resp.hovered() {
                             Color32::WHITE
                         } else {
@@ -6395,12 +6194,10 @@ impl HestiaApp {
                         if icon_resp.hovered() {
                             icon_resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
                             if !expanded {
-                                // Subtle background circle for the standalone icon
                                 ui.painter().circle_filled(icon_pos, 14.0, Color32::from_white_alpha(15));
                             }
                         }
 
-                        // 3. Search Text Input (reveal as bar expands)
                         if how_expanded > 0.2 {
                             let input_rect = egui::Rect::from_min_max(
                                 rect.min + egui::vec2(icon_size, 0.0),
@@ -6424,7 +6221,6 @@ impl HestiaApp {
                             }
                         }
 
-                        // 4. Clear button (fades in at the end)
                         if !is_empty && how_expanded > 0.9 {
                             let x_pos = rect.right_center() - egui::vec2(16.0, 0.0);
                             let x_area = egui::Rect::from_center_size(x_pos, egui::Vec2::splat(24.0));
@@ -6445,14 +6241,10 @@ impl HestiaApp {
                         }
                     });
 
-                    // Floating Header Label: fades out when the filter bar expands OR a selection is active.
-                    // The sort dropdown fades out only on selection, so it stays reachable while filtering.
                     let header_visibility = (1.0 - how_expanded) * (1.0 - selection_anim);
                     let sort_visibility = 1.0 - selection_anim;
                     if sort_visibility > 0.01 {
                         ui.add_space(-4.0 * header_visibility);
-                        // Reserve width that shrinks monotonically as the filter bar expands (302 -> 162),
-                        // so the combo anchored inside it never over-travels. Fades out on selection.
                         let unit_width = (302.0 - 140.0 * how_expanded) * sort_visibility;
                         let (unit_rect, label_resp) = ui.allocate_exact_size(egui::vec2(unit_width, 41.0), Sense::click());
                         if ui.ctx().input(|i| {
@@ -6486,7 +6278,6 @@ impl HestiaApp {
                         let title_text = bold(text.installed_mods(), Some(18.0)).color(title_color);
                         let title_galley = egui::WidgetText::from(title_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default);
                         let extended_clip_rect = unit_rect.expand2(egui::vec2(10.0, 0.0));
-                        // Skip painting at ~0 alpha: premultiplied RGB with alpha 0 blends additively (stays visible).
                         if header_visibility > 0.01 {
                             ui.painter().with_clip_rect(extended_clip_rect).galley(
                                 egui::Align2::LEFT_CENTER
@@ -6500,13 +6291,8 @@ impl HestiaApp {
 
                         let combo_width = 148.0;
                         let combo_gap = 14.0;
-                        // Slide the combo smoothly from just-after-the-title (idle) to just-after-the-filter-bar
-                        // (expanded), anchored off the unit's left edge so it moves the minimal ~59px and never
-                        // over-travels. content_origin drives the title's slide only, not the combo.
                         let combo_offset = (title_galley.size().x + combo_gap) * (1.0 - how_expanded)
                             + combo_gap * how_expanded;
-                        // Selection outro/intro slide (mirrors the bulk-button group): slide right while fading
-                        // out as a selection appears, slide left into place while fading back in as it clears.
                         const SORT_SELECTION_SLIDE: f32 = 22.0;
                         let selection_slide = (1.0 - sort_visibility) * SORT_SELECTION_SLIDE;
                         let combo_x = unit_rect.left() + combo_offset + selection_slide;
@@ -6520,8 +6306,6 @@ impl HestiaApp {
                                 .max_rect(combo_rect)
                                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
                         );
-                        // Fade the whole dropdown via egui's opacity system, which composites correctly down
-                        // to zero. (Manual premultiplied-alpha colors blend additively near 0 -> bright artifacts.)
                         combo_ui.set_opacity(sort_visibility);
                         combo_ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_rgb(44, 47, 52);
                         combo_ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgb(50, 54, 60);
@@ -6544,11 +6328,7 @@ impl HestiaApp {
 
                     if selection_anim > 0.01 {
                         let folder_selection_header = self.library_folder_selection_active();
-                        // Dynamically reduce the gap by 10px when the search bar is collapsed
                         ui.add_space(10.0 * selection_anim * how_expanded);
-                        // Intro/outro slide, mirroring the sort dropdown in reverse: enter from the left while
-                        // fading in, slide left while fading out. Fade via egui's opacity system so every color
-                        // (including the red "update" button) composites cleanly to 0 with no additive artifacts.
                         const BULK_SELECTION_SLIDE: f32 = 22.0;
                         let bulk_slide = -(1.0 - selection_anim) * BULK_SELECTION_SLIDE;
                         let bulk_group_rect = egui::Rect::from_min_size(
@@ -6562,12 +6342,12 @@ impl HestiaApp {
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                         );
                         group_ui.set_opacity(selection_anim);
-                        group_ui.spacing_mut().item_spacing.y = 2.0; // Total control over vertical gaps
+                        group_ui.spacing_mut().item_spacing.y = 2.0;
                         group_ui.vertical(|ui| {
                             if folder_selection_header {
                                 self.render_folder_selection_toolbar(ui, how_expanded);
                             } else {
-                                ui.add_space(-5.0); // Stack top margin
+                                ui.add_space(-5.0);
                                 ui.spacing_mut().button_padding = egui::vec2(7.0, 5.0);
                                 let radius = egui::CornerRadius::same(5);
                                 ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
@@ -6769,7 +6549,6 @@ impl HestiaApp {
                                 });
                             }
                             });
-                        // Reserve the group's footprint so the right-aligned stats never overlap it.
                         let bulk_used_width = group_ui.min_rect().width();
                         let bulk_used_height = if folder_selection_header {
                             (group_ui.min_rect().bottom() - bulk_group_rect.top()).max(41.0)
@@ -6779,21 +6558,17 @@ impl HestiaApp {
                         ui.allocate_space(Vec2::new((bulk_used_width + bulk_slide).max(0.0), bulk_used_height));
                     }
 
-                    // Explicit (not salted) id: keeps the interactive count Label's id fixed so it
-                    // can never shift onto another widget's slot on a selection-transition frame,
-                    // which is what produced the debug-only red id-clash flash at the header's edge.
                     ui.scope_builder(
                         egui::UiBuilder::new()
                             .id(egui::Id::new("hestia_library_header_stats"))
                             .layout(egui::Layout::right_to_left(egui::Align::Center)),
                         |ui| {
-                        ui.set_height(41.0); // Keep right-side layout height stable
-                        // Only show stats if selection is empty AND 0.7s has passed
+                        ui.set_height(41.0);
                         let show_stats_target = !has_selection && self.selection_empty_at.map_or(true, |t| now - t > 0.7);
                         let factor = ui.ctx().animate_bool_with_time(ui.id().with("stats_entry"), show_stats_target, if show_stats_target { 0.25 } else { 0.0 });
                         
                         if factor > 0.01 {
-                            ui.add_space(20.0 * (1.0 - factor)); // Slide-left entrance
+                            ui.add_space(20.0 * (1.0 - factor));
                             ui.vertical(|ui| {
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                                     let count_label = text.library_mods_count(cards.len());
@@ -6883,9 +6658,6 @@ impl HestiaApp {
             self.state.static_prefs.effective_library_category_display_mode();
         let show_empty_category_folders =
             self.state.static_prefs.library_show_empty_category_folders;
-        // The uncategorized pile inherits the mod sort order (it's a filtered slice of the
-        // globally-sorted cards). When status-first is on and the pile spans more than one
-        // status, it splits into per-status sub-sections with adaptive headers below.
         let uncategorized_status_split = self.state.static_prefs.library_sort_status_first;
         let mut selected_category_folder_id =
             self.selected_category_folder_id
@@ -7017,7 +6789,6 @@ impl HestiaApp {
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.scope(|ui| {
-                    // Reserve space for the floating scrollbar so it never overlaps the rightmost cards.
                     let scroll = &mut ui.style_mut().spacing.scroll;
                     if scroll.floating {
                         scroll.floating_allocated_width = scroll.bar_width + desired_right_gap;
@@ -7047,7 +6818,7 @@ impl HestiaApp {
                                 scroll_viewport_rect,
                                 !self.dragging_mod_ids.is_empty() || self.dragging_category_id.is_some(),
                             );
-                        ui.spacing_mut().item_spacing.x = card_spacing; // Gap between cards horizontally
+                        ui.spacing_mut().item_spacing.x = card_spacing;
                         ui.add_space(0.0);
 
                         let available = ui.available_width().max(CARD_WIDTH + left_padding);
@@ -7101,8 +6872,6 @@ impl HestiaApp {
                             (ModStatus::Archived, text.mod_status_label(&ModStatus::Archived), status_color(&ModStatus::Archived)),
                         ];
                         let modified_update_behavior = self.state.static_prefs.modified_update_behavior;
-                        // No folder tiles are visible while drilled into a category,
-                        // so there is nowhere to drop a dragged mod.
                         let mod_drag_enabled = matches!(
                             self.state.static_prefs.effective_library_group_mode(),
                             LibraryGroupMode::Category
@@ -7240,13 +7009,6 @@ impl HestiaApp {
                                                         .is_some_and(|cover| !cover.trim().is_empty())
                                             })
                                         })
-                                        // No member has cover_image metadata yet
-                                        // (e.g. a fresh install still syncing its
-                                        // gallery). Fall back in the same status
-                                        // order: the thumb loader can still source
-                                        // from the GB snapshot URL, so the tile
-                                        // rides the member's card thumbnail
-                                        // instead of waiting for the sync to end.
                                         .or_else(|| {
                                             section_cards
                                                 .iter()
@@ -7298,13 +7060,6 @@ impl HestiaApp {
                                 .map(|tile| {
                                     let texture = tile.representative_mod_id.as_deref().and_then(
                                         |mod_id| {
-                                            // The tile paints into a 220x112 rect, so the
-                                            // card thumbnail is already the right size —
-                                            // and it is the very texture the mod's own card
-                                            // loads, so the folder fills in with it instead
-                                            // of trailing a separate full-size decode.
-                                            // A full texture is only reused when the detail
-                                            // view happened to load one already.
                                             if let Some(texture) =
                                                 self.get_mod_full_texture(mod_id, 2).cloned()
                                             {
@@ -7326,8 +7081,6 @@ impl HestiaApp {
                                     (tile.id.clone(), texture)
                                 })
                                 .collect();
-                        // Censored folders show their picture's blurred copy, picked here
-                        // because the tiles draw where the app can't be reached.
                         let folder_tile_copies: HashMap<String, egui::TextureHandle> = folder_tiles
                             .iter()
                             .filter(|tile| tile.representative_unsafe_content)
@@ -7445,7 +7198,6 @@ impl HestiaApp {
                         let titlebar_context_block_rect = self.last_titlebar_rect;
                         let mut pointer_over_grid_card = false;
 
-                        // Viewport culling: calculate row dimensions
                         let row_height = CARD_HEIGHT + card_spacing;
                         let should_censor_unsafe = self.should_censor_unsafe();
                         
@@ -7476,29 +7228,25 @@ impl HestiaApp {
                         let mut pending_dismiss_newer_files: Option<(String, Vec<u64>)> = None;
                         let mut render_cards = |ui: &mut Ui,
                                                 section_cards: Vec<&LibraryCardRow>| {
-                            // Get viewport for culling
                             let viewport = ui.clip_rect();
                             let viewport_top = viewport.top();
                             let viewport_bottom = viewport.bottom();
-                            let buffer_rows = 2; // Render 2 extra rows above/below for smooth scrolling
+                            let buffer_rows = 2;
                             
                             for row in section_cards.chunks(columns) {
-                                // Calculate row position
                                 let row_top = ui.cursor().top();
                                 let row_bottom = row_top + row_height;
                                 
-                                // Check if row is visible (with buffer)
                                 let is_visible = row_bottom >= viewport_top - (buffer_rows as f32 * row_height)
                                     && row_top <= viewport_bottom + (buffer_rows as f32 * row_height);
                                 
                                 if !is_visible {
-                                    // Just allocate space for invisible rows
                                     ui.add_space(row_height);
                                     continue;
                                 }
                                 
                                 let _row_response = ui.horizontal_top(|ui| {
-                                    ui.add_space(left_padding); // Left padding, matching header
+                                    ui.add_space(left_padding);
                                     for card in row {
                                         let (
                                             mod_id,
@@ -7666,7 +7414,6 @@ impl HestiaApp {
                                                         }
                                                         self.get_mod_thumb_texture(mod_id, 2)
                                                     };
-                                                    // Owned, so its censored copy can be looked up.
                                                     let cover_texture = cover_texture.cloned();
                                                     let mut needs_unsafe_cover =
                                                         *unsafe_content && should_censor_unsafe;
@@ -7761,7 +7508,6 @@ impl HestiaApp {
                                                     if response.clicked() {
                                                         pending_begin_mod_selection = true;
                                                         response.request_focus();
-                                                        // Space bar is used for selection toggle, so ignore it here to keep mod detail open
                                                         let is_space = ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_down(egui::Key::Space));
                                                         if !is_space {
                                                             let modifiers = ui.input(|i| i.modifiers);
@@ -7774,19 +7520,16 @@ impl HestiaApp {
                                                                     true,
                                                                 );
                                                             } else if modifiers.shift {
-                                                                // Range selection using the active mod as anchor
                                                                 if !select_mod_card_visible_range(
                                                                     &mut self.selected_mods,
                                                                     self.selected_mod_id.as_deref(),
                                                                     mod_id,
                                                                     &visible_card_ids,
                                                                 ) {
-                                                                    // Fallback: if no pivot or pivot is hidden, just select this one
                                                                     self.selected_mods.insert(mod_id.clone());
                                                                 }
                                                                 self.set_selected_mod_id(Some(mod_id.clone()));
                                                             } else {
-                                                                // Standard click: Toggle detail view
                                                                 if selected {
                                                                     self.set_selected_mod_id(None);
                                                                 } else {
@@ -7996,8 +7739,6 @@ impl HestiaApp {
                                                                                     .selectable(false),
                                                                                 )
                                                                                 .on_hover_cursor(egui::CursorIcon::Default);
-                                                                                // Category views show status; StatusSections shows category. The
-                                                                                // legacy card-detail preferences stay hidden and do not affect this.
                                                                                 let show_status_on_card = !matches!(
                                                                                     category_display_mode,
                                                                                     LibraryCategoryDisplayMode::StatusSections
@@ -8124,7 +7865,6 @@ impl HestiaApp {
                                             ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.active.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.open.corner_radius = radius;
-                                            // Submenus take their frame margin from here, so they match this one.
                                             ui.style_mut().spacing.menu_margin = egui::Margin::same(12);
 
                                             render_selected_mod_summary(
@@ -8277,7 +8017,6 @@ impl HestiaApp {
                                             ui.style_mut().visuals.widgets.hovered.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.active.corner_radius = radius;
                                             ui.style_mut().visuals.widgets.open.corner_radius = radius;
-                                            // Submenus take their frame margin from here, so they match this one.
                                             ui.style_mut().spacing.menu_margin = egui::Margin::same(12);
                                             let title = user_title
                                                 .as_deref()
@@ -8423,8 +8162,6 @@ impl HestiaApp {
                                                         )
                                                         .is_some();
                                                     if !locked && self.mod_has_enabled_category_mates(mod_id) {
-                                                        // A split button: Enable itself still enables,
-                                                        // the submenu adds turning the others off.
                                                         let menu = ui.menu_button(
                                                             icon_text_sized(Icon::Check, text.enable(), 12.0, 12.0),
                                                             |ui| {
@@ -8856,12 +8593,6 @@ impl HestiaApp {
                                         .max_rect(checkbox_rect)
                                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                                 );
-                                // Keep the hit target allocated for the whole tile lifetime. The
-                                // old zero-sized response was gated by `response.hovered()`, which
-                                // can be false on the release frame after the child checkbox has
-                                // taken the pointer. That made a plain first click disappear.
-                                // Painting still follows the normal floating-checkbox affordance,
-                                // while pointer geometry keeps it visible during press/release.
                                 let checkbox_pointer_pos = ui.ctx().pointer_latest_pos();
                                 let pointer_over_checkbox = checkbox_pointer_pos
                                     .is_some_and(|pointer_pos| checkbox_rect.contains(pointer_pos));
@@ -9747,12 +9478,6 @@ impl HestiaApp {
                                         }
 
                                         if !uncategorized_cards.is_empty() {
-                                            // The pile keeps the global mod sort order (it's a
-                                            // filtered slice of the sorted cards). When status-first
-                                            // is on and the pile spans more than one status, split it
-                                            // into "Uncategorized: {status}" sub-sections; otherwise a
-                                            // single "Uncategorized" header (no split when all mods
-                                            // share one status).
                                             let present_statuses: Vec<ModStatus> = [
                                                 ModStatus::Active,
                                                 ModStatus::Disabled,
@@ -10059,8 +9784,6 @@ impl HestiaApp {
                             self.dragging_mod_ids.clear();
                         }
                         if let Some(category_folder_id) = pending_category_folder_id {
-                            // Going somewhere new leaves nothing for forward to return to,
-                            // like a web browser.
                             self.category_folder_forward_id = None;
                             self.selected_category_folder_id = category_folder_id;
                             self.clear_library_folder_selection();
@@ -10488,8 +10211,6 @@ impl HestiaApp {
             )
             .response
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-            // Group-by remains hidden by policy. Category layout has its own menu and remains
-            // available even while drilled into a folder or selecting.
             if drilled_category.is_none() && !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                 ui.menu_button(
                     icon_text_sized(Icon::SquareStack, text.context_group_by(), 12.0, 12.0),
@@ -10625,7 +10346,6 @@ impl HestiaApp {
         }
     }
 
-    /// The mod detail action (⋯) menu: the button plus its popup of mod actions.
     fn render_mod_detail_action_menu(&mut self, ui: &mut Ui, selected: &ModEntry) {
         let text = self.text();
         ui.scope(|ui| {
@@ -10639,9 +10359,6 @@ impl HestiaApp {
 
             let (menu_rect, menu_btn) =
                 ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::click());
-            // Drive the animation off `contains_pointer` (not `hovered`) so it
-            // holds steady through a click instead of dipping while the button
-            // is held down or the popup opens.
             let hover_t = ui.ctx().animate_bool_with_time(
                 ui.id().with(("mod_detail_menu_hover", &selected.id)),
                 menu_btn.contains_pointer(),
@@ -11004,8 +10721,6 @@ impl HestiaApp {
             );
         }
 
-        // Keep the empty-description result in the same bounded cache so the toolbar's
-        // availability check and the body use one stable prepared value.
         self.cached_library_markdown(&selected.id, "", Some(&selected.root_path), gb_id);
         (
             "No description".to_string(),
@@ -11054,7 +10769,6 @@ impl HestiaApp {
 
     fn render_right_pane(&mut self, ui: &mut Ui, show_mod_detail: bool) {
         let text = self.text();
-        // Use the available rect and extend it to fill the pane
         let pane_rect = ui.available_rect_before_wrap();
         if ui
             .ctx()
@@ -11070,11 +10784,7 @@ impl HestiaApp {
             return;
         }
         self.last_right_pane_rect = Some(pane_rect);
-        // The cover runs past the pane to the window's right and bottom edges, so
-        // it touches them instead of leaving the window's margin as a dark strip.
         let full_rect = egui::Rect::from_min_max(pane_rect.min, ui.ctx().viewport_rect().max);
-        // The pane's own painter is clipped to the window's margin, so paint on the
-        // same layer through one clipped to the cover instead.
         let cover_painter = ui
             .ctx()
             .layer_painter(ui.layer_id())
@@ -11082,7 +10792,6 @@ impl HestiaApp {
 
         let details_rect = pane_rect.shrink2(egui::vec2(12.0, 12.0));
 
-        // Draw cover as background to fill entire pane
         let game_id = self
             .selected_game()
             .filter(|game| game.enabled && self.has_enabled_games())
@@ -11097,7 +10806,6 @@ impl HestiaApp {
             let scaled_width = container_height * texture_aspect;
 
             let (rect, uv) = if scaled_width > container_rect.width() {
-                // Image wider than container: fit height, clip sides
                 let uv_width_fraction = container_rect.width() / scaled_width;
                 let uv_x_offset = (1.0 - uv_width_fraction) / 2.0;
                 (
@@ -11108,7 +10816,6 @@ impl HestiaApp {
                     ),
                 )
             } else {
-                // Image narrower than or equal to container: fit height, center horizontally
                 let x_offset = (container_rect.width() - scaled_width) / 2.0;
                 let centered_rect = egui::Rect::from_min_size(
                     container_rect.min + egui::vec2(x_offset, 0.0),
@@ -11123,9 +10830,6 @@ impl HestiaApp {
             Some((rect, uv))
         });
 
-        // Any window over the pane blurs and darkens the cover, fading in and out.
-        // It is drawn here, under every window, and only once, so the pane looks
-        // the same with one window open as with several.
         let detail_window_open = (show_mod_detail && self.mod_detail_open)
             || (!show_mod_detail && self.browse_detail_open);
         let pane_covered = detail_window_open || self.right_pane_bound_window_open();
@@ -11136,7 +10840,6 @@ impl HestiaApp {
             egui::emath::easing::cubic_in_out,
         );
         if covered_amount > 0.0 {
-            // Until a newly picked game's blurred copy is ready, the cover only darkens.
             let backdrop = game_id
                 .as_ref()
                 .and_then(|game_id| self.game_cover_backdrop_textures.get(game_id));
@@ -11168,9 +10871,6 @@ impl HestiaApp {
             return;
         };
         let selected = selected_snapshot.as_ref();
-        // The card cache includes transient Thalia classifications.  Keep the
-        // detail action row in sync with that effective state without mutating
-        // the selected mod's persisted status.
         let selected_effective_update_state = self
             .cached_grouped_evidence_for_mod(selected)
             .map(|evidence| {
@@ -11181,16 +10881,10 @@ impl HestiaApp {
                 )
             })
             .unwrap_or(selected.update_state);
-        // The expensive HTML sanitization and html2md conversion are pure. Resolve image URLs
-        // later, through the existing dependency-aware render cache, so files arriving in the
-        // metadata/cache directories are still observed.
         let (primary_description_markdown, primary_markdown_root, primary_markdown_gb_id) = self
             .cached_library_primary_description_markdown(selected);
 
         let details_offset = egui::vec2(0.0, 32.0);
-        // Defaults only apply until egui has a rect for this id, so the saved layout
-        // lands on the first open after a restart; egui memory keeps the rect for the
-        // rest of the session and the recorder below keeps the saved copy in sync.
         let (details_pos, details_size) = restore_floating_window_rect(
             self.state.static_prefs.floating_windows.library_detail,
             details_rect.min + details_offset,
@@ -11213,7 +10907,7 @@ impl HestiaApp {
             text.browse_mod_detail(),
             14.0,
             14.0,
-        )) // MY MOD view's mod detail GUI
+        ))
             .id(egui::Id::new(("mod_detail_window", self.mod_detail_window_nonce)))
             .order(egui::Order::Foreground)
             .default_pos(details_pos)
@@ -11225,17 +10919,9 @@ impl HestiaApp {
             .resizable(true)
             .collapsible(true)
             .movable(true)
-            // Bounds the window to the workspace pane, which also caps how large
-            // it can be dragged; `min_width`/`min_height` keep it usable at the
-            // low end. The old `max_width` cap is dropped so it can widen.
             .constrain_to(details_rect)
             .frame(
                 egui::Frame::window(ui.style())
-                    // Trim the bottom inner margin so the pinned LOCAL/SOURCE handle sits
-                    // close to the window's bottom edge when collapsed; keep 18 on the other
-                    // sides. The expanded section restores its breathing room with its own
-                    // trailing pad (see the footer body) rather than a taller margin, so
-                    // toggling doesn't reflow the whole window.
                     .inner_margin(egui::Margin {
                         left: 18,
                         right: 18,
@@ -11272,7 +10958,6 @@ impl HestiaApp {
                             self.perform_mod_rename(selected.id.clone());
                         }
                     } else {
-                        // Double-clicking the name starts the same rename as F2.
                         if mod_detail_title_label(ui, &title).double_clicked() {
                             self.start_selected_mod_rename();
                         }
@@ -11296,9 +10981,6 @@ impl HestiaApp {
                                 .on_hover_text(self.mod_update_badge_tooltip(&selected));
                         }
                     } else {
-                        // Unlinked mods still get a status segment here, and clicking it
-                        // runs the same action as the "Link Mod" menu entry: expand the
-                        // SOURCE section and focus its link input.
                         ui.add_space(-4.0);
                         static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
                         ui.add_space(-4.0);
@@ -11496,8 +11178,6 @@ impl HestiaApp {
                         );
                         let has_unlinked_text_to_translate = !translation_is_linked
                             && !self.unlinked_texts_to_translate(&selected.id).is_empty();
-                        // Also offer translation on unlinked mods that only carry keybinds,
-                        // so the inline Hotkeys view (List labels / Raw lines) can be translated.
                         let has_hotkeys_to_translate =
                             !translation_is_linked && hotkeys_available;
                         if !detail_shows_personal_note
@@ -11616,7 +11296,6 @@ impl HestiaApp {
                     .frame(egui::Frame::NONE)
                     .show_separator_line(false)
                     .show(ui, |ui| {
-                    // Drives the animated height reveal of the section above the toggle row.
                     let collapse_id = ui.make_persistent_id(("my_mod_source_body", &selected.id));
                     let mut collapse_state = egui::collapsing_header::CollapsingState::load_with_default_open(
                         ui.ctx(),
@@ -11625,24 +11304,13 @@ impl HestiaApp {
                     );
                     collapse_state.set_open(self.my_mod_source_expanded);
 
-                    // Reserve the handle row at the very TOP of the footer. Its graphics — the
-                    // divider line and the chevron tab — are painted LATER, after the scroll area
-                    // (see below), so they sit on top of the scrolling content above. The chevron
-                    // hangs BELOW the line (top edge on the line); the line marks the section's top
-                    // edge and the body reveals beneath it. The row is as tall as the tab so that,
-                    // fully collapsed (`show_body_unindented` allocates nothing), the tab rests
-                    // flush at the bottom instead of dropping into the window's bottom margin.
                     let row_height = 18.0;
                     let (row_rect, _) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), row_height),
                         Sense::hover(),
                     );
 
-                    // Animated height reveal: the body is clipped to `openness * full_height`,
-                    // and the bottom panel auto-sizes to it, so the whole footer slides open/shut.
                     collapse_state.show_body_unindented(ui, |ui| {
-                        // Small gap below the divider before the columns begin. The divider sits
-                        // on the section's top edge and is painted separately over the scroll area.
                         ui.add_space(4.0);
                         let mut source_group_rect: Option<egui::Rect> = None;
                         let column_spacing = ui.spacing().item_spacing.x;
@@ -11694,12 +11362,6 @@ impl HestiaApp {
                                             let _ = open_in_explorer(&selected.root_path);
                                         }
                                     });
-                                    // Local-changes action lives here (it is about the
-                                    // on-disk files, not the GameBanana link). In this
-                                    // visible LOCAL section, only offer "Mark as not
-                                    // modified" while the mod currently reads Modified;
-                                    // keep "Restore modification status" while a mark is
-                                    // in effect.
                                     if let Some(mark_as_not_modified) =
                                         Self::local_changes_action_for_mod(&selected).filter(|mark| {
                                             !*mark
@@ -11851,10 +11513,6 @@ impl HestiaApp {
                                         } else {
                                             static_label(ui, RichText::new(text.link_gamebanana_prompt()).small().color(Color32::from_gray(160)));
                                             ui.add_space(4.0);
-                                            // Fill the section's fixed-width column. Clamp with plain
-                                            // literals so egui's sizing pass (which can report an
-                                            // unbounded available width) can't feed desired_width back
-                                            // into itself and grow the field without bound.
                                             let input_w = (ui.available_width() - 12.0).clamp(80.0, 320.0);
                                             let input_response = ui.add(
                                                 TextEdit::singleline(&mut input_str)
@@ -11864,10 +11522,6 @@ impl HestiaApp {
                                             );
                                             ui.add_space(6.0);
                                             let parsed_link = parse_gb_link(&input_str);
-                                            // Enter in the field submits just like clicking Sync Mod. The
-                                            // inner `if let Some(link)` gates on a valid parse, so a blank
-                                            // or unparseable entry does nothing (matching the button's
-                                            // disabled state).
                                             let submit_via_enter = input_response.lost_focus()
                                                 && ui.input(|i| i.key_pressed(egui::Key::Enter));
                                             let submit_via_button = ui
@@ -11985,8 +11639,6 @@ impl HestiaApp {
 
                                     if let Some((id, is_tool)) = open_in_browse_id {
                                         if is_tool {
-                                            // The in-app browse detail only understands the Mod
-                                            // namespace; tool pages open in the system browser.
                                             ui.ctx().open_url(egui::OpenUrl::new_tab(
                                                 gamebanana::browser_url_typed(id, true),
                                             ));
@@ -12011,8 +11663,6 @@ impl HestiaApp {
                                     }
 
                                     if let Some((id, is_tool)) = link_and_sync_id {
-                                        // A new link of a mod with no category moves it into its
-                                        // GameBanana category once the page comes back.
                                         let place_in_category = self.selected_mod().is_some_and(|mod_entry| {
                                             mod_entry
                                                 .source
@@ -12057,8 +11707,6 @@ impl HestiaApp {
                         });
 
                         if let Some(source_rect) = source_group_rect {
-                            // "Link Mod" asked us to bring this section into view: animate the
-                            // scroll first, then glow the box briefly once we've arrived.
                             if self.mod_detail_source_focus_pending {
                                 self.mod_detail_source_focus_pending = false;
                                 ui.scroll_to_rect_animation(
@@ -12073,10 +11721,6 @@ impl HestiaApp {
                                 let elapsed = ui.input(|i| i.time) - start;
                                 let glow = source_focus_glow_alpha(elapsed);
                                 if glow > 0.0 {
-                                    // The halo expands ~12px past the box, and the SOURCE column
-                                    // reaches the content's right edge, so widen the clip rightward
-                                    // into the window's right margin to keep the halo from being
-                                    // clipped on that side.
                                     let restore_clip = ui.clip_rect();
                                     ui.set_clip_rect({
                                         let mut c = restore_clip;
@@ -12094,11 +11738,6 @@ impl HestiaApp {
                             }
                         }
 
-                        // Restore the expanded section's breathing room above the window's bottom
-                        // edge. The window keeps a slim fixed 4px bottom margin so the collapsed
-                        // handle tucks in tight; this trailing pad — part of the animated body, so
-                        // it reveals and hides with it — gives the expanded columns a comfortable
-                        // gap without a taller margin that would reflow the window on every toggle.
                         ui.add_space(6.0);
                     });
 
@@ -12140,12 +11779,6 @@ impl HestiaApp {
                             .min_scrolled_width(rail_width)
                             .auto_shrink([false, true])
                             .scroll_bar_visibility(
-                                // Hidden: the rail scrolls via the on-image chevron buttons (and
-                                // wheel/drag). A visible non-floating scrollbar reserves a solid
-                                // strip under the images that, once the LOCAL/SOURCE section is
-                                // expanded and the scroll viewport shrinks, lands right on the
-                                // divider as a dark bar over the images. The chevrons make it
-                                // redundant here, so drop it.
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             );
 
@@ -12273,14 +11906,12 @@ impl HestiaApp {
                                                 });
                                         }
 
-                                        // Preload hi-res for current and neighbors to match Browse view performance
                                         if rect.intersects(ui.clip_rect()) {
                                             if Self::pointer_motion_image_throttle_active(ui.ctx()) {
                                                 ui.ctx().request_repaint_after(
                                                     std::time::Duration::from_millis(120),
                                                 );
                                             } else {
-                                                // Only preload hi-res for visible items, and at a much lower priority than thumbnails
                                                 self.queue_mod_image_full_load(texture_key.clone(), selected.root_path.join(rel), 15);
                                             }
                                         }
@@ -12540,7 +12171,6 @@ impl HestiaApp {
                     }
                     let (mut markdown, mut markdown_root, mut markdown_gb_id) = if let Some(translation_state) = self.my_mods_translation_state.get(&selected.id) {
                         if let Some(translated_profile) = &translation_state.translated_profile {
-                            // Use translated description
                             if let Some(html) = translated_profile.html_text.as_deref() {
                                 (
                                     cached_library_prepared_markdown(
@@ -12580,9 +12210,6 @@ impl HestiaApp {
                         .and_then(|source| source.gamebanana.as_ref())
                         .is_none()
                     {
-                        // The translation is stored in another HestiaApp field. Materialize only
-                        // the active translated value before mutably borrowing the prepared
-                        // content cache, keeping the normal no-translation path allocation-free.
                         let translation = selected
                             .metadata
                             .user
@@ -12619,19 +12246,10 @@ impl HestiaApp {
                         selected.metadata.extracted.readme_path.as_deref()
                             == Some(personal_note_source_path.as_str())
                             || personal_note_editing;
-                    // Always offer "Add note…" in the dropdown when the mod has no note
-                    // yet (regardless of link state or other sources), so every source is
-                    // reachable from the dropdown every time.
                     let can_offer_personal_note_choice = personal_note_source.is_none();
-                    // The header "+ Add Note" shows whenever this mod has no saved
-                    // personal note (regardless of readmes or other sources) and we
-                    // aren't already editing one.
                     let can_add_personal_note =
                         personal_note_source.is_none() && !personal_note_editing;
 
-                    // Availability of each systemic source, used to resolve (and validate)
-                    // the persisted pick so a stale choice degrades gracefully instead of
-                    // showing an empty or broken view.
                     let hotkeys_available = self.mod_has_keybinds(&selected);
                     let textfile_available = selected
                         .metadata
@@ -12646,9 +12264,6 @@ impl HestiaApp {
                                 .iter()
                                 .any(|source| source.path == path)
                         });
-                    // A pre-change explicit readme pick is honored only while it is still
-                    // the valid effective source (extraction repoints readme_path to the
-                    // best source when the saved path goes missing).
                     let legacy_explicit_readme = selected
                         .metadata
                         .user
@@ -12665,12 +12280,6 @@ impl HestiaApp {
                         legacy_explicit_readme,
                     );
 
-                    // Keep the parsed-ini cache warm for this mod while Hotkeys is shown
-                    // (the cache is data only; the persisted kind is the source of truth).
-                    // `hotkeys_write_blocked` = the game is up but the folded consent is off,
-                    // so neither cycling a value nor resetting can reach it. Computed once
-                    // here (throttled inside) and shared by the header (Reset vs read-only
-                    // status) and the value list (inert rows).
                     let hotkeys_write_blocked = if matches!(
                         effective_source,
                         MetadataSourceKind::Hotkeys
@@ -12711,17 +12320,9 @@ impl HestiaApp {
                         });
 
                     ui.add_space(10.0);
-                    // Bottom-align the row so the short controls (Add Note button, the
-                    // List/Raw toggle, the RabbitFX chip) sit on the dropdown header's
-                    // bottom edge instead of floating at its vertical center. Size the row
-                    // to its content the way `ui.horizontal` does (start from
-                    // interact_size.y, let the tall badge grow it); plain `with_layout`
-                    // would claim the full remaining pane height and leave a gap above.
                     let row_size =
                         egui::vec2(ui.available_size_before_wrap().x, ui.spacing().interact_size.y);
                     ui.allocate_ui_with_layout(row_size, egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                        // The source dropdown badge IS the section header. Description is
-                        // always available, so this is always an interactive dropdown.
                         let badge_text = match effective_source {
                             MetadataSourceKind::Description => {
                                 format!("{} ▾", text.meta_source_description())
@@ -12790,9 +12391,6 @@ impl HestiaApp {
                         }
 
                         if matches!(effective_source, MetadataSourceKind::Hotkeys) {
-                            // Raw <-> List cycling toggle. Neutral when idle, accent
-                            // only on hover/press so it isn't distracting. Persisted
-                            // globally (static_prefs) so the choice survives restarts.
                             let mode_label = if self.state.static_prefs.hotkeys_simplified {
                                 text.hotkeys_view_list()
                             } else {
@@ -12851,13 +12449,6 @@ impl HestiaApp {
                                 self.hotkey_clear_confirm_target_id = None;
                             }
                             ui.add_space(4.0);
-                            // S2: this one slot shows EITHER the Reset control OR a read-only
-                            // status — never both. A blocked panel has nothing to reset live,
-                            // so the eraser gives way to a ⚠ status plus a "(why?)" explainer
-                            // whose tooltip carries the two-step fix.
-                            //
-                            // Nudge the whole slot to sit snug under the toggle's baseline.
-                            // Fine-tune here: negative x = left, positive y = down.
                             let reset_slot_shift = egui::vec2(-6.0, 1.0);
                             let slot_rect = ui.cursor().translate(reset_slot_shift);
                             let mut slot_ui = ui.new_child(
@@ -12894,16 +12485,8 @@ impl HestiaApp {
                                         selected.id.as_str(),
                                     ));
                                     if armed {
-                                        // Fine-tune the confirmation spacing here:
-                                        //   confirm_label_gap  = label "…?" → trash icon
-                                        //   confirm_button_gap = trash icon → X (cancel)
                                         let confirm_label_gap = 4.0;
                                         let confirm_button_gap = 2.0;
-                                        // Intro slide-in: the cluster slides out rightward from
-                                        // the eraser's spot, clipped on the left so it appears to
-                                        // emerge from behind it. Fine-tune the feel here:
-                                        //   confirm_slide_secs     = duration (bigger = slower)
-                                        //   confirm_slide_distance = px it travels in from the left
                                         let confirm_slide_secs = 0.28;
                                         let confirm_slide_distance = 24.0;
                                         let t = ui.ctx().animate_bool_with_time(
@@ -12911,7 +12494,6 @@ impl HestiaApp {
                                             true,
                                             confirm_slide_secs,
                                         );
-                                        // Ease-out so it decelerates into place.
                                         let eased = 1.0 - (1.0 - t) * (1.0 - t);
                                         let dx = -(1.0 - eased) * confirm_slide_distance;
 
@@ -12967,7 +12549,6 @@ impl HestiaApp {
                                             .translate(egui::vec2(-dx, 0.0));
                                         ui.advance_cursor_after_rect(used);
                                     } else {
-                                        // Reset so the next arm replays the intro from the start.
                                         ui.ctx().animate_bool_with_time(
                                             confirm_anim_id,
                                             false,
@@ -12995,7 +12576,6 @@ impl HestiaApp {
                         } else if matches!(effective_source, MetadataSourceKind::TextFile)
                             && personal_note_selected
                         {
-                            // Personal note: pencil to edit / green check to save.
                             let note_button_icon = if personal_note_editing {
                                 Icon::Check
                             } else {
@@ -13045,18 +12625,10 @@ impl HestiaApp {
 
                     match effective_source {
                         MetadataSourceKind::Description => {
-                            // Ported from the Browse detail: show the GameBanana update
-                            // log for linked mods, cached ~30 min (see
-                            // `ensure_my_mod_updates`). Unlinked mods have no id to fetch.
-                            // Rendered above the description markdown to match Browse's
-                            // layout, where Updates sits ahead of the description body.
                             let gb_mod_id = parse_gb_id_from_entry(&selected);
                             if gb_mod_id > 0 {
                                 self.render_my_mod_updates_section(ui, gb_mod_id);
                             }
-                            // Keep the filesystem-dependent URL resolution outside the prepared
-                            // content cache. This preserves local `.hestia` description images
-                            // and lets newly downloaded/deleted assets be observed normally.
                             let markdown = rewrite_markdown_urls(
                                 &markdown,
                                 markdown_root.as_deref(),
@@ -13079,9 +12651,6 @@ impl HestiaApp {
                                 &markdown,
                                 Some(&selected.root_path),
                             );
-                            // Breathing room so the last line of the description does not
-                            // butt against the footer's divider line (painted just below
-                            // the scroll area) when scrolled to the bottom.
                             ui.add_space(12.0);
                         }
                         MetadataSourceKind::TextFile => {
@@ -13129,9 +12698,6 @@ impl HestiaApp {
                         }
                         MetadataSourceKind::Hotkeys => {
                             let simplified = self.state.static_prefs.hotkeys_simplified;
-                            // Only the List view has translatable text (labels); Raw is
-                            // config syntax, left as-is. Active if either the unlinked or
-                            // the linked (GameBanana) translate toggle is on for this mod.
                             let translating = simplified
                                 && self
                                     .my_mods_translation_state
@@ -13140,8 +12706,6 @@ impl HestiaApp {
                                         state.unlinked_translation_enabled
                                             || state.translation_lang.is_some()
                                     });
-                            // Collect the labels first (this drops the metadata_hotkeys_view
-                            // borrow before the &mut self translation request).
                             let labels: Vec<String> = if translating {
                                 self.metadata_hotkeys_view
                                     .as_ref()
@@ -13158,11 +12722,6 @@ impl HestiaApp {
                             let current_values = self.cached_hotkey_values(&selected.id);
                             let action = if let Some((_, inis)) = &self.metadata_hotkeys_view {
                                 if simplified {
-                                    // Rows stay at full appearance; clicks/hover are inert
-                                    // Rows stay fully interactive (hover + clickable) even
-                                    // while blocked, so they still read as actionable. The
-                                    // click is intercepted below: a blocked change can't
-                                    // reach the running game, so it toasts instead of firing.
                                     render_mod_config_simple(
                                         ui,
                                         inis,
@@ -13213,9 +12772,6 @@ impl HestiaApp {
                     }
                     apply_vertical_scroll_navigation(ui, scroll_navigation, true);
                 });
-                // Only clicks that land on this window count: a popup drawn over the scroll
-                // area (the "..." menu's "Link Mod") would otherwise re-collapse the section
-                // it just opened in the same frame.
                 let clicked_detail_scroll = ui
                     .input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten())
                     .is_some_and(|pos| {
@@ -13226,26 +12782,16 @@ impl HestiaApp {
                     self.my_mod_source_expanded = false;
                 }
 
-                // Paint the LOCAL/SOURCE handle (divider line + chevron tab) AFTER the scroll area
-                // so it sits on top: the tab's top edge meets the line (the section's top edge) and
-                // hangs below it, and the divider isn't covered by the scrolling content above.
-                // Geometry comes from the row reserved at the top of the footer panel.
                 {
                     let line_color = Color32::from_gray(98);
                     let toggle_size = egui::vec2(22.0, 18.0);
-                    // The tab hangs BELOW the line: its top edge sits on the divider, so shift the
-                    // centre down by half its height. `min.y` is the reserved row's top = the line.
                     let toggle_rect = egui::Rect::from_center_size(
                         egui::pos2(
-                            // Right edge flush with the content edge; the divider ends here too.
                             handle_row_rect.max.x - (toggle_size.x * 0.5),
                             handle_row_rect.min.y + toggle_size.y * 0.5,
                         ),
                         toggle_size,
                     );
-                    // Nudge the clip a hair right and down so the tab's 1px border isn't shaved at
-                    // the content edge, nor clipped when the collapsed handle rests in the window's
-                    // bottom-right corner.
                     let restore_clip = ui.clip_rect();
                     ui.set_clip_rect({
                         let mut c = restore_clip;
@@ -13253,8 +12799,6 @@ impl HestiaApp {
                         c.max.y += 6.0;
                         c
                     });
-                    // Interact first so the frame (drawn only while hot) lands UNDER the chevron and
-                    // the icon colour can react to hover/press.
                     let toggle_response = ui.interact(
                         toggle_rect,
                         ui.id().with("mod_detail_source_toggle"),
@@ -13262,7 +12806,6 @@ impl HestiaApp {
                     );
                     let hot =
                         toggle_response.hovered() || toggle_response.is_pointer_button_down_on();
-                    // Divider runs the full width, passing under the tab.
                     let line_y = handle_row_rect.min.y;
                     ui.painter().line_segment(
                         [
@@ -13271,9 +12814,6 @@ impl HestiaApp {
                         ],
                         egui::Stroke::new(1.0, line_color),
                     );
-                    // A near-square tab (1px corner radius). No frame at rest — just the bare
-                    // chevron; the fill and border appear only while hovered or pressed. Painted
-                    // before the icon so the glyph lands on top of the fill.
                     if hot {
                         ui.painter().rect(
                             toggle_rect,
@@ -13283,14 +12823,11 @@ impl HestiaApp {
                             egui::StrokeKind::Inside,
                         );
                     }
-                    // The handle rides up to expand and drops back to collapse, so a collapsed
-                    // section shows "up" and an open one shows "down".
                     let toggle_icon = if self.my_mod_source_expanded {
                         Icon::ChevronsDown
                     } else {
                         Icon::ChevronsUp
                     };
-                    // Subtle at rest; brighten once the frame appears so the glyph reads on the fill.
                     let icon_color = if hot {
                         Color32::from_gray(205)
                     } else {
@@ -13351,12 +12888,8 @@ impl HestiaApp {
     }
 }
 
-/// Total lifetime of the "Link Mod" source-section highlight, in seconds.
 const SOURCE_FOCUS_GLOW_TOTAL: f64 = 1.18;
 
-/// Alpha envelope (0..1) for the source-section highlight triggered by "Link Mod".
-/// The opening window is intentionally silent so the animated scroll lands first;
-/// the glow then ramps up, holds, and fades back out. Returns 0.0 once finished.
 fn source_focus_glow_alpha(elapsed: f64) -> f32 {
     const SCROLL: f64 = 0.25;
     const RAMP: f64 = 0.11;
@@ -13376,8 +12909,6 @@ fn source_focus_glow_alpha(elapsed: f64) -> f32 {
     }
 }
 
-/// Paint a brief accent glow around the source section: a faint fill wash, a soft
-/// outward halo, and a bright core stroke, all scaled by `alpha` (0..1).
 fn paint_source_focus_glow(painter: &egui::Painter, rect: egui::Rect, alpha: f32) {
     let alpha = alpha.clamp(0.0, 1.0);
     let accent = Color32::from_rgb(224, 122, 72);
@@ -13407,9 +12938,6 @@ fn paint_source_focus_glow(painter: &egui::Painter, rect: egui::Rect, alpha: f32
     );
 }
 
-/// Paint one row of the metadata source picker: a leading Lucide glyph, then the
-/// label, with hover/selection fill. Disabled rows (stubs not yet wired to their
-/// data) are dimmed and inert. Returns true only when an enabled row is clicked.
 fn metadata_source_row(
     ui: &mut Ui,
     icon: Icon,
@@ -13454,9 +12982,6 @@ fn metadata_source_row(
         egui::FontId::new(13.0, FontFamily::Name(LUCIDE_FAMILY.into())),
         icon_color,
     );
-    // A single Lucide glyph can't be two-toned, so "add" rows keep a normal base
-    // glyph and get a larger green "+" overlaid as a badge overhanging the base
-    // glyph's bottom-right corner.
     if plus_overlay {
         let plus_color = if enabled {
             Color32::from_rgb(110, 194, 132)
@@ -13492,8 +13017,6 @@ fn metadata_source_row(
     enabled && response.clicked()
 }
 
-/// Format a 3DMigoto `key = ` value into something readable: drop the `no_*`
-/// modifier noise, title-case ctrl/alt/shift, and map common VK_/OEM_ names.
 fn format_config_key(raw: &str) -> String {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -13520,7 +13043,6 @@ fn format_config_key(raw: &str) -> String {
 }
 
 fn format_config_key_token(t: &str) -> String {
-    // `VK_OEM_2` and `OEM_2` are the same key, so the `oem_` names match either way.
     let oem = t.strip_prefix("vk_").filter(|rest| rest.starts_with("oem_")).unwrap_or(t);
     let named = match oem {
         "vk_down" => "Down",
@@ -13568,8 +13090,6 @@ fn format_config_key_token(t: &str) -> String {
     t.to_ascii_uppercase()
 }
 
-/// A header (already stripped of its `Key` prefix) is "generic" if nothing but
-/// `swap`, separators, and digits remain — e.g. `Swap_5`, `_3`, `12`.
 fn is_generic_swap_header(stripped: &str) -> bool {
     let compact: String = stripped
         .to_ascii_lowercase()
@@ -13580,9 +13100,6 @@ fn is_generic_swap_header(stripped: &str) -> bool {
     rest.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Split a PascalCase/camelCase label into words, keeping short all-caps runs
-/// (acronyms like `HUD`) intact, then capitalize the first letter.
-/// `HairColor` -> `Hair Color`.
 fn split_camel_label(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();
@@ -13608,8 +13125,6 @@ fn split_camel_label(s: &str) -> String {
     }
 }
 
-/// Human label for a section name: `.` is a hierarchy separator rendered as `": "`,
-/// and each segment is de-camel-cased. `Menu.ResetPosition` -> `Menu: Reset Position`.
 fn humanize_section_label(name: &str) -> String {
     name.split('.')
         .filter(|segment| !segment.is_empty())
@@ -13620,8 +13135,6 @@ fn humanize_section_label(name: &str) -> String {
 
 struct HotkeyListRow {
     show_ui: bool,
-    // A command binding (`run =`) with no cycle value — e.g. "reset menu position".
-    // Sorted to the bottom and shown without a `= …` value.
     is_action: bool,
     ini_rel_path: String,
     raw_key: String,
@@ -13629,10 +13142,7 @@ struct HotkeyListRow {
     label: String,
     var_name: Option<String>,
     values: Vec<String>,
-    /// The variable's starting value from `[Constants]`, used until the game saves one.
     default_value: Option<String>,
-    /// The `$var == value` checks in the section's `condition` (only when they are all
-    /// joined by `&&`). Decides when the key does anything in game.
     conditions: Vec<(String, String)>,
 }
 
@@ -13650,16 +13160,12 @@ enum HotkeyListAction {
     },
 }
 
-/// Number of modifier keys (Alt/Ctrl/Shift) in a formatted key string, so simpler
-/// combos sort before more complex ones (e.g. `Alt+1` and `Ctrl+3` before `Alt+Ctrl+2`).
 fn key_modifier_count(key: &str) -> usize {
     key.split('+')
         .filter(|part| matches!(part.trim(), "Alt" | "Ctrl" | "Shift"))
         .count()
 }
 
-/// Case-insensitive natural comparison so keys sort intuitively: `F2` before `F10`
-/// and `Alt+2` before `Alt+10`, rather than lexicographically.
 fn natural_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let mut ac = a.chars().peekable();
@@ -13705,9 +13211,6 @@ fn config_key_has_specific_key(raw: &str) -> bool {
     })
 }
 
-/// Parse keybind sections into the simplified "List" rows (one per real cycle
-/// toggle), floating the "show UI" toggle to the top. Shared by the List renderer and
-/// the translation-string collector so the labels stay in sync.
 fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
     let mut rows: Vec<HotkeyListRow> = Vec::new();
     for ini in inis {
@@ -13742,21 +13245,13 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                 .strip_prefix("Key")
                 .or_else(|| inner.strip_prefix("key"))
                 .unwrap_or(inner);
-            // Some authors name the section after the variable, e.g. `[Key$HairColor]`;
-            // drop the leading `$` so the label reads "Hair Color", not "$Hair Color".
             let stripped = stripped.strip_prefix('$').unwrap_or(stripped);
 
             let conditions = hotkey_condition_checks(condition);
-            // A `run =` beside a value list is usually the mod redrawing after the change
-            // (`run = CommandListProcessToggles`), so the section is still a toggle. A
-            // `run =` beside one fixed value is a command fed by that value (`$direction
-            // = 1` then `run = CommandListCycleVariant`), listed as an action below.
             let cycle = first_var.filter(|(_, values)| {
                 !has_run || values.split(',').filter(|part| !part.trim().is_empty()).count() > 1
             });
             if let Some((var_name, values)) = cycle {
-                // Cycle toggle: needs a `$var` to flip. Skip mouse buttons and hold
-                // bindings.
                 if typ.eq_ignore_ascii_case("hold")
                     || !config_key_has_specific_key(key)
                     || key.to_ascii_lowercase().contains("button")
@@ -13787,8 +13282,6 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                     raw_key: key.to_string(),
                     key: format_config_key(key),
                     label,
-                    // Cycle states as "0 / 1 / 2" (clearer than "0,1,2"), dropping empty
-                    // entries left by trailing or doubled commas.
                     var_name: Some(var_name.to_string()),
                     values: values
                         .split(',')
@@ -13804,10 +13297,6 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
                     conditions,
                 });
             } else if has_run {
-                // Command binding with no cycle var (e.g. "reset menu position"). Keep
-                // only the useful keyboard ones: drop menu plumbing by name and mouse
-                // buttons or arrows (menu dragging and navigation). Shown last, no cycle
-                // values.
                 let inner_lc = inner.to_ascii_lowercase();
                 let name_excluded = inner_lc.starts_with("keyclick")
                     || inner_lc.starts_with("keyclose")
@@ -13835,8 +13324,6 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
             }
         }
     }
-    // Order: menu/"show UI" toggle first, then cycle toggles, then command/action keys
-    // (the "reset" keys) last; within each group, fewer modifiers first, then natural key.
     rows.sort_by(|a, b| {
         fn rank(row: &HotkeyListRow) -> u8 {
             if row.show_ui {
@@ -13855,9 +13342,6 @@ fn hotkeys_list_rows(inis: &[ModConfigIni]) -> Vec<HotkeyListRow> {
     rows
 }
 
-/// The translatable labels from the List view (descriptive names derived from the
-/// section headers). Deduped. Only the List has natural language — the Raw view is
-/// config syntax (keys, `$vars`, numbers), so it is left untranslated.
 fn hotkeys_list_translatable_labels(inis: &[ModConfigIni]) -> Vec<String> {
     let mut out: Vec<String> = hotkeys_list_rows(inis)
         .into_iter()
@@ -13906,10 +13390,6 @@ fn hotkey_current_value<'a>(
     matches.next().is_none().then_some(first.1.as_str())
 }
 
-/// The `$var == value` checks in a key section's condition, e.g.
-/// `$object_detected == 1 && $body == 0` gives `object_detected = 1` and `body = 0`.
-/// Anything with `||` is left alone (empty), since a single unmet check wouldn't prove
-/// the key is off. Variables of other namespaces (`$\ns\var`) are skipped.
 fn hotkey_condition_checks(condition: &str) -> Vec<(String, String)> {
     if condition.contains("||") {
         return Vec::new();
@@ -13932,7 +13412,6 @@ fn hotkey_condition_checks(condition: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Same value as 3DMigoto compares them: as numbers when both are, else as text.
 fn hotkey_values_match(a: &str, b: &str) -> bool {
     let (a, b) = (a.trim(), b.trim());
     match (a.parse::<f64>(), b.parse::<f64>()) {
@@ -13941,10 +13420,6 @@ fn hotkey_values_match(a: &str, b: &str) -> bool {
     }
 }
 
-/// The key does nothing in game right now: its condition checks another listed toggle
-/// of the same ini, and that toggle has a different value. Such rows are greyed out
-/// and never pressed, since mods often share one key between them. False when the
-/// value isn't known.
 fn hotkey_row_unavailable(
     row: &HotkeyListRow,
     rows: &[HotkeyListRow],
@@ -14011,13 +13486,9 @@ fn clickable_hotkey_label(ui: &mut Ui, text: &str, color: Color32) -> egui::Resp
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A small, subtle "(why?)" explainer. On hover the inner word gets a dashed
-/// underline and the cursor gains a question mark (`CursorIcon::Help`); the tooltip
-/// carries the full explanation. The parentheses stay plain — only "why?" is decorated.
 fn why_link(ui: &mut Ui, tooltip: &str) {
     let font = egui::FontId::proportional(11.0);
     let base = Color32::from_gray(125);
-    // Measure the pieces so the dashed underline lands under just the "why?" span.
     let (open_w, word_w, close_w, height) = ui.fonts_mut(|f| {
         let open = f.layout_no_wrap("(".to_string(), font.clone(), base);
         let word = f.layout_no_wrap("why?".to_string(), font.clone(), base);
@@ -14069,11 +13540,6 @@ fn paint_hotkey_element_hover(ui: &Ui, response: &egui::Response, corner_radius:
     );
 }
 
-/// Simplified keybind view: one line per real cycle toggle (`key -> label ->
-/// values`). Menu/mouse plumbing and hold bindings are hidden, and the mod's "show UI"
-/// toggle (if any) is floated to the top. Rows that do nothing while another toggle
-/// has its current value are greyed out and can't be clicked.
-/// `translations` swaps each label for its translated form when one is available.
 fn render_mod_config_simple(
     ui: &mut Ui,
     inis: &[ModConfigIni],
@@ -14150,7 +13616,6 @@ fn render_mod_config_simple(
                 }
             }
             if !row.values.is_empty() {
-                // "= 0,1" reads more clearly than a bare "0,1" for people new to modding.
                 ui.label(
                     RichText::new("=")
                         .size(12.0)
@@ -14204,17 +13669,12 @@ fn render_mod_config_simple(
     action
 }
 
-/// Render parsed 3DMigoto keybind sections into the current `ui` (no scroll area or
-/// empty-state handling — the caller wraps as needed). Shared by the config viewer
-/// window and the inline "Hotkeys" metadata source.
 fn render_mod_config_sections(ui: &mut Ui, inis: &[ModConfigIni]) {
     for (index, ini) in inis.iter().enumerate() {
         if index > 0 {
             ui.add_space(8.0);
         }
 
-        // Collapsible file header: strip the DISABLED_BY_HESTIA/ prefix and prepend a
-        // triangle showing expand (▶) / collapse (▽) state. The whole row toggles it.
         let display_path = ini
             .rel_path
             .strip_prefix(crate::model::DISABLED_CONTAINER)
@@ -14223,8 +13683,6 @@ fn render_mod_config_sections(ui: &mut Ui, inis: &[ModConfigIni]) {
         let expand_id = ui.make_persistent_id(("mod_config_file", &ini.rel_path));
         let mut expanded = ui.data_mut(|d| d.get_temp::<bool>(expand_id).unwrap_or(true));
         let arrow = if expanded { "▽" } else { "▶" };
-        // Fixed-width arrow slot so the bold path never shifts when the glyph width
-        // changes between ▶ and ▽. The path itself uses the Settings font (bold).
         let header_inner = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.add_sized(
@@ -14250,9 +13708,6 @@ fn render_mod_config_sections(ui: &mut Ui, inis: &[ModConfigIni]) {
             continue;
         }
 
-        // Re-indented content (ignoring the source file's own indentation). Lines
-        // within a key section are packed tight; the gap between sections is kept.
-        // No extra space before the first section, so the file header sits close to it.
         for (section_index, section) in ini.sections.iter().enumerate() {
             if section_index > 0 {
                 ui.add_space(6.0);

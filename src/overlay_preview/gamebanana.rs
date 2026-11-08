@@ -1,7 +1,3 @@
-//! GameBanana mods in the in-game overlay: the lists it asked Hestia for, and
-//! what came back.  The carousel shows a character's list after the
-//! category's own mods.
-
 use std::{
     collections::{HashMap, hash_map::Entry},
     path::PathBuf,
@@ -12,50 +8,37 @@ use crate::overlay_protocol::{
     Pictures, SameNameChoice,
 };
 
-/// How long a list waits after the carousel reaches it before it asks, so
-/// flicking past categories or typing a search asks only for where it stops.
 const SETTLE_SECS: f64 = 0.3;
 
-/// The carousel asks for the next page this many cards before the end.
 pub(super) const LOAD_AHEAD: usize = 3;
 
-/// How long a finished install's card stays where it is, saying so, before
-/// it crosses into the category's own mods.
 const HOLD_SECS: f64 = 0.6;
 
-/// One list: a character's mods, or those that match a search.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ListKey {
     pub character: u64,
-    /// The search as `search_key` has it, or empty for all the mods.
     pub query: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Status {
-    /// Asks at this time if the carousel is still there.
     Settling(f64),
-    /// Waits for this page.
     Loading(u32),
-    /// GameBanana has more pages.
     More,
     End,
     Failed,
 }
 
-/// The card after a list's mods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StatusCard {
     Loading,
     Failed,
-    /// GameBanana has nothing for the list.
     Empty,
 }
 
 #[derive(Debug)]
 pub(super) struct List {
     pub mods: Vec<BrowseMod>,
-    /// How many pages came.
     pages: u32,
     status: Status,
 }
@@ -80,29 +63,20 @@ enum Characters {
     Failed,
 }
 
-/// A mod the overlay asked Hestia to install, and how that goes.
 #[derive(Clone, Debug)]
 pub(super) struct Install {
     pub name: String,
     pub stage: InstallStage,
-    /// When it last asked a question, in the order installs asked, so the
-    /// oldest question comes first.
     asked: u64,
-    /// Once it's installed and the carousel shows, until when its card
-    /// stays.
     hold_until: Option<f64>,
-    /// Its card went, leaving the installed mods.
     crossed: bool,
 }
 
 impl Install {
-    /// The installed mods wait behind its card: it isn't done yet, or it's
-    /// done and its card hasn't crossed.
     pub(super) fn holds(&self) -> bool {
         self.running() || matches!(self.stage, InstallStage::Installed { .. }) && !self.crossed
     }
 
-    /// Hestia works on it, or it waits for an answer.
     fn running(&self) -> bool {
         runs(&self.stage)
     }
@@ -115,7 +89,6 @@ impl Install {
     }
 }
 
-/// An install at `stage` isn't done yet.
 fn runs(stage: &InstallStage) -> bool {
     !matches!(
         stage,
@@ -123,33 +96,25 @@ fn runs(stage: &InstallStage) -> bool {
     )
 }
 
-/// What an install's news tells someone who has the overlay closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum InstallNews {
-    /// It's installed, turned off.
     Installed(String),
-    /// Hestia's window installed it turned on.
     InstalledOn(String),
     Failed(String),
-    /// It needs an answer.
     Question(String),
 }
 
 #[derive(Debug, Default)]
 pub(super) struct GameBanana {
-    /// Only the in-game overlay has Hestia to ask.
     enabled: bool,
     lists: HashMap<ListKey, List>,
     characters: Characters,
     installs: HashMap<u64, Install>,
-    /// Counts the questions installs asked.
     questions_asked: u64,
-    /// Requests for Hestia since the last `take_requests`.
     requests: Vec<FromOverlay>,
 }
 
 impl GameBanana {
-    /// Off keeps what came already, for when it's back on.
     pub(super) fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
@@ -162,8 +127,6 @@ impl GameBanana {
         self.lists.get(key).filter(|_| self.enabled)
     }
 
-    /// The carousel is near the end of `key`'s cards: start the list, or ask
-    /// for its next page.  True when the list is new, so it has cards now.
     pub(super) fn want(&mut self, key: &ListKey, now: f64) -> bool {
         if !self.enabled {
             return false;
@@ -194,7 +157,6 @@ impl GameBanana {
         false
     }
 
-    /// When a settling list asks, for the next frame.
     pub(super) fn settles_at(&self, key: &ListKey) -> Option<f64> {
         match self.lists.get(key)?.status {
             Status::Settling(at) => Some(at),
@@ -202,7 +164,6 @@ impl GameBanana {
         }
     }
 
-    /// True when the list changed.
     pub(super) fn receive_page(&mut self, page: BrowsePage) -> bool {
         let key = ListKey {
             character: page.character,
@@ -228,7 +189,6 @@ impl GameBanana {
         true
     }
 
-    /// Asks again for a list's page that failed.
     pub(super) fn retry(&mut self, key: &ListKey) {
         if let Some(list) = self.lists.get_mut(key)
             && list.status == Status::Failed
@@ -243,8 +203,6 @@ impl GameBanana {
         }
     }
 
-    /// Gives mods and characters the pictures Hestia downloaded.  Says
-    /// whether a character got one.
     pub(super) fn apply_pictures(&mut self, pictures: &Pictures) -> bool {
         let mods: HashMap<u64, &PathBuf> =
             pictures.mods.iter().map(|(id, path)| (*id, path)).collect();
@@ -266,7 +224,6 @@ impl GameBanana {
         characters_changed
     }
 
-    /// Asks Hestia for the game's characters, unless it has them.
     pub(super) fn ask_characters(&mut self) {
         if self.enabled && matches!(self.characters, Characters::NotAsked | Characters::Failed) {
             self.characters = Characters::Asking;
@@ -291,7 +248,6 @@ impl GameBanana {
         }
     }
 
-    /// The pictures of the mods the library's setting censors.
     pub(super) fn censored_images(&self) -> impl Iterator<Item = PathBuf> + '_ {
         self.lists
             .values()
@@ -300,8 +256,6 @@ impl GameBanana {
             .filter_map(|item| item.image.clone())
     }
 
-    /// Asks Hestia to install `item` into the category `category_id`, or
-    /// into a new one for its character.  False while it installs already.
     pub(super) fn install(&mut self, item: &BrowseMod, category_id: Option<String>) -> bool {
         if !self.enabled || self.installs.get(&item.id).is_some_and(Install::holds) {
             return false;
@@ -329,14 +283,10 @@ impl GameBanana {
         self.installs.get(&mod_id)
     }
 
-    /// The installed mods of `mod_id` wait behind its card.
     pub(super) fn holds(&self, mod_id: u64) -> bool {
         self.installs.get(&mod_id).is_some_and(Install::holds)
     }
 
-    /// Starts the hold of the installs that finished, and ends the ones
-    /// whose time is up.  Gives the mods whose cards cross now, and when the
-    /// next one does.
     pub(super) fn cross_finished(&mut self, now: f64) -> (Vec<u64>, Option<f64>) {
         let mut crossed = Vec::new();
         let mut next: Option<f64> = None;
@@ -356,9 +306,6 @@ impl GameBanana {
         (crossed, next)
     }
 
-    /// Takes how an install goes from Hestia, or a download Hestia's window
-    /// started, which comes with the mod's name.  Says what the strip should
-    /// tell about it.
     pub(super) fn receive_install(&mut self, update: InstallUpdate) -> Option<InstallNews> {
         let InstallUpdate {
             mod_id,
@@ -368,7 +315,6 @@ impl GameBanana {
         let install = match self.installs.entry(mod_id) {
             Entry::Occupied(entry) if entry.get().running() || !runs(&stage) => entry.into_mut(),
             Entry::Vacant(_) if !runs(&stage) => return None,
-            // Hestia's window started it, or started it again after it ended.
             entry => entry
                 .insert_entry(Install {
                     name: name.filter(|_| self.enabled)?,
@@ -396,7 +342,6 @@ impl GameBanana {
         }
     }
 
-    /// The install that has waited longest for an answer.
     pub(super) fn question(&self) -> Option<(u64, &Install)> {
         self.installs
             .iter()
@@ -405,7 +350,6 @@ impl GameBanana {
             .map(|(&mod_id, install)| (mod_id, install))
     }
 
-    /// Installs the file `file_id` of the mod that asked which.
     pub(super) fn pick_file(&mut self, mod_id: u64, file_id: u64) {
         if let Some(install) = self.installs.get_mut(&mod_id)
             && let InstallStage::ChooseFile { files } = &install.stage
@@ -417,7 +361,6 @@ impl GameBanana {
         }
     }
 
-    /// Answers the mod that found a folder with its name.
     pub(super) fn choose_same_name(&mut self, mod_id: u64, choice: SameNameChoice) {
         if let Some(install) = self.installs.get_mut(&mod_id)
             && matches!(install.stage, InstallStage::SameName { .. })
@@ -427,7 +370,6 @@ impl GameBanana {
         }
     }
 
-    /// Stops an install that asked a question.
     pub(super) fn cancel_install(&mut self, mod_id: u64) {
         if let Some(install) = self.installs.get_mut(&mod_id)
             && install.asking()
@@ -492,7 +434,6 @@ mod tests {
                 page: 1,
             })]
         );
-        // Asking twice for a page waits for the first answer.
         assert!(!gamebanana.want(&key(""), 0.6));
         assert!(gamebanana.take_requests().is_empty());
         assert!(gamebanana.receive_page(page("", 1, &[1, 2], true)));
@@ -501,7 +442,6 @@ mod tests {
             gamebanana.take_requests()[..],
             [FromOverlay::Browse(Browse { page: 2, .. })]
         ));
-        // A page repeating a mod keeps one.
         assert!(gamebanana.receive_page(page("", 2, &[2, 3], false)));
         let list = gamebanana.list(&key("")).unwrap();
         assert_eq!(
@@ -718,7 +658,6 @@ mod tests {
         assert_eq!(gamebanana.cross_finished(1.0).0, [3]);
         assert!(!gamebanana.holds(3));
 
-        // The mod got deleted, and the window downloads it again.
         assert_eq!(
             gamebanana.receive_install(window(InstallStage::Waiting)),
             None

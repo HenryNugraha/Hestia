@@ -14,9 +14,6 @@ fn current_language() -> Option<AppLanguage> {
     }
 }
 
-/// Returns the GameBanana id and whether it points at the Tool namespace
-/// (e.g. RabbitFX lives under gamebanana.com/tools/). A bare number is
-/// treated as a mod id.
 fn parse_gb_link(input: &str) -> Option<(u64, bool)> {
     let input = input.trim();
     if let Ok(id) = input.parse::<u64>() {

@@ -316,10 +316,6 @@ fn extract_image_urls_from_profile_json(raw_profile_json: &str) -> Vec<String> {
     extract_image_urls_from_html_like_text(html)
 }
 
-/// The Library detail pane keeps one small cache for the selected mod. HTML to Markdown
-/// conversion is pure and relatively expensive, while URL rewriting below it depends on files
-/// arriving in the mod metadata directory and the shared image cache. Keep those two stages
-/// separate so a prepared description can be reused without making a missing image permanent.
 #[derive(Clone, Default)]
 struct LibraryDetailContentCache {
     mod_id: String,
@@ -486,9 +482,6 @@ fn cached_library_prepared_markdown(
         .prepared_markdown(mod_id, html, mod_root, gb_id)
 }
 
-/// Convert HTML to the Markdown form consumed by egui_commonmark. This deliberately excludes
-/// filesystem-dependent URL resolution; callers that render the result must still run
-/// `rewrite_markdown_urls` / `cached_rewrite_markdown_for_render` afterwards.
 fn prepare_markdown_content(html: &str) -> String {
     let detective = "https://images.gamebanana.com/static/img/mascots/detective.png";
     let iframe_sanitized_html = HTML_IFRAME_RE.replace_all(html, |caps: &regex::Captures| {
@@ -535,8 +528,6 @@ fn prepare_markdown_content(html: &str) -> String {
     html2md::parse_html_custom(&sanitized_html, &handlers)
 }
 
-/// html2md's own link handler percent-decodes link targets, which turns `%26` into `&`, `%23`
-/// into `#` and `%29` into `)` and breaks real links. Same handler, minus the decoding.
 #[derive(Default)]
 struct VerbatimLinkHandler {
     start_pos: usize,
@@ -546,7 +537,6 @@ struct VerbatimLinkHandler {
 
 impl html2md::TagHandler for VerbatimLinkHandler {
     fn handle(&mut self, tag: &html2md::Handle, printer: &mut html2md::StructuredPrinter) {
-        // Markdown has no named anchors, so those stay raw HTML.
         if html2md::common::get_tag_attr(tag, "name").is_some() {
             html2md::TagHandler::handle(&mut html2md::dummy::IdentityHandler, tag, printer);
             self.emit_unchanged = true;
@@ -574,7 +564,6 @@ fn mod_primary_description_markdown(
     portable: &persistence::PortablePaths,
 ) -> String {
     match mod_primary_description_html(mod_entry) {
-        // The cached GameBanana profile's images aren't in the mod's folder.
         Some((html, from_profile)) => prepare_markdown_for_display(
             &html,
             (!from_profile).then_some(mod_entry.root_path.as_path()),
@@ -585,8 +574,6 @@ fn mod_primary_description_markdown(
     }
 }
 
-/// The description the mod details window shows, as HTML, and whether it
-/// came from the cached GameBanana profile.
 fn mod_primary_description_html(mod_entry: &ModEntry) -> Option<(String, bool)> {
     if let Some(html) = mod_entry
         .metadata
@@ -619,14 +606,10 @@ fn mod_primary_description_html(mod_entry: &ModEntry) -> Option<(String, bool)> 
         .map(|html| (html.to_owned(), false))
 }
 
-/// Markdown as plain text, for the in-game overlay, which shows no
-/// pictures, links or styles.  Paragraphs keep a blank line between them and
-/// list items a bullet.
 fn markdown_plain_text(markdown: &str) -> String {
     use pulldown_cmark::{Event, Tag, TagEnd};
 
     let mut text = String::new();
-    // Inside a picture, whose alt text isn't shown.
     let mut images = 0_usize;
     for event in pulldown_cmark::Parser::new(markdown) {
         match event {
@@ -634,7 +617,6 @@ fn markdown_plain_text(markdown: &str) -> String {
             Event::End(TagEnd::Image) => images = images.saturating_sub(1),
             _ if images > 0 => {}
             Event::Text(part) | Event::Code(part) => {
-                // Where the details window shows a YouTube video.
                 if !part.trim_start().starts_with("{{hestia-youtube:") {
                     text.push_str(&part);
                 }

@@ -17,11 +17,6 @@ fn tracked_file_meta_from_mod_file(file: &gamebanana::ModFile) -> TrackedFileMet
     }
 }
 
-/// Extend an installed file recipe with the files that were actually committed
-/// by a Merge install.  Old metadata is intentionally retained: it can contain
-/// archived/deleted files or legacy name-only identities that are no longer in
-/// the current profile.  Nonzero GameBanana IDs are authoritative; legacy
-/// entries without an ID fall back to their file name.
 fn add_merge_tracked_file(recipe: &mut FileSetRecipe, tracked: TrackedFileMeta) {
     let duplicate = if tracked.file_id != 0 {
         recipe
@@ -45,9 +40,6 @@ fn merge_file_set_recipe(
 ) -> FileSetRecipe {
     let mut merged = FileSetRecipe::default();
 
-    // Keep richer metadata first, then reconstruct selectors that older state
-    // persisted without a metadata record. This retains deleted/legacy files
-    // without inventing a newer date or archive identity.
     for tracked in &existing.selected_files_meta {
         add_merge_tracked_file(&mut merged, tracked.clone());
     }
@@ -91,9 +83,6 @@ fn merge_file_set_recipe(
         add_merge_tracked_file(&mut merged, tracked_file_meta_from_mod_file(file));
     }
 
-    // Keep selectors aligned with metadata. A legacy record cannot be paired
-    // with an ID vector without inserting a fake zero ID, so names become the
-    // complete selector representation whenever any ID is unknown.
     if merged
         .selected_files_meta
         .iter()
@@ -170,8 +159,6 @@ fn update_task_targets_mod(task: &TaskEntry, target: &ModEntry, update_title: &s
     }
 }
 
-/// A `current` answer with only separate extra files has no main download
-/// and drops the update task, so the bundle is all that ties them to the mod.
 fn thalia_bundle_updates_mod(bundle: &ThaliaInstallBundle, target: &ModEntry) -> bool {
     bundle.game_id == target.game_id
         && bundle
@@ -278,10 +265,6 @@ fn downloadable_all_files(profile: &gamebanana::ProfileResponse) -> Vec<&gameban
         .collect()
 }
 
-/// Resolves the persisted install recipe into a complete, date-bearing
-/// baseline for the passive new-file signal.  A missing or ambiguous part of
-/// the recipe makes the whole baseline unknown; guessing here would hide a
-/// missed upload behind a local install timestamp.
 fn known_installed_files_for_newer_notice(
     file_set: &FileSetRecipe,
     profile: &gamebanana::ProfileResponse,
@@ -310,9 +293,6 @@ fn known_installed_files_for_newer_notice(
         return None;
     }
 
-    // `selected_files_meta` is authoritative when present, including for a
-    // source the author later deleted.  Only a missing date may be hydrated
-    // from an unambiguous current ID/name resolution.
     for installed in &mut tracked {
         if installed.date_added > 0 {
             continue;
@@ -338,10 +318,6 @@ fn known_installed_files_for_newer_notice(
     tracked.iter().all(|file| file.date_added > 0).then_some(tracked)
 }
 
-/// Returns active downloadable GameBanana files strictly newer than the
-/// known installed archive upload baseline.  This does not infer lineage or
-/// variants: it is only a conservative availability fact for the UI's
-/// passive "new files" notice.
 fn available_newer_files(
     file_set: &FileSetRecipe,
     profile: &gamebanana::ProfileResponse,
@@ -381,7 +357,6 @@ fn available_newer_files(
     newer
 }
 
-/// The file ids a linked mod has installed.
 fn installed_file_ids(file_set: &FileSetRecipe) -> impl Iterator<Item = u64> + '_ {
     file_set
         .selected_file_ids
@@ -391,7 +366,6 @@ fn installed_file_ids(file_set: &FileSetRecipe) -> impl Iterator<Item = u64> + '
         .filter(|id| *id != 0)
 }
 
-/// The files a mod has, plus those its pending update would install.
 fn claimed_file_ids(
     file_set: &FileSetRecipe,
     pending_update: Option<&IgnoredUpdateSignature>,
@@ -414,10 +388,6 @@ fn all_profile_files(profile: &gamebanana::ProfileResponse) -> Vec<&gamebanana::
         .collect()
 }
 
-/// Reconstructs an old ID-only/name-only recipe only when every selected
-/// identity can be recovered from one cached catalog. A partial result would
-/// silently turn a multi-file install into a different recipe, so callers
-/// must keep the original legacy selectors when this returns `None`.
 fn reconstruct_tracked_files_from_candidates(
     file_set: &FileSetRecipe,
     candidates: &[TrackedFileMeta],
@@ -482,9 +452,6 @@ fn selector_shape_is_valid(file_set: &FileSetRecipe) -> bool {
         return false;
     }
     if file_set.selected_files_meta.is_empty() {
-        // Names alone must identify one file each. When stable IDs are also
-        // present, names are historical hints and may legitimately repeat or
-        // no longer match the current catalog.
         if ids.is_empty()
             && names
                 .iter()
@@ -527,10 +494,6 @@ fn selectors_conflict_with_catalog(
     file_set: &FileSetRecipe,
     all_remote_files: &[&gamebanana::ModFile],
 ) -> bool {
-    // A nonzero persisted ID is authoritative. The author may rename or
-    // replace a file while reusing the old name, and the current catalog may
-    // contain the same name under several distinct IDs. Only name-only
-    // recipes need unique current-name resolution.
     if !file_set.selected_file_ids.is_empty() || file_set.selected_file_names.is_empty() {
         return false;
     }
@@ -552,11 +515,6 @@ fn selectors_conflict_with_catalog(
     })
 }
 
-/// Fills metadata introduced after older installs were written. The source
-/// cache is consulted in the same order as update refreshes: raw profile,
-/// snapshot, then the newly fetched profile. Missing files are left alone so
-/// a deleted/legacy source remains distinguishable from an observed zero-byte
-/// archive and never triggers a network or archive read.
 fn hydrate_tracked_file_sizes(
     file_set: &mut FileSetRecipe,
     old_raw_profile_json: Option<&str>,
@@ -784,9 +742,6 @@ fn resolve_fallback_tracked_files(
     None
 }
 
-/// True when the file set names specific remote files, i.e. the update check
-/// would compare them against the profile's downloadable files and could flip
-/// the mod to `MissingSource` if none of them are found.
 fn file_set_tracks_remote_files(file_set: &FileSetRecipe) -> bool {
     !file_set.selected_files_meta.is_empty()
         || !file_set.selected_file_ids.is_empty()
@@ -801,9 +756,6 @@ fn normalized_file_label(label: &str) -> String {
         .collect()
 }
 
-/// Pairs a tracked file with a candidate through the author-assigned file label
-/// ("Main File" vs "Experimental"). This is the only usable lineage signal when
-/// file names are random hashes and every re-upload replaces the old file.
 fn file_label_lineage_matches(tracked: &TrackedFileMeta, candidate: &gamebanana::ModFile) -> bool {
     let tracked_label = tracked
         .label
@@ -2232,10 +2184,6 @@ fn fallback_candidate_matches(
         && token_identity_condition(&tracked.file_name, &candidate.file_name)
 }
 
-/// Uses a complete GameBanana update history as a last-resort replacement
-/// signal when the normal filename/version fallbacks cannot identify a
-/// renamed file. Every catalog file must be accounted for by a single-file
-/// release chain; incomplete or conflicting file associations remain neutral.
 fn release_sequence_candidate_matches(
     tracked: &TrackedFileMeta,
     candidate: &gamebanana::ModFile,
@@ -2252,9 +2200,6 @@ fn release_sequence_candidate_matches(
     let Some(source) = fallback_source_file(tracked, all_profile_files) else {
         return false;
     };
-    // The installed file may have been moved out of the active catalog after
-    // the author published its replacement. Archived membership is authoritative
-    // even when the archived payload's own flag or URL is stale/missing.
     let source_is_archived = profile_file_is_archived(profile, source);
     if !(source_is_archived || profile_file_is_active_downloadable(profile, source))
         || !profile_file_is_active_downloadable(profile, candidate)
@@ -2271,8 +2216,6 @@ fn release_sequence_candidate_matches(
         return false;
     }
 
-    // Keep the log's original spelling for conflict checks, while using the
-    // existing numeric ordering helper for release progression.
     let parse_release_version = |value: Option<&str>| {
         let raw = value?.trim();
         if raw.is_empty()
@@ -2290,9 +2233,6 @@ fn release_sequence_candidate_matches(
         Some((version, raw.to_owned()))
     };
 
-    // Each tuple is (record date, file date, file id, numeric version,
-    // original version text). Unattached prose records are intentionally
-    // ignored; an attached malformed record invalidates the chain.
     let mut records = Vec::new();
     for record in &history.records {
         let mut ids = match (record.file_ids.as_ref(), record.files.as_ref()) {
@@ -2383,9 +2323,6 @@ fn release_sequence_candidate_matches(
         return false;
     }
 
-    // A complete history may omit the original upload, but only one such file
-    // is acceptable and it must be the oldest unlabeled catalog file. Every
-    // other catalog file must be represented by exactly one update record.
     let unassociated_ids: Vec<_> = all_catalog_ids
         .iter()
         .filter(|id| !attached.contains_key(id))
@@ -2423,9 +2360,6 @@ fn release_sequence_candidate_matches(
         }
     }
 
-    // Authors sometimes leave the same version on successive files. Dates and
-    // one-file attachments establish the order, but a version decrease makes
-    // the whole release history unusable.
     if records.windows(2).any(|pair| {
         ordered_typed_release_version(&pair[0].3)
             > ordered_typed_release_version(&pair[1].3)
@@ -2452,9 +2386,6 @@ fn release_sequence_candidate_matches(
         return false;
     }
 
-    // The installed file may be the original upload or any logged release.
-    // Only records after that point can be candidates; the latest such record
-    // is the only file this helper is allowed to select.
     let release_records: Vec<_> = match source_record_index {
         Some(index) => records.iter().skip(index + 1).collect(),
         None => records.iter().collect(),
@@ -2502,10 +2433,6 @@ fn release_sequence_candidate_matches(
             return false;
         }
     } else if !source_associated && release_records.len() < 2 {
-        // An unassociated root with no numeric version has no evidence that a
-        // single attached record is its successor. Require two later
-        // one-file records so the serial chain itself supplies that proof.
-        // An associated source may still advance on one record.
         return false;
     }
 
@@ -2515,8 +2442,6 @@ fn release_sequence_candidate_matches(
         .filter(|file| profile_file_is_active_downloadable(profile, file))
         .map(|file| file.id)
         .collect();
-    // With an archived source, the only active file may be the latest release.
-    // An active source still requires a separate active candidate as before.
     if active_ids.is_empty()
         || (!source_is_archived
             && (active_ids.len() <= 1 || active_ids.iter().all(|id| *id == source.id)))
@@ -2527,10 +2452,6 @@ fn release_sequence_candidate_matches(
     latest.2 == candidate.id && active_ids.contains(&candidate.id)
 }
 
-/// Archive path lists the matcher could still use for these recipes: the
-/// installed file and every eligible candidate of each single-source recipe
-/// that the metadata model left undecided.  Lists already attached to the
-/// profile are left out.
 fn file_listing_ids_wanted(
     items: &[(Option<i64>, FileSetRecipe)],
     profile: &gamebanana::ProfileResponse,
@@ -2569,12 +2490,6 @@ fn evaluate_file_set_update_group(
             .collect();
     }
 
-    // Canonicalize the complete catalog before either resolver runs.  This
-    // makes archived membership authoritative and prevents duplicate IDs from
-    // manufacturing a release proof.  The native single-file adapter receives
-    // the same canonical profile and is terminal on abstention; only recipes
-    // outside its one-source scope continue through the conservative legacy
-    // resolver below.
     let canonical_profile = matcher_adapter::canonicalize_profile(profile);
     if !canonical_profile.ambiguous_ids.is_empty() {
         return items
@@ -2585,9 +2500,6 @@ fn evaluate_file_set_update_group(
             })
             .collect();
     }
-    // Keep the native adapter's canonicalization anchored to the original
-    // payload.  The outer canonical profile is used by the legacy resolver;
-    // passing it into the adapter would discard the ambiguity provenance.
     let mut native_evaluations = matcher_adapter::evaluate_native_single_group(items, profile)
         .map(|group| group.evaluations)
         .unwrap_or_else(|| vec![matcher_adapter::NativeSingleEvaluation::default(); items.len()]);
@@ -2636,10 +2548,6 @@ fn evaluate_file_set_update_group(
         Vec::new();
 
     for candidate in active_remote_files.iter().copied() {
-        // Collect verified chain claims before the softer filename/label
-        // matchers run. A single-file recipe may later promote its unique
-        // claim over a filename winner; multi-file recipes retain the legacy
-        // lower-priority behavior below.
         let release_matches: Vec<Vec<TrackedFileMeta>> = fallback_resolved
             .iter()
             .enumerate()
@@ -2801,10 +2709,6 @@ fn evaluate_file_set_update_group(
             ) {
                 assigned_candidates[fallback_idx].push(tracked_file_meta_from_mod_file(candidate));
             }
-            // A current fallback match, including one rejected by a veto or
-            // left tied between groups, must keep precedence over the log
-            // sequence. The latter is collected only for wholly unmatched
-            // candidates and evaluated in a second stage below.
             continue;
         }
         if fallback_matches.iter().any(|matches| !matches.is_empty()) {
@@ -2816,11 +2720,6 @@ fn evaluate_file_set_update_group(
         }
     }
 
-    // A complete one-file release chain is stronger evidence than a merely
-    // similar filename. Promote it only for recipes with exactly one tracked
-    // source. Multi-file recipes retain the established conservative path,
-    // and conflicting release claims abstain instead of assigning one
-    // download twice.
     let mut unique_claims: Vec<Vec<&gamebanana::ModFile>> = vec![Vec::new(); items.len()];
     for (candidate, release_matches) in &release_priority_candidates {
         let matching_groups: Vec<_> = release_matches
@@ -2865,9 +2764,6 @@ fn evaluate_file_set_update_group(
         }
     }
 
-    // The update log is deliberately lower priority than every existing
-    // matcher. It may fill an otherwise unmatched group, but cannot displace
-    // a current winner or resolve a current tie.
     for (candidate, release_matches) in &release_sequence_candidates {
         let mut release_scores: Vec<_> = release_matches
             .iter()
@@ -2902,11 +2798,6 @@ fn evaluate_file_set_update_group(
         }
     }
 
-    // Reserve every viable legacy graph claim before native arbitration.  A
-    // multi-file recipe may already have a different soft assignment, but its
-    // still-viable release claim must continue to block a native sibling from
-    // taking the same candidate.  Otherwise an occupied multi-file group would
-    // incorrectly suppress the evidence of a competing claim.
     let mut legacy_potential_candidate_ids = HashSet::new();
     for (candidate, release_matches) in release_priority_candidates
         .iter()
@@ -2931,11 +2822,6 @@ fn evaluate_file_set_update_group(
         }
     }
 
-    // Candidate ownership is group-wide.  A native choice that collides with
-    // another native recipe or with a legacy multi-file assignment abstains;
-    // the legacy recipe loses its complete assignment as well.  This keeps a
-    // shared candidate from being silently installed into two recipes and
-    // prevents a partial multi-file update.
     let native_candidate_ids: HashSet<u64> = native_evaluations
         .iter()
         .filter_map(|evaluation| evaluation.claim.map(|claim| claim.candidate_id))
@@ -3115,8 +3001,6 @@ fn current_remote_signature(
         if tracked_files.len() == selected_ids.len() {
             return candidate_signature(tracked_files).map(prearm_next_update_signature);
         }
-        // IDs are authoritative. Never fall through to a same-name file with
-        // a different ID after a source was deleted and reuploaded.
         return profile_update_signature(profile).map(prearm_next_update_signature);
     }
     if !file_set.selected_file_names.is_empty() {
@@ -3173,16 +3057,10 @@ fn source_profile_for_compare(source: &ModSourceData) -> Option<gamebanana::Prof
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct CachedProfileFreshness {
-    /// A recorded cache write is stronger than any legacy remote date. This
-    /// prevents an old profile with a malformed future file date from
-    /// displacing a newer observed cache.
     observed_at: Option<DateTime<Utc>>,
     legacy_remote_timestamp: i64,
 }
 
-/// Returns the newest remote timestamp available in a cached profile. Legacy
-/// source records have no cache-write timestamp, so their profile and file
-/// dates are the only freshness evidence available.
 fn cached_profile_freshness(
     source: &ModSourceData,
     profile: &gamebanana::ProfileResponse,
@@ -3211,8 +3089,6 @@ fn cached_profile_catalog_fingerprint(profile: &gamebanana::ProfileResponse) -> 
     profile_catalog_fingerprint(profile, true)
 }
 
-/// Without history the page reads as if GameBanana's update history had not
-/// been loaded, so the same page fingerprints the same either way.
 fn profile_catalog_fingerprint(
     profile: &gamebanana::ProfileResponse,
     with_history: bool,
@@ -3304,10 +3180,6 @@ fn matching_release_record_fingerprint(
     })
 }
 
-/// Builds one cached catalog per GameBanana group and evaluates every local
-/// recipe against that catalog. This is deliberately immutable: callers can
-/// capture the evidence before applying status, ignore, or local-change
-/// overlays and before taking mutable borrows of individual mods.
 fn build_cached_update_evidence(
     mods: &[ModEntry],
     target_game_id: Option<&str>,
@@ -3361,7 +3233,6 @@ fn build_cached_update_evidence(
                 Some((chosen_freshness, _, chosen_profile, _))
                     if freshness == *chosen_freshness =>
                 {
-                    // Same catalog: keep the copy with more archive lists.
                     let chosen_listings = chosen_profile.file_listings.len();
                     if profile.file_listings.len() > chosen_listings {
                         chosen = Some((
@@ -3431,8 +3302,6 @@ fn build_cached_update_evidence(
             })
             .collect();
         for (index, (mod_entry, evaluation)) in group.iter().zip(evaluations).enumerate() {
-            // A file another mod of this page has, or is about to get, is not
-            // news for this one.
             let mut other_mods_files: Vec<u64> = claims
                 .iter()
                 .enumerate()
@@ -3486,9 +3355,6 @@ fn build_cached_update_evidence(
     evidence
 }
 
-/// Whether the mod's on-disk fingerprint diverges from the fingerprint the
-/// user last accepted via "Ignore local changes". Returns true when nothing
-/// was accepted, so callers can `&&` it with the baseline comparison.
 fn local_changes_diverge_from_accepted(source: &ModSourceData, mod_entry: &ModEntry) -> bool {
     let Some(accepted) = source.accepted_local_changes.as_ref() else {
         return true;
@@ -3497,10 +3363,6 @@ fn local_changes_diverge_from_accepted(source: &ModSourceData, mod_entry: &ModEn
         || accepted.ini_hash != mod_entry.ini_hash
 }
 
-/// True when the mod's files differ from the install baseline and the user has
-/// not accepted the current files via "Ignore local changes". The baseline is
-/// never rewritten by that acceptance, so clearing `accepted_local_changes`
-/// restores the original verdict.
 fn mod_has_local_changes_for_update_check(mod_entry: &ModEntry) -> bool {
     let Some(source) = mod_entry.source.as_ref() else {
         return false;
@@ -3511,10 +3373,6 @@ fn mod_has_local_changes_for_update_check(mod_entry: &ModEntry) -> bool {
     diverges_from_baseline && local_changes_diverge_from_accepted(source, mod_entry)
 }
 
-/// Whether the mod carries an "Ignore local changes" acceptance that still
-/// matches its files. Once the files drift past the accepted fingerprint the
-/// acceptance is spent: the mod reads Modified again and the checkbox shows
-/// unchecked, so re-checking it accepts the new state.
 fn mod_ignores_local_changes(mod_entry: &ModEntry) -> bool {
     mod_entry.source.as_ref().is_some_and(|source| {
         source.accepted_local_changes.is_some()
@@ -3522,8 +3380,6 @@ fn mod_ignores_local_changes(mod_entry: &ModEntry) -> bool {
     })
 }
 
-/// Drops a spent acceptance (files drifted past the accepted fingerprint).
-/// Returns true when something was cleared so the caller can persist.
 fn clear_spent_local_changes_acceptance(mod_entry: &mut ModEntry) -> bool {
     let spent = mod_entry.source.as_ref().is_some_and(|source| {
         source.accepted_local_changes.is_some()
@@ -3538,12 +3394,6 @@ fn clear_spent_local_changes_acceptance(mod_entry: &mut ModEntry) -> bool {
     true
 }
 
-/// Toggles "Ignore local changes" for a linked mod. Enabling snapshots the
-/// current on-disk fingerprint as accepted (the install baseline is kept, so
-/// this is reversible); disabling drops the acceptance so the baseline
-/// comparison takes over again. Grouped callers reconcile the resulting state
-/// against the complete GameBanana peer group after this mutation. Returns
-/// true when anything changed; the caller persists the mod and app state.
 fn set_mod_ignore_local_changes(mod_entry: &mut ModEntry, ignore: bool) -> bool {
     let content_mtime = mod_entry.content_mtime;
     let ini_hash = mod_entry.ini_hash.clone();
@@ -3567,9 +3417,6 @@ fn set_mod_ignore_local_changes(mod_entry: &mut ModEntry, ignore: bool) -> bool 
         return false;
     }
     source.accepted_local_changes = next;
-    // Do not derive a one-item remote verdict here. The production callers
-    // immediately reconcile the full peer group; this fallback only keeps the
-    // local label coherent for legacy/unit callers that have no group context.
     if mod_has_local_changes_for_update_check(mod_entry) {
         mod_entry.update_state = ModUpdateState::ModifiedLocally;
     } else if mod_entry.update_state == ModUpdateState::ModifiedLocally {
@@ -3590,10 +3437,6 @@ fn apply_ignored_update_override(
     apply_ignored_update_override_with_signature(source, raw_state, current_signature)
 }
 
-/// Keep an exact Ignore-once acknowledgement when the conservative matcher
-/// cannot classify the update, but the cached catalog still contains the same
-/// active downloadable newer file(s). This covers an AI-only match without
-/// allowing an old acknowledgement to hide a different local update.
 fn ignored_signature_still_matches_newer_active_file(
     source: &ModSourceData,
     ignored: &IgnoredUpdateSignature,
@@ -3619,10 +3462,6 @@ fn ignored_signature_still_matches_newer_active_file(
         })
 }
 
-/// Applies the ignore overlays using a signature produced by the grouped
-/// worker evaluation.  Update-check results must use this rather than
-/// rebuilding a signature from one source's profile: the worker's signature
-/// represents the complete peer group and its collision decision.
 fn apply_ignored_update_override_with_signature(
     source: &mut ModSourceData,
     raw_state: ModUpdateState,
@@ -3748,9 +3587,6 @@ fn backfill_selected_files_meta(
     true
 }
 
-/// Adopts labels onto tracked files persisted before labels existed, while the
-/// original file can still be found remotely. Once the author re-uploads (old
-/// file gone), the label is the only way to identify the successor.
 fn backfill_tracked_file_labels(
     file_set: &mut FileSetRecipe,
     profile: &gamebanana::ProfileResponse,
@@ -3924,10 +3760,6 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
 }
 
 impl HestiaApp {
-    /// Reuses the transient grouped matching map for all library consumers
-    /// sharing the current card cache inputs. Folder selection calls this
-    /// before filtering, so a render does not rebuild every GameBanana peer
-    /// group on each frame.
     fn ensure_cached_grouped_update_evidence(&mut self) {
         let cache_key = self.grouped_update_evidence_cache_key();
         if self.library_card_cache.evidence_key == Some(cache_key) {
@@ -3939,11 +3771,6 @@ impl HestiaApp {
         self.library_card_cache.evidence_key = Some(cache_key);
     }
 
-    /// Matching evidence is independent of search, sorting, grouping, and
-    /// other card presentation choices. Keep those inputs out of this key so
-    /// typing a search query does not rescore every peer group. The transient
-    /// Thalia result fingerprint is included so a completed recommendation
-    /// invalidates the cached card evidence without touching persisted state.
     fn grouped_update_evidence_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         Self::grouped_update_evidence_cache_key_for_mods(&self.state.mods).hash(&mut hasher);
@@ -3960,9 +3787,6 @@ impl HestiaApp {
         hasher.finish()
     }
 
-    /// Returns grouped cached evidence for UI actions. The library-card cache
-    /// normally already contains this map; the fallback builds the same full
-    /// peer group when an action is opened before cards have rendered.
     fn cached_grouped_evidence_for_mod(
         &self,
         mod_entry: &ModEntry,
@@ -3991,10 +3815,6 @@ impl HestiaApp {
         })
     }
 
-    /// Applies the same status, Ignore, and local-change overlays used by the
-    /// grouped matcher without mutating source metadata. Library filters and
-    /// rows must classify the effective grouped state rather than persisted
-    /// state, which can lag until the next refresh.
     fn effective_grouped_update_state(
         mod_entry: &ModEntry,
         evidence: Option<&CachedUpdateEvidence>,
@@ -4029,10 +3849,6 @@ impl HestiaApp {
         evidence.state
     }
 
-    /// Returns whether the passive file-availability notice should be shown
-    /// for a mod.  Smart matching remains authoritative: a recognized smart
-    /// update owns the card even if the broader availability scan also sees
-    /// other files.  This function only reads cached evidence and preferences.
     fn has_newer_files_notice_from_evidence(
         mod_entry: &ModEntry,
         evidence: &CachedUpdateEvidence,
@@ -4055,9 +3871,6 @@ impl HestiaApp {
             .copied()
             .filter(|id| *id != 0)
             .collect();
-        // An Ignore Once acknowledgement applies to the exact file IDs that
-        // the smart matcher presented.  Keep that preference from being
-        // reintroduced through the broader passive list.
         let ignored_once: HashSet<u64> = source
             .ignored_update_signature
             .as_ref()
@@ -4085,9 +3898,6 @@ impl HestiaApp {
         )
     }
 
-    /// Dismisses exactly the IDs that the file review UI showed.  This is a
-    /// per-upload acknowledgement, not a state or install mutation: later
-    /// GameBanana IDs will naturally surface again.
     fn dismiss_newer_files_notice(&mut self, mod_id: &str, file_ids: &[u64]) -> bool {
         let mut ids: Vec<u64> = file_ids.iter().copied().filter(|id| *id != 0).collect();
         ids.sort_unstable();
@@ -4130,8 +3940,6 @@ impl HestiaApp {
             }
         };
         if let Err(err) = save_result {
-            // Do not leave a dismissal that was never durably persisted: the
-            // next refresh should keep showing the notice.
             if let Some(source) = self.state.mods[mod_index].source.as_mut() {
                 source.dismissed_newer_file_ids = previous_dismissals;
             }
@@ -4148,9 +3956,6 @@ impl HestiaApp {
         true
     }
 
-    /// Reapplies cached grouped evidence after an install has written a new
-    /// recipe. This runs after the metadata borrow is released, so every peer
-    /// in the GameBanana group is evaluated against the same catalog.
     fn reconcile_cached_grouped_update_states(&mut self, target_game_id: Option<&str>) {
         let evidence = build_cached_update_evidence(&self.state.mods, target_game_id);
         for mod_entry in &mut self.state.mods {
@@ -4259,9 +4064,6 @@ impl HestiaApp {
         }
     }
 
-    /// Builds matching context from every linked sibling, while targets remain
-    /// the subset selected by status/local-change policy. This runs at dispatch
-    /// time so manual checks and proxy restarts use the same current context.
     fn build_update_check_peer_context(&mut self) -> Vec<UpdateCheckItem> {
         let mut items = Vec::new();
         let mut metadata_changed = false;
@@ -4360,8 +4162,6 @@ impl HestiaApp {
                     .map(|mod_entry| mod_entry.game_id.clone())
                     .collect()
             });
-        // Hold blue notices from now until this check's Thalia round, even
-        // when the check itself has to wait for a busy batch or another check.
         self.thalia_matching.begin_round(round_games.iter().cloned());
         if force {
             self.thalia_matching
@@ -4382,13 +4182,6 @@ impl HestiaApp {
         const UPDATE_CHECK_COOLDOWN_SECS: i64 = 1800;
         let now = chrono::Utc::now();
 
-        // The *network* refetch is throttled per game (the schedule is persisted
-        // so app restarts can't bypass it and hammer GameBanana). The reconcile
-        // pass in the loop below is free -- it reads the cached snapshot already
-        // on disk -- so it runs on every call regardless of the cooldown. Without
-        // that, a restart inside the cooldown window leaves every linked mod stuck
-        // at the load-time `Unlinked` default (blank card, "unlinked" badge) even
-        // though the source is right there. Only the fetch itself waits.
         let allow_network = force || {
             let schedule_key = target_game_id.unwrap_or_default();
             !self
@@ -4400,10 +4193,6 @@ impl HestiaApp {
                         < UPDATE_CHECK_COOLDOWN_SECS
                 })
         };
-        // Hydrate legacy recipes and capture one immutable catalog per linked
-        // group before taking the per-mod mutable borrows below. The evidence
-        // includes ignored/skipped/local-change peers; those overlays are
-        // applied after the grouped match.
         self.build_update_check_peer_context();
         let cached_evidence = build_cached_update_evidence(&self.state.mods, target_game_id);
         let mut items = Vec::with_capacity(self.state.mods.len());
@@ -4414,7 +4203,6 @@ impl HestiaApp {
             if let Some(id) = target_game_id {
                 if mod_entry.game_id != id { continue; }
             }
-            // Only mods with a GameBanana link participate.
             let Some((linked_mod_id, is_tool)) = mod_entry
                 .source
                 .as_ref()
@@ -4434,7 +4222,6 @@ impl HestiaApp {
                         None,
                     )
                 });
-            // Terminal, non-network states take precedence and short-circuit.
             if !Self::status_target_enabled(&mod_entry.status, update_check_statuses) {
                 if mod_entry.update_state != ModUpdateState::CheckSkipped || metadata_backfilled {
                     mod_entry.update_state = ModUpdateState::CheckSkipped;
@@ -4466,16 +4253,6 @@ impl HestiaApp {
                 continue;
             }
 
-            // Reconcile the live verdict from the cached snapshot so a linked mod
-            // shows its real last-known state immediately, independent of the
-            // network throttle below. The ignore overlay mirrors the
-            // network-result path (consume_update_check_results) so an
-            // ignored-once update keeps its state across restarts. A mod that has
-            // never been fetched has no snapshot to compare against, so it stays
-            // at whatever it loaded as (see the badge's linked-but-unchecked case).
-            // A spent "Ignore local changes" acceptance (files drifted past the
-            // accepted fingerprint) is dropped here so the checkbox and the
-            // Modified label agree.
             let acceptance_cleared = clear_spent_local_changes_acceptance(mod_entry);
             let mut reconciled_changed = false;
             if let Some(evidence) = cached_evidence.get(&mod_entry.id) {
@@ -4503,14 +4280,9 @@ impl HestiaApp {
                 state_changed_without_fetch = true;
             }
 
-            // Everything above is free (local + cached). The network refetch is
-            // the throttled part, so it is the only thing gated by the cooldown.
             if !allow_network {
                 continue;
             }
-            // Automatic checks leave MissingSource mods alone (a genuinely deleted
-            // mod would fail the same way forever), but an explicit Reload must be
-            // able to recover mods that were marked Missing by a bad API response.
             if !force && !should_check_update_state(mod_entry.update_state) {
                 continue;
             }
@@ -4526,8 +4298,6 @@ impl HestiaApp {
             let Some(source) = mod_entry.source.as_ref() else {
                 continue;
             };
-            // Prefer the exact GameBanana file(s) this mod was installed from.
-            // Fall back to the profile snapshot timestamp for older metadata.
             let local_sync_ts = selected_file_baseline_ts(&source.file_set)
                 .or_else(|| source.snapshot.as_ref().and_then(|s| s.update_ts))
                 .or_else(|| mod_entry.content_mtime.map(|t| t.timestamp()));
@@ -4544,8 +4314,6 @@ impl HestiaApp {
         if state_changed_without_fetch {
             self.save_state();
         }
-        // With nothing to fetch, no check result will arrive to start the
-        // Thalia round, so ask now from the cached catalog.
         let nothing_to_fetch = items.is_empty();
         self.dispatch_update_check_items(items);
         if !allow_network || nothing_to_fetch {
@@ -4648,9 +4416,6 @@ impl HestiaApp {
                                 })
                         })
                 }) else {
-                    // The user may have relinked or changed the recipe while
-                    // this request was in flight. Never apply a stale grouped
-                    // result to the new source.
                     continue;
                 };
                 if let Some(profile) = profile.as_ref()
@@ -4791,9 +4556,6 @@ impl HestiaApp {
                     }
                 }
             }
-            // A completed manual or automatic request resets the automatic
-            // cooldown. This is deliberately recorded only after the worker
-            // returns, never when a request is merely queued.
             let completed_at = chrono::Utc::now();
             for game_id in checked_game_ids {
                 self.state.last_update_check_time_by_game.insert(game_id, completed_at);
@@ -4918,9 +4680,6 @@ impl HestiaApp {
                 StartupScanEvent::Ready(mods) => {
                     self.state.mods = mods;
                     self.restore_imported_mod_categories(None);
-                    // Startup uses its own scan worker instead of the normal refresh paths,
-                    // so run the XXMI persistence pass here too. This installs or cleans the
-                    // d3dx.ini reload helper before the user launches the selected game.
                     let scan_game_ids: Vec<String> = match self.selected_game() {
                         Some(game) => vec![game.definition.id.clone()],
                         None => self
@@ -5195,8 +4954,6 @@ impl HestiaApp {
                         });
                     }
                 }
-                // Startup recovery skips disabled games, so a game enabled by the path
-                // scan still owes one recovery pass.
                 if let Some(game_id) = enabled_game_id {
                     self.queue_profile_recovery_for_game(&game_id);
                 }
@@ -5315,8 +5072,6 @@ impl HestiaApp {
                             )));
                         });
                     }
-                    // Startup recovery skips disabled games, so a game enabled by the path
-                    // scan still owes one recovery pass.
                     if let Some(game_id) = enabled_game_id {
                         self.queue_profile_recovery_for_game(&game_id);
                     }
@@ -5454,11 +5209,6 @@ impl HestiaApp {
         }
     }
 
-    /// The install worker and the disk scanner build these paths independently,
-    /// so separator style, verbatim prefixes, and casing can differ for the same
-    /// location on Windows. Exact `PathBuf` equality would then leave a freshly
-    /// installed mod unmatched here — and therefore permanently Unlinked, since
-    /// this match is what carries the GameBanana metadata onto the new entry.
     fn install_path_matches_mod_root(installed: &Path, mod_root: &Path) -> bool {
         if installed == mod_root {
             return true;
@@ -5479,8 +5229,6 @@ impl HestiaApp {
         normalized_components(installed) == normalized_components(mod_root)
     }
 
-    /// Finalizes every pending install that landed in `game_id` and returns the ids of the mods
-    /// those installs produced (empty when nothing was pending).
     fn resolve_pending_install_finalization_for_game(&mut self, game_id: &str) -> Vec<String> {
         let mut installed_mod_ids = Vec::new();
         let job_ids: Vec<u64> = self.pending_install_finalize.keys().copied().collect();
@@ -5506,7 +5254,6 @@ impl HestiaApp {
         installed_mod_ids
     }
 
-    /// Returns the ids of the mods this install produced.
     fn finalize_install_after_refresh(
         &mut self,
         job_id: u64,
@@ -5577,12 +5324,6 @@ impl HestiaApp {
             }
         }
 
-        // The publish worker stages the requested state atomically. Final state is resolved after
-        // category assignment below; no second disable pass can transiently mutate a replacement.
-        // An external install (no Browse metadata, no GameBanana profile) may
-        // ship its own preview image; adopt it as the initial mod image the
-        // same way a manually supplied one lands. The scan sees the files in
-        // their final place, including DISABLED_BY_HESTIA when applicable.
         if pending_meta.is_none() && gb_profile.is_none() {
             for id in &newly_installed_ids {
                 self.enqueue_adopt_bundled_preview_images(id);
@@ -5611,8 +5352,6 @@ impl HestiaApp {
                 candidate_labels,
             );
         }
-        // The in-game overlay's installs go where it showed them, or into
-        // their character's category.
         let overlay_category = self.game_overlay_install_category(job_id);
         for id in &newly_installed_ids {
             match &overlay_category {
@@ -5625,11 +5364,6 @@ impl HestiaApp {
                 ),
             }
         }
-        // External installs (no GameBanana listing) inherit the category folder
-        // the user was drilled into when they queued the install. GameBanana
-        // downloads/updates carry pending_meta and derive their own category
-        // above, so this fallback stays out of their way. Skip if the folder was
-        // deleted between queueing and finalize.
         if pending_meta.is_none() {
             if let Some(category_id) = target_category_id.filter(|id| {
                 self.state.categories.iter().any(|category| category.id == *id)
@@ -5640,10 +5374,6 @@ impl HestiaApp {
             }
         }
 
-        // The worker publishes Auto candidates disabled.  Resolve their final
-        // state only after the refresh has assigned categories. Auto candidates
-        // are still disabled here, so only pre-existing or successfully enabled
-        // peers count and one candidate can claim an otherwise empty category.
         let preserved_status_for = |mod_entry: &ModEntry| {
             preserved_states.iter().find_map(|(path, status)| {
                 Self::install_path_matches_mod_root(path, &mod_entry.root_path)
@@ -5711,9 +5441,6 @@ impl HestiaApp {
                 }
             }
         }
-        // Auto status resolution can enable a staged candidate. Reconcile only
-        // after that final status assignment so grouped matching never leaves
-        // an enabled candidate stuck at the worker's temporary CheckSkipped.
         let affected_game_ids: HashSet<String> = newly_installed_ids
             .iter()
             .filter_map(|id| {
@@ -5832,8 +5559,6 @@ impl HestiaApp {
         newly_installed_ids
     }
 
-    /// `always` gives the mod a category even when the setting for Browse
-    /// downloads is off.
     fn apply_browse_download_category(
         &mut self,
         mod_entry_id: &str,
@@ -5851,8 +5576,6 @@ impl HestiaApp {
         self.place_mod_in_gamebanana_category(mod_entry_id, &meta.game_id, gb_profile);
     }
 
-    /// A mod linked by hand while it had no category goes where a download of
-    /// it would, if it still has none.
     fn place_linked_mod_in_category(
         &mut self,
         mod_entry_id: &str,
@@ -5871,8 +5594,6 @@ impl HestiaApp {
         self.place_mod_in_gamebanana_category(mod_entry_id, game_id, Some(profile));
     }
 
-    /// The Settings switch that puts `game_id`'s GameBanana mods in their
-    /// category. Unset, it starts on only for a game without categories.
     fn create_downloaded_mod_category(&mut self, game_id: &str) -> bool {
         if let Some(enabled) = self
             .state
@@ -5895,8 +5616,6 @@ impl HestiaApp {
         enabled
     }
 
-    /// Moves the mod into the category for its GameBanana category, creating
-    /// one when none matches.
     fn place_mod_in_gamebanana_category(
         &mut self,
         mod_entry_id: &str,
@@ -5930,7 +5649,6 @@ impl HestiaApp {
             .and_then(|profile| profile.category.as_ref())
             .map(|category| category.id)
             .filter(|id| *id != 0);
-        // Set only for a character's mods.
         let character_super_category_id =
             gamebanana::character_super_category_id_for_hestia(game_id).filter(|id| {
                 gb_profile
@@ -6065,7 +5783,6 @@ impl HestiaApp {
             .and_then(|meta| meta.profile_cached_at);
         let Some(meta) = pending_meta else { return; };
 
-        // Identify all mods sharing this ID to keep them in sync
         let target_indices: Vec<usize> = self.state.mods.iter().enumerate()
             .filter(|(_, m)| m.id == mod_entry_id && m.game_id == meta.game_id)
             .map(|(i, _)| i)
@@ -6111,7 +5828,6 @@ impl HestiaApp {
             source.ignored_update_signature = None;
             source.baseline_content_mtime = mod_entry.content_mtime;
             source.baseline_ini_hash = mod_entry.ini_hash.clone();
-            // A fresh baseline supersedes any "Ignore local changes" acceptance.
             source.accepted_local_changes = None;
 
             mod_entry.unsafe_content_auto = gb_profile
@@ -6225,16 +5941,11 @@ impl HestiaApp {
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
         self.inflight_full_image_requests
             .retain(|key| key != mod_entry_id && !key.starts_with(&prefix));
-        // A pre-sync failure must not delay the freshly synced cover; the next
-        // request should go straight to the worker.
         self.mod_thumb_unavailable.remove(mod_entry_id);
         self.rebuild_texture_tracking();
         self.log_action(self.text().synced_action(), &folder_name);
     }
 
-    /// Image-only backfill may receive a profile reconstructed from the
-    /// persisted snapshot. Only a profile accompanied by a real fetch time is
-    /// allowed to replace the matching catalog and freshness timestamp.
     fn apply_sync_profile_metadata(
         mod_entry: &mut ModEntry,
         profile: &gamebanana::ProfileResponse,
@@ -6261,16 +5972,9 @@ impl HestiaApp {
             .resolve(mod_entry.unsafe_content_auto);
         source.baseline_content_mtime = mod_entry.content_mtime;
         source.baseline_ini_hash = mod_entry.ini_hash.clone();
-        // A fresh baseline supersedes any "Ignore local changes" acceptance.
         source.accepted_local_changes = None;
     }
 
-    /// Early cover publish from an image-sync job: the first preview is on disk
-    /// while the rest of the gallery is still downloading. Pointing cover_image
-    /// at it now lets the mod card and its category folder tile stop waiting on
-    /// the full sync. Screenshots stay untouched so an interrupted sync is still
-    /// caught by `backfill_missing_mod_images` (gated on empty screenshots); the
-    /// final SyncImagesDone applies the complete result as before.
     fn apply_mod_sync_cover(&mut self, mod_entry_id: &str, cover_rel_path: &str) {
         let mut changed = false;
         for mod_entry in self
@@ -6297,8 +6001,6 @@ impl HestiaApp {
             return;
         }
         self.save_state();
-        // Invalidate unconditionally: on a mod update the rel path is unchanged
-        // while the bytes are new, so comparing paths would pin a stale texture.
         self.clear_mod_card_texture(mod_entry_id);
         self.mod_thumb_unavailable.remove(mod_entry_id);
     }
@@ -6347,9 +6049,6 @@ impl HestiaApp {
             game_id,
             update_target_id: Some(mod_entry_id.to_string()),
             thalia_plan,
-            // Updates preserve the target state during finalization; staging
-            // is still disabled so a failed refresh can never expose a new
-            // active tree prematurely.
             install_state: ModInstallState::Auto,
             preserve_existing_state: true,
         });
@@ -6389,10 +6088,6 @@ impl HestiaApp {
     }
 }
 
-/// Resolve the Auto policy for one candidate after refresh has hydrated its
-/// category. `mods` includes candidates from this and other ready jobs; the
-/// caller's `claims` set records a successful enable whose status may not yet
-/// be visible to a subsequent decision in the same frame.
 fn auto_install_status(
     categories: &[ModCategory],
     candidate: &ModEntry,
@@ -6412,14 +6107,6 @@ fn auto_install_status(
     ModInstallState::resolve_auto(category_id, category_has_active, first_candidate)
 }
 
-/// The category a mod from GameBanana category `name` (id `remote_id`) goes
-/// into, if there is one: the only one linked to it by hand, then one with
-/// its name. The link button is gone, but the links people made before stay.
-/// A character's mods, whose `character_super_id` is the game's character
-/// section, also go into one with its short name ("Tangtang" for "Operators:
-/// Tangtang"), then the only one whose GameBanana mods are all its own, like
-/// the overlay matches them. Several categories can share a character, so
-/// none is picked over the others.
 fn download_category<'a>(
     categories: &'a [ModCategory],
     mods: &[ModEntry],
@@ -6470,7 +6157,6 @@ fn download_category<'a>(
     }))
 }
 
-/// The item, when there is exactly one.
 fn only<T>(mut items: impl Iterator<Item = T>) -> Option<T> {
     let first = items.next()?;
     items.next().is_none().then_some(first)
@@ -6495,7 +6181,6 @@ mod download_category_tests {
         }
     }
 
-    /// A mod in `category_id`, downloaded from the character `character`.
     fn mod_from(id: &str, category_id: &str, character: Option<u64>) -> ModEntry {
         let mut metadata = crate::model::ModMetadata::default();
         metadata.user.category_id = Some(category_id.to_owned());
@@ -6600,7 +6285,6 @@ mod download_category_tests {
             auto_install_status(&categories, &mods[0], &mods, &claims),
             ModStatus::Active
         );
-        // Mimic the backend's successful enable and the finalizer's claim.
         mods[0].status = ModStatus::Active;
         claims.insert("cat".to_owned());
         second.status = ModStatus::Disabled;
@@ -6610,7 +6294,6 @@ mod download_category_tests {
         );
     }
 
-    /// Where a Tangtang mod goes, by category id.
     fn tangtang(categories: &[ModCategory], mods: &[ModEntry]) -> Option<String> {
         download_category(
             categories,
@@ -6858,8 +6541,6 @@ mod update_signature_tests {
 
         remote.file_listings.insert(21, list("other"));
         assert!(file_listing_ids_wanted(&items, &remote).is_empty());
-        // Thin metadata: the path model may not pick either, but the lists
-        // never turn the recipe into a skipped check.
         let evaluations = evaluate_file_set_update_group(&items, &remote);
         assert_ne!(evaluations[0].state, ModUpdateState::CheckSkipped);
     }
@@ -6989,9 +6670,6 @@ mod update_signature_tests {
         assert!(available_newer_files(&fallback_file_set(&ambiguous.files[0]), &ambiguous).is_empty());
     }
 
-    /// Mod 728709: the main file was installed as one mod and a small extra
-    /// as another.  The main file is newer than the extra, but it is not news
-    /// for the extra's mod, while a truly new file still is.
     #[test]
     fn files_other_mods_of_the_page_have_are_not_newer_files() {
         let extra = mod_file(10, "neonrookiefx.zip", 100);
@@ -7018,7 +6696,6 @@ mod update_signature_tests {
         let newer: Vec<u64> = evidence["extra"].newer_files.iter().map(|file| file.id).collect();
         assert_eq!(newer, vec![30]);
 
-        // Alone on the page, the main file is news again.
         let evidence = build_cached_update_evidence(
             &[cached_mod_entry_with_file("extra", &page, &extra)],
             None,
@@ -7126,9 +6803,6 @@ mod update_signature_tests {
         let candidate_id = 77;
         let mut evaluations = vec![native_test_evaluation(0, candidate_id)];
 
-        // This ID represents a complete legacy multi-file assignment.  The
-        // native recipe must clear its entire result when the group owner is
-        // already claimed elsewhere; callers clear the legacy signature too.
         matcher_adapter::abstain_competing_native_claims(
             &mut evaluations,
             &HashSet::from([candidate_id]),
@@ -7414,8 +7088,6 @@ mod update_signature_tests {
             cached_profile_catalog_fingerprint(&changed_profile_date)
         );
 
-        // A Thalia plan made from a page saved by Browse (no history) must
-        // still match the same page loaded with history for the update.
         assert_eq!(
             thalia_profile_fingerprint(&profile_without_history),
             thalia_profile_fingerprint(&profile_with_known_empty_history)
@@ -8012,9 +7684,6 @@ mod update_signature_tests {
 
     #[test]
     fn profile_without_download_urls_keeps_known_source_up_to_date() {
-        // A known installed source remains present even when the catalog has no
-        // usable download candidates. The update check must not call that
-        // clerical metadata loss MissingSource.
         let mut degraded = mod_file(10, "current.zip", 100);
         degraded.download_url = None;
         let profile = profile(vec![degraded.clone()], 100);
@@ -8161,10 +7830,6 @@ mod update_signature_tests {
         gamebanana::ModFile,
         gamebanana::ProfileResponse,
     ) {
-        // This fixture uses an explicit source version so its single-record
-        // cases cover the known-numeric path. The real 728107 source has no
-        // per-file API version and is covered by the two-record regression
-        // fixture instead.
         let source = versioned_mod_file(
             1849618,
             "845ae2cf2f3406ac2dd3371ea60aff22.rar",
@@ -8409,8 +8074,6 @@ mod update_signature_tests {
             "1.6",
         );
         source.download_url = None;
-        // Some API payloads leave the per-file flag unset; placement in the
-        // archived-files array is the authoritative archived signal.
         source.is_archived = false;
         let mut first = versioned_mod_file(
             1853077,
@@ -9113,8 +8776,6 @@ mod update_signature_tests {
     fn refinement_a_recovers_archived_all_letter_collision_suffix_with_peer_context() {
         let mut source = versioned_mod_file(10, "hideuid_ebbcf.zip", 100, "1.0");
         source.download_url = None;
-        // Some API responses omit `_bIsArchived` on the archived-file array;
-        // membership in `archived_files` is the authoritative signal here.
         source.is_archived = false;
         let candidate = versioned_mod_file(20, "hideuid_a1b2c.zip", 200, "1.1");
         let profile = gamebanana::ProfileResponse {
@@ -10509,9 +10170,6 @@ mod update_signature_tests {
         }
     }
 
-    // RabbitFX ships files named `v<version>_<hash>.zip`; every release replaces
-    // both variants, so the file label is the only way to tell which new file
-    // succeeds the one that was installed.
     #[test]
     fn label_lineage_maps_hash_reupload_but_native_abstains_without_source() {
         let old_main = labeled_mod_file(10, "v23_9f8e7d.zip", 100, "Main File");
@@ -10590,7 +10248,6 @@ mod update_signature_tests {
             file_set.selected_files_meta[0].label.as_deref(),
             Some("Main File")
         );
-        // Second pass is a no-op.
         assert!(!backfill_tracked_file_labels(&mut file_set, &profile));
     }
 
@@ -11095,7 +10752,6 @@ mod ignore_local_changes_tests {
         assert_eq!(source.baseline_content_mtime, baseline_mtime);
         assert_eq!(source.baseline_ini_hash.as_deref(), Some("baseline"));
 
-        // Re-applying the same acceptance is a no-op.
         assert!(!set_mod_ignore_local_changes(&mut mod_entry, true));
 
         assert!(set_mod_ignore_local_changes(&mut mod_entry, false));
@@ -11113,12 +10769,10 @@ mod ignore_local_changes_tests {
         mod_entry.ini_hash = Some("edited again".to_string());
         assert!(mod_has_local_changes_for_update_check(&mod_entry));
         assert!(!mod_ignores_local_changes(&mod_entry));
-        // The spent acceptance is dropped by the next check pass.
         assert!(clear_spent_local_changes_acceptance(&mut mod_entry));
         assert!(mod_entry.source.as_ref().unwrap().accepted_local_changes.is_none());
         assert!(!clear_spent_local_changes_acceptance(&mut mod_entry));
 
-        // Accepting again snapshots the newer fingerprint.
         assert!(set_mod_ignore_local_changes(&mut mod_entry, true));
         assert!(!mod_has_local_changes_for_update_check(&mod_entry));
     }

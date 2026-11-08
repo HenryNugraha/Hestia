@@ -1,19 +1,7 @@
-//! Return from the lightweight overlay to the normal Hestia window.
-//!
-//! The overlay is intentionally a separate native window.  When the normal
-//! window is already alive, restoring that window is preferable to starting a
-//! second application instance.  If it cannot be found, launch the
-//! current executable and let normal startup handle the requested profile.
-
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-/// Show the existing Hestia window, or start normal Hestia startup.
-///
-/// `state_path` identifies the settings currently used by the overlay, including
-/// an installed or explicitly selected portable profile. Close the overlay after this
-/// function returns `Ok(())`.
 pub(super) fn show_main(state_path: Option<&Path>) -> Result<()> {
     #[cfg(windows)]
     if try_restore_existing_window()? {
@@ -23,8 +11,6 @@ pub(super) fn show_main(state_path: Option<&Path>) -> Result<()> {
     spawn_main(state_path)
 }
 
-/// Show the Hestia window that started the in-game overlay.  Hestia sends its
-/// window with the start message, so this doesn't look for it by title.
 pub(super) fn show_host(window: Option<i64>) -> Result<()> {
     #[cfg(windows)]
     {
@@ -63,9 +49,6 @@ fn spawn_main(state_path: Option<&Path>) -> Result<()> {
     {
         use std::os::windows::process::CommandExt;
 
-        // The release executable is a GUI subsystem app, but debug builds may
-        // still inherit a console.  The overlay must never flash a console
-        // when it starts the normal window.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
@@ -143,7 +126,6 @@ fn is_current_hestia_process(pid: u32) -> bool {
     let same_executable = target
         .to_string_lossy()
         .eq_ignore_ascii_case(&current.to_string_lossy());
-    // The main app can be a release/installed copy rather than this preview build.
     let hestia_name = Path::new(&target)
         .file_stem()
         .and_then(|name| name.to_str())
@@ -183,9 +165,6 @@ fn restore_and_foreground(hwnd: windows::Win32::Foundation::HWND) -> bool {
         && unsafe { AttachThreadInput(current_thread, target_thread, true).as_bool() };
 
     unsafe {
-        // Restore only a minimized window.  SW_RESTORE on an already maximized
-        // window can drop it back to its normal size, which makes this action
-        // unexpectedly change the user's main GUI layout.
         let command = if IsIconic(hwnd).as_bool() {
             SW_RESTORE
         } else {

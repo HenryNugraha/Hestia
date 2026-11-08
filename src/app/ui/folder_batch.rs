@@ -321,9 +321,6 @@ impl HestiaApp {
         response.clicked()
     }
 
-    /// Render the contextual scope row below the fixed-height selection toolbar.
-    /// The library header owns the sibling placement so the row keeps its width when
-    /// the search bar is expanded.
     fn render_folder_selection_scope_line(&mut self, ui: &mut Ui) {
         let Some(mut targets) = self.folder_batch_targets() else {
             return;
@@ -613,7 +610,6 @@ impl HestiaApp {
                         }
                     });
                 });
-            // A running job owns the status row. Do not stack a stale report beneath it.
             return;
         }
         if let Some((completed, skipped, unsupported, changed_missing, failed, cancelled)) =

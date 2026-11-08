@@ -38,8 +38,6 @@ impl ThumbnailByteCache {
 }
 
 pub struct RuntimeServices {
-    // Only the app instance owns this Arc. Clones captured by Tokio tasks keep a Handle, not
-    // the runtime owner, so shutdown cannot occur from one of its own worker threads.
     _runtime_owner: Option<Arc<tokio::runtime::Runtime>>,
     runtime_handle: tokio::runtime::Handle,
     http_client: Arc<RwLock<ClientWithMiddleware>>,

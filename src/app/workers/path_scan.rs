@@ -87,8 +87,6 @@ where
             return true;
         }
 
-        // Keep only paths in this stack. At most one directory iterator is alive
-        // at a time, so cancellation is checked between every filesystem step.
         let mut pending_directories = vec![root];
         while let Some(directory) = pending_directories.pop() {
             if cancel.load(Ordering::Relaxed) {
@@ -133,8 +131,6 @@ where
                     continue;
                 }
                 if file_type.is_dir() {
-                    // `file_type` does not follow directory symlinks or junctions,
-                    // matching WalkDir::follow_links(false).
                     pending_directories.push(entry.path());
                     continue;
                 }

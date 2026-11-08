@@ -1,17 +1,3 @@
-//! Platform adjustments for the always-on-top overlay.
-//!
-//! The overlay is a mouse target while the game remains the keyboard target.  On
-//! Windows, `ViewportBuilder::with_active(false)` only controls the initial
-//! `ShowWindow` call in winit.  `WS_EX_NOACTIVATE` and `WM_MOUSEACTIVATE` are
-//! needed as well so a click, pin, or drag does not move foreground focus to the
-//! overlay.
-//!
-//! The keyboard moves to the overlay only through Alt+H.  Windows delivers the
-//! hotkey even over a game that blocks other processes from its input, and
-//! receiving it allows the overlay to take the foreground.  Key messages then
-//! reach this window procedure, which hands them to `keyboard`, and
-//! `return_focus` gives the keyboard back afterwards.
-
 #[cfg(windows)]
 use std::sync::{
     Mutex, OnceLock,
@@ -31,8 +17,6 @@ unsafe extern "system" {
     fn GetDpiForWindow(hwnd: windows::Win32::Foundation::HWND) -> u32;
 }
 
-/// The preview has one native window per process.  Keep the original winit
-/// window procedure so the subclass can forward every message it does not own.
 #[cfg(windows)]
 static PREVIOUS_WNDPROC: AtomicIsize = AtomicIsize::new(0);
 
@@ -42,48 +26,33 @@ static SUBCLASS_HWND: AtomicIsize = AtomicIsize::new(0);
 #[cfg(windows)]
 const HOTKEY_ID: i32 = 1;
 
-/// Points between the bottom of the strip and the bottom edge of the monitor.
 #[cfg(windows)]
 const BOTTOM_GAP: f32 = 18.0;
 
-/// Timer that puts the overlay back above the taskbar.
 #[cfg(windows)]
 const RAISE_TIMER_ID: usize = 1;
 
 #[cfg(windows)]
 const RAISE_CHECK_MS: u32 = 250;
 
-/// The window that had the keyboard when Alt+H took it.
 #[cfg(windows)]
 static RETURN_TARGET: AtomicIsize = AtomicIsize::new(0);
 
-/// Whether a click on the overlay takes the keyboard, for a pinned overlay
-/// left open behind the game.
 #[cfg(windows)]
 static CLICK_TAKES_KEYBOARD: AtomicBool = AtomicBool::new(false);
 
-/// Whether the last key press was swallowed.  `TranslateMessage` has already
-/// queued its character messages by then, and they must not reach winit
-/// alone: an orphan `WM_SYSCHAR` makes `DefWindowProc` beep.
 #[cfg(windows)]
 static SWALLOW_CHARACTERS: AtomicBool = AtomicBool::new(false);
 
-/// The game's processes, for the in-game overlay.
 #[cfg(windows)]
 static GAME_PROCESSES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-/// Whether the hidden in-game overlay waits for the game to come to the
-/// front, to show itself there.
 #[cfg(windows)]
 static WAITING_FOR_GAME: AtomicBool = AtomicBool::new(false);
 
-/// Set once the game has come to the front, until the frame reads it.
 #[cfg(windows)]
 static GAME_ARRIVED: AtomicBool = AtomicBool::new(false);
 
-/// The native region is owned by USER32 after `SetWindowRgn` succeeds.  Keep
-/// only the input used to build it so a normal repaint does not allocate and
-/// replace an HRGN every frame.
 #[cfg(windows)]
 static INPUT_REGION_CACHE: OnceLock<Mutex<Option<InputRegionCache>>> = OnceLock::new();
 
@@ -115,14 +84,6 @@ impl PixelRect {
     }
 }
 
-/// Apply the non-activating window behavior after eframe has created the winit
-/// window.  The native window is still hit-testable: `MA_NOACTIVATE` preserves
-/// the mouse message instead of using `MA_NOACTIVATEANDEAT`, so egui clicks,
-/// wheel input, and native window dragging keep working.
-///
-/// This does not register the hotkey, synthesize input, call
-/// `SetForegroundWindow`, or move focus to another window.  `register_hotkey`
-/// adds the only path that moves the keyboard to the overlay.
 #[cfg(windows)]
 pub(super) fn configure(cc: &eframe::CreationContext<'_>) -> std::io::Result<()> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -143,12 +104,6 @@ pub(super) fn configure(cc: &eframe::CreationContext<'_>) -> std::io::Result<()>
     Ok(())
 }
 
-/// The strip overlaps the taskbar.  Both are always-on-top windows, so
-/// whichever came forward last covers the other.
-///
-/// Marking the overlay as fullscreen makes the shell drop the taskbar while
-/// the overlay has the keyboard, which keeps Alt+H from bringing it up over a
-/// game.  The timer puts the overlay back on top after the taskbar is used.
 #[cfg(windows)]
 fn keep_above_taskbar(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::SetTimer;
@@ -171,10 +126,7 @@ fn mark_fullscreen(hwnd: windows::Win32::Foundation::HWND) -> windows::core::Res
     use windows::Win32::UI::Shell::{ITaskbarList2, TaskbarList};
 
     unsafe {
-        // winit has usually initialized OLE on this thread already.  Every
-        // successful call, including that case, needs its own uninitialize.
         let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        // The shell keeps the mark.  The taskbar list object can be released.
         let result = CoCreateInstance::<_, ITaskbarList2>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
             .and_then(|taskbar| {
                 taskbar.HrInit()?;
@@ -187,9 +139,6 @@ fn mark_fullscreen(hwnd: windows::Win32::Foundation::HWND) -> windows::core::Res
     }
 }
 
-/// Put the overlay back above the taskbar once the keyboard has moved on to
-/// something other than the shell.  Raising it while the shell has the
-/// keyboard would cover the menu or jump list that was just opened.
 #[cfg(windows)]
 unsafe fn raise_above_taskbar(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -218,13 +167,11 @@ unsafe fn raise_above_taskbar(hwnd: windows::Win32::Foundation::HWND) {
     };
 }
 
-/// Whether a taskbar on any monitor is above the overlay.
 #[cfg(windows)]
 unsafe fn taskbar_above(hwnd: windows::Win32::Foundation::HWND) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{GW_HWNDPREV, GetWindow};
 
     let mut window = hwnd;
-    // Only always-on-top windows are above the overlay, so this stays short.
     for _ in 0..256 {
         match unsafe { GetWindow(window, GW_HWNDPREV) } {
             Ok(above) => window = above,
@@ -258,15 +205,10 @@ unsafe fn is_shell_window(window: windows::Win32::Foundation::HWND) -> bool {
     is_shell_class(&class, taskbar_process)
 }
 
-/// Taskbars, their menus and jump lists, the tray overflow and Alt+Tab belong
-/// to the process that owns the taskbar.
 #[cfg(windows)]
 fn is_shell_class(class: &str, taskbar_process: bool) -> bool {
     match class {
-        // Start, search and the notification center run in their own hosts.
         "Windows.UI.Core.CoreWindow" => true,
-        // File Explorer and the desktop share the taskbar's process, but
-        // switching to them means the taskbar is no longer in use.
         "CabinetWClass" | "Progman" | "WorkerW" => false,
         _ => taskbar_process,
     }
@@ -294,8 +236,6 @@ fn configure_window(
     };
 
     unsafe {
-        // Keep all existing winit flags (topmost, layered, tool-window, etc.)
-        // and add only the activation policy required by this overlay.
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         if ex_style & WS_EX_NOACTIVATE.0 as isize == 0 {
             SetLastError(WIN32_ERROR(0));
@@ -328,8 +268,6 @@ fn configure_window(
             return Ok(());
         }
 
-        // SetWindowLongPtrW reports the old procedure, so clear last error to
-        // distinguish a genuine zero result from a normal replacement.
         SetLastError(WIN32_ERROR(0));
         let previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, callback);
         if previous == 0 {
@@ -339,12 +277,8 @@ fn configure_window(
         PREVIOUS_WNDPROC.store(previous, Ordering::Release);
         SUBCLASS_HWND.store(hwnd.0 as isize, Ordering::Release);
 
-        // Keep the fixed canvas click-through until the first egui frame has
-        // supplied its actual visible rectangles. Without this, the unused
-        // part of the 560x660 startup canvas briefly intercepts game input.
         set_window_input_region(hwnd, &[])?;
 
-        // Start on the monitor containing the foreground game.
         let foreground = GetForegroundWindow();
         place_on_monitor_of(hwnd, window_or(foreground, hwnd), pixels_per_point)?;
     }
@@ -360,11 +294,6 @@ fn window_or(
     if window.0.is_null() { fallback } else { window }
 }
 
-/// The overlay uses a fixed-size native canvas so expanding from the mini
-/// strip never changes its anchor.  Place that canvas at the bottom centre of
-/// the monitor showing `target`.  The gap ignores the taskbar: a game covers
-/// it, and on the desktop the overlay stays above it.  A monitor arranged to
-/// the left of the primary display has a negative origin.
 #[cfg(windows)]
 unsafe fn place_on_monitor_of(
     hwnd: windows::Win32::Foundation::HWND,
@@ -388,8 +317,6 @@ unsafe fn place_on_monitor_of(
         if monitor.0.is_null() || !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
             return Ok(());
         }
-        // Arriving on a monitor with another scale resizes the canvas to keep
-        // its size in points, so place it again at the new size.
         for _ in 0..2 {
             let mut window_rect = RECT::default();
             if GetWindowRect(hwnd, &mut window_rect).is_err() {
@@ -432,10 +359,6 @@ unsafe fn place_on_monitor_of(
     Ok(())
 }
 
-/// Show the hidden overlay on the monitor of `target`, above the other
-/// always-on-top windows, without taking the keyboard.  A game that went
-/// fullscreen after the overlay started can be above it otherwise.  On the
-/// same monitor, the overlay stays where it was dragged.
 #[cfg(windows)]
 unsafe fn show_on_monitor_of(
     hwnd: windows::Win32::Foundation::HWND,
@@ -454,7 +377,6 @@ unsafe fn show_on_monitor_of(
         MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             != MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST)
     };
-    // Windows knows the scale of any window, so the fallback goes unused.
     if moved && let Err(error) = unsafe { place_on_monitor_of(hwnd, target, 1.0) } {
         tracing::warn!(%error, "Could not place the overlay on the game's monitor");
     }
@@ -478,11 +400,6 @@ fn overlay_window() -> Option<windows::Win32::Foundation::HWND> {
     (hwnd != 0).then(|| windows::Win32::Foundation::HWND(hwnd as *mut std::ffi::c_void))
 }
 
-/// Hide the in-game overlay.  Alt+H shows it again.  egui still runs a frame
-/// when asked while the window is hidden, just less often.
-///
-/// This calls Windows directly: winit would show the window again whenever
-/// egui changes any of its flags.
 #[cfg(windows)]
 pub(super) fn hide() {
     use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
@@ -493,18 +410,12 @@ pub(super) fn hide() {
     }
 }
 
-/// XXMI takes keys from a window with this title as well as from the game.
 #[cfg(windows)]
 use crate::overlay_protocol::XXMI_TITLE;
 
-/// The overlay's title before it lent itself `XXMI_TITLE`.
 #[cfg(windows)]
 static LENT_TITLE: Mutex<Option<String>> = Mutex::new(None);
 
-/// Gives the overlay the title XXMI takes keys from, so the game gets the
-/// keys that are down, or gives it its own back.  Hestia gives it that title
-/// itself while it presses a key for the game through it, and then the
-/// overlay leaves the title, and taking it back, to Hestia.
 #[cfg(windows)]
 pub(super) fn lend_title(lend: bool) {
     use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextW, SetWindowTextW};
@@ -543,15 +454,12 @@ pub(super) fn is_visible() -> bool {
     overlay_window().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
 }
 
-/// Wait for one of the game's processes to come to the front, then show the
-/// overlay there.  `take_game_arrived` reports it.
 #[cfg(windows)]
 pub(super) fn wait_for_game(processes: &[u32]) {
     set_game_processes(processes);
     WAITING_FOR_GAME.store(true, Ordering::Release);
 }
 
-/// The game's processes changed, for example once it has finished starting.
 #[cfg(windows)]
 pub(super) fn set_game_processes(processes: &[u32]) {
     *GAME_PROCESSES
@@ -559,14 +467,11 @@ pub(super) fn set_game_processes(processes: &[u32]) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = processes.to_vec();
 }
 
-/// Whether the game came to the front, and the overlay showed itself there,
-/// since the last call.
 #[cfg(windows)]
 pub(super) fn take_game_arrived() -> bool {
     GAME_ARRIVED.swap(false, Ordering::AcqRel)
 }
 
-/// Checked on the taskbar timer while the hidden overlay waits for the game.
 #[cfg(windows)]
 unsafe fn watch_for_game(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -592,9 +497,6 @@ unsafe fn watch_for_game(hwnd: windows::Win32::Foundation::HWND) {
     }
 }
 
-/// Register `hotkey` for the configured overlay window, in place of the key
-/// it had.  Windows delivers it even while a game that blocks other input
-/// has the keyboard.
 #[cfg(windows)]
 pub(super) fn register_hotkey(hotkey: OverlayHotkey) -> std::io::Result<()> {
     use windows::Win32::Foundation::HWND;
@@ -637,13 +539,10 @@ fn hotkey_modifiers(
     })
 }
 
-/// Whether another app has `hotkey` registered already.  The overlay's own
-/// registration counts too, so leave out the key it has.
 #[cfg(windows)]
 pub(crate) fn hotkey_taken(hotkey: OverlayHotkey) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 
-    // Any id works for a registration this thread undoes right away.
     const PROBE_ID: i32 = 0xB00;
     let registered = unsafe {
         RegisterHotKey(
@@ -662,8 +561,6 @@ pub(crate) fn hotkey_taken(hotkey: OverlayHotkey) -> bool {
     }
 }
 
-/// Resize the overlay's canvas to `size` points, keeping its bottom centre
-/// where it is.
 #[cfg(windows)]
 pub(super) fn resize_canvas(size: egui::Vec2) {
     use windows::Win32::Foundation::{HWND, RECT};
@@ -703,14 +600,11 @@ pub(super) fn resize_canvas(size: egui::Vec2) {
     }
 }
 
-/// Sets whether a click on the overlay takes the keyboard from the game.
 #[cfg(windows)]
 pub(super) fn set_click_takes_keyboard(takes: bool) {
     CLICK_TAKES_KEYBOARD.store(takes, Ordering::Relaxed);
 }
 
-/// Hand the keyboard back to the window that had it before Alt+H.  Returns
-/// false when the overlay still has it.
 #[cfg(windows)]
 pub(super) fn return_focus() -> bool {
     use windows::Win32::Foundation::HWND;
@@ -723,14 +617,11 @@ pub(super) fn return_focus() -> bool {
         return true;
     }
     let target = HWND(RETURN_TARGET.load(Ordering::Acquire) as *mut std::ffi::c_void);
-    // The foreground process may give the foreground away.
     !target.0.is_null()
         && unsafe { IsWindow(Some(target)) }.as_bool()
         && unsafe { SetForegroundWindow(target) }.as_bool()
 }
 
-/// `windows::core::Error` converts into an `io::Error` that keeps the HRESULT,
-/// so recover the Win32 code that callers compare against.
 #[cfg(windows)]
 fn os_error(error: windows::core::Error) -> std::io::Error {
     let code = error.code().0 as u32;
@@ -741,10 +632,6 @@ fn os_error(error: windows::core::Error) -> std::io::Error {
     }
 }
 
-/// Update the native hit-test region from the visible egui rectangles.  A
-/// window region is used instead of `HTTRANSPARENT`: the latter only forwards
-/// to windows owned by the same thread and therefore cannot make transparent
-/// overlay gaps reach the game in another process.
 #[cfg(windows)]
 pub(super) fn update_input_regions(
     ctx: &egui::Context,
@@ -813,8 +700,6 @@ fn set_window_input_region(
     };
 
     unsafe {
-        // An empty region makes the whole transparent canvas click through. A
-        // null HRGN would mean the opposite: USER32 restores the full window.
         let combined = CreateRectRgn(0, 0, 0, 0);
         if combined.is_invalid() {
             return Err(std::io::Error::last_os_error());
@@ -835,7 +720,6 @@ fn set_window_input_region(
         }
 
         if SetWindowRgn(hwnd, Some(combined), true) == 0 {
-            // USER32 did not take ownership on failure.
             let _ = DeleteObject(HGDIOBJ(combined.0));
             return Err(std::io::Error::last_os_error());
         }
@@ -896,8 +780,6 @@ fn clear_input_region_cache(hwnd: isize) {
     }
 }
 
-/// Non-Windows preview builds retain the same call site without introducing a
-/// platform-specific branch in the eframe app creator.
 #[cfg(not(windows))]
 pub(super) fn configure(_: &eframe::CreationContext<'_>) -> std::io::Result<()> {
     Ok(())
@@ -943,16 +825,12 @@ pub(super) fn take_game_arrived() -> bool {
     false
 }
 
-/// Take the keyboard for Alt+H.  Receiving the hotkey is what allows
-/// `SetForegroundWindow` to succeed while another app has the foreground.
 #[cfg(windows)]
 unsafe fn take_focus_for_hotkey(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindowVisible};
 
     let foreground = unsafe { GetForegroundWindow() };
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-        // The in-game overlay hides between uses.  Alt+H brings it back on
-        // the game's monitor, and it stops waiting for the game.
         WAITING_FOR_GAME.store(false, Ordering::Release);
         unsafe { show_on_monitor_of(hwnd, window_or(foreground, hwnd)) };
     }
@@ -962,8 +840,6 @@ unsafe fn take_focus_for_hotkey(hwnd: windows::Win32::Foundation::HWND) {
     keyboard::hotkey(focused, focused && !already_focused);
 }
 
-/// Take the keyboard for a click on the pinned overlay while another window
-/// has it.  The click is the last input, which allows `SetForegroundWindow`.
 #[cfg(windows)]
 unsafe fn take_focus_for_click(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -979,8 +855,6 @@ unsafe fn take_focus_for_click(hwnd: windows::Win32::Foundation::HWND) {
     }
 }
 
-/// Bring the overlay to the front from `foreground`, which gets the keyboard
-/// back later.  Returns whether the overlay has the keyboard.
 #[cfg(windows)]
 unsafe fn take_focus(
     hwnd: windows::Win32::Foundation::HWND,
@@ -993,8 +867,6 @@ unsafe fn take_focus(
         if !foreground.0.is_null() {
             RETURN_TARGET.store(foreground.0 as isize, Ordering::Release);
         }
-        // Activation sends WM_ACTIVATE through this window procedure before
-        // the call returns.
         let _ = unsafe { SetForegroundWindow(hwnd) };
     }
     let focused = unsafe { GetForegroundWindow() } == hwnd;
@@ -1020,8 +892,6 @@ unsafe fn peek_key_message(hwnd: windows::Win32::Foundation::HWND) -> Option<key
     }
 }
 
-/// Keyboard handling for the subclassed overlay window.  Returns a result for
-/// the messages it swallows.
 #[cfg(windows)]
 unsafe fn keyboard_message(
     hwnd: windows::Win32::Foundation::HWND,
@@ -1041,15 +911,12 @@ unsafe fn keyboard_message(
             unsafe { take_focus_for_hotkey(hwnd) };
             Some(LRESULT(0))
         }
-        // The click itself still goes on to egui.
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
             if CLICK_TAKES_KEYBOARD.load(Ordering::Relaxed) && keyboard::installed() =>
         {
             unsafe { take_focus_for_click(hwnd) };
             None
         }
-        // The overlay has no menu.  Keep Alt+Space and Alt+letter from
-        // entering menu mode.
         WM_SYSCOMMAND if wparam.0 & 0xFFF0 == SC_KEYMENU as usize => Some(LRESULT(0)),
         WM_CHAR | WM_SYSCHAR | WM_DEADCHAR | WM_SYSDEADCHAR
             if SWALLOW_CHARACTERS.load(Ordering::Relaxed) =>
@@ -1066,8 +933,6 @@ unsafe fn keyboard_message(
         }
         _ => {
             let key = keyboard::KeyMessage::parse(msg, wparam.0, lparam.0)?;
-            // A key Hestia presses for the game does nothing here.  Read
-            // before anything peeks at the next message, which changes this.
             if unsafe { GetMessageExtraInfo() }.0 as usize
                 == crate::overlay_protocol::HESTIA_INPUT_MARK
             {
@@ -1099,18 +964,11 @@ unsafe extern "system" fn overlay_window_proc(
         WM_MOUSEACTIVATE, WM_NCDESTROY, WM_STYLECHANGING, WM_TIMER, WS_EX_NOACTIVATE,
     };
 
-    // winit may refresh its extended styles when viewport flags change.  Keep
-    // this one bit in those pending style changes as well as in the initial
-    // native style set by `configure`.
     if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 && lparam.0 != 0 {
         let style = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
         style.styleNew |= WS_EX_NOACTIVATE.0;
     }
 
-    // The extended style normally makes this unnecessary, but returning
-    // MA_NOACTIVATE covers mouse activation paths that go through the window
-    // procedure.  Do not return MA_NOACTIVATEANDEAT: the click still belongs to
-    // the overlay and must reach egui.
     if msg == WM_MOUSEACTIVATE {
         return LRESULT(MA_NOACTIVATE as isize);
     }
@@ -1177,8 +1035,6 @@ mod tests {
         }
         unsafe {
             let foreground = GetForegroundWindow();
-            // An invisible, process-owned window exercises real native message
-            // dispatch without clicking or changing focus in another app.
             let window = TestWindow(
                 CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -1251,7 +1107,6 @@ mod tests {
     fn input_regions_scale_negative_origins_and_keep_holes() {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(2.0);
-        // egui applies scale changes at the next pass rather than immediately.
         ctx.begin_pass(egui::RawInput::default());
         ctx.end_pass().drop_without_applying_deltas();
         assert!((ctx.pixels_per_point() - 2.0).abs() < f32::EPSILON);
@@ -1259,8 +1114,6 @@ mod tests {
             &ctx,
             &[
                 Rect::from_min_max(pos2(-4.25, 3.0), pos2(10.0, 20.5)),
-                // A separate rectangle leaves the space between these two
-                // entries out of the native region.
                 Rect::from_min_max(pos2(20.0, 3.0), pos2(24.5, 20.5)),
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(0.0, 10.0)),
             ],
@@ -1297,7 +1150,6 @@ mod tests {
 
     #[test]
     fn default_position_keeps_gap_on_offset_monitor() {
-        // A 1080p monitor to the right of a 1440p primary, lowered by 363px.
         let monitor = RECT {
             left: 2560,
             top: 363,

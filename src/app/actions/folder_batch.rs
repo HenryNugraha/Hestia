@@ -1,12 +1,7 @@
 use std::sync::mpsc::{self, Receiver};
 
-/// Shared lock reason for mutation entry points that predate folder batches.  The reason is
-/// intentionally a stable internal value; callers use their normal localized locked-action
-/// surface when they reject a request.
 const FOLDER_BATCH_BUSY_BLOCK_REASON: &str = "folder batch is running";
 
-/// A result for one snapshotted member.  The optional detail is deliberately kept out of the
-/// progress API: the UI may be configured to hide names and counts for unsafe content.
 #[derive(Debug, Clone)]
 enum FolderBatchItemResult {
     Completed,
@@ -56,8 +51,6 @@ enum FolderBatchWorkerEvent {
     },
 }
 
-/// State owned by the UI while the filesystem worker runs.  The target snapshot remains attached
-/// to the job so refreshing the library or changing the selection cannot retarget it.
 struct FolderBatchJob {
     action: FolderBatchAction,
     targets: FolderBatchTargets,
@@ -139,9 +132,6 @@ fn action_status_eligible(
 }
 
 impl HestiaApp {
-    /// Return the member IDs that can currently participate in an operation.  IDs are
-    /// de-duplicated because a legacy category/name match can otherwise appear twice in a UI
-    /// snapshot.
     fn folder_batch_action_eligible_ids(
         &self,
         targets: &FolderBatchTargets,
@@ -214,7 +204,6 @@ impl HestiaApp {
                 })
             })
         {
-            // Empty folders are still a valid explicit folder deletion target.
             return true;
         }
         !self
@@ -297,13 +286,8 @@ impl HestiaApp {
             }
         }
 
-        // Normalize the snapshot once at the boundary.  This also prevents duplicate filesystem
-        // work when overlapping folder selections are supplied by a caller.
         let eligible = self.folder_batch_action_eligible_ids(&targets, action);
         if action == FolderBatchAction::RemoveFolders {
-            // RemoveFolders is intentionally independent of the Visible/All contents toggle:
-            // it always unassigns the complete captured membership. Keep the original
-            // all_mod_ids snapshot so a newly installed member can prevent folder removal.
             targets.mod_ids = targets.all_mod_ids.clone();
             let mut seen = HashSet::new();
             targets.mod_ids.retain(|id| seen.insert(id.clone()));
@@ -335,9 +319,6 @@ impl HestiaApp {
         let Some(game) = game else { return false };
         let use_default_path = self.state.static_prefs.use_default_mods_path;
         let delete_behavior = self.state.static_prefs.delete_behavior;
-        // Prepare the one settings transaction on the UI thread only for operations that change
-        // the live importer set. Metadata-only moves and queued update checks do not need to
-        // touch d3dx_user.ini.
         let persist_tx = matches!(
             action,
             FolderBatchAction::Enable
@@ -537,9 +518,6 @@ impl HestiaApp {
                 .iter()
                 .any(|item| !matches!(item.result, FolderBatchItemResult::Completed))
             {
-                // The executor can only prove the on-disk step. A merge-time revalidation may
-                // still classify an item as changed, so keep every selected folder for retry
-                // whenever any captured member did not complete.
                 remove_category_ids.clear();
             }
             let completed_items = job.completed;
@@ -563,8 +541,6 @@ impl HestiaApp {
                     .cloned()
                 && game.is_xxmi()
             {
-                // The worker committed its one settings transaction already. This call only
-                // performs the normal live-state refresh/reload handshake used by single actions.
                 self.finish_xxmi_persist_tx(&game, None, Some(trigger));
             }
             let is_read_only_queue = matches!(
@@ -579,9 +555,6 @@ impl HestiaApp {
                     .iter()
                     .map(|entry| (entry.id.clone(), entry.updated_at))
                     .collect();
-                // Refresh the affected game before removing an empty folder. This admits a
-                // member installed externally while the worker was running, even when it was
-                // not in the in-memory snapshot captured at start.
                 let rescanned =
                     match xxmi::refresh_state(&mut self.state, Some(&job.targets.game_id)) {
                         Ok(()) => {
@@ -619,7 +592,6 @@ impl HestiaApp {
                 }
             }
             self.save_state();
-            // Resume any refresh/recovery work that was deferred while the batch lock was held.
             self.resume_folder_batch_deferred_work();
             let mut report = FolderBatchReport {
                 action: job.action,
@@ -636,9 +608,6 @@ impl HestiaApp {
                 cancelled,
                 items: job.items,
             };
-            // Update installs are deferred until the batch lock is released. Their existing
-            // queue/finalization path can then own the game's filesystem without racing this
-            // batch's worker or settings transaction.
             if report.action == FolderBatchAction::Update {
                 let update_ids: Vec<String> = report
                     .items
@@ -754,9 +723,6 @@ impl HestiaApp {
             | FolderBatchAction::Disable
             | FolderBatchAction::Archive
             | FolderBatchAction::Restore => {
-                // The filesystem executor owns these fields. Preserve source, unsafe-content,
-                // image, and update metadata that may have arrived from an unrelated event while
-                // this batch was running.
                 current.root_path = next.root_path;
                 current.folder_name = next.folder_name;
                 current.status = next.status;
@@ -818,8 +784,6 @@ impl HestiaApp {
         self.folder_batch_report.as_ref()
     }
 
-    /// A redaction-aware summary for the completion surface.  Zeroes are intentional when the
-    /// current preference hides counts; callers can show the generic working/result string then.
     fn folder_batch_report_summary(&self) -> Option<(usize, usize, usize, usize, usize, bool)> {
         let report = self.folder_batch_report.as_ref()?;
         let show_counts = self.state.static_prefs.unsafe_content_mode
@@ -839,9 +803,6 @@ impl HestiaApp {
         }
     }
 
-    /// Report rows with labels and failure details redacted according to the current preference.
-    /// A caller gets `None` for the whole row surface when counts are hidden for an All-scope
-    /// operation, so it cannot accidentally reveal the number of hidden members.
     fn folder_batch_report_items(&self) -> Option<Vec<FolderBatchItemReport>> {
         let report = self.folder_batch_report.as_ref()?;
         let hide_counts = self.state.static_prefs.unsafe_content_mode
@@ -922,8 +883,6 @@ fn run_folder_batch_worker(
             .unwrap_or(&entry.folder_name)
             .to_owned();
         let unsafe_content = entry.unsafe_content;
-        // Unreal's active and disabled roots are both visible to the game process.  Recheck at
-        // the item boundary because a game can launch after the UI admitted the batch.
         let locked = game.is_unreal_engine()
             && xxmi_persist::game_process_running_for_reload(&game)
             && matches!(
@@ -1046,9 +1005,6 @@ fn run_folder_batch_worker(
             FolderBatchAction::RemoveFolders | FolderBatchAction::DeleteFoldersAndContents
         )
     {
-        // A category may be removed only after every captured member in it completed. If the
-        // snapshot itself lost an ID before the worker began, retain all categories: a later
-        // rescan cannot prove that missing member was safely handled.
         let snapshot_complete = snapshot_ids == captured_member_ids;
         remove_category_ids = targets
             .category_ids
@@ -1098,9 +1054,6 @@ fn folder_batch_physical_item_matches(
         if !mod_is_in_target_scope(categories, targets, &physical) {
             return false;
         }
-    } else {
-        // Older mods can legitimately have no portable metadata. Their path and category state
-        // still get checked by the UI merge after the operation.
     }
     if game.is_unreal_engine() {
         let expected_root = match entry.status {
@@ -1119,10 +1072,6 @@ fn folder_batch_physical_item_matches(
         };
         match entry.status {
             ModStatus::Active | ModStatus::Disabled => {
-                // XXMI can discover nested mod roots below Mods. Keep the containment check
-                // rather than requiring a direct parent, while still rejecting a stale root in
-                // another game's tree. Disabled payloads stay in the same root below the real
-                // model constant; the old lowercase spelling was never a valid container.
                 if !entry.root_path.starts_with(&live_root) {
                     return false;
                 }
@@ -1138,10 +1087,6 @@ fn folder_batch_physical_item_matches(
                 let Ok(archive_root) = xxmi::archived_mods_root(game, use_default_path) else {
                     return false;
                 };
-                // Archive writes may preserve the nested physical organization below
-                // Mods_Archived. Older archives may not have a recorded destination, and a
-                // stale recorded path is harmless because restore confines its fallback to the
-                // current live root.
                 if !strict_path_descendant(&entry.root_path, &archive_root) {
                     return false;
                 }
@@ -1154,11 +1099,6 @@ fn folder_batch_physical_item_matches(
     true
 }
 
-/// Return whether `path` is a strict lexical descendant of `root`.
-///
-/// The archive root itself is not a mod, and rejecting `ParentDir` components keeps a
-/// syntactically prefixed path from escaping the archive tree without requiring the target to
-/// exist on disk.
 fn strict_path_descendant(path: &Path, root: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;

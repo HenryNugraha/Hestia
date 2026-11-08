@@ -183,9 +183,6 @@ fn resolve_persistent_data_paths_with_fallback_dir(
     let latest_fallback_state_source = latest_versioned_portable_state(fallback_dir);
     let fallback_history = fallback_dir.join("hestia.dat");
 
-    // A save beside the exe is only used when one is already there and the folder still takes
-    // writes. Everything else, first runs included, lives in AppData, so separate copies of
-    // Hestia share one save instead of each starting its own.
     let portable_save_exists = portable_state.exists()
         || latest_portable_state_source.is_some()
         || legacy_exe_portable_state.exists()
@@ -349,7 +346,6 @@ pub fn load_app_state(paths: &PortablePaths) -> Result<AppState> {
     let profile_categories_migrated =
         migrate_profile_categories(&mut state.profiles_by_game, &state.categories);
 
-    // Move static preferences (single assignment, no field-by-field copying)
     state.static_prefs = prefs.static_prefs;
 
     let profile_tools_migrated = migrate_profile_tools(
@@ -1162,11 +1158,11 @@ fn link_or_copy_file(source: &Path, destination: &Path) -> Result<()> {
 fn is_cross_device_error(err: &std::io::Error) -> bool {
     #[cfg(windows)]
     {
-        err.raw_os_error() == Some(17) // ERROR_NOT_SAME_DEVICE
+        err.raw_os_error() == Some(17)
     }
     #[cfg(not(windows))]
     {
-        err.raw_os_error() == Some(18) // EXDEV
+        err.raw_os_error() == Some(18)
     }
 }
 
@@ -1186,14 +1182,12 @@ fn evict_lru_if_needed_path(max_bytes: u64) -> Result<()> {
 
     use rayon::prelude::*;
 
-    // Collect entries first
     let entries: Vec<_> = WalkDir::new(&cache_root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .collect();
 
-    // Process in parallel to gather file info
     let files: Vec<_> = entries
         .par_iter()
         .filter_map(|entry| {
@@ -1272,14 +1266,12 @@ fn prune_tmp_files_in_dir(
     }
     let now = SystemTime::now();
 
-    // Collect entries first
     let entries: Vec<_> = WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .collect();
 
-    // Process in parallel
     entries.par_iter().for_each(|entry| {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("tmp") {
@@ -1601,8 +1593,6 @@ games = []
             offset: [32.0, 0.0],
             size: [440.0, 620.0],
         });
-        // `static_prefs` is flattened into the top level and `floating_windows` is a
-        // nested table, so the pretty serializer must order it after the scalars.
         let raw = toml::to_string_pretty(&AppPreferences::from(&state)).unwrap();
         let saved: AppPreferences = toml::from_str(&raw).unwrap();
         assert_eq!(

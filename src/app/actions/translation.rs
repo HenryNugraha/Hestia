@@ -1,7 +1,3 @@
-/// Keep the current GameBanana catalog authoritative when applying a translated
-/// profile. Translation responses are presentation data and may have been
-/// generated from an older snapshot, so copying the whole response can hide a
-/// newly uploaded file (or replace a current download URL with stale metadata).
 fn overlay_translated_profile(
     authoritative: &gamebanana::ProfileResponse,
     translated: &gamebanana::ProfileResponse,
@@ -21,10 +17,6 @@ fn overlay_translated_profile(
         merged.html_text = translated.html_text.clone();
     }
 
-    // File labels can be translated too, but file identity and catalog
-    // structure always come from the current GameBanana profile. Match by the
-    // stable nonzero file ID across both active and archived arrays; never use
-    // position or a translated filename as identity.
     let translated_files = translated
         .files
         .iter()
@@ -220,9 +212,6 @@ impl HestiaApp {
             .flatten()
     }
 
-    /// Cache-only lookup of an unlinked-text translation, independent of the per-mod
-    /// `unlinked_translation_enabled` flag. The Hotkeys view uses this because its
-    /// translation can be driven by either the unlinked or the linked translate toggle.
     fn unlinked_translation_cached(&self, mod_entry_id: &str, content: &str) -> Option<&str> {
         let content_hash = Self::unlinked_text_content_hash(content.trim());
         let key =
@@ -234,18 +223,12 @@ impl HestiaApp {
             .map(String::as_str)
     }
 
-    /// Batch-translate short strings through the unlinked-text pipeline. Chunks the set
-    /// to stay under the translate API's 12,000-char per-request limit, and joins each
-    /// chunk with an explicit `∎∎∎` delimiter (a rare math symbol translators pass
-    /// through) rather than a bare newline, so the segments survive translation and map
-    /// back 1:1. The line-count check is only a last-resort guard. Returns
-    /// original -> translated for the segments that came back intact.
     pub(crate) fn batch_translate_strings(
         &mut self,
         mod_entry_id: &str,
         strings: &[String],
     ) -> HashMap<String, String> {
-        const CHAR_LIMIT: usize = 11_000; // headroom under the API's 12,000
+        const CHAR_LIMIT: usize = 11_000;
         const DELIM: &str = "\n∎∎∎\n";
         const SPLIT: &str = "∎∎∎";
         let delim_len = DELIM.chars().count();
@@ -253,7 +236,6 @@ impl HestiaApp {
 
         let mut start = 0;
         while start < strings.len() {
-            // Grow a chunk until adding the next string would exceed the limit.
             let mut end = start;
             let mut len = 0usize;
             while end < strings.len() {
@@ -266,7 +248,7 @@ impl HestiaApp {
                 end += 1;
             }
             if end == start {
-                end = start + 1; // a single oversized string still goes out on its own
+                end = start + 1;
             }
 
             let chunk = &strings[start..end];
@@ -459,9 +441,6 @@ impl HestiaApp {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    /// Resolve the best current profile available for a linked mod. Browse's
-    /// detail is preferred; a persisted raw profile or snapshot is only an
-    /// offline fallback for the Library detail.
     fn current_profile_for_gamebanana_mod(
         &self,
         mod_id: u64,
@@ -667,15 +646,12 @@ impl HestiaApp {
             return;
         };
 
-        // If translation is loading, show toast and return
         if detail.translation_loading {
             self.cancel_gamebanana_translation(mod_id);
             return;
         }
 
-        // If translation is active, toggle it off
         if detail.translation_lang.is_some() {
-            // Restore original markdown
             let markdown = prepare_markdown_for_display(
                 detail.profile.html_text.as_deref().unwrap_or_default(),
                 None,
@@ -692,7 +668,6 @@ impl HestiaApp {
             return;
         }
 
-        // Start translation
         let lang = self.current_translation_lang();
         self.request_translation_for_gamebanana_mod(mod_id, lang, false);
     }
@@ -754,14 +729,12 @@ impl HestiaApp {
             .entry(mod_id.clone())
             .or_default();
 
-        // If translation is active, toggle it off
         if translation_state.translation_lang.is_some() {
             translation_state.translation_lang = None;
             translation_state.translated_profile = None;
             return;
         }
 
-        // Start translation
         self.request_translation_for_mod_entry(&mod_id, false);
     }
 
@@ -932,7 +905,6 @@ impl HestiaApp {
                 Err(err) => {
                     self.set_translation_loading_for_gamebanana_mod(mod_id, false);
 
-                    // Show error toast
                     let text = self.text();
                     self.set_message_ok(text.translation_failed());
                     self.log_error(&format!("Translation failed for mod {mod_id}: {err}"));
@@ -954,7 +926,6 @@ impl HestiaApp {
     }
 
     pub(crate) fn clear_translation_caches(&mut self) {
-        // Clear in-memory state
         for detail in self.browse_state.details.values_mut() {
             let detail = Arc::make_mut(detail);
             detail.translated_profile = None;
@@ -1060,9 +1031,6 @@ mod translation_tests {
             html_text: Some("translated description".to_string()),
             download_count: 1,
             is_withheld: false,
-            // Deliberately reorder and put the old active file in the archived
-            // translation array; stable IDs, not position or archive grouping,
-            // determine the text overlay.
             files: vec![translated_v2],
             archived_files: vec![translated_old],
             ..Default::default()

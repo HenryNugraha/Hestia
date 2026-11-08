@@ -136,8 +136,6 @@ impl HestiaApp {
     ) -> Self {
         install_app_fonts(&cc.egui_ctx, state.static_prefs.font_style);
         apply_theme(&cc.egui_ctx);
-        // Hestia handles Ctrl + = and Ctrl + - itself, to keep the size in range
-        // and saved.
         cc.egui_ctx
             .options_mut(|options| options.zoom_with_keyboard = false);
         state.static_prefs.interface_zoom =
@@ -359,15 +357,11 @@ impl HestiaApp {
 
         let applied_custom_proxy = runtime_services.custom_proxy();
         let proxy_url_draft = state.static_prefs.custom_proxy_url.clone();
-        // `wgpu_render_state` is None exactly when eframe runs the glow backend.
         let active_adapter = cc
             .wgpu_render_state
             .as_ref()
             .map(|render_state| render_state.adapter.get_info());
         match &active_adapter {
-            // Named in the log because the GPU the UI landed on matters as much
-            // as the API: Hestia asks for the low-power adapter so it leaves the
-            // discrete GPU to whatever game is running.
             Some(info) => tracing::info!(
                 "renderer device: {} ({:?}, {:?})",
                 info.name,
@@ -696,7 +690,6 @@ impl HestiaApp {
             window_state_last_save: 0.0,
             floating_window_save_due: None,
             window_was_maximized,
-            // The window opens at zoom 1, and the saved zoom lands a frame later.
             window_zoom: 1.0,
             window_min_size: None,
             selection_empty_at: None,
@@ -736,11 +729,6 @@ impl HestiaApp {
         app
     }
 
-    /// Clears the renderer boot breadcrumb once this renderer has actually put
-    /// frames on screen. Until then the breadcrumb stays, so a driver that
-    /// enumerates fine and then dies during device creation or the first
-    /// presents demotes itself on the next launch instead of leaving the app
-    /// unstartable.
     fn confirm_renderer_boot(&mut self, ctx: &egui::Context) {
         if !self.renderer_boot_unconfirmed || !crate::renderer::boot_confirmed(ctx) {
             return;
@@ -750,11 +738,6 @@ impl HestiaApp {
     }
 
     fn complete_startup_launch(&mut self, ctx: &egui::Context) {
-        // Only wait while recovery is still *running*. A recovery that failed must not hold
-        // the launch: the failure is per-game (tracked in `profile_recovery_failed_games`,
-        // which blocks profile operations for that game alone), and keeping the whole app in
-        // the startup-loading state would freeze every other game's library over one
-        // inaccessible install.
         let profile_recovery_pending = self
             .profile_operation_inflight
             .as_ref()
@@ -962,8 +945,6 @@ impl HestiaApp {
                         ));
                         continue;
                     }
-                    // The visible switch must describe the still-active client after a failed
-                    // candidate probe. Keep the draft text so the user can correct it.
                     self.state.static_prefs.use_custom_proxy = self.applied_custom_proxy.is_some();
                     self.report_error_message(
                         format!("proxy validation failed: {error}"),
@@ -974,10 +955,6 @@ impl HestiaApp {
         }
     }
 
-    /// Relaunches the app so a changed renderer preference takes effect: the
-    /// renderer is fixed at window creation. `--after-proxy-restart` only skips
-    /// the single-instance guard, which the new process needs while this one is
-    /// still shutting down.
     fn restart_for_renderer_change(&mut self) {
         if self.has_active_mod_tasks() {
             self.report_warn(
@@ -996,9 +973,6 @@ impl HestiaApp {
         std::process::exit(0);
     }
 
-    /// Relaunches the app elevated via a UAC prompt. Session-only: elevation is not
-    /// remembered across launches, and Explorer drag-and-drop cannot reach an elevated
-    /// window (UIPI), which the warning copy tells the user about.
     fn restart_as_administrator(&mut self) {
         if self.has_active_mod_tasks() {
             self.report_warn(
@@ -1017,9 +991,6 @@ impl HestiaApp {
         }
     }
 
-    /// The directory whose ACL governs every mod operation for this game: the parent of the
-    /// profile storage dir, which contains the mods dir, the disabled-mods dir, and profile
-    /// archives. Granting access here (with inheritance) unblocks all of them.
     fn game_write_scope_dir(&self, game: &GameInstall) -> Option<PathBuf> {
         let use_default = self.state.static_prefs.use_default_mods_path;
         if let Ok(roots) = profiles::profile_roots(game, use_default) {
@@ -1066,8 +1037,6 @@ impl HestiaApp {
                     let game_id = event.game_id;
                     self.push_log(format!("granted write access to the game folder ({game_id})"));
                     self.invalidate_path_write_status_cache();
-                    // Storage recovery and the mod scan were skipped or degraded while the
-                    // directory was read-only; rerun both now that writes work.
                     self.queue_profile_recovery_for_game(&game_id);
                     self.queue_game_refresh(game_id);
                 }
@@ -1079,8 +1048,6 @@ impl HestiaApp {
     }
 
     fn restart_network_work_for_proxy_change(&mut self) {
-        // Never touch extraction, installation, archive moves, or scans. Only the requests
-        // that own network sockets are cancelled, and resumable transfers retain their partials.
         if let Some(inflight) = &self.app_update_download_inflight {
             self.pending_proxy_app_update_resume = Some(inflight.manifest.clone());
             inflight.cancel.store(true, Ordering::Relaxed);
@@ -1134,9 +1101,6 @@ impl HestiaApp {
         self.restart_active_translations_for_proxy_change();
         self.invalidate_thalia_matching();
         self.restart_active_update_check_for_proxy_change();
-        // Invalidation cancelled any Thalia requests in flight. A restarted
-        // update check asks again when it finishes; otherwise ask now so
-        // held notices are not left waiting for answers that never come.
         let game_ids: HashSet<String> = self
             .state
             .mods
@@ -1380,7 +1344,7 @@ impl HestiaApp {
                 TextureEntryMeta {
                     bytes,
                     last_access_tick: last,
-                    priority: 1, // Default to background
+                    priority: 1,
                 },
             );
             self.texture_ram_estimated_bytes =
@@ -1398,7 +1362,7 @@ impl HestiaApp {
                 TextureEntryMeta {
                     bytes,
                     last_access_tick: last,
-                    priority: 0, // Default to inactive high-res
+                    priority: 0,
                 },
             );
             self.texture_ram_estimated_bytes =
@@ -1416,7 +1380,7 @@ impl HestiaApp {
                 TextureEntryMeta {
                     bytes,
                     last_access_tick: last,
-                    priority: 1, // Default to background
+                    priority: 1,
                 },
             );
             self.texture_ram_estimated_bytes =
@@ -1434,7 +1398,7 @@ impl HestiaApp {
                 TextureEntryMeta {
                     bytes,
                     last_access_tick: last,
-                    priority: 0, // Default to inactive high-res
+                    priority: 0,
                 },
             );
             self.texture_ram_estimated_bytes =
@@ -1443,8 +1407,6 @@ impl HestiaApp {
     }
 
     fn evict_textures_to_budget(&mut self, now: f64) {
-        // Weighted eviction: Level 0 (inactive hi-res) -> Level 1 (off-screen thumbs) -> Level 2 (on-screen/rails)
-        // Level 3 (Current Full View) is protected.
         for target_priority in 0..=2 {
             while self.texture_ram_estimated_bytes > self.texture_ram_budget_bytes {
                 let victim = self
@@ -1459,7 +1421,7 @@ impl HestiaApp {
                     self.texture_evictions_window_count =
                         self.texture_evictions_window_count.saturating_add(1);
                 } else {
-                    break; // No more victims at this priority level
+                    break;
                 }
             }
         }
@@ -1479,8 +1441,6 @@ impl HestiaApp {
         self.pending_texture_uploads.clear();
         self.pending_mod_image_queue.clear();
         self.pending_mod_image_requests.clear();
-        // Dropping the queue means no worker result will ever clear these, and a
-        // card whose id is still listed here refuses to re-request its thumbnail.
         self.pending_image_loads.clear();
         self.inflight_full_image_requests.clear();
         self.cancel_browse_full_image_requests();
@@ -1529,8 +1489,6 @@ impl HestiaApp {
         }
     }
 
-    /// Uploads a picture along with its censored copy (see `censor_copy`), so
-    /// turning censoring on or off never has to load pictures again.
     fn load_censorable_texture(
         &mut self,
         ctx: &egui::Context,
@@ -1548,8 +1506,6 @@ impl HestiaApp {
         texture
     }
 
-    /// Pictures leave their caches in many places, so their copies go once
-    /// egui no longer knows the picture they copy.
     fn drop_orphaned_censored_copies(&mut self, ctx: &egui::Context) {
         if self.censored_copies.is_empty() {
             return;
@@ -1563,16 +1519,11 @@ impl HestiaApp {
                 .copied()
                 .collect()
         };
-        // Dropped only after the read lock is gone: dropping a texture locks
-        // egui's textures again.
         for original in orphaned {
             self.censored_copies.remove(&original);
         }
     }
 
-    /// The blurred copy to draw in place of `texture` while it is censored,
-    /// once it has loaded.  Without one, draw the picture under
-    /// `paint_unsafe_overlay`.
     fn censored_copy(
         &self,
         texture: &egui::TextureHandle,
@@ -1609,7 +1560,6 @@ impl HestiaApp {
             return self.browse_thumb_textures.get(key);
         }
 
-        // Fallback for thumbnails generated via high-res preloading, which may not have the "rail:" prefix.
         if let Some(stripped) = key.strip_prefix("rail:") {
             if self.browse_thumb_textures.contains_key(stripped) {
                 self.touch_texture(TextureKind::BrowseThumb, stripped, priority);
@@ -2182,8 +2132,6 @@ impl HestiaApp {
         } else if !mod_root_ready {
             primary_issue = Some(GameSetupIssue::MissingModFolder);
         } else if !mods_dir_writable {
-            // Windows blocks unelevated writes into the game directory (e.g. Program Files
-            // installs).  This outranks loader issues: installing a loader would fail too.
             primary_issue = Some(GameSetupIssue::NoGameDirAccess);
         }
 
@@ -2280,8 +2228,6 @@ impl HestiaApp {
         path_allows_dir_creation(path)
     }
 
-    /// Drop cached write-probe results so the next readiness pass re-checks ACLs, e.g. right
-    /// after a grant-access elevation finishes.
     fn invalidate_path_write_status_cache(&self) {
         if let Ok(mut cache) = self.path_write_status_cache.lock() {
             cache.clear();
@@ -2425,10 +2371,6 @@ impl HestiaApp {
     fn library_card_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        // Thalia recommendations are transient grouped evidence. Include its
-        // fingerprint so a completed or expired recommendation rebuilds the
-        // card rows and left-pane status from the same evidence used by the
-        // mod detail view.
         self.thalia_evidence_fingerprint().hash(&mut hasher);
         self.selected_game.hash(&mut hasher);
         self.mods_search_query.hash(&mut hasher);
@@ -2579,9 +2521,6 @@ impl HestiaApp {
             snapshot.update_ts.hash(hasher);
             snapshot.description.hash(hasher);
             snapshot.preview_urls.hash(hasher);
-            // Snapshot history is matching evidence even when no raw profile
-            // is available. Canonicalize record order and retain the known
-            // versus unknown distinction (`None` versus a known empty log).
             let history = snapshot.update_history.as_ref().map(|history| {
                 let mut records: Vec<_> = history
                     .records
@@ -2826,8 +2765,6 @@ impl HestiaApp {
             .collect();
         let category_first = self.state.static_prefs.library_sort_category_first
             && self.state.static_prefs.effective_library_group_mode() == LibraryGroupMode::Status;
-        // Use the current display order, including live mod counts, rather than
-        // the last stored manual ranks. Both views then honor Category Order.
         let ordered_categories = if category_first {
             self.categories_for_game(&game.definition.id)
         } else {
@@ -2926,9 +2863,6 @@ impl HestiaApp {
         *current = order[next];
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab: move to the next / previous primary tab,
-    /// wrapping at both ends. Tab order is `ViewMode::TAB_ORDER`; add new
-    /// views there and this picks them up automatically.
     fn cycle_primary_view(&mut self, forward: bool) {
         Self::cycle_ordered_value(&mut self.current_view, ViewMode::TAB_ORDER, forward);
         self.clear_library_folder_selection();
@@ -2944,7 +2878,6 @@ impl HestiaApp {
         Self::cycle_ordered_value(&mut self.tasks_tab, TasksTab::TAB_ORDER, forward);
     }
 
-    /// Apply the same layout transition from Library menus and Settings.
     fn set_library_category_display_mode(&mut self, mode: LibraryCategoryDisplayMode) -> bool {
         if self.state.static_prefs.library_category_display_mode == mode {
             return false;
@@ -2964,8 +2897,6 @@ impl HestiaApp {
         self.dragging_mod_ids.clear();
         self.clear_category_rename();
 
-        // Both Lists expose every filtered card; the folder overview exposes only
-        // Uncategorized cards. Retain a batch selection only where it remains visible.
         let cards = self.library_cards_for_selected_game();
         let visible_ids: HashSet<&str> = cards
             .iter()
@@ -2991,8 +2922,6 @@ impl HestiaApp {
         true
     }
 
-    /// Opens the category folder the library last went back out of, like a browser's forward
-    /// button, while it still is one of this game's folders.
     fn reopen_left_category_folder(&mut self) -> bool {
         if self.selected_category_folder_id.is_some()
             || self
@@ -3152,9 +3081,6 @@ impl HestiaApp {
         false
     }
 
-    // Fallback for the fullview overlay's copy shortcut, mirroring
-    // poll_windows_ctrl_v_edge: egui's synthesized Copy event does not arrive
-    // reliably on Windows, so poll the real key state instead.
     #[cfg(windows)]
     fn poll_windows_ctrl_c_edge(&mut self, ctx: &egui::Context) -> bool {
         let ctrl_down = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
@@ -3177,9 +3103,6 @@ impl HestiaApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // Settings is waiting for the overlay's new hotkey, so the keys are
-        // its.  Ctrl+V is still noted as held, so taking it as the hotkey
-        // doesn't paste once Settings stops listening.
         if game_overlay_hotkey_listening(ctx) {
             let _ = self.poll_windows_ctrl_v_edge(ctx);
             return;
@@ -3194,8 +3117,6 @@ impl HestiaApp {
         let app_window_focused =
             ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(input.focused));
 
-        // Ctrl+Tab cycles forward through the primary tabs, Ctrl+Shift+Tab
-        // cycles backward (same convention as browser tab switching).
         if !text_input_active {
             let tab_cycle = ctx.input(|input| {
                 if input.modifiers.ctrl && !input.modifiers.alt && input.key_pressed(egui::Key::Tab) {
@@ -3233,10 +3154,6 @@ impl HestiaApp {
                 }
             }
         }
-        // Ctrl+P — the settings/preferences shortcut. Deliberately NOT a bare
-        // function key like F10: while the XXMI foreground grant is active, any bare key
-        // Hestia handles also bleeds to the game (F10 = XXMI reload), so settings lives on
-        // a Ctrl combo that no XXMI mod binds.
         if ctx.input_mut(|input| {
             input.consume_shortcut(&egui::KeyboardShortcut::new(ctrl, egui::Key::P))
         }) {
@@ -3290,8 +3207,6 @@ impl HestiaApp {
         }
 
         if self.current_view == ViewMode::Library {
-            // The windows that cover the right pane (Tasks, Settings, the log...) leave the
-            // library usable beside them, so its keys work while they're open too.
             let library_key_context =
                 app_window_focused && !text_input_active && !egui::Popup::is_any_open(ctx);
             if library_key_context
@@ -3527,13 +3442,9 @@ impl HestiaApp {
         self.image_generation.fetch_add(1, Ordering::Relaxed);
         self.pending_mod_image_queue.clear();
         self.pending_mod_image_requests.clear();
-        // Same reason as in clear_dynamic_textures: requests that never reach a
-        // worker produce no result, so these have to be released by hand or the
-        // cards they belong to stay blank for the rest of the session.
         self.pending_image_loads.clear();
         self.inflight_full_image_requests.clear();
 
-        // self.selected_mod_id = mod_id;
         self.selected_mod_id = mod_id.clone();
         self.selected_mod_detail_snapshot = None;
         self.library_detail_content_cache = None;
@@ -3546,8 +3457,6 @@ impl HestiaApp {
             self.mod_detail_focus_requested = true;
             self.maybe_translate_my_mod_details(&id);
 
-            // Optimization: Pre-fetch full cover image for the selected mod to avoid redundant decoding later.
-            // Extract necessary data before any mutable borrows of `self`
             let (mod_entry_id_clone, source_path_clone) = {
                 if let Some(mod_entry) = self.state.mods.iter().find(|m| m.id == id) {
                     let (_, source_path, _) = Self::current_card_thumb_meta(mod_entry);
@@ -3557,7 +3466,6 @@ impl HestiaApp {
                 }
             };
 
-            // Now perform mutable operations
             if let Some(mod_entry_id) = mod_entry_id_clone {
                 if let Some(path) = source_path_clone {
                     self.queue_mod_image_full_load(mod_entry_id.clone(), path, 10);
@@ -3568,9 +3476,6 @@ impl HestiaApp {
         }
     }
 
-    /// Ctrl + = and Ctrl + - step the interface size by 0.1, and Ctrl + 0 goes
-    /// back to Normal, like a browser.  Runs after the frame is drawn, so the
-    /// overlay hotkey picker gets these keys first.
     fn handle_interface_zoom_keys(&mut self, ctx: &egui::Context) {
         use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
         let zoom = self.state.static_prefs.interface_zoom;
@@ -3592,8 +3497,6 @@ impl HestiaApp {
         }
     }
 
-    /// Sizes Hestia, and the in-game overlay with it.  The new size shows
-    /// from the next frame.
     fn set_interface_zoom(&mut self, ctx: &egui::Context, zoom: f32) {
         let zoom = InterfaceSize::snap_zoom(zoom);
         ctx.set_zoom_factor(zoom);
@@ -3615,7 +3518,6 @@ impl HestiaApp {
         if viewport.minimized.unwrap_or(false) {
             return;
         }
-        // Bigger sizes need a bigger window, but never more than the screen.
         let mut min_size = MAIN_WINDOW_MIN_SIZE;
         if let Some(monitor) = viewport.monitor_size {
             min_size = min_size.min(monitor * 0.9);
@@ -3625,7 +3527,6 @@ impl HestiaApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_size));
         }
         let maximized = viewport.maximized.unwrap_or(false);
-        // Saved at zoom 1, the way Windows places the window at startup.
         let pos = if maximized {
             None
         } else {
@@ -3661,9 +3562,6 @@ impl HestiaApp {
         self.flush_floating_window_layouts(ctx, now);
     }
 
-    /// Applies a change to the remembered floating-window geometry after the user
-    /// has actually moved/resized that window. Content can still auto-grow a
-    /// window, but that layout is not treated as a user override.
     fn remember_floating_window_layout(
         &mut self,
         ctx: &egui::Context,
@@ -3687,9 +3585,6 @@ impl HestiaApp {
         }
     }
 
-    /// Writes pending floating-window geometry once the user has stopped dragging
-    /// for `FLOATING_WINDOW_SAVE_DEBOUNCE_SECS`; keeps a repaint scheduled so the
-    /// write happens even if the app goes idle right after the drag.
     fn flush_floating_window_layouts(&mut self, ctx: &egui::Context, now: f64) {
         let Some(due) = self.floating_window_save_due else {
             return;
@@ -3721,8 +3616,6 @@ impl HestiaApp {
         match xxmi::refresh_state(&mut self.state, game_id.as_deref()) {
             Ok(()) => {
                 self.restore_imported_mod_categories(game_id.as_deref());
-                // Settings baseline/reroute must cover this synchronous path too — the
-                // first scan after an upgrade often runs here, not in the async worker.
                 let scan_game_ids: Vec<String> = match game_id.as_deref() {
                     Some(id) => vec![id.to_string()],
                     None => self
@@ -3837,8 +3730,6 @@ impl HestiaApp {
         };
         let before = self.capture_reload_snapshots(Some(&game_id));
 
-        // Do this before the background library scan so newly added tool executables appear
-        // as soon as the UI repaints after the reload click.
         self.sync_tools_for_selected_game();
         self.save_state();
         self.pending_reload_summary = Some((game_id.clone(), before));
@@ -4112,8 +4003,6 @@ impl HestiaApp {
     }
 
     fn check_pending_worker_events(&mut self) -> bool {
-        // Check if any worker channels have pending events
-        // This uses try_recv's non-blocking peek behavior
         let has_events = !self.icon_result_rx.is_empty()
             || !self.mod_image_result_rx.is_empty()
             || !self.manual_image_event_rx.is_empty()
@@ -4144,7 +4033,6 @@ impl HestiaApp {
     }
 
     fn check_pending_process_work(&mut self) -> bool {
-        // Check if any processing queues have work
         let has_work = !self.pending_mod_image_queue.is_empty()
             || !self.pending_texture_uploads.is_empty()
             || (self.current_view == ViewMode::Browse
@@ -4163,7 +4051,6 @@ impl HestiaApp {
     }
 }
 
-/// The floating windows whose geometry is remembered; see `FloatingWindowLayouts`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FloatingWindow {
     Log,
@@ -4188,10 +4075,6 @@ impl FloatingWindow {
 }
 
 impl HestiaApp {
-    /// Puts a floating window back at its default size and position and forgets
-    /// the saved layout. Works by bumping the window's id nonce so egui starts a
-    /// fresh area (the same trick the corner-anchored windows use on every open);
-    /// the recorder then stores the default rect again on the next frame.
     fn reset_floating_window_layout(&mut self, ctx: &egui::Context, window: FloatingWindow) {
         let layouts = &mut self.state.static_prefs.floating_windows;
         match window {
@@ -4234,14 +4117,6 @@ impl HestiaApp {
         ctx.request_repaint();
     }
 
-    /// Title-bar layout controls shared by the resizable floating windows: a
-    /// "reset size and position" icon just left of the close button, visible only
-    /// while the window differs from `default_rect`, plus a right-click menu on the
-    /// title bar offering the same action. The icon is drawn in a sublayer of the
-    /// window so it stacks with it and never floats over other windows.
-    /// `inner_margin` is the window frame's inner margin (the title bar inherits it).
-    /// Returns true when a reset was requested; the caller applies it after its own
-    /// post-show bookkeeping so `force_default_pos` flags aren't cleared again.
     fn floating_window_layout_controls<R>(
         &self,
         ctx: &egui::Context,
@@ -4258,8 +4133,6 @@ impl HestiaApp {
         let text = self.text();
         let style = ctx.style_of(ctx.theme());
         let stroke_width = style.visuals.window_stroke.width;
-        // The title bar's row height: egui allocates its buttons at the heading row
-        // height and our 14pt titles fit inside that.
         let row_height =
             ctx.fonts_mut(|fonts| fonts.row_height(&egui::TextStyle::Heading.resolve(&style)));
         let title_rect = egui::Rect::from_min_size(
@@ -4270,10 +4143,6 @@ impl HestiaApp {
             ),
         );
         let title_center_y = window_rect.min.y + stroke_width + inner_margin + row_height / 2.0;
-        // egui allocates the close button a heading-row-high square and paints the
-        // "X" at `icon_width` in its middle; sit one icon plus a small gap to its left,
-        // with a hit box just a touch larger than the glyph so it can't steal the
-        // close button's edge.
         let icon_width = style.spacing.icon_width;
         let close_button_center_x =
             window_rect.max.x - stroke_width - inner_margin - row_height / 2.0;
@@ -4305,8 +4174,6 @@ impl HestiaApp {
                 .show(ctx, |ui| {
                     let (rect, button) = ui.allocate_exact_size(button_size, Sense::click());
                     let visuals = ui.style().interact(&button);
-                    // Same nominal size and hover growth as egui's close "X" next door
-                    // (icon_width, expanded by the interact visuals when hovered).
                     let icon_size = icon_width + 2.0 * visuals.expansion;
                     paint_lucide_icon_centered(
                         ui.painter(),
@@ -4324,9 +4191,6 @@ impl HestiaApp {
                 });
         }
 
-        // Right-click on the title bar (including the control above) opens a small
-        // menu with the same action, so there is a way in even while the window is
-        // collapsed or already at its default layout.
         let title_bar_right_clicked = ctx.input(|input| {
             input.pointer.secondary_clicked()
                 && input
@@ -4443,10 +4307,6 @@ fn response_drag_active(response: egui::Response) -> bool {
     response.drag_started() || response.dragged() || response.drag_stopped()
 }
 
-/// Paints a lucide glyph with its ink box centered on `center`. Painting text with
-/// `Align2::CENTER_CENTER` centers the font row, and icon fonts don't sit centered
-/// in their row, so the glyph would drift a pixel or two against egui's
-/// geometrically painted close "X" that this is meant to line up with.
 fn paint_lucide_icon_centered(
     painter: &egui::Painter,
     center: egui::Pos2,
@@ -4468,9 +4328,6 @@ fn paint_lucide_icon_centered(
     painter.galley(center - ink_center.to_vec2(), galley, color);
 }
 
-/// Outer size of a floating window after `show()`, rounded to whole points so the
-/// frame-stroke half-pixel doesn't drift across save/restore cycles. `None` when the
-/// window is collapsed (its rect is just the title bar then) or wasn't drawn at all.
 fn shown_floating_window_rect<R>(
     response: &Option<egui::InnerResponse<Option<R>>>,
 ) -> Option<egui::Rect> {
@@ -4486,7 +4343,6 @@ fn shown_floating_window_rect<R>(
     })
 }
 
-/// Converts a shown window rect into the pane-relative form we persist.
 fn floating_window_rect_relative_to(
     rect: egui::Rect,
     inset_rect: egui::Rect,
@@ -4498,8 +4354,6 @@ fn floating_window_rect_relative_to(
     }
 }
 
-/// A remembered size that is safe to feed back into `default_size`: finite and
-/// positive, capped to the pane it has to fit in. Falls back to `default` otherwise.
 fn restore_floating_window_size(
     saved: Option<[f32; 2]>,
     default: egui::Vec2,
@@ -4512,10 +4366,6 @@ fn restore_floating_window_size(
     size.min(inset_rect.size()).max(egui::Vec2::ZERO)
 }
 
-/// Resolves a remembered pane-relative rect against the current pane: the size is
-/// capped to the pane and the top-left is pulled back inside it, so a layout saved
-/// on a bigger window (or another monitor) never restores half off-pane. Falls back
-/// to `default_pos`/`default_size` when nothing usable is saved.
 fn restore_floating_window_rect(
     saved: Option<FloatingWindowRect>,
     default_pos: egui::Pos2,
@@ -4575,7 +4425,6 @@ mod floating_window_layout_tests {
         assert_eq!(saved.offset, [40.0, 40.0]);
         assert_eq!(saved.size, [420.0, 560.0]);
 
-        // Same offset, different pane origin: the window follows the pane.
         let moved_pane = pane.translate(egui::vec2(-50.0, 200.0));
         let (pos, size) = restore_floating_window_rect(
             Some(saved),
@@ -4596,7 +4445,6 @@ mod floating_window_layout_tests {
         };
         let (pos, size) =
             restore_floating_window_rect(Some(saved), pane.min, egui::vec2(1.0, 1.0), pane);
-        // Height capped to the pane, then position clamped so the rect fits.
         assert_eq!(size, egui::vec2(400.0, 600.0));
         assert_eq!(pos, egui::pos2(pane.max.x - 400.0, pane.min.y));
     }
@@ -4754,7 +4602,6 @@ mod readiness_tests {
         std::fs::write(&exe, []).unwrap();
         let game = game_install("nte", GameBackend::UnrealEngine, exe);
 
-        // No bypasser installed either; the access issue must still win.
         let readiness = HestiaApp::compute_game_readiness(&game, false, None, false);
 
         assert!(readiness.game_present);

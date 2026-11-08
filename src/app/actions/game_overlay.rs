@@ -1,68 +1,35 @@
-// Runs the in-game overlay: Hestia starts it when a supported game starts,
-// keeps its library current, and closes it when the game exits.  The game
-// watcher and the overlay process are in workers/game_overlay.rs.
-
-/// How often Hestia looks for library changes to send to the in-game overlay.
 const GAME_OVERLAY_LIBRARY_INTERVAL: Duration = Duration::from_millis(250);
 
-/// How long Hestia waits to start the in-game overlay again after it closed
-/// unexpectedly or couldn't start, by how many times in a row that happened.
 const GAME_OVERLAY_RESTART_DELAYS: [Duration; 3] = [
     Duration::from_secs(1),
     Duration::from_secs(5),
     Duration::from_secs(30),
 ];
 
-/// How long the overlay must run for a later close to count as a new
-/// failure, not one more in a row.
 const GAME_OVERLAY_GOOD_RUN: Duration = Duration::from_secs(60);
 
-/// The in-game overlay, and what Hestia keeps for it.
 #[derive(Default)]
 struct GameOverlay {
     watcher: Option<GameWatcher>,
-    /// The watcher's thread couldn't start, so there is no overlay.
     watcher_failed: bool,
-    /// The games the watcher looks for.
     watched: Vec<WatchedGame>,
-    /// The watched games that run now.
     running: Vec<RunningGame>,
     process: Option<OverlayProcess>,
-    /// The library the overlay has.
     sent: Option<OverlayLibraryDraft>,
-    /// The settings the overlay has.
     sent_settings: Option<overlay_protocol::Settings>,
     next_library_check: Option<Instant>,
-    /// Where the overlay was in each game's library, by game, for this
-    /// session.
     selections: HashMap<String, overlay_protocol::Selection>,
-    /// How many times in a row the overlay closed unexpectedly or couldn't
-    /// start while its game ran.
     failures: usize,
-    /// When to start it again after that.
     restart_at: Option<Instant>,
-    /// The GameBanana installs it asked for that aren't done.
     installs: Vec<OverlayInstall>,
-    /// The GameBanana downloads Hestia's window started for its game that
-    /// aren't done, which it shows like its own installs.
     window_downloads: Vec<WindowDownload>,
-    /// The game the preview in Settings shows the overlay for, while no
-    /// game runs.  Hestia's own window stands in for the game.
     preview: Option<String>,
-    /// The overlay's number for the hotkey press about to go to the hotkey
-    /// worker, which its answer repeats.
     pending_hotkey_press: Option<u64>,
-    /// The mods whose hotkeys the overlay asked for.  Their hotkeys go to it
-    /// again when their values change, which can grey some out.
     hotkey_mods: HashSet<String>,
 }
 
 impl HestiaApp {
-    /// Starts the in-game overlay when a supported game starts, keeps its
-    /// library current, and closes it when the game exits.
     fn poll_game_overlay(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        // With the overlay turned off in Settings, no game counts, so a
-        // running overlay closes.
         let watched: Vec<WatchedGame> = if self.state.static_prefs.game_overlay {
             self.state
                 .games
@@ -78,7 +45,6 @@ impl HestiaApp {
             }
             self.game_overlay.watched = watched;
         }
-        // The preview ends when its game has no overlay any more.
         if let Some(id) = &self.game_overlay.preview
             && !self.game_overlay.watched.iter().any(|game| &game.id == id)
         {
@@ -106,8 +72,6 @@ impl HestiaApp {
         self.consume_game_overlay_events(ctx);
         self.sync_game_overlay_installs(ctx);
 
-        // The overlay's game while it runs, or else the first one that runs,
-        // or else the preview's.
         let overlay = &self.game_overlay;
         let shown = overlay
             .process
@@ -123,7 +87,6 @@ impl HestiaApp {
             .find(|running| Some(running.id.as_str()) == shown)
             .or(running.first())
             .map(|running| (*running).clone())
-            // The overlay shows over Hestia then, and works as in the game.
             .or_else(|| {
                 overlay.preview.clone().map(|id| RunningGame {
                     id,
@@ -144,7 +107,6 @@ impl HestiaApp {
                 self.send_game_overlay_library(ctx);
             }
             (process @ Some(_), game) => {
-                // Its game exited, or stopped being a supported one.
                 if let Some(process) = process.take() {
                     tracing::info!(game = %process.game_id, "Closing the in-game overlay");
                     self.handoff_game_overlay_questions();
@@ -245,7 +207,6 @@ impl HestiaApp {
             prefs.game_overlay_all_characters = show;
         }
         if opacity_changed.is_some() || all_characters_changed.is_some() {
-            // The overlay has them already.
             self.game_overlay.sent_settings = Some(self.game_overlay_settings());
             self.save_state();
         }
@@ -254,7 +215,6 @@ impl HestiaApp {
                 self.handle_game_overlay_install(&game_id, message);
             }
             for mod_id in hotkeys {
-                // A mod that's gone leaves the overlay with the next library.
                 let Some(entry) = self
                     .state
                     .mods
@@ -264,8 +224,6 @@ impl HestiaApp {
                 else {
                     continue;
                 };
-                // Pressing a key that cycles a value starts from the value the
-                // mod has now.
                 self.ensure_hotkey_values_cached(&entry);
                 let values = self.cached_hotkey_values(&mod_id);
                 if let Some(process) = &self.game_overlay.process {
@@ -293,7 +251,6 @@ impl HestiaApp {
             }
         }
         if exited && let Some(process) = self.game_overlay.process.take() {
-            // After a good run, start again with the shortest wait.
             if process.started.elapsed() > GAME_OVERLAY_GOOD_RUN {
                 self.game_overlay.failures = 0;
             }
@@ -335,9 +292,6 @@ impl HestiaApp {
         }
     }
 
-    /// Presses one of a mod's hotkeys the overlay asked for, like a click on
-    /// it in the library's hotkey list.  The hotkey worker's answer goes to the
-    /// overlay later.  The error is for the overlay's warning strip.
     fn press_game_overlay_hotkey(
         &mut self,
         game_id: &str,
@@ -375,8 +329,6 @@ impl HestiaApp {
         if self.other_running_xxmi_game(&game).is_some() {
             return Err(not_sent());
         }
-        // The overlay names the row by its place and its key, in case the
-        // mod's files changed since it read them.
         let rows = hotkeys_list_rows(&parse_mod_config_inis(&entry.root_path));
         let Some(row) = rows
             .get(index)
@@ -390,8 +342,6 @@ impl HestiaApp {
         }
         let current_values = self.cached_hotkey_values(mod_id);
         if hotkey_row_unavailable(row, &rows, &current_values) {
-            // The overlay's list is out of date: it greys the key once it has
-            // the new one.
             self.resend_game_overlay_hotkeys(mod_id);
             return Err(not_sent());
         }
@@ -406,18 +356,14 @@ impl HestiaApp {
                 &row.raw_key,
                 &row.values,
             ),
-            // Keys that don't cycle a value Hestia knows get one press.
             _ => self.run_hotkey_command(mod_id, &row.raw_key, &row.label),
         }
-        // Nothing went to the hotkey worker, so nothing will answer.
         match self.game_overlay.pending_hotkey_press.take() {
             Some(_) => Err(not_sent()),
             None => Ok(()),
         }
     }
 
-    /// Sends the overlay a mod's hotkeys again after their values changed, when
-    /// it asked for them.
     fn resend_game_overlay_hotkeys(&self, mod_id: &str) {
         let Some(process) = &self.game_overlay.process else {
             return;
@@ -434,14 +380,12 @@ impl HestiaApp {
         }
     }
 
-    /// Answers a hotkey press the overlay asked for, when it still runs.
     fn answer_game_overlay_hotkey(&self, id: u64, error: Option<String>) {
         if let Some(process) = &self.game_overlay.process {
             process.answer_hotkey(id, error);
         }
     }
 
-    /// The settings the overlay takes from Hestia.
     fn game_overlay_settings(&self) -> overlay_protocol::Settings {
         let prefs = &self.state.static_prefs;
         overlay_protocol::Settings {
@@ -458,7 +402,6 @@ impl HestiaApp {
         }
     }
 
-    /// What answering the overlay's GameBanana requests needs, while it runs.
     fn game_overlay_browse(&self) -> Option<OverlayBrowse> {
         let process = self.game_overlay.process.as_ref()?;
         let prefs = &self.state.static_prefs;
@@ -473,11 +416,6 @@ impl HestiaApp {
         })
     }
 
-    /// Makes a change the in-game overlay asked for, or the library's "Enable
-    /// this mod, disable others", with the steps of the library's Enable and
-    /// Disable, as one change with one reload.  Gives the game's reload key
-    /// when the reload settings leave pressing it to the user.  The error is
-    /// for the overlay's warning strip.
     fn apply_mod_change(
         &mut self,
         game_id: &str,
@@ -496,7 +434,6 @@ impl HestiaApp {
         else {
             return Ok(None);
         };
-        // A mod that's gone leaves the overlay with the library sent next.
         let Some(target) = self.state.mods.iter().find(|entry| {
             entry.id == mod_id
                 && entry.game_id == game_id
@@ -515,8 +452,6 @@ impl HestiaApp {
             }
             _ => {}
         }
-        // Uncategorized mods have nothing to do with each other, so using one
-        // leaves the rest on.  Unsafe mods the overlay hides count too.
         if action == ChangeAction::Use
             && let Some(category_id) = effective_category_id(&self.state.categories, target)
         {
@@ -551,11 +486,8 @@ impl HestiaApp {
 
         let use_default = self.state.static_prefs.use_default_mods_path;
         let mut ptx = self.begin_xxmi_persist_tx(&game);
-        // (name, turned on)
         let mut done: Vec<(String, bool)> = Vec::new();
         let mut failure = None;
-        // Off first.  If one of the others won't turn off, the used mod stays
-        // off too, so two never run together.
         for (mod_ids, on) in [(&turn_off, false), (&turn_on, true)] {
             if on && failure.is_some() {
                 break;
@@ -593,8 +525,6 @@ impl HestiaApp {
                 && self.xxmi_reload_enabled_for_game(&game, *trigger)
         })
         .map(|(trigger, _)| trigger);
-        // With auto-reload off for this, the overlay tells the user which key
-        // shows the change.
         let press_key =
             (game.is_xxmi() && !done.is_empty() && request_reload.is_none()).then(|| {
                 xxmi_persist::importer_root_for(&game, use_default)
@@ -684,7 +614,6 @@ impl HestiaApp {
         }
     }
 
-    /// Waits longer each time before the overlay starts again.
     fn game_overlay_failed(&mut self, ctx: &egui::Context, detail: String) {
         let overlay = &mut self.game_overlay;
         let delay = GAME_OVERLAY_RESTART_DELAYS
@@ -693,19 +622,16 @@ impl HestiaApp {
         overlay.restart_at = Some(Instant::now() + delay);
         ctx.request_repaint_after(delay);
         tracing::warn!(retry_in = ?delay, "{detail}");
-        // The log gets the first of a run of failures.
         if overlay.failures == 1 {
             self.log_warn(detail);
         }
     }
 
-    /// Sends the library when it changed, a few times a second at most.
     fn send_game_overlay_library(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         if let Some(check_at) = self.game_overlay.next_library_check
             && now < check_at
         {
-            // Look once more then, for a change made meanwhile.
             ctx.request_repaint_after(check_at - now);
             return;
         }
@@ -713,7 +639,6 @@ impl HestiaApp {
         self.send_game_overlay_library_now();
     }
 
-    /// Sends the library when it changed.
     fn send_game_overlay_library_now(&mut self) {
         let Some(process) = &self.game_overlay.process else {
             return;
@@ -733,7 +658,6 @@ impl HestiaApp {
         }
     }
 
-    /// Ends the in-game overlay with Hestia.
     fn shut_down_game_overlay(&mut self) {
         if let Some(process) = self.game_overlay.process.take() {
             process.end();
@@ -741,9 +665,6 @@ impl HestiaApp {
     }
 }
 
-/// The library the in-game overlay shows for `game`, sorted like the library:
-/// the categories in their order and Uncategorized last, each with its mods.
-/// Archived mods aren't in it, nor unsafe ones the library hides.
 fn game_overlay_library(
     state: &AppState,
     game: &GameInstall,
@@ -868,7 +789,6 @@ fn overlay_mod_draft(entry: &ModEntry, censored: bool) -> OverlayModDraft {
     }
 }
 
-/// Hestia's window, which the overlay's restore button brings back.
 #[cfg(windows)]
 fn game_overlay_host_window(frame: &eframe::Frame) -> Option<i64> {
     match frame.window_handle().ok()?.as_raw() {
@@ -953,7 +873,6 @@ mod game_overlay_library_tests {
             mod_entry("m5", "Loose", None, ModStatus::Active),
             mod_entry("m6", "Missing category", Some("gone"), ModStatus::Disabled),
         ];
-        // Another game's mods stay out.
         let mut other = mod_entry("m7", "Other game", None, ModStatus::Active);
         other.game_id = "genshin".to_owned();
         state.mods.push(other);
@@ -1072,9 +991,6 @@ mod game_overlay_library_tests {
         assert_eq!(library.categories[1].character, None);
     }
 
-    /// Saves the installed Hestia's library as the overlay preview's sample,
-    /// for `--overlay-preview` and its screenshots.  The game is
-    /// HESTIA_OVERLAY_PREVIEW_GAME, Endfield by default.
     #[test]
     #[ignore = "reads the real library and writes target/overlay-preview/sample-library.json"]
     fn save_overlay_preview_sample() {
@@ -1098,8 +1014,6 @@ mod game_overlay_library_tests {
             .find(|game| game.definition.id == game_id)
             .expect("the game is in the library")
             .clone();
-        // Only reads the mods, unlike Hestia's scan, which also writes their
-        // metadata.  The overlay leaves archived mods out anyway.
         state.mods = crate::integrations::xxmi::scan_live_mods(
             &game,
             state.static_prefs.use_default_mods_path,

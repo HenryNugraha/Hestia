@@ -97,7 +97,6 @@ impl HestiaApp {
                             ui,
                             bold(text.scan_results(), None)
                                 .size(16.0)
-                                //.underline()
                                 .color(Color32::from_gray(220)),
                         );
                         ui.add_space(2.0);
@@ -174,8 +173,6 @@ impl HestiaApp {
                 });
             });
 
-        // Poll for scan progress at a bounded rate; an unconditional immediate repaint
-        // here would render at maximum rate for as long as the overlay is visible.
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 
@@ -343,7 +340,6 @@ impl HestiaApp {
             .as_ref()
             .and_then(|m| m.update_folder_name.clone());
 
-        // Auto-proceed if only one candidate
         if inspection.candidates.len() == 1 {
             let Some(game) = self
                 .state
@@ -363,8 +359,6 @@ impl HestiaApp {
             let preferred = if let Some(target) = &update_folder_name {
                 target.clone()
             } else if thalia_separate {
-                // A library shared between mods keeps the author's folder
-                // name, so an existing copy can be recognized.
                 sanitize_folder_name(&candidate.label)
             } else {
                 self.preferred_browse_folder_name(mod_title.as_deref(), &candidate.label)
@@ -373,7 +367,6 @@ impl HestiaApp {
                 .mods_path(self.state.static_prefs.use_default_mods_path)
                 .unwrap_or_default();
             if thalia_separate {
-                // Same folder name, or the same library under another name.
                 let candidate_path = candidate.path.clone();
                 let kept = if self.existing_install_target(&game, &preferred, job_id).is_some() {
                     Some(preferred.clone())
@@ -965,10 +958,6 @@ impl HestiaApp {
         }
     }
 
-    /// Shows a file question left by the in-game overlay after its process
-    /// closes.  Keeping this on the overlay install record lets the answer go
-    /// through the same handler as an in-overlay answer, including the
-    /// original task and category.
     fn render_game_overlay_file_prompt(&mut self, ctx: &egui::Context) {
         let process_game_id = self
             .game_overlay
@@ -1077,7 +1066,6 @@ impl HestiaApp {
 
     fn detect_drag_and_drop(&mut self, ctx: &egui::Context) {
         let text = self.text();
-        // Show a visual cue when files are hovered
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
@@ -1107,7 +1095,6 @@ impl HestiaApp {
             );
         }
 
-        // Handle dropped files
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped_files.is_empty() {
             let mut batch_sources = Vec::new();
@@ -1130,8 +1117,6 @@ impl HestiaApp {
                     continue;
                 }
                 if let Some(first_volume) = importing::resolve_split_archive(&path) {
-                    // All parts of one split set map to the same first volume,
-                    // so dropping mod.rar.0001 + mod.rar.0002 queues one install.
                     if first_volume != path && !seen_paths.insert(first_volume.clone()) {
                         self.install_batch_stats.skipped += 1;
                         continue;

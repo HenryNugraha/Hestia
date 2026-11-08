@@ -9,8 +9,6 @@ impl HestiaApp {
         if self.hotkey_customization_tx.send(request).is_err() {
             return false;
         }
-        // The customization worker processes requests sequentially and sends exactly one
-        // completion per request, including failed reads and worker panics.
         let overlay_press = self.game_overlay.pending_hotkey_press.take();
         self.hotkey_requests_inflight
             .push_back((game_id, overlay_press));
@@ -41,8 +39,6 @@ impl HestiaApp {
             return;
         };
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // Live-state un-mappings only matter when d3dx.ini flushes persist values quickly
-        // enough for Hestia to read back during gameplay.
         let mirrors = if self.xxmi_live_readback_capable_for_game(&game) {
             xxmi_persist::importer_root_for(&game, use_default)
                 .map(|importer_root| {
@@ -81,12 +77,6 @@ impl HestiaApp {
             .unwrap_or_default()
     }
 
-    /// Whether cycling a hotkey value in the List view can't reach the game right now:
-    /// the mod's XXMI game is running but d3dx.ini does not allow Hestia-delivered hotkeys,
-    /// so the write would never take effect. Non-XXMI games and capable games are never blocked.
-    /// The running check enumerates processes, so the result is cached
-    /// for ~1s (keyed by game id) to keep it out of the per-frame render cost; a repaint
-    /// is scheduled so a game exit or launch flips the state within one interval.
     fn hotkeys_write_blocked(&mut self, entry: &ModEntry, ctx: &egui::Context) -> bool {
         if self.folder_batch_game_busy(&entry.game_id) {
             return true;
@@ -96,10 +86,6 @@ impl HestiaApp {
             self.hotkeys_write_block_cache = None;
             return false;
         };
-        // This is a render-path guard. Do not fall back to `reload_config_status` here: that
-        // fallback resolves the importer root and would defeat the watch deadline after a path
-        // change invalidates the status cache. The d3dx watch refreshes this cache on its next
-        // due pass.
         let use_default = self.state.static_prefs.use_default_mods_path;
         let mods_path = game.mods_path(use_default);
         let config_identity_matches = !importer_root_watch_identity_changed(
@@ -129,8 +115,6 @@ impl HestiaApp {
             self.hotkeys_write_block_cache = None;
             return false;
         }
-        // Keep re-checking while a consent-off XXMI game's List view is on screen so the
-        // block engages/lifts promptly when the game launches or exits.
         ctx.request_repaint_after(TTL);
         let now = ctx.input(|input| input.time);
         if let Some((game_id, blocked, next_check_at)) = &self.hotkeys_write_block_cache
@@ -243,15 +227,6 @@ impl HestiaApp {
         Some(format!("{}\\{var_name}", rel_path.to_ascii_lowercase()))
     }
 
-    /// Live-state mirror set for one mod: the `[Present]` mirrors its helper needs (for
-    /// generation) and the read-back un-mappings that turn helper persist keys in
-    /// `d3dx_user.ini` back into the value cache's keys (for reading).
-    ///
-    /// v1 resolves each shown cycle variable to a `[Constants]` declaration in the same ini
-    /// that binds it (the spec's stated limitation). A variable that ini does not declare
-    /// `global` and non-`persist` is left un-mirrored: `persist` globals already flush on
-    /// their own, and non-`global` vars are not cross-namespace addressable, so the helper
-    /// could neither read nor write them.
     fn mod_mirror_set(
         entry: &ModEntry,
         importer_root: &Path,
@@ -307,10 +282,6 @@ impl HestiaApp {
         (mirrors, readbacks)
     }
 
-    /// Regenerate (or remove) each mod-local live-state helper `hestia.ini` for a game.
-    /// Without fast d3dx_user.ini autosave, or when a mod is inactive, an empty mirror set
-    /// removes that mod's helper so no stale mirroring survives. Cheap when nothing changed
-    /// (hash-compare).
     fn refresh_live_state_helper_for_game(&mut self, game: &GameInstall) {
         if !game.is_xxmi() || self.folder_batch_game_busy(&game.definition.id) {
             return;
@@ -348,13 +319,7 @@ impl HestiaApp {
         }
     }
 
-    /// Poll `d3dx_user.ini` for the mod whose Hotkeys view is open and re-read its values when
-    /// the DLL flushes a change, so the shown live values self-correct within the autosave
-    /// cadence — including changes made with the mod's own in-game hotkeys. A no-op unless the
-    /// fast d3dx_user.ini autosave is active and the game is running (while closed the file is
-    /// not flushed, and editing it there would race the flush).
     fn poll_live_state_watch(&mut self, ctx: &egui::Context) {
-        // Half the 1s autosave interval, so a flush is picked up within ~0.5s.
         const POLL_INTERVAL: f64 = 0.5;
 
         let Some(mod_id) = self.metadata_hotkeys_view.as_ref().map(|(id, _)| id.clone()) else {
@@ -370,9 +335,6 @@ impl HestiaApp {
             return;
         };
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // Do not use `xxmi_live_readback_capable_for_game` here: its cache-miss fallback resolves
-        // the importer root. The d3dx watch owns that deadline-gated resolution, so only consult
-        // its status once the cached identity matches this mod's current game path.
         let mods_path = game.mods_path(use_default);
         let config_identity_matches = !importer_root_watch_identity_changed(
             self.d3dx_reload_config_watch.as_ref().map(|watch| {
@@ -404,13 +366,9 @@ impl HestiaApp {
             return;
         }
 
-        // Keep the frame loop alive so polling continues while the app is otherwise idle.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
         let now = logic_time();
-        // (Re)arm the watch when its mod, game, or effective Mods path changes. The initial
-        // values were already loaded by `select_hotkeys_source`, so just seed the token and wait
-        // for the next flush. Root discovery itself is cached and deadline-gated.
         let identity_changed = self
             .live_state_watch
             .as_ref()
@@ -485,8 +443,6 @@ impl HestiaApp {
             watch.token = token;
         }
         if changed {
-            // Re-read even though the mod's `ini_hash` is unchanged — the flush is off-disk
-            // runtime state, not an edit to the mod's own files.
             self.mod_hotkey_values_loading.remove(&entry.id);
             self.refresh_hotkey_values_cache_for_entry(&entry);
         }

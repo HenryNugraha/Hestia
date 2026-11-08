@@ -128,9 +128,6 @@ fn profile_switcher_control_rect(slot_rect: egui::Rect, pane_top: Option<f32>) -
     )
 }
 
-/// Vertical breathing room between the frame edge and the first/last row. Rows paint a rounded
-/// hover highlight edge to edge, and the bottom corners are the rounded ones, so the padding has to
-/// match top and bottom or the last row reads as clipped against the corner curve.
 const PROFILE_SELECTOR_MENU_PADDING_Y: i8 = 8;
 
 fn profile_selector_menu_frame(style: &egui::Style) -> egui::Frame {
@@ -214,11 +211,6 @@ fn paint_profile_selector_dot(painter: &egui::Painter, center: egui::Pos2, activ
     }
 }
 
-/// Storage tooltip body. `archive_size` is the on-disk archive (or the last known one when the
-/// profile is live again); `uncompressed_size` is the loose payload, summed from the library for
-/// the active profile and remembered on the catalog record for the others. While the profile is
-/// not sitting in its archive the uncompressed size is the number that matters, so it leads and
-/// "No archive yet" only appears when neither size is known.
 fn profile_storage_tooltip_text(
     text: TextCatalog,
     state: ProfileStorageTooltipState,
@@ -353,9 +345,6 @@ fn profile_selector_paused_row(ui: &mut egui::Ui, label: &str, reason: &str) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileTimelineStage {
     Archiving,
-    /// Getting the target profile's files into staging. Depending on where the source lives this
-    /// is an archive extraction or a directory copy, so the row's label follows the worker stage
-    /// rather than being fixed.
     Preparing,
     Switching,
 }
@@ -380,8 +369,6 @@ fn profile_progress_footer_rects(
     (note_rect, cancel_rect)
 }
 
-/// The validation line under the name field. Always takes its row, so the dialog does not jump
-/// when a hint appears or goes away.
 fn profile_name_hint_row(ui: &mut Ui, hint: Option<&str>) {
     const HINT_ROW_HEIGHT: f32 = 18.0;
     ui.add_space(3.0);
@@ -437,9 +424,6 @@ fn profile_timeline_stages(
     }
 }
 
-/// Whether this operation's worker publishes a percentage. Deleting is a single `remove_dir_all`
-/// and renaming touches no files at all, so there is nothing to sample: those show a looping bar
-/// instead of a number that would sit at 0 until the operation finishes.
 fn profile_operation_reports_progress(kind: ProfileOperationKind) -> bool {
     matches!(
         kind,
@@ -449,9 +433,6 @@ fn profile_operation_reports_progress(kind: ProfileOperationKind) -> bool {
     )
 }
 
-/// Whether the preparation row is currently copying files rather than unpacking an archive. Only
-/// meaningful once the worker has entered the copy; the neutral "Preparing" prelude reads as an
-/// extract, which is the label the archive path keeps throughout.
 fn profile_stage_is_copy(stage: &str) -> bool {
     stage.contains("Copying")
 }
@@ -885,7 +866,6 @@ impl HestiaApp {
         } else if blocked {
             duplicate.on_hover_text(paused_tooltip.as_deref().unwrap_or(""));
         }
-        // Read-only, so it stays available while an operation blocks the write actions above.
         let has_profiles_dir = self.selected_game_profiles_dir().is_some();
         let open_folder = profile_selector_action_row(
             ui,
@@ -949,8 +929,6 @@ impl HestiaApp {
         };
         let mut submit = false;
         let mut cancel = false;
-        // Validated every frame against the in-memory catalog, so a taken name is pointed out
-        // while the user types and can never be submitted.
         let mut can_submit = false;
         let constrain_rect = self
             .last_right_pane_rect
@@ -1004,7 +982,6 @@ impl HestiaApp {
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
                         submit = can_submit && enter_pressed;
                         if enter_pressed && !can_submit {
-                            // Enter on a taken name keeps the caret where the fix goes.
                             edit.request_focus();
                         }
                         cancel = ui.input(|input| input.key_pressed(egui::Key::Escape));
@@ -1052,8 +1029,6 @@ impl HestiaApp {
                 Ok(()) => self.clear_profile_name_prompt(),
                 Err(error) => {
                     let close_prompt = Self::profile_error_is_storage_out_of_date(&error);
-                    // A name problem (the catalog changed under the dialog) gets the same
-                    // localized reason the inline hint shows, not the generic failure.
                     let toast = match error.downcast_ref::<ProfileNameError>() {
                         Some(ProfileNameError::Empty) => text.profile_name_empty().to_string(),
                         Some(ProfileNameError::Taken(existing)) => {
@@ -1361,8 +1336,6 @@ impl HestiaApp {
 
                         let row_label = match timeline_stage {
                             ProfileTimelineStage::Archiving => text.archiving_current_profile(),
-                            // Duplicating usually copies a directory rather than unpacking an
-                            // archive; say which one is actually happening.
                             ProfileTimelineStage::Preparing => {
                                 if profile_stage_is_copy(&stage) {
                                     text.copying_selected_profile()

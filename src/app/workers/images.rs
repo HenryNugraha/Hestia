@@ -730,11 +730,6 @@ fn spawn_local_mod_image_worker(
                                             thumb_profile,
                                         )
                                     });
-                                    // PNG-encoding a full-size image is the most
-                                    // expensive step here and only feeds the disk
-                                    // cache, so it is never awaited: leaving it on
-                                    // the reply path delays every full image the UI
-                                    // is waiting on by an encode it does not need.
                                     let portable_for_put = portable.clone();
                                     let cache_key_for_put = full_cache_key.clone();
                                     let limit = cache_limit_bytes.load(Ordering::Relaxed);
@@ -841,9 +836,6 @@ fn spawn_local_mod_image_worker(
                             }
                         }
                         let image_thumb = thumb_bytes.as_deref().and_then(load_cover_color_image);
-                        // Always reported, not just when regenerated: the UI uses
-                        // this to tell "this source has no image" apart from "this
-                        // request was cancelled" and stop re-requesting the former.
                         let _ = tx.send(LocalModImageResult {
                             texture_key,
                             image_full: None,
@@ -955,12 +947,6 @@ fn load_cover_color_image_thumbnail(
         ))
     })
 }
-// Card thumbnails paint to fill a fixed landscape box, so baking them fit-inside
-// (letterboxed) leaves a portrait source far narrower than the box and the paint
-// step then upscales that sliver into a blur. Baking cover — cropping to the box
-// aspect up front, biased toward the top for portraits so the face survives —
-// keeps the thumbnail sharp at any source aspect while the on-disk size stays
-// fixed and small. Mirrors the paint-time `ThumbnailFit::CoverTop` framing.
 fn resize_image_bytes_to_card_cover_png(bytes: &[u8]) -> Result<Vec<u8>> {
     let (target_w, target_h) = ThumbnailProfile::Card.dimensions();
     let image = decode_limited_dynamic_image(bytes)?.into_rgba8();
@@ -978,13 +964,6 @@ fn resize_image_bytes_to_card_cover_png(bytes: &[u8]) -> Result<Vec<u8>> {
     }
     Ok(out)
 }
-// Crop `rgba` to the target aspect ratio (cover), then hand the crop to the
-// shared fit path — which only ever downscales — to reach the target box. A
-// portrait source (taller than wide) biases the crop toward the top, skipping
-// ~8% of headroom so the subject's face/upper body survives instead of the
-// centered torso; anything else crops from the center. The 8% top skip matches
-// `ThumbnailFit::CoverTop` so a baked thumb and a live full-image crop frame the
-// subject identically.
 fn resize_rgba_to_cover_rgba(
     src_w: u32,
     src_h: u32,
@@ -998,11 +977,9 @@ fn resize_rgba_to_cover_rgba(
     let target_aspect = target_w as f32 / target_h as f32;
     let src_aspect = src_w as f32 / src_h as f32;
     let (crop_w, crop_h, x_off, y_off) = if src_aspect > target_aspect {
-        // Wider than the box: trim the sides, keep full height, center horizontally.
         let crop_w = ((src_h as f32 * target_aspect).round() as u32).clamp(1, src_w);
         (crop_w, src_h, (src_w - crop_w) / 2, 0)
     } else if src_aspect < target_aspect {
-        // Taller than the box: trim top/bottom, keep full width.
         let crop_h = ((src_w as f32 / target_aspect).round() as u32).clamp(1, src_h);
         let slack = src_h - crop_h;
         let y_off = if src_w < src_h {
@@ -1021,8 +998,6 @@ fn resize_rgba_to_cover_rgba(
     };
     resize_rgba_to_fit_rgba(crop_w, crop_h, cropped, [target_w, target_h])
 }
-// Copy a `crop_w`x`crop_h` sub-rectangle out of a tightly packed RGBA buffer.
-// The caller guarantees the rectangle lies within `src_w`x(buffer height).
 fn crop_rgba(rgba: &[u8], src_w: u32, x: u32, y: u32, crop_w: u32, crop_h: u32) -> Vec<u8> {
     let row_stride = src_w as usize * 4;
     let crop_row = crop_w as usize * 4;
@@ -1126,9 +1101,6 @@ fn load_icon_color_image(bytes: &[u8]) -> Option<egui::ColorImage> {
 mod cover_crop_tests {
     use super::*;
 
-    // Each pixel encodes its own coordinates: red = x, green = y (mod 251 to stay
-    // inside a u8 and clear of the 255 edge). A crop returned without downscaling
-    // therefore reveals exactly which source column/row landed at its top-left.
     fn marker_rgba(w: u32, h: u32) -> Vec<u8> {
         let mut v = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h {
@@ -1143,17 +1115,16 @@ mod cover_crop_tests {
         (out.2[0], out.2[1])
     }
 
-    // Card box aspect used everywhere below.
     const TW: u32 = 220;
     const TH: u32 = 130;
 
     #[test]
     fn portrait_biases_crop_toward_top() {
         let out = resize_rgba_to_cover_rgba(100, 300, marker_rgba(100, 300), TW, TH).unwrap();
-        assert_eq!((out.0, out.1), (100, 59)); // full width, card-aspect band, no upscale
+        assert_eq!((out.0, out.1), (100, 59));
         let (x, y) = top_left(&out);
-        assert_eq!(x, 0); // width untouched
-        assert_eq!(y, 24); // starts 8% (0.08*300) down, not centered (~120)
+        assert_eq!(x, 0);
+        assert_eq!(y, 24);
     }
 
     #[test]
@@ -1161,36 +1132,34 @@ mod cover_crop_tests {
         let out = resize_rgba_to_cover_rgba(400, 100, marker_rgba(400, 100), TW, TH).unwrap();
         assert_eq!((out.0, out.1), (169, 100));
         let (x, y) = top_left(&out);
-        assert_eq!(x, 115); // (400-169)/2, sides trimmed evenly
-        assert_eq!(y, 0); // full height kept
+        assert_eq!(x, 115);
+        assert_eq!(y, 0);
     }
 
     #[test]
     fn non_portrait_tall_source_centers_vertical_crop() {
-        // Landscape yet narrower than the box aspect: vertical crop, but centered
-        // rather than top-biased (the 8% skip is portrait-only).
         let out = resize_rgba_to_cover_rgba(200, 140, marker_rgba(200, 140), TW, TH).unwrap();
         assert_eq!((out.0, out.1), (200, 118));
-        assert_eq!(top_left(&out).1, 11); // (140-118)/2
+        assert_eq!(top_left(&out).1, 11);
     }
 
     #[test]
     fn exact_aspect_source_is_pure_downscale() {
         let out = resize_rgba_to_cover_rgba(440, 260, marker_rgba(440, 260), TW, TH).unwrap();
-        assert_eq!((out.0, out.1), (TW, TH)); // no crop, just fit
+        assert_eq!((out.0, out.1), (TW, TH));
     }
 
     #[test]
     fn small_source_stays_native() {
         let out = resize_rgba_to_cover_rgba(50, 40, marker_rgba(50, 40), TW, TH).unwrap();
-        assert_eq!((out.0, out.1), (50, 30)); // cropped to aspect, never upscaled
+        assert_eq!((out.0, out.1), (50, 30));
     }
 
     #[test]
     fn extreme_portrait_stays_in_bounds() {
         let out = resize_rgba_to_cover_rgba(10, 1000, marker_rgba(10, 1000), TW, TH).unwrap();
         assert_eq!((out.0, out.1), (10, 6));
-        assert_eq!(top_left(&out).1, 80); // min(0.08*1000, slack)
+        assert_eq!(top_left(&out).1, 80);
     }
 
     #[test]

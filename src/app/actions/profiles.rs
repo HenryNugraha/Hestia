@@ -2,13 +2,9 @@ const PROFILE_STORAGE_FILE_NAME_METADATA_KEY: &str = "profile_storage_file_name"
 const MODS_LOCKED_BLOCK_REASON: &str = "mods are currently locked";
 const PROFILE_STORAGE_OUT_OF_DATE_ERROR: &str = "profile storage is out of date";
 
-/// Why a profile name cannot be used. Travels inside `anyhow::Error` so the name dialog can
-/// downcast it and show the localized reason instead of a generic failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ProfileNameError {
     Empty,
-    /// The stored display name of the profile that already uses the name (which may differ in
-    /// case or be the Default profile under its localized label).
     Taken(String),
 }
 
@@ -25,9 +21,6 @@ impl std::fmt::Display for ProfileNameError {
 
 impl std::error::Error for ProfileNameError {}
 
-/// The stored display name of the profile in `catalog` that already uses `normalized`, ignoring
-/// `except` (the profile being renamed). Comparison is the same case-insensitive, Default-aware
-/// rule the selector uses to tell profiles apart.
 fn profile_name_conflict(
     catalog: Option<&ProfileCatalog>,
     normalized: &str,
@@ -64,9 +57,6 @@ impl HestiaApp {
         Ok(normalized.to_string())
     }
 
-    /// Validation of the name dialog's draft for the selected game, evaluated while the user
-    /// types so a taken name is shown inline and cannot be submitted. `kind` decides which
-    /// profile is exempt: a rename may keep its own name.
     fn profile_name_draft_validation(
         &self,
         kind: ProfileOperationKind,
@@ -106,9 +96,6 @@ impl HestiaApp {
         if kind == ProfileOperationKind::Recover {
             return None;
         }
-        // Recovery could not vouch for this game's storage (an interrupted switch may still
-        // be half-applied), so mutating operations stay off until a recovery pass succeeds.
-        // Recover itself is exempt above, and re-queueing one clears the game from this set.
         if self
             .selected_game()
             .is_some_and(|game| self.profile_recovery_failed_games.contains(&game.definition.id))
@@ -174,8 +161,6 @@ impl HestiaApp {
         reason
     }
 
-    /// Both process guards in one scan. Render callers must go through
-    /// `profile_operation_block_reason_for_render` so this fresh check stays out of the frame loop.
     fn running_process_block_reason(&self) -> Option<&'static str> {
         let game = self.selected_game()?;
 
@@ -189,8 +174,6 @@ impl HestiaApp {
             }
         }
 
-        // A tool launched out of the profile folder keeps file handles open there, which makes the
-        // directory rename in `swap_roots` fail. Block up front rather than failing partway.
         let use_default = self.state.static_prefs.use_default_mods_path;
         let profile_roots: Vec<PathBuf> = game
             .mods_path(use_default)
@@ -202,9 +185,6 @@ impl HestiaApp {
             return None;
         }
 
-        // `exe` and `cmd` are opt-in; without these flags `Process::exe` is always `None` and
-        // Proton/Wine command-line matches would never fire. Everything else stays off so this
-        // stays cheap enough for the UI loop.
         let system = sysinfo::System::new_with_specifics(
             sysinfo::RefreshKind::nothing().with_processes(
                 sysinfo::ProcessRefreshKind::nothing()
@@ -330,8 +310,6 @@ impl HestiaApp {
         })
     }
 
-    /// Profile storage directory for the selected game, if one can be resolved. `None` disables the
-    /// menu entry, which happens when the game has no mods path configured yet.
     fn selected_game_profiles_dir(&self) -> Option<PathBuf> {
         let game = self.selected_game()?;
         profiles::profile_roots(game, self.state.static_prefs.use_default_mods_path)
@@ -354,9 +332,6 @@ impl HestiaApp {
                 return;
             }
         };
-        // A game whose profiles have never been archived has no storage directory yet. Create it
-        // along with the readme that explains the files, so the folder is never opened empty and
-        // unexplained.
         if let Err(err) = profiles::ensure_profile_storage_layout(&roots) {
             self.report_error_message(
                 format!(
@@ -404,11 +379,6 @@ impl HestiaApp {
         }
     }
 
-    /// A profile id no other profile of this game is using.
-    ///
-    /// 32 bits makes a clash vanishingly unlikely but not impossible, and the id is what keeps two
-    /// profiles apart in storage - including two shared ones both called "Default" - so it is
-    /// checked rather than assumed.
     fn unused_profile_id(&self, game_id: &str) -> ProfileId {
         let taken: Vec<ProfileId> = self
             .state
@@ -472,8 +442,6 @@ impl HestiaApp {
             .collect()
     }
 
-    /// Capture the live tool state into the profile that is about to be switched away from, so its
-    /// launch options and pins come back untouched the next time it is activated.
     fn snapshot_active_profile_tools(
         &mut self,
         game_id: &str,
@@ -517,9 +485,6 @@ impl HestiaApp {
         })
     }
 
-    /// Swap the live tool set over to the profile that just became active. Tools whose executable
-    /// is gone are pruned by the tool sync that follows the queued game refresh, so restoring the
-    /// full recorded set here is what preserves launch options for everything that survives.
     fn restore_profile_tools(&mut self, game_id: &str, snapshot: ProfileToolSnapshot) {
         let retired: Vec<String> = self
             .state
@@ -537,8 +502,6 @@ impl HestiaApp {
             .tools
             .extend(Self::sanitize_profile_tools(game_id, snapshot.tools));
 
-        // Two profiles can hold different executables at the same path, so never carry a cached
-        // icon across the swap even when a restored tool keeps its id.
         for tool in self.state.tools.iter().filter(|tool| tool.game_id == game_id) {
             self.tool_icon_textures.remove(&tool.id);
             self.tool_icon_texture_failures.remove(&tool.id);
@@ -553,8 +516,6 @@ impl HestiaApp {
                 .insert(game_id.to_string(), snapshot.blacklist);
         }
 
-        // Restored orders were compacted against the other profile's tool set; rebuild both so the
-        // window list and the four titlebar slots are contiguous and within their limits again.
         self.compact_tool_window_order_for_game(game_id);
         self.enforce_tool_titlebar_limit_for_game(game_id);
         self.compact_tool_titlebar_order_for_game(game_id);
@@ -995,8 +956,6 @@ impl HestiaApp {
             .and_then(|reason| Self::profile_actions_paused_reason_text(text, reason))
     }
 
-    /// Localized toast for a profile operation stopped by open files: the folder the user knows
-    /// (`Mods`) and up to three programs to close, or a generic hint when nothing was attributed.
     fn profile_files_in_use_message(text: TextCatalog, report: &OpenHandleReport) -> String {
         const LISTED_HOLDERS: usize = 3;
         let folder = report.root_label();
@@ -1225,9 +1184,6 @@ impl HestiaApp {
         let target_id = self.unused_profile_id(game_id);
         let active_archive =
             active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok());
-        // A new profile starts empty: no categories and no tools. Its mods folder is empty, so any
-        // inherited tool would either be pruned by the sync that follows or dangle at a path this
-        // profile has nothing at.
         self.begin_profile_operation(
             game_id.to_string(),
             game,
@@ -1308,8 +1264,6 @@ impl HestiaApp {
             .categories
             .clone()
             .or_else(|| Some(active_categories.clone()));
-        // A duplicate is a copy of the source, so it inherits the source's tools; fall back to the
-        // live set when the source predates profile-scoped tools.
         let source_tools = self
             .profile_tool_snapshot_for(game_id, source_id)
             .unwrap_or_else(|| active_tools.clone());
@@ -1332,9 +1286,6 @@ impl HestiaApp {
         )
     }
 
-    /// Total on-disk size of the live mods for `game_id`, summed from the library's per-mod
-    /// fingerprints. `None` when the library has mods but none of them carry a size yet, so a
-    /// stale zero never reads as an empty profile.
     pub(crate) fn library_uncompressed_size(&self, game_id: &str) -> Option<u64> {
         let mut total = 0_u64;
         let mut count = 0_usize;
@@ -1397,9 +1348,6 @@ impl HestiaApp {
         });
         let active_archive =
             active_id.and_then(|id| self.profile_archive_for(game_id, &game, id).ok());
-        // The outgoing profile's loose payload is what the library is showing right now; remember
-        // it so the storage tooltip has a size to report while the profile waits to compress. The
-        // archive metadata replaces it once compression finishes.
         if let Some((id, size)) = active_id.zip(self.library_uncompressed_size(game_id)) {
             if let Some(profile) = self
                 .state
@@ -1505,8 +1453,6 @@ impl HestiaApp {
             }
         }
         let mut renamed_storage_file_name = None;
-        // Inactive profile storage is labelled with the profile name. The active profile lives in
-        // the normal mods folders, so active renames do not touch any inactive same-marker copy.
         if !active_profile
             && let Some(current_storage_file_name) = current_storage_file_name.as_deref()
         {
@@ -1630,9 +1576,6 @@ impl HestiaApp {
 
     fn dispatch_profile_recovery(&mut self) {
         self.profile_recovery_failed_games.clear();
-        // Disabled games are skipped: recovery reads the game's own directories, and a game
-        // the user turned off must not be touched at startup. Re-enabling it in the settings
-        // queues its recovery again.
         self.profile_recovery_queue = self
             .state
             .games
@@ -1743,8 +1686,6 @@ impl HestiaApp {
                 format!("profile recovery could not start: {error:#}"),
                 Some("Profile recovery failed"),
             );
-            // One game failing to even start must not strand the rest of the queue; the
-            // startup launch waits for the queue to drain.
             self.dispatch_next_profile_recovery();
         }
     }
@@ -1772,10 +1713,6 @@ impl HestiaApp {
         }
     }
 
-    /// Restore catalog records for stored profiles the catalog had lost, so they become visible
-    /// and switchable again instead of sitting on disk unreachable. Each record is rebuilt from
-    /// the profile's own embedded metadata; `tools` is deliberately left `None` on profiles that
-    /// predate profile-scoped tools so the usual migration seeds them on first use.
     fn adopt_orphaned_profiles(
         &mut self,
         game_id: &str,
@@ -1885,11 +1822,6 @@ impl HestiaApp {
             {
                 continue;
             }
-            // The embedded name is only refreshed when a profile cycles through being active, so a
-            // profile renamed while archived comes back under its previous name. Keeping a
-            // duplicate name would then be confusing, so disambiguate rather than collide.
-            // Prefer the name on disk: renames keep it current, while the embedded name is
-            // whatever the profile was called the last time its archive was written.
             let preferred = orphan.label.as_deref().unwrap_or(&metadata.display_name);
             let display_name = Self::unique_adopted_profile_name(catalog, preferred);
             let mut portable_metadata = metadata.portable_metadata;
@@ -1909,11 +1841,6 @@ impl HestiaApp {
                 updated_at: orphan.updated_at,
                 portable_metadata,
                 categories: metadata.categories,
-                // Deliberately not adopted from the archive. A profile archive is shareable and
-                // can be dropped into the folder by hand, and a tool entry carries an executable
-                // path and launch arguments - importing those would let a shared archive place a
-                // one-click arbitrary command in the toolbar. Leaving this `None` makes the usual
-                // migration rediscover tools from this profile's own mods folder instead.
                 tools: None,
                 tool_blacklist: None,
             });
@@ -2027,12 +1954,6 @@ impl HestiaApp {
         unreachable!()
     }
 
-    /// Bring stored names back in line with the current catalog after recovery has folded any
-    /// inactive Explorer renames into app state.
-    ///
-    /// The active profile lives in the normal mods folders, so same-id storage under
-    /// `Mods_Profiles` is stale and is removed. Inactive profiles keep exactly one readable storage
-    /// name that follows the catalog name.
     fn sync_profile_storage_labels(&mut self, game_id: &str) {
         let Some(game) = self
             .state
@@ -2276,8 +2197,6 @@ impl HestiaApp {
                         _ => None,
                     };
                     self.consume_foreground_profile_event(event, inflight);
-                    // The failure only blocks profile operations for this game; startup and
-                    // every other game continue normally.
                     if let Some(game_id) = recovery_blocked_game {
                         self.profile_recovery_failed_games.insert(game_id);
                     }
@@ -2333,9 +2252,6 @@ impl HestiaApp {
                         blacklist: marker.tool_blacklist.clone().unwrap_or_default(),
                     })
                 });
-                // A newly-created XXMI profile starts with a clean generated d3dx_user.ini
-                // (written by the worker after the swap committed); its record must carry
-                // the same snapshot so it never inherits another profile's file by omission.
                 let create_clean_snapshot = kind == ProfileOperationKind::Create
                     && self.state.static_prefs.preserve_mod_settings
                     && self
@@ -2538,8 +2454,6 @@ impl HestiaApp {
                 for warning in warnings {
                     self.report_error_message(warning, Some("Profile data preserved"));
                 }
-                // Say so rather than having profiles quietly appear: an adopted profile means the
-                // catalog had lost track of data that was on disk the whole time.
                 if !adopted.is_empty() {
                     let text = self.text();
                     for name in &adopted {
@@ -2575,8 +2489,6 @@ impl HestiaApp {
                 let text = self.text();
                 match files_in_use {
                     Some(report) => {
-                        // The toast names what to close; the log keeps the exact paths for
-                        // the user who wants to know which file it was.
                         let toast = Self::profile_files_in_use_message(text, &report);
                         self.report_error_message(
                             format!("profile operation failed for {game_id}: {error}"),
@@ -2879,9 +2791,6 @@ mod profile_process_guard_tests {
         ));
     }
 
-    /// `Process::exe` is opt-in on the refresh kind. If the `with_exe` flag is ever dropped from
-    /// `running_process_block_reason`, every `exe()` silently becomes `None` and the guard that
-    /// stops a profile swap while a tool holds the folder open would never fire again.
     #[test]
     fn process_refresh_kind_populates_exe_paths() {
         let system = sysinfo::System::new_with_specifics(

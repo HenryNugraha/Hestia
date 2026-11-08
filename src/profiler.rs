@@ -1,10 +1,3 @@
-//! Frame profiling, compiled only with `--features profile`.
-//!
-//! Serves live profile data for `puffin_viewer` on 127.0.0.1:8585. When
-//! `HESTIA_PROFILE_DUMP=<path>` is set, additionally rewrites an aggregated
-//! per-scope text report at that path every few seconds, so a capture survives
-//! killing the app and needs no viewer.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -15,7 +8,6 @@ pub fn init() {
     match puffin_http::Server::new("127.0.0.1:8585") {
         Ok(server) => {
             tracing::info!("puffin server listening on 127.0.0.1:8585");
-            // Serve for the lifetime of the process.
             std::mem::forget(server);
         }
         Err(err) => tracing::warn!("failed to start puffin server: {err}"),
@@ -23,8 +15,6 @@ pub fn init() {
 
     if let Some(path) = std::env::var_os("HESTIA_PROFILE_DUMP") {
         let view = puffin::GlobalFrameView::default();
-        // Packing saves RAM for long captures but re-unpacking every dump would
-        // burn CPU inside the very frames being measured.
         view.lock().set_pack_frames(false);
         let path = PathBuf::from(path);
         std::thread::Builder::new()
@@ -117,8 +107,6 @@ fn build_report(frames: &puffin::FrameView) -> String {
     report
 }
 
-/// Walks scopes recursively, accumulating inclusive and self time per scope
-/// name. Returns the summed inclusive time of the scopes at this level.
 fn accumulate(
     stream: &puffin::Stream,
     reader: puffin::Reader<'_>,

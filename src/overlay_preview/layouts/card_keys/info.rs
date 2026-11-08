@@ -1,9 +1,3 @@
-//! The info side of a card's back: the mod's description, personal note or
-//! one of its text files, read-only.  The header picks which, like the
-//! source menu in the mod's details, and Space moves to the next.  The text
-//! scrolls by lines, with W and S or the wheel over it.  Notes are written in
-//! Hestia's window.
-
 use std::collections::HashMap;
 
 use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
@@ -16,23 +10,17 @@ use super::{CardKeys, paint_scrollbar};
 use crate::app::TextKey;
 use crate::overlay_protocol::{InfoKind, InfoSource, ModInfo};
 
-/// Lines one step of W, S or the wheel scrolls.
 pub(in crate::overlay_preview::layouts) const STEP_LINES: usize = 3;
 const MENU_ROW: f32 = 24.0;
 
 #[derive(Default)]
 pub(super) struct CardInfo {
-    /// Mods' sources with text, by id, once Hestia has sent them.
     sources: HashMap<String, Vec<InfoSource>>,
-    /// The source each mod shows.
     shown: HashMap<String, usize>,
-    /// The source menu is open on the card showing its info.
     menu: bool,
 }
 
 impl CardInfo {
-    /// Keeps the source the card showed when it's still there, else shows
-    /// the one Hestia picked.
     pub(super) fn receive(&mut self, answer: ModInfo) {
         let picked = answer.sources.get(answer.shown).map(same_source);
         let before = self
@@ -81,8 +69,6 @@ impl CardInfo {
         self.shown.get(mod_id).copied().unwrap_or(0)
     }
 
-    /// Shows the next source, after the last the first.  False when there's
-    /// only one.
     pub(super) fn next_source(&mut self, mod_id: &str) -> bool {
         let count = self.list(mod_id).len();
         if count < 2 {
@@ -120,13 +106,10 @@ fn icon_font() -> FontId {
 }
 
 impl CardKeys {
-    /// How many sources the mod's info has.
     pub(in crate::overlay_preview::layouts) fn info_sources(&self, mod_id: &str) -> usize {
         self.info.list(mod_id).len()
     }
 
-    /// Shows the next source on the card showing its info.  False when
-    /// there's none to move to.
     pub(in crate::overlay_preview::layouts) fn next_info_source(&mut self) -> bool {
         let Some(flip) = self
             .flip
@@ -143,8 +126,6 @@ impl CardKeys {
         true
     }
 
-    /// The source in `header` and its text in `body`, from the scrolled-to
-    /// line.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn paint_info(
         &mut self,
@@ -165,7 +146,6 @@ impl CardKeys {
         };
         let several = sources.len() > 1;
 
-        // The header: what shows, and a menu of the others when there are.
         let label = elided_galley(
             ui,
             source_label(source),
@@ -232,7 +212,6 @@ impl CardKeys {
             );
         }
 
-        // The text, as many whole lines as fit.
         let mut job = egui::text::LayoutJob::simple(
             source.text.clone(),
             FontId::proportional(12.0),
@@ -283,8 +262,6 @@ impl CardKeys {
         }
     }
 
-    /// The open source menu under `header`, over everything else on the
-    /// card.  A click off it closes it.
     pub(super) fn paint_info_menu(
         &mut self,
         ui: &Ui,
@@ -444,7 +421,6 @@ mod tests {
         info.receive(answer(sources.clone(), 0));
         assert!(info.next_source("some"));
         assert_eq!(info.shown("some"), 1);
-        // A note written since comes before the files.
         let mut with_note = sources;
         with_note.insert(1, source(InfoKind::Note, "note.md", "Mine"));
         info.receive(answer(with_note, 0));

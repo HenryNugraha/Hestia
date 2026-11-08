@@ -42,7 +42,6 @@ fn main() -> anyhow::Result<()> {
     );
     let live_overlay = std::env::args_os().any(|arg| arg == overlay_protocol::OVERLAY_ARG);
     if live_overlay {
-        // Stdout carries the messages to Hestia.
         let _ = fmt()
             .with_env_filter(log_filter)
             .with_writer(std::io::stderr)
@@ -57,20 +56,12 @@ fn main() -> anyhow::Result<()> {
     if manifest_cli::try_run()? {
         return Ok(());
     }
-    // Keep layout experiments independent of the normal startup, saved state,
-    // single-instance guard, and game integrations.
     if std::env::args_os().any(|arg| arg == "--overlay-preview") {
         return overlay_preview::run();
     }
-    // The in-game overlay Hestia starts while a game runs.  Like the preview,
-    // it never loads or saves Hestia's state.
     if live_overlay {
         return overlay_preview::run_live();
     }
-    // A main-thread panic takes the process down without `on_exit`, which must not leave a
-    // synthetic XXMI reload/hotkey press stuck (3DMigoto would keep reloading every frame).
-    // Worker-thread panics unwind through the sender's own drop guard, so only the main
-    // thread flips the shutdown flag here.
     {
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -164,15 +155,8 @@ fn main() -> anyhow::Result<()> {
     let renderer_selection = renderer::select(&portable, state.static_prefs.renderer);
     let auto_renderer_label = renderer_selection.auto_label;
     let renderer_boot_unconfirmed = renderer_selection.breadcrumb_pending;
-    // eframe injects the display handle at instance creation time.
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup.instance_descriptor.backends = renderer_selection.backends;
-    // Rendering on a GPU other than the one that drives the window's monitor
-    // costs a full cross-adapter copy every present, which pins both GPUs on a
-    // multi-GPU box. So instead of a blanket power-preference hint (which
-    // hardcoded the iGPU and produced exactly that copy whenever the window sat
-    // on a dedicated-GPU display), pick the adapter ourselves: `Auto` matches
-    // the display's GPU, and an explicit preference forces integrated/dedicated.
     let renderer_gpu = renderer_selection.gpu;
     let display_pci = if renderer_gpu == renderer::GpuTarget::MatchDisplay {
         let pos = if state.static_prefs.window_maximized {

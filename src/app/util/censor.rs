@@ -1,29 +1,14 @@
-/// The shorter side of a censored picture's copy, in pixels.  Stretched over a
-/// card, a copy this small looks like a strong blur: colors and rough shapes,
-/// nothing more.
 const CENSOR_COPY_SHORT_SIDE: usize = 32;
 
-/// How many points of the picture each copy pixel averages, along each side.
-/// A fixed count keeps a copy just as cheap for a large picture as a small one.
 const CENSOR_COPY_SAMPLES: usize = 4;
 
-/// Censored copies are covered with this dark color at this opacity, out of
-/// 255.  The blur already hides the picture, so this only keeps a censored card
-/// darker than the rest.
 const CENSOR_COVER: [u32; 3] = [12, 12, 14];
 const CENSOR_COVER_ALPHA: u32 = 150;
 
-/// The shorter side of the blurred cover behind windows open over the right
-/// pane, in pixels.  Larger than a censored copy, so the cover stays
-/// recognizable, just soft.
 const BACKDROP_COPY_SHORT_SIDE: usize = 96;
 
-/// How far the blurred cover's colors move toward grey, in percent: 0 keeps
-/// them, 100 is fully grey.
 const BACKDROP_DESATURATE_PERCENT: u32 = 30;
 
-/// A tiny, blurred and darkened copy of a picture, drawn in its place while
-/// it is censored.  The main window and the overlay both use it.
 pub(crate) fn censor_copy(image: &egui::ColorImage) -> egui::ColorImage {
     let Some((size, pixels)) = shrunk_blurred_copy(image, CENSOR_COPY_SHORT_SIDE) else {
         return image.clone();
@@ -31,7 +16,6 @@ pub(crate) fn censor_copy(image: &egui::ColorImage) -> egui::ColorImage {
     let pixels = pixels
         .into_iter()
         .map(|[red, green, blue, alpha]| {
-            // The colors carry their alpha already, so the cover does too.
             let darken = |channel: u32, cover: u32| {
                 (channel * (255 - CENSOR_COVER_ALPHA) / 255
                     + cover * CENSOR_COVER_ALPHA * alpha / (255 * 255)) as u8
@@ -47,9 +31,6 @@ pub(crate) fn censor_copy(image: &egui::ColorImage) -> egui::ColorImage {
     egui::ColorImage::new(size, pixels)
 }
 
-/// A small, blurred and washed-out copy of a game cover, faded in over the
-/// cover while a window is open over the right pane.  The pane darkens it
-/// separately.
 pub(crate) fn backdrop_copy(image: &egui::ColorImage) -> egui::ColorImage {
     let Some((size, pixels)) = shrunk_blurred_copy(image, BACKDROP_COPY_SHORT_SIDE) else {
         return image.clone();
@@ -57,8 +38,6 @@ pub(crate) fn backdrop_copy(image: &egui::ColorImage) -> egui::ColorImage {
     let pixels = pixels
         .into_iter()
         .map(|[red, green, blue, alpha]| {
-            // The grey of the same brightness.  The colors carry their alpha
-            // already, and so does this mix of them.
             let grey = (299 * red + 587 * green + 114 * blue) / 1000;
             let desaturate = |channel: u32| {
                 (channel * (100 - BACKDROP_DESATURATE_PERCENT)
@@ -76,9 +55,6 @@ pub(crate) fn backdrop_copy(image: &egui::ColorImage) -> egui::ColorImage {
     egui::ColorImage::new(size, pixels)
 }
 
-/// Shrinks a picture so its shorter side is `short_side` (smaller pictures
-/// keep their size) and softens it.  Stretched back over the picture's place,
-/// the copy looks like a strong blur.  None for an empty picture.
 fn shrunk_blurred_copy(
     image: &egui::ColorImage,
     short_side: usize,
@@ -95,8 +71,6 @@ fn shrunk_blurred_copy(
         (scaled(width), scaled(height))
     };
 
-    // Pictures load while Hestia draws, so this stays plain loops over points
-    // worked out once: debug builds don't optimize closures and iterators.
     let columns = censor_copy_sample_points(width, copy_width);
     let rows = censor_copy_sample_points(height, copy_height);
     let count = (CENSOR_COPY_SAMPLES * CENSOR_COPY_SAMPLES) as u32;
@@ -121,7 +95,6 @@ fn shrunk_blurred_copy(
         }
     }
 
-    // Soften the edges between copy pixels, twice in each direction.
     for _ in 0..2 {
         censor_copy_blur(&mut pixels, copy_width, copy_height, true);
         censor_copy_blur(&mut pixels, copy_width, copy_height, false);
@@ -129,9 +102,6 @@ fn shrunk_blurred_copy(
     Some(([copy_width, copy_height], pixels))
 }
 
-/// The points along one side of a picture that the copy averages:
-/// `CENSOR_COPY_SAMPLES` in a row for each copy pixel, spread evenly over the
-/// part of the picture that pixel stands for.
 fn censor_copy_sample_points(side: usize, copy_side: usize) -> Vec<usize> {
     let mut points = Vec::with_capacity(copy_side * CENSOR_COPY_SAMPLES);
     for copy_index in 0..copy_side {
@@ -145,8 +115,6 @@ fn censor_copy_sample_points(side: usize, copy_side: usize) -> Vec<usize> {
     points
 }
 
-/// A 1-2-1 blur along each row, or down each column; the edges repeat their
-/// last pixel.
 fn censor_copy_blur(pixels: &mut [[u32; 4]], width: usize, height: usize, along_rows: bool) {
     let source = pixels.to_vec();
     for y in 0..height {
@@ -188,7 +156,6 @@ mod censor_copy_tests {
         assert_eq!(wide.size, [57, 32]);
         let tall = censor_copy(&plain(1080, 1920, egui::Color32::WHITE));
         assert_eq!(tall.size, [32, 57]);
-        // Small pictures keep their size; there is nothing to shrink.
         let small = censor_copy(&plain(20, 10, egui::Color32::WHITE));
         assert_eq!(small.size, [20, 10]);
         let empty = censor_copy(&plain(0, 0, egui::Color32::WHITE));
@@ -198,7 +165,6 @@ mod censor_copy_tests {
     #[test]
     fn censored_pictures_darken_without_turning_black() {
         let copy = censor_copy(&plain(64, 64, egui::Color32::from_rgb(255, 0, 128)));
-        // A plain picture only darkens, edges included.
         assert!(
             copy.pixels
                 .iter()
@@ -208,7 +174,6 @@ mod censor_copy_tests {
 
     #[test]
     fn censored_pictures_lose_their_details() {
-        // A fine black and white checkerboard blurs into an even grey.
         let pixels = (0..64 * 64)
             .map(|index| {
                 let (x, y) = (index % 64, index / 64);
@@ -229,13 +194,11 @@ mod censor_copy_tests {
     fn backdrop_copies_wash_out_colors_without_darkening() {
         let copy = backdrop_copy(&plain(1920, 1080, egui::Color32::from_rgb(255, 0, 128)));
         assert_eq!(copy.size, [171, 96]);
-        // Pink moves 30% of the way to the grey of its brightness (90).
         assert!(
             copy.pixels
                 .iter()
                 .all(|pixel| pixel.to_array() == [205, 27, 116, 255])
         );
-        // Greys keep their brightness.
         let grey = backdrop_copy(&plain(640, 360, egui::Color32::from_gray(120)));
         assert!(
             grey.pixels

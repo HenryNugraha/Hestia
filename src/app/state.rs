@@ -8,8 +8,6 @@ struct ToastEntry {
     message: String,
     is_error: bool,
     created_at: f64,
-    /// Optional button rendered on the toast; actionable toasts stay up longer and are the only
-    /// ones that accept pointer input.
     action: Option<ToastAction>,
 }
 
@@ -48,18 +46,13 @@ enum XxmiReloadEvent {
     Failed { game_id: String, message: String },
 }
 
-/// Tracks the `d3dx_user.ini` change signal for the mod whose Hotkeys view is open, so the
-/// shown live values self-correct within the autosave cadence without re-reading every frame.
 struct LiveStateWatch {
     mod_id: String,
     game_id: String,
     use_default: bool,
     mods_path: Option<PathBuf>,
     importer_root: Option<PathBuf>,
-    /// Last observed `(mtime, len)` of `d3dx_user.ini`; `None` until the first poll (or when
-    /// the file is absent). A different token means the DLL flushed new persist values.
     token: Option<(std::time::SystemTime, u64)>,
-    /// Next `ctx` time (seconds) at which to poll, throttling stat calls to the cadence below.
     next_poll_at: f64,
 }
 
@@ -127,9 +120,6 @@ enum HotkeyCustomizationRequest {
         game: GameInstall,
         use_default: bool,
         entry: ModEntry,
-        /// Live-state mirror un-mappings for this mod: each maps a helper persist key in
-        /// `d3dx_user.ini` back to the mod-relative key the value cache expects. Empty when
-        /// live-state is off or the mod has no mirrorable shown variables.
         mirrors: Vec<xxmi_persist::MirrorReadback>,
     },
     SetValue {
@@ -229,12 +219,7 @@ type LibraryCardRow = (
 struct LibraryCardCache {
     key: Option<u64>,
     rows: Arc<Vec<LibraryCardRow>>,
-    /// Last immutable grouped matching evidence used while rebuilding cards.
-    /// This is transient UI state; the persisted source metadata remains the
-    /// authority for the next refresh.
     evidence: HashMap<String, CachedUpdateEvidence>,
-    /// Cache key for `evidence`. It may be populated before the card rows when
-    /// folder selection needs the same grouped matching result.
     evidence_key: Option<u64>,
 }
 
@@ -243,21 +228,11 @@ struct CachedUpdateEvidence {
     state: ModUpdateState,
     signature: Option<IgnoredUpdateSignature>,
     prearmed_signature: Option<IgnoredUpdateSignature>,
-    /// Active, downloadable GameBanana files that are newer than this mod's
-    /// known installed archive baseline.  This is deliberately separate from
-    /// the smart matcher result: it is a passive availability signal only.
     newer_files: Vec<gamebanana::ModFile>,
     installed_files: Vec<TrackedFileMeta>,
-    /// Files other mods from the same page have, or will have once their
-    /// pending update installs.  They are kept out of `newer_files`.
     other_mods_files: Vec<u64>,
-    /// One immutable profile is shared by all cached peers in a GameBanana
-    /// group so file review and matching inspect the same catalog.
     profile: Option<Arc<gamebanana::ProfileResponse>>,
     profile_cached_at: Option<DateTime<Utc>>,
-    /// Transient: a Thalia answer for this exact context is still on its way.
-    /// `newer_files` is held back meanwhile so the blue notice does not show
-    /// and then vanish once Thalia answers `current`.
     thalia_pending: bool,
 }
 
@@ -369,8 +344,6 @@ pub struct HestiaApp {
     show_modified_locally_mods: bool,
     show_ignoring_update_mods: bool,
     selected_category_folder_id: Option<String>,
-    /// The category folder the library last went back out of, which the forward button opens
-    /// again.
     category_folder_forward_id: Option<String>,
     selected_library_folder_ids: HashSet<String>,
     library_folder_selection_anchor: Option<String>,
@@ -390,32 +363,14 @@ pub struct HestiaApp {
     dragging_mod_ids: Vec<String>,
     current_view: ViewMode,
     settings_open: bool,
-    /// Bumped to give the Settings window a fresh egui area (and so its default
-    /// rect) when the user resets its layout; same for the two detail windows.
     settings_window_nonce: u64,
     mod_detail_window_nonce: u64,
     browse_detail_window_nonce: u64,
-    /// API name of the renderer actually in use this session ("DirectX 12",
-    /// "Vulkan", "Metal", "OpenGL"), shown in settings next to the preference.
-    /// Compared against the predicted label to decide whether a restart would
-    /// change anything, so this stays the bare API name.
     active_renderer_label: &'static str,
-    /// GPU the UI actually landed on, appended to the label for display only.
-    /// `None` under glow, which never reports an adapter.
     active_renderer_device: Option<String>,
-    /// Which kind of GPU the UI landed on, so settings can tell whether an
-    /// integrated/dedicated selection differs from what is running. `None` under
-    /// glow, or when the adapter is neither integrated nor discrete.
     active_renderer_gpu: Option<GpuChoice>,
-    /// API name Auto would resolve to on this machine, probed at startup; used
-    /// to hide the restart button when a selection changes nothing.
     auto_renderer_label: &'static str,
-    /// Renderer preference the app booted with; a differing current preference
-    /// offers a restart button in settings.
     boot_renderer_pref: RendererPreference,
-    /// A renderer boot breadcrumb is on disk waiting to be cleared. Stays true
-    /// until enough passes have run to call this renderer working; if the
-    /// process dies first, the next launch demotes to the next rung.
     renderer_boot_unconfirmed: bool,
     proxy_url_draft: String,
     proxy_url_validation_error: Option<String>,
@@ -433,8 +388,6 @@ pub struct HestiaApp {
     last_titlebar_rect: Option<egui::Rect>,
     last_right_pane_rect: Option<egui::Rect>,
     mod_detail_focus_requested: bool,
-    /// The mod whose details should open their category menu once drawn, from
-    /// the mod menu's Categories.
     mod_detail_category_picker_pending: Option<String>,
     browse_detail_focus_requested: bool,
     mod_detail_editing: bool,
@@ -443,34 +396,20 @@ pub struct HestiaApp {
     mod_detail_edit_target_id: Option<String>,
     mod_detail_rename_focus_target_id: Option<String>,
     mod_detail_edit_name: String,
-    // mod id -> (ini_hash when computed, whether the mod's .ini has keybind sections)
     mod_keybinds_available_cache: HashMap<String, (Option<String>, bool)>,
-    // (mod id, parsed keybind sections) when "Hotkeys" is shown inline as the source.
     metadata_hotkeys_view: Option<(String, Vec<ModConfigIni>)>,
-    // mod id -> (ini_hash when read, persisted customization values from d3dx_user.ini)
     mod_hotkey_values_cache: HashMap<String, (Option<String>, HashMap<String, String>)>,
     mod_hotkey_values_loading: HashSet<String>,
-    // Live-state watch: while the Hotkeys view is open for a mod whose game has the folded
-    // consent on and is running, poll `d3dx_user.ini` for changes and re-read on flush.
     live_state_watch: Option<LiveStateWatch>,
-    // The in-game overlay, while a supported game runs.
     game_overlay: GameOverlay,
-    // Active XXMI game's root d3dx.ini status, shown in Settings and used to prompt when the
-    // saved consent is on but the file no longer has the required values.
     d3dx_reload_status_cache: Option<D3dxReloadStatusCache>,
     d3dx_reload_config_watch: Option<D3dxReloadConfigWatch>,
-    // Throttled game process checks shared by render/update paths that only need UI-fresh state.
     game_process_running_cache: HashMap<String, GameProcessRunningCache>,
-    // Render-only cache for profile process guards; actual profile operations re-check fresh.
     profile_process_block_cache: Option<ProfileProcessBlockCache>,
     profile_storage_status_cache:
         HashMap<(String, ProfileId, PathBuf, PathBuf), ProfileStorageStatusCacheEntry>,
-    // Throttled cache for the Hotkeys List write-block check (game running + consent off),
-    // so the render path doesn't enumerate processes every frame: (game id, blocked, next check).
     hotkeys_write_block_cache: Option<(String, bool, f64)>,
     hotkey_customization_tx: WorkerTx<HotkeyCustomizationRequest>,
-    /// The game of each request the hotkey worker has, and the overlay's number for a press it
-    /// asked for.
     hotkey_requests_inflight: VecDeque<(String, Option<u64>)>,
     hotkey_customization_rx: WorkerRx<HotkeyCustomizationEvent>,
     hotkey_clear_inflight: HashSet<String>,
@@ -512,8 +451,6 @@ pub struct HestiaApp {
     log_display_cache: LogDisplayCache,
     tools_window_nonce: u64,
     tools_force_default_pos: bool,
-    /// Auto-detected tools that arrived with a mod install and have not been looked at yet. Drives
-    /// the "New" badge in the Tools window; cleared once that window closes.
     new_tool_ids: HashSet<String>,
     tools_new_badges_shown: bool,
     tool_launch_options_prompt: Option<ToolLaunchOptionsPrompt>,
@@ -549,16 +486,12 @@ pub struct HestiaApp {
     game_icon_textures: HashMap<String, egui::TextureHandle>,
     tool_icon_textures: HashMap<String, egui::TextureHandle>,
     game_cover_textures: HashMap<String, egui::TextureHandle>,
-    /// Blurred copies of the game covers, faded in while a window is open over
-    /// the right pane. See `backdrop_copy`.
     game_cover_backdrop_textures: HashMap<String, egui::TextureHandle>,
     mod_thumbnail_placeholder: Option<egui::TextureHandle>,
     mod_cover_textures: HashMap<String, egui::TextureHandle>,
     mod_full_textures: HashMap<String, egui::TextureHandle>,
     browse_image_textures: HashMap<String, egui::TextureHandle>,
     browse_thumb_textures: HashMap<String, egui::TextureHandle>,
-    /// Blurred copies of the pictures above, by the picture they copy, drawn
-    /// in place of a censored picture. See `censor_copy`.
     censored_copies: HashMap<egui::TextureId, egui::TextureHandle>,
     icon_request_tx: WorkerTx<IconRequest>,
     icon_result_rx: WorkerRx<IconResult>,
@@ -572,18 +505,8 @@ pub struct HestiaApp {
     pending_mod_image_requests: HashSet<String>,
     pending_mod_image_queue: Vec<LocalModImageRequest>,
     pending_image_loads: HashSet<String>,
-    /// Keys with a dispatched `FullOnly` request. `pending_mod_image_queue` only
-    /// dedupes what is still queued, so without this a per-frame caller re-sends
-    /// the same full-size decode every frame until the first one returns.
     inflight_full_image_requests: HashSet<String>,
-    /// Mods whose card-thumbnail source produced no image. A new source identity
-    /// retries immediately, so this never needs explicit invalidation; a source
-    /// that merely failed retries after a cooldown, since the cause can be
-    /// transient (an image cache entry that has not been written yet).
     mod_thumb_unavailable: HashMap<String, ModThumbFailure>,
-    /// `pending_mod_image_queue` length at the end of `logic`, so the end of `ui`
-    /// can tell whether rendering queued image work that nothing will dispatch
-    /// until another frame runs.
     image_queue_len_after_logic: usize,
     pending_icon_requests: HashSet<String>,
     cover_request_tx: WorkerTx<CoverRequest>,
@@ -624,14 +547,8 @@ pub struct HestiaApp {
     pending_browse_install_safety: HashMap<u64, bool>,
     pending_browse_install_meta: HashMap<u64, PendingBrowseInstallMeta>,
     thalia_install_bundles: Vec<ThaliaInstallBundle>,
-    /// Install jobs for files Thalia said go in their own folder. They are
-    /// named after the archive's folder, and an existing copy is kept.
     thalia_separate_install_jobs: HashSet<u64>,
-    /// Bundle downloads canceled while still running. If one finishes
-    /// anyway, its archive is dropped instead of installed on its own.
     thalia_canceled_bundle_tasks: HashSet<u64>,
-    /// What each combined bundle folder held when it was checked, so the
-    /// install refuses files changed afterwards.
     thalia_bundle_manifests: HashMap<u64, Arc<importing::bundle::FolderManifest>>,
     gif_rewritten_markdown_cache: HashMap<String, String>,
     markdown_dependency_signature_cache: HashMap<String, (String, Instant)>,
@@ -653,8 +570,6 @@ pub struct HestiaApp {
     translation_request_nonce: u64,
     cancelled_translation_requests: HashSet<u64>,
     my_mods_translation_state: HashMap<String, MyModTranslationState>,
-    // MY MODS update log (ported from Browse's Updates section), keyed by GameBanana
-    // mod id. `my_mod_updates_inflight` de-dupes concurrent fetches for the same mod.
     my_mod_updates: HashMap<u64, MyModUpdatesState>,
     my_mod_updates_inflight: HashSet<u64>,
     update_check_tx: WorkerTx<UpdateCheckRequest>,
@@ -664,8 +579,6 @@ pub struct HestiaApp {
     update_check_active_items: Vec<UpdateCheckItem>,
     pending_update_check_game: Option<String>,
     pending_update_check_mods: HashSet<String>,
-    // Mods linked by hand while unlinked and uncategorized; they go into their
-    // GameBanana category once the link's first page fetch comes back.
     pending_link_category_mods: HashSet<String>,
     thalia_matching: ThaliaMatchingState,
     refresh_request_tx: WorkerTx<RefreshRequest>,
@@ -708,13 +621,8 @@ pub struct HestiaApp {
     window_state_cache: Option<WindowStateSnapshot>,
     window_state_last_save: f64,
     window_was_maximized: bool,
-    /// The zoom the window's position and size were measured at.  They are
-    /// still in the old zoom's units on the frame a new zoom lands.
     window_zoom: f32,
-    /// The smallest window size last asked of Windows, in points.
     window_min_size: Option<egui::Vec2>,
-    /// Trailing-debounce deadline (egui input time) for writing changed
-    /// `static_prefs.floating_windows` to disk; `None` when nothing is pending.
     floating_window_save_due: Option<f64>,
     selection_empty_at: Option<f64>,
     startup_scan_loading: bool,
@@ -763,7 +671,6 @@ struct D3dxForegroundConflictPrompt {
     game_id: String,
     game_name: String,
     path: PathBuf,
-    /// The pre-existing `[System]` values (`key`, `value`) enabling would stash and replace.
     fields: Vec<(String, String)>,
 }
 
@@ -782,17 +689,9 @@ struct PendingInstallFinalize {
     rel_paths: Vec<String>,
     pending_meta: Option<PendingBrowseInstallMeta>,
     pending_unsafe: bool,
-    /// Requested state captured when this job was queued.  It must not be
-    /// reread from preferences after a queued install starts.
     install_state: ModInstallState,
     preserve_existing_state: bool,
-    /// Existing states captured before Replace/Merge, keyed by both possible
-    /// active/disabled output roots so refresh can restore a replacement
-    /// without publishing it active during the filesystem swap.
     preserved_states: Vec<(PathBuf, ModStatus)>,
-    /// Category folder the user was drilled into when the install was queued.
-    /// Applied to the new mod(s) only for external installs (no GameBanana
-    /// listing to derive a category from). See `finalize_install_after_refresh`.
     target_category_id: Option<String>,
 }
 
@@ -804,12 +703,8 @@ struct InstallJob {
     title: Option<String>,
     reuse_existing_task: bool,
     install_state: ModInstallState,
-    /// Normal Replace/Merge and update installs preserve an existing target's
-    /// state.  Explicit Enable/Disable requests set this to false.
     preserve_existing_state: bool,
     preserved_states: Vec<(PathBuf, ModStatus)>,
-    /// Open category folder captured at enqueue time; see `target_category_id`
-    /// on `PendingInstallFinalize`.
     category_id: Option<String>,
 }
 
@@ -838,8 +733,6 @@ struct BrowseState {
     selected_character_category: Option<BrowseCharacterCategory>,
     details: HashMap<u64, Arc<BrowseDetailCache>>,
     loading_details: HashMap<u64, Instant>,
-    /// Last detail request attempt per mod. This transient cooldown prevents a
-    /// failed profile request from being retried on every Browse repaint.
     detail_request_attempts: HashMap<u64, Instant>,
     pending_installs: Vec<PendingBrowseInstall>,
     pending_file_review: Option<PendingModFileReview>,
@@ -875,10 +768,7 @@ struct BrowseCard {
 #[derive(Clone)]
 struct BrowseDetailCache {
     profile: gamebanana::ProfileResponse,
-    /// Profile namespace (Mod vs Tool), because their numeric IDs can collide.
     is_tool: bool,
-    /// Set only when the profile was fetched from the network. Cached and
-    /// fallback profiles have no reliable observation time.
     profile_cached_at: Option<DateTime<Utc>>,
     markdown: String,
     unsafe_content: bool,
@@ -916,11 +806,6 @@ enum BrowseUpdatesState {
     Failed(String),
 }
 
-/// MY MODS update-log state, keyed by GameBanana mod id. Absence from the map means
-/// "never requested". `fetched_at` drives the in-memory 30-minute refresh window;
-/// `attempted_at` throttles retries after a hard failure. Entries reuse
-/// [`BrowseUpdateEntry`]. A cache fallback after a failed refresh is transparent —
-/// it lands as `Ready` with the cached entries, so the UI mirrors Browse exactly.
 #[derive(Clone)]
 enum MyModUpdatesState {
     Loading,
@@ -947,29 +832,14 @@ struct PendingBrowseInstall {
     thalia_plan: Option<ThaliaInstallPlan>,
 }
 
-/// An automatic Thalia update and the extra files it needs. Every download
-/// is held until all of them finished. Then all files are checked and the
-/// mod's folder is built once in a scratch folder (the update plus every file
-/// merged into it), so the mod itself is swapped in one step. Separate
-/// folders install first, the mod last. The first failure cancels whatever
-/// has not run yet. Bundles live in memory only; a restart drops them and
-/// their tasks cannot be retried one by one.
 struct ThaliaInstallBundle {
-    /// Install worker job that checks and combines the files.
     key: u64,
     title: String,
     game_id: String,
-    /// Task IDs in install order. Merged files fold into the first folder
-    /// task once the files are combined.
     members: Vec<u64>,
-    /// Members installed as their own mod.
     separate: HashSet<u64>,
-    /// The update itself, when Thalia named a newer file.
     main: Option<u64>,
-    /// The mod being updated and a fingerprint of its folder when the update
-    /// was queued. A change made in between stops the update.
     target: Option<(String, Option<u64>)>,
-    /// Thalia's answer for the mod, refused when its files do not fit.
     answer: Option<(String, ThaliaRecommendation)>,
     downloaded: HashMap<u64, (String, String, PathBuf)>,
     preparing: bool,
@@ -993,7 +863,6 @@ struct FileReviewContext {
     recommended_action: Option<FileReviewAction>,
     installed_files: Vec<TrackedFileMeta>,
     newer_file_ids: Vec<u64>,
-    /// Listed files another mod from this page has, with that mod's name.
     other_mod_titles: Vec<(u64, String)>,
     dismissible_file_ids: Vec<u64>,
     expected_file_set: FileSetRecipe,
@@ -1020,22 +889,13 @@ struct PendingBrowseInstallMeta {
     install_state: ModInstallState,
     preserve_existing_state: bool,
     post_install_rename_to: Option<String>,
-    /// Provenance of the profile used for this install. `None` means a cache
-    /// hit/fallback (or a legacy retry task) and must not replace a known
-    /// source observation time with `Utc::now()`.
     profile_cached_at: Option<DateTime<Utc>>,
     is_tool: bool,
-    /// Explicit resolution selected in the file-review prompt.  `None` keeps
-    /// ordinary browse installs on the user's configured conflict policy.
     explicit_resolution: Option<ImportResolution>,
 }
 
 type UpdateCheckItem = (String, String, u64, Option<i64>, FileSetRecipe, bool);
 
-/// Stable identity of the complete matching group used by one remote check.
-/// Status, ignore, and local-change overlays are intentionally absent: they
-/// affect which result is applied, while the worker's collision evidence must
-/// remain tied only to the peer recipes and links it actually evaluated.
 fn update_check_group_fingerprint(items: &[UpdateCheckItem]) -> u64 {
     let mut entries: Vec<_> = items
         .iter()
@@ -1068,8 +928,6 @@ fn update_check_group_fingerprint_for_group(
 
 struct UpdateCheckRequest {
     generation: u64,
-    /// Targets eligible for this check. Peer context is separate so ignored,
-    /// skipped, and locally modified siblings still participate in matching.
     items: Vec<UpdateCheckItem>,
     peer_items: Vec<UpdateCheckItem>,
 }
@@ -1243,7 +1101,6 @@ enum BrowseRequest {
     FetchDetail {
         nonce: u64,
         mod_id: u64,
-        /// GameBanana keeps Tool and Mod IDs in separate namespaces.
         is_tool: bool,
         force_refresh: bool,
         include_update_history: bool,
@@ -1255,8 +1112,6 @@ enum BrowseRequest {
         is_tool: bool,
         force_refresh: bool,
     },
-    /// MY MODS update log fetch. The worker owns the 30-minute freshness window and
-    /// the stale-fallback (via `CachedModUpdates`), so no `force_refresh` here.
     FetchMyModUpdates {
         nonce: u64,
         mod_id: u64,
@@ -1474,14 +1329,13 @@ struct BrowseDownloadJob {
     file_name: String,
     cache_limit_bytes: u64,
     total_size: Option<u64>,
-    /// GameBanana's MD5 of the file, when it lists one.
     md5: Option<String>,
 }
 
 struct DownloadProgress {
     downloaded: u64,
     total: Option<u64>,
-    speed: f64, // bytes/sec
+    speed: f64,
     last_update: std::time::Instant,
     bytes_since_last: u64,
 }
@@ -1520,23 +1374,15 @@ enum InstallRequest {
     Install {
         job_id: u64,
         candidate_indices: Vec<usize>,
-        /// Initial on-disk status for each selected candidate.  Auto requests
-        /// are always Disabled here; their final state is resolved after the
-        /// refresh once category assignment and successful installs are known.
         candidate_install_states: Vec<ModStatus>,
         preferred_names: Vec<String>,
         choice: ConflictChoice,
         target_root: PathBuf,
         game_backend: GameBackend,
-        /// Root used by the worker when it must publish a disabled candidate
-        /// before the library refresh.  `None` means no disabled publication
-        /// is necessary for this request.
         disabled_target_root: Option<PathBuf>,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
-        /// Files the staged copy must hold exactly, for a combined bundle.
         expected_manifest: Option<Arc<importing::bundle::FolderManifest>>,
     },
-    /// Checks and combines the downloaded files of one Thalia bundle.
     PrepareThaliaBundle {
         job_id: u64,
         game_id: String,
@@ -1547,9 +1393,6 @@ enum InstallRequest {
         mod_entry_id: String,
         mod_root_path: PathBuf,
         profile: Box<gamebanana::ProfileResponse>,
-        /// `Some` only when the profile came from a real remote fetch. A
-        /// snapshot reconstructed for image-only backfill must not refresh
-        /// matching freshness or replace the cached catalog.
         profile_cached_at: Option<DateTime<Utc>>,
     },
     Cancel {
@@ -1601,8 +1444,6 @@ enum InstallEvent {
         rel_paths: Vec<String>,
         profile_cached_at: Option<DateTime<Utc>>,
     },
-    /// The first preview image of a sync job is on disk while the rest of the
-    /// gallery is still downloading, so the cover can be published early.
     SyncImagesCover {
         mod_entry_id: String,
         cover_rel_path: String,
@@ -1677,9 +1518,6 @@ enum ManualImageEvent {
         folder_name: String,
         rel_paths: Vec<String>,
     },
-    /// Preview images the mod shipped with, adopted right after an external
-    /// install. Applied like `Added` but without the user-facing toast, since
-    /// the install message is the one that matters at that moment.
     BundledAdopted {
         mod_id: String,
         folder_name: String,
@@ -1730,7 +1568,6 @@ struct CardThumbMeta {
     size: Option<u64>,
 }
 
-/// A card-thumbnail source that came back empty, and when.
 struct ModThumbFailure {
     kind: String,
     id: String,
@@ -1740,14 +1577,6 @@ struct ModThumbFailure {
 }
 
 impl ModThumbFailure {
-    /// Whether a fresh request for `meta` would just repeat this failure.
-    ///
-    /// `CardThumbMeta::kind` is `"none"` when the mod has no cover source at all.
-    /// Nothing about that can change while the identity stays the same, so it is
-    /// never retried; every other kind reads from disk or a cache that a later
-    /// download can still fill, so those get another attempt after a cooldown.
-    /// A source file that appeared or changed on disk since the failure cannot
-    /// repeat it, so that skips the cooldown entirely.
     fn still_applies(&self, meta: &CardThumbMeta) -> bool {
         if self.kind != meta.kind || self.id != meta.id {
             return false;
@@ -1764,16 +1593,10 @@ impl ModThumbFailure {
     }
 }
 
-/// What became of a card-thumbnail queue attempt, so callers can tell a real
-/// enqueue apart from a silent decline.
 enum CardThumbQueueOutcome {
-    /// A request is queued or already in flight; a worker result will arrive.
     Requested,
-    /// The texture already exists or the mod is gone; nothing to wait for.
     NotNeeded,
-    /// Declined by the failure cache; worth retrying once the cooldown ends.
     CoolingDown(Duration),
-    /// Declined for good: the mod has no cover source at all.
     NoSource,
 }
 
@@ -2097,14 +1920,9 @@ struct ProfileOperationSpec {
     target_categories: Option<Vec<ModCategory>>,
     target_tools: Option<Vec<ToolEntry>>,
     target_tool_blacklist: Option<Vec<String>>,
-    /// Profiles the catalog already knows about, so recovery can tell which stored profiles are
-    /// orphaned. Only populated for `Recover`.
     known_profile_ids: Vec<ProfileId>,
-    /// Exact inactive storage entries already represented in the catalog.
     known_profile_storage_file_names: Vec<String>,
     metadata: Option<crate::integrations::profiles::ProfileArchiveMetadata>,
-    /// Snapshot/restore `d3dx_user.ini` across the profile swap (XXMI games with the
-    /// preserve-mod-settings preference enabled).
     preserve_mod_settings: bool,
     send_reload_hotkey: bool,
     cancel: Arc<AtomicBool>,
@@ -2112,8 +1930,6 @@ struct ProfileOperationSpec {
     stage: Arc<RwLock<String>>,
 }
 
-/// The tool state owned by one profile: every tool the user has for this game, with its launch
-/// options, titlebar pin and ordering, plus the auto-detected paths they removed.
 #[derive(Clone, Default)]
 struct ProfileToolSnapshot {
     tools: Vec<ToolEntry>,
@@ -2145,9 +1961,6 @@ struct ProfileReconcileSpec {
     known_profile_storage_file_names: Vec<String>,
 }
 
-/// Payload of [`ProfileEvent::Completed`], boxed at the variant. It dwarfs every other variant, and
-/// an enum is sized to its largest, so inlining it would make even a bare `Canceled` message carry
-/// hundreds of bytes through the channel.
 struct ProfileCompleted {
     game_id: String,
     kind: ProfileOperationKind,
@@ -2199,8 +2012,6 @@ enum ProfileEvent {
         game_id: String,
         error: String,
         recovery_blocking: bool,
-        /// Set when the operation stopped because another program holds files below a live mod
-        /// root open; the action layer turns it into a toast that names what to close.
         files_in_use: Option<OpenHandleReport>,
     },
     Canceled {

@@ -7,7 +7,6 @@ struct SystemFontCandidate {
 const CLASSIC_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeui.ttf";
 const CLASSIC_BOLD_FONT_PATH: &str = "C:\\Windows\\Fonts\\segoeuib.ttf";
 
-/// Shared with the overlay preview, so the binary embeds the font once.
 pub(crate) static CJK_FONT_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/src/asset/font/NotoSansSC-Regular.ttf"
@@ -489,7 +488,6 @@ fn prepare_initial_window_placement(cc: &eframe::CreationContext<'_>, state: &Ap
 
 #[cfg(not(windows))]
 fn prepare_initial_window_placement(_cc: &eframe::CreationContext<'_>, _state: &AppState) {
-    // need improvement here but I hate dealing with linux DE :(
 }
 
 #[cfg(windows)]
@@ -717,9 +715,6 @@ fn open_in_explorer(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// SID of the account running this process. Must be read from the unelevated process:
-/// the UAC prompt may authenticate a different (admin) account, while it is this user
-/// who needs the grant.
 #[cfg(windows)]
 fn current_user_sid() -> Result<String> {
     use std::os::windows::process::CommandExt;
@@ -743,8 +738,6 @@ fn current_user_sid() -> Result<String> {
         .ok_or_else(|| anyhow!("unexpected whoami output: {}", stdout.trim()))
 }
 
-/// Grant the current user's account Modify rights on `dir` (inherited by its subtree) through
-/// an elevated icacls run. Blocks until icacls exits; call from a worker thread.
 #[cfg(windows)]
 fn elevated_grant_dir_access(dir: &Path) -> Result<()> {
     use std::ffi::OsStr;
@@ -760,15 +753,10 @@ fn elevated_grant_dir_access(dir: &Path) -> Result<()> {
         .encode_wide()
         .chain(Some(0))
         .collect();
-    // A trailing backslash (drive roots like C:\) would escape the closing quote in the
-    // argument line; doubling it keeps the path intact after unquoting.
     let mut dir_str = dir.display().to_string();
     if dir_str.ends_with('\\') {
         dir_str.push('\\');
     }
-    // (OI)(CI)M: Modify, inherited by existing and future children. icacls applies the
-    // inheritable ACE through SetNamedSecurityInfo, which propagates across the subtree
-    // without an explicit /T sweep.
     let params_str = format!("\"{dir_str}\" /grant *{sid}:(OI)(CI)M");
     let params: Vec<u16> = OsStr::new(&params_str)
         .encode_wide()
@@ -808,8 +796,6 @@ fn elevated_grant_dir_access(_dir: &Path) -> Result<()> {
     bail!("granting folder access is only supported on Windows");
 }
 
-/// Relaunch this executable elevated (UAC prompt) with `arg`, without waiting. The caller
-/// exits the current process on success.
 #[cfg(windows)]
 fn launch_self_elevated(arg: &str) -> Result<()> {
     use std::ffi::OsStr;

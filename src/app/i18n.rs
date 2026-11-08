@@ -2584,8 +2584,6 @@ impl TextCatalog {
         self.get(TextKey::LibraryUncategorizedFirstListOnlyTooltip)
     }
 
-    /// Header for a status run inside the uncategorized pile, e.g. "Uncategorized: Disabled".
-    /// The catalog string carries a `{status}` placeholder so translators control word order.
     fn library_uncategorized_status_header(self, status: &ModStatus) -> String {
         self.get(TextKey::LibraryUncategorizedStatusHeader)
             .replace("{status}", self.mod_status_label(status))
@@ -2683,7 +2681,6 @@ impl TextCatalog {
         self.get(TextKey::LibraryDisable)
     }
 
-    // The mod menu's Enable submenu says what the overlay's key hints say.
     fn enable_this_mod(self) -> &'static str {
         self.get(TextKey::GameOverlayHintEnable)
     }

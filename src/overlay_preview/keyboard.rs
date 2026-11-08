@@ -1,21 +1,3 @@
-//! Keyboard input for the native overlay preview.
-//!
-//! Games that run elevated or under anti-cheat stop other processes from
-//! hooking, reading, or injecting their keyboard input, so the overlay does not
-//! try.  On Windows, the overlay's key (Alt+H unless Settings changed it) is a
-//! system hotkey that still arrives over such games, and `platform` uses it
-//! to move the keyboard focus to the overlay.  Key
-//! messages then reach the overlay's own window procedure, and this module
-//! turns them into commands and session events.  While a search is being
-//! typed, letters and Space pass on to the search field instead.  Capture runs
-//! and other platforms read the same keys from egui.
-//!
-//! The keys the overlay doesn't use still reach the game: XXMI, the mod
-//! loader, takes keys from a window titled `XXMI_TITLE` as well as from the
-//! game, so the overlay lends itself that title while one of them is down.
-//! A card showing its hotkeys or info keeps only a few keys, so mods get the
-//! rest.
-
 #[cfg(any(windows, test))]
 use std::{
     collections::VecDeque,
@@ -30,37 +12,24 @@ use crate::model::OverlayHotkey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Command {
-    /// Up to the mods row, or down to the categories row.
     Row(i32),
-    /// Left or right within the current row.
     Move(i32),
     Mod(i32),
     Category(i32),
-    /// Enable the highlighted mod and disable the others.
     Exclusive,
     Toggle,
-    /// Turn the focused card over to its hotkeys, or back.
     Flip,
-    /// Turn the focused card over to its info, or back.
     Info,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Event {
-    /// The hotkey arrived.  `focused` reports whether the overlay has the
-    /// keyboard.
-    Hotkey {
-        focused: bool,
-    },
+    Hotkey { focused: bool },
     Command(Command),
-    /// Tab, F or Ctrl+F: start typing a search, or, from Tab while typing,
-    /// stop typing and keep the results.
     Search,
     Escape,
-    /// A click on the pinned overlay took the keyboard from another window.
     Clicked,
-    /// Another window took the keyboard.
     Deactivated,
 }
 
@@ -111,18 +80,13 @@ const WM_SYSKEYDOWN: u32 = 0x0104;
 #[cfg(any(windows, test))]
 const WM_SYSKEYUP: u32 = 0x0105;
 
-/// Key messages report Shift with a generic virtual key and tell the sides
-/// apart only by scan code.
 #[cfg(any(windows, test))]
 const RIGHT_SHIFT_SCAN_CODE: u32 = 0x36;
 
 #[cfg(any(windows, test))]
 const REPEAT_DELAY: Duration = Duration::from_millis(300);
-/// How long the overlay keeps XXMI's title after the last key it lent it for
-/// is up.  Longer than a slow game frame.
 #[cfg(any(windows, test))]
 const TITLE_LINGER: Duration = Duration::from_millis(200);
-/// How often to look whether to give XXMI's title back.
 #[cfg(windows)]
 const TITLE_CHECK: Duration = Duration::from_millis(50);
 #[cfg(any(windows, test))]
@@ -130,26 +94,16 @@ const REPEAT_INTERVAL: Duration = Duration::from_millis(120);
 
 #[derive(Clone, Copy)]
 enum Role {
-    /// Fires on press, then repeats while held.
     Navigate(Command),
-    /// Fires once per press.
     Activate(Command),
-    /// Space and Enter: Exclusive, or Toggle while Shift is held.
     Enable,
-    /// Tab, F and Ctrl+F start typing a search.  F types while searching,
-    /// so only Tab stops.
     Search,
     Escape,
-    /// Swallowed without a command, so a press that starts in the overlay
-    /// also ends there: the modifiers, the hotkey's key, whose press went to
-    /// the hotkey, and F10, the reload key.
     Swallow,
-    /// Passed through.  Other keys do nothing while one is held.
     Windows,
 }
 
 impl Role {
-    /// The event for a new press.  Repeats follow their own rules.
     fn event(self, shift: bool) -> Option<Event> {
         match self {
             Role::Navigate(command) | Role::Activate(command) => Some(Event::Command(command)),
@@ -165,11 +119,8 @@ impl Role {
     }
 }
 
-/// A set of `KEYS`, a key's bit being `1 << index`.
 type Mask = u64;
 
-/// Every key the overlay tracks.  A key's bit in the router masks is
-/// `1 << index`.  While a card shows its back, only `BACK_KEYS` are tracked.
 const KEYS: [(u32, Role); 30] = [
     (vk::W, Role::Activate(Command::Row(-1))),
     (vk::UP, Role::Activate(Command::Row(-1))),
@@ -203,19 +154,13 @@ const KEYS: [(u32, Role); 30] = [
     (vk::RWIN, Role::Windows),
 ];
 
-/// Stands in `KEYS` for the hotkey's key, which Settings can change.  No
-/// real key has code 0.
 const HOTKEY: u32 = 0;
 
-// Set and read on the thread that runs the UI and the window procedure.
 thread_local! {
     static HOTKEY_KEYS: Cell<OverlayHotkey> = const { Cell::new(OverlayHotkey::DEFAULT) };
-    /// The focused card shows its hotkeys or info, so the overlay keeps only
-    /// `BACK_KEYS` and the game gets the rest, which mods may use.
     static BACK: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Makes `hotkey` the key the overlay tracks as its hotkey.
 pub(super) fn set_hotkey(hotkey: OverlayHotkey) {
     HOTKEY_KEYS.set(hotkey);
 }
@@ -224,7 +169,6 @@ fn hotkey_key() -> u32 {
     u32::from(HOTKEY_KEYS.get().key)
 }
 
-/// The key a `KEYS` entry stands for.
 #[cfg(windows)]
 fn real_key(key: u32) -> u32 {
     if key == HOTKEY { hotkey_key() } else { key }
@@ -243,23 +187,15 @@ const fn bit(key: u32) -> Mask {
 
 const SHIFT_KEYS: Mask = bit(vk::LSHIFT) | bit(vk::RSHIFT);
 const WINDOWS_KEYS: Mask = bit(vk::LWIN) | bit(vk::RWIN);
-/// Shift, Ctrl and Alt, which the game may take with a key it gets.
 const MODIFIER_KEYS: Mask =
     SHIFT_KEYS | bit(vk::LCONTROL) | bit(vk::RCONTROL) | bit(vk::LMENU) | bit(vk::RMENU);
 
-/// The keys a card's back keeps without Shift, Ctrl or Alt: W, A, S and D
-/// move, Space presses, and Esc turns the card back.  With one of those
-/// held, they go to the game like every other key.
 const PLAIN_BACK_KEYS: Mask =
     bit(vk::W) | bit(vk::A) | bit(vk::S) | bit(vk::D) | bit(vk::SPACE) | bit(vk::ESCAPE);
 
-/// The keys tracked while a card shows its back.  Besides the plain keys:
-/// the hotkey, the modifiers, which only make up chords, the Windows keys,
-/// and F10, Hestia's reload key.
 const BACK_KEYS: Mask =
     PLAIN_BACK_KEYS | bit(HOTKEY) | bit(vk::F10) | MODIFIER_KEYS | WINDOWS_KEYS;
 
-/// Whether the overlay tracks the `KEYS` entry at `index` right now.
 fn tracked(index: usize) -> bool {
     !BACK.get() || BACK_KEYS & (1 << index) != 0
 }
@@ -272,22 +208,15 @@ fn slot(key: u32) -> Option<(usize, Role)> {
         .map(|index| (index, KEYS[index].1))
 }
 
-/// Whether a card's back lends one of its plain keys to the game: a new
-/// press while Shift, Ctrl or Alt is held, and the repeats and release of a
-/// key lent so far.
 fn lends_plain_key(index: usize, pressed: bool, lent: bool, held: bool, modifiers: bool) -> bool {
     BACK.get() && PLAIN_BACK_KEYS & (1 << index) != 0 && (lent || (pressed && !held && modifiers))
 }
 
-/// Whether the overlay window swallows the key instead of passing it on,
-/// when no search is being typed.
 #[cfg(any(windows, test))]
 fn consumes(key: u32) -> bool {
     slot(key).is_some_and(|(_, role)| !matches!(role, Role::Windows))
 }
 
-/// Keys that type into the search while it is being typed, although they
-/// are commands otherwise.  The hotkey's key types unless it's an F key.
 fn types(key: u32) -> bool {
     let typed = matches!(key, 0x30..=0x39 | 0x41..=0x5A);
     (key == hotkey_key() && typed)
@@ -309,7 +238,6 @@ fn types(key: u32) -> bool {
         )
 }
 
-/// Whether the search is being typed after `event`.
 fn typing_after(typing: bool, event: Event) -> bool {
     match event {
         Event::Search => !typing,
@@ -318,7 +246,6 @@ fn typing_after(typing: bool, event: Event) -> bool {
     }
 }
 
-/// The virtual key behind a key that reached egui.
 fn egui_vk(key: egui::Key) -> Option<u32> {
     use egui::Key;
 
@@ -344,31 +271,21 @@ fn egui_vk(key: egui::Key) -> Option<u32> {
         Key::F10 => vk::F10,
         Key::Tab => vk::TAB,
         Key::F => vk::F,
-        // The letter, digit or F key the hotkey can be.
         _ => return OverlayHotkey::key_code(key.name()).map(u32::from),
     })
 }
 
-/// Reads the overlay's keys from egui, for capture runs and other platforms,
-/// where no window procedure sees them first.  It takes the keys the window
-/// would swallow out of egui's input, with the hotkey's keys standing in for
-/// the hotkey.
 #[derive(Default)]
 pub(super) struct EguiKeys {
     typing: bool,
-    /// A card shows its back.
     back: bool,
-    /// Bits as in `KEYS`.  egui marks repeats only after this filter runs.
     held: Mask,
-    /// Keys whose press typed into the search, or that a card's back left to
-    /// egui since a modifier was held.
     passed: Mask,
     events: Vec<Event>,
 }
 
 impl EguiKeys {
     pub(super) fn filter(&mut self, input: &mut Vec<egui::Event>) {
-        // egui reports a key's character right after its press.
         let mut took_press = false;
         input.retain(|event| match *event {
             egui::Event::Key {
@@ -393,26 +310,19 @@ impl EguiKeys {
         std::mem::take(&mut self.events)
     }
 
-    /// Whether letters and Space type into the search.  The app has the
-    /// final say, since it can ignore a key that asked to start typing.
     pub(super) fn set_typing(&mut self, typing: bool) {
         self.typing = typing;
     }
 
-    /// Whether the focused card shows its hotkeys or info, so the overlay
-    /// keeps only `BACK_KEYS`.
     pub(super) fn set_back(&mut self, back: bool) {
         BACK.set(back);
         if back && !self.back {
-            // Their releases go to egui now.
             self.held &= BACK_KEYS;
             self.passed &= BACK_KEYS;
         }
         self.back = back;
     }
 
-    /// Routes a key like the window procedure does and returns whether egui
-    /// keeps it.
     fn key(&mut self, key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> bool {
         let Some(vk) = egui_vk(key) else {
             return true;
@@ -488,8 +398,6 @@ pub(super) struct KeyMessage {
 
 #[cfg(any(windows, test))]
 impl KeyMessage {
-    /// Reads a key-down or key-up window message, with Shift, Ctrl and Alt
-    /// resolved to their left or right key.
     pub(super) fn parse(message: u32, wparam: usize, lparam: isize) -> Option<Self> {
         let pressed = match message {
             WM_KEYDOWN | WM_SYSKEYDOWN => true,
@@ -501,22 +409,12 @@ impl KeyMessage {
         Some(Self { key, pressed })
     }
 
-    /// AltGr reports a fake left Ctrl right before right Alt, on both press
-    /// and release.  `next` peeks at the following key message.
     fn is_altgr_control(self, next: impl FnOnce() -> Option<Self>) -> bool {
         self.key == vk::LCONTROL
             && next().is_some_and(|next| next.key == vk::RMENU && next.pressed == self.pressed)
     }
 }
 
-/// Tracks the keys held while the overlay has the keyboard.
-///
-/// `ours` marks keys whose press reached the overlay.  A key already held when
-/// the overlay took the keyboard belongs to the game: its repeats do nothing,
-/// and it does not hold up handing the keyboard back.
-///
-/// While a search is being typed, letters and Space go to the search field.
-/// `passed` marks those presses, so their repeats and release go there too.
 #[cfg(any(windows, test))]
 #[derive(Debug)]
 struct Router {
@@ -524,7 +422,6 @@ struct Router {
     ours: Mask,
     passed: Mask,
     typing: bool,
-    /// A card shows its back.
     back: bool,
     next_repeat: [Option<Instant>; KEYS.len()],
     events: VecDeque<Event>,
@@ -547,8 +444,6 @@ impl Default for Router {
 
 #[cfg(any(windows, test))]
 impl Router {
-    /// Starts over from the physical key state.  Of `ours`, only keys that
-    /// are still held are kept.
     fn reset(&mut self, held: Mask, ours: Mask) {
         self.down = held;
         self.ours = ours & held;
@@ -561,9 +456,6 @@ impl Router {
         self.reset(0, 0);
     }
 
-    /// Once a card shows its back, the releases of keys it doesn't keep
-    /// won't reach the router.  Gives back those that are down, for the
-    /// lender to hold back until they're up.
     fn set_back(&mut self, back: bool) -> Vec<u32> {
         let mut dropped = Vec::new();
         if back && !self.back {
@@ -585,16 +477,12 @@ impl Router {
         dropped
     }
 
-    /// The hotkey swallowed its key's press while the overlay had the
-    /// keyboard, so its repeats and release are the overlay's too.
     fn hotkey_pressed(&mut self) {
         self.down |= bit(HOTKEY);
         self.ours |= bit(HOTKEY);
         self.passed &= !bit(HOTKEY);
     }
 
-    /// Whether a key that went down in the overlay is still `held`.  Handing
-    /// the keyboard back now would send its repeats and release to the game.
     fn busy(&self, held: Mask) -> bool {
         self.ours & held != 0
     }
@@ -604,7 +492,6 @@ impl Router {
         self.events.push_back(event);
     }
 
-    /// Routes a key message and returns whether the window swallows it.
     fn key(&mut self, key: u32, pressed: bool, now: Instant) -> bool {
         let Some((index, role)) = slot(key) else {
             return false;
@@ -622,9 +509,6 @@ impl Router {
 
         let chord = self.down & WINDOWS_KEYS != 0;
         if self.down & mask != 0 {
-            // An auto-repeat.  Only a navigation press that moved the
-            // selection repeats, on its own schedule, and not while its key
-            // types.
             if let Role::Navigate(command) = role
                 && swallow
                 && !chord
@@ -658,34 +542,19 @@ impl Router {
     }
 }
 
-/// A change to the overlay's title.
 #[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Title {
-    /// Take the title XXMI takes keys from.
     Lend,
-    /// Take the overlay's own back.
     GiveBack,
 }
 
-/// Keeps the title XXMI takes keys from on the overlay while keys the overlay
-/// doesn't use are down, so the game gets them.  Not while a search is typed
-/// or one of the overlay's own keys is down, since the game would get those
-/// too.  A key that went down then holds the title back until it's up, and so
-/// does a key that was down before the overlay had the keyboard.
-///
-/// The title stays a moment after the last key is up, for XXMI to see it go
-/// up: XXMI only acts on a key that goes down after it saw it up.
 #[cfg(any(windows, test))]
 #[derive(Debug, Default)]
 struct Lender {
-    /// Down, and the game sees them.
     lent: Vec<u32>,
-    /// Down, and the game mustn't see them.
     held_back: Vec<u32>,
-    /// Whether the overlay has the title.
     titled: bool,
-    /// When the last lent key went up, while the overlay still has the title.
     emptied: Option<Instant>,
 }
 
@@ -695,12 +564,10 @@ impl Lender {
         self.titled
     }
 
-    /// Whether `key` is down and the lender knows it.
     fn has(&self, key: u32) -> bool {
         self.lent.contains(&key) || self.held_back.contains(&key)
     }
 
-    /// Holds back `keys`, which went down for the overlay, until they're up.
     fn hold_back(&mut self, keys: Vec<u32>) {
         for key in keys {
             if !self.has(key) {
@@ -709,11 +576,8 @@ impl Lender {
         }
     }
 
-    /// A key the overlay doesn't use went down.  `blocked` while a search is
-    /// typed or one of the overlay's keys is down.
     fn press(&mut self, key: u32, blocked: bool) -> Option<Title> {
         if self.lent.contains(&key) || self.held_back.contains(&key) {
-            // A repeat.
             return None;
         }
         if blocked || !self.held_back.is_empty() {
@@ -731,22 +595,17 @@ impl Lender {
         self.note_emptied(now);
     }
 
-    /// One of the overlay's own keys went down.  The keys lent so far stay
-    /// held back until they're up.
     fn stop(&mut self) -> Option<Title> {
         self.held_back.append(&mut self.lent);
         self.give_back()
     }
 
-    /// Starts over with `held` down, none of them lent.
     fn reset(&mut self, held: Vec<u32>) -> Option<Title> {
         self.lent.clear();
         self.held_back = held;
         self.give_back()
     }
 
-    /// Forgets the keys that are up, for a release that never arrived, and
-    /// gives the title back once the last lent key has been up a moment.
     fn tick(&mut self, down: impl Fn(u32) -> bool, now: Instant) -> Option<Title> {
         self.held_back.retain(|&held| down(held));
         self.lent.retain(|&lent| down(lent));
@@ -779,8 +638,6 @@ struct Shared {
     lender: Lender,
 }
 
-// The window procedure runs on the thread that owns the window, which is also
-// the thread that runs the UI.
 #[cfg(windows)]
 thread_local! {
     static SHARED: std::cell::RefCell<Option<Shared>> = const { std::cell::RefCell::new(None) };
@@ -797,14 +654,11 @@ fn with_shared<T>(f: impl FnOnce(&mut Shared) -> T) -> Option<T> {
         .flatten()
 }
 
-/// Updates the router, then asks for a frame once the borrow has ended.
 #[cfg(windows)]
 fn notify<T>(update: impl FnOnce(&mut Router) -> T) -> Option<T> {
     notify_shared(|shared| update(&mut shared.router))
 }
 
-/// Updates the router and the lender, then asks for a frame once the borrow
-/// has ended.
 #[cfg(windows)]
 fn notify_shared<T>(update: impl FnOnce(&mut Shared) -> T) -> Option<T> {
     let (result, ctx) = with_shared(|shared| (update(shared), shared.ctx.clone()))?;
@@ -812,8 +666,6 @@ fn notify_shared<T>(update: impl FnOnce(&mut Shared) -> T) -> Option<T> {
     Some(result)
 }
 
-/// Changes the overlay's title, after the borrow of the shared state has
-/// ended: the change goes through the window procedure.
 #[cfg(windows)]
 fn apply_title(title: Option<Title>) {
     if let Some(title) = title {
@@ -828,8 +680,6 @@ fn physically_down(key: u32) -> bool {
     (unsafe { GetAsyncKeyState(key as i32) }) < 0
 }
 
-/// Reads the tracked keys.  This only sees the truth while the overlay has
-/// the keyboard: a game that blocks input also hides it from this call.
 #[cfg(windows)]
 fn physical_keys() -> Mask {
     KEYS.iter()
@@ -839,7 +689,6 @@ fn physical_keys() -> Mask {
         .fold(0, |held, (index, _)| held | (1 << index))
 }
 
-/// The keys the overlay doesn't use that are down, but Shift, Ctrl and Alt.
 #[cfg(windows)]
 fn untracked_keys_down() -> Vec<u32> {
     (0x08..=0xFE)
@@ -851,7 +700,6 @@ fn untracked_keys_down() -> Vec<u32> {
         .collect()
 }
 
-/// Whether a `Keyboard` is alive on this thread.
 #[cfg(windows)]
 pub(super) fn installed() -> bool {
     SHARED
@@ -859,8 +707,6 @@ pub(super) fn installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Routes a key message sent to the overlay window and returns whether the
-/// window should swallow it.  `next` peeks at the following key message.
 #[cfg(windows)]
 pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<KeyMessage>) -> bool {
     if !installed() {
@@ -880,7 +726,6 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
         .unwrap_or(false)
     });
     let Some((index, _)) = routed else {
-        // The game gets it while it's down.
         let now = Instant::now();
         let title = with_shared(|shared| {
             if message.pressed {
@@ -888,7 +733,6 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
                 let blocked = router.typing || router.down & !MODIFIER_KEYS != 0;
                 shared.lender.press(message.key, blocked)
             } else {
-                // The title goes back on a later frame.
                 shared.lender.release(message.key, now);
                 None
             }
@@ -898,12 +742,9 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
         return false;
     };
     let consumed = consumes(message.key);
-    // Peek before borrowing: PeekMessageW can dispatch sent messages into the
-    // window procedure.
     if message.is_altgr_control(next) {
         return consumed;
     }
-    // With both Shift keys held, Windows reports only the last release.
     let other_shift = match message.key {
         vk::LSHIFT if !message.pressed => Some(vk::RSHIFT),
         vk::RSHIFT if !message.pressed => Some(vk::LSHIFT),
@@ -911,7 +752,6 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     }
     .filter(|&key| !physically_down(key));
     let now = Instant::now();
-    // The game mustn't get the overlay's own keys.
     let own_press = message.pressed && (1 << index) & MODIFIER_KEYS == 0;
     let (swallow, title) = notify_shared(|shared| {
         let swallow = shared.router.key(message.key, message.pressed, now);
@@ -925,8 +765,6 @@ pub(super) fn key_message(message: KeyMessage, next: impl FnOnce() -> Option<Key
     swallow
 }
 
-/// The hotkey arrived.  `took_focus` is true when the overlay has just taken
-/// the keyboard from another window.
 #[cfg(windows)]
 pub(super) fn hotkey(focused: bool, took_focus: bool) {
     let held = if took_focus { physical_keys() } else { 0 };
@@ -943,7 +781,6 @@ pub(super) fn hotkey(focused: bool, took_focus: bool) {
             router.hotkey_pressed();
         }
         router.push(Event::Hotkey { focused });
-        // The hotkey is one of the overlay's keys.
         if took_focus {
             shared.lender.reset(others)
         } else {
@@ -954,7 +791,6 @@ pub(super) fn hotkey(focused: bool, took_focus: bool) {
     apply_title(title);
 }
 
-/// Asks for a frame, for news from the window procedure that isn't a key.
 #[cfg(windows)]
 pub(super) fn wake() {
     notify(|_| ());
@@ -974,7 +810,6 @@ pub(super) fn activated() {
     }
 }
 
-/// A click took the keyboard.  Activation has already reset the keys.
 #[cfg(windows)]
 pub(super) fn clicked() {
     notify(|router| router.push(Event::Clicked));
@@ -987,12 +822,9 @@ pub(super) fn deactivated() {
         shared.router.push(Event::Deactivated);
         shared.lender.reset(Vec::new());
     });
-    // Whatever the lender knew, a window in the back keeps its own title.
     apply_title(Some(Title::GiveBack));
 }
 
-/// Keyboard state for the overlay window.  Create it on the thread that runs
-/// the window, and keep one at a time.
 pub(super) struct Keyboard {
     _private: (),
 }
@@ -1025,7 +857,6 @@ impl Keyboard {
             };
             apply_title(title);
             if let Some(ctx) = titled {
-                // Look again soon, to give the title back.
                 ctx.request_repaint_after(TITLE_CHECK);
             }
             events
@@ -1036,8 +867,6 @@ impl Keyboard {
         }
     }
 
-    /// Whether letters and Space type into the search.  The app has the final
-    /// say, since it can ignore a key that asked to start typing.
     pub(super) fn set_typing(&self, typing: bool) {
         #[cfg(windows)]
         with_shared(|shared| shared.router.typing = typing);
@@ -1045,8 +874,6 @@ impl Keyboard {
         let _ = typing;
     }
 
-    /// Whether the focused card shows its hotkeys or info, so the overlay
-    /// keeps only `BACK_KEYS` and passes the rest to the game.
     pub(super) fn set_back(&self, back: bool) {
         BACK.set(back);
         #[cfg(windows)]
@@ -1056,7 +883,6 @@ impl Keyboard {
         });
     }
 
-    /// Whether a key pressed in the overlay is still physically held.
     pub(super) fn busy(&self) -> bool {
         #[cfg(windows)]
         {
@@ -1087,7 +913,6 @@ mod tests {
     use super::*;
 
     const ALL: Mask = Mask::MAX;
-    /// The B key, which the overlay does not use.
     const UNUSED: u32 = 0x42;
 
     fn after(start: Instant, ms: u64) -> Instant {
@@ -1166,7 +991,6 @@ mod tests {
                 router.key(shift, false, now);
                 assert_eq!(drain(&mut router), vec![command(Command::Toggle)]);
             }
-            // Ctrl and Alt do not change what Space and Enter do.
             for modifier in [vk::LCONTROL, vk::LMENU] {
                 router.key(modifier, true, now);
                 press(&mut router, key, now);
@@ -1180,7 +1004,6 @@ mod tests {
     fn other_keys_pass_through_without_commands() {
         let now = Instant::now();
         let mut router = Router::default();
-        // B, F4, and the Windows keys.
         for key in [UNUSED, 0x73, vk::LWIN, vk::RWIN] {
             assert!(!consumes(key));
             assert!(!router.key(key, true, now));
@@ -1196,7 +1019,6 @@ mod tests {
         let mut router = Router::default();
         BACK.set(true);
         router.set_back(true);
-        // Esc, W, A, S, D, Space, the hotkey and the modifiers stay.
         for key in [
             vk::ESCAPE,
             vk::W,
@@ -1212,7 +1034,6 @@ mod tests {
         ] {
             assert!(consumes(key), "{key:#x}");
         }
-        // The rest reach the game, as mods may use them.
         for key in [
             vk::UP,
             vk::DOWN,
@@ -1247,8 +1068,6 @@ mod tests {
         router.key(vk::R, true, now);
         router.key(vk::W, true, now);
         BACK.set(true);
-        // R turned the card.  Its release goes to the game now, so the router
-        // forgets it, and the lender holds it back until it's up.
         assert_eq!(router.set_back(true), vec![vk::R]);
         assert_eq!(router.down, bit(vk::W));
         assert!(!router.busy(bit(vk::R)));
@@ -1258,7 +1077,6 @@ mod tests {
         lender.release(vk::R, now);
         lender.release(vk::UP, now);
         assert_eq!(lender.press(vk::UP, false), Some(Title::Lend));
-        // Turning again changes nothing.
         assert!(router.set_back(true).is_empty());
         BACK.set(false);
         assert!(router.set_back(false).is_empty());
@@ -1269,21 +1087,15 @@ mod tests {
         let index = |key| bit(key).trailing_zeros() as usize;
         BACK.set(true);
         for key in [vk::W, vk::A, vk::S, vk::D, vk::SPACE, vk::ESCAPE] {
-            // Alt+W and the like go to the game.
             assert!(lends_plain_key(index(key), true, false, false, true));
-            // Plain, they're the overlay's.
             assert!(!lends_plain_key(index(key), true, false, false, false));
-            // A repeat of a press the overlay took stays the overlay's.
             assert!(!lends_plain_key(index(key), true, false, true, true));
-            // The repeats and release of a lent press follow it.
             assert!(lends_plain_key(index(key), true, true, false, false));
             assert!(lends_plain_key(index(key), false, true, false, false));
             assert!(!lends_plain_key(index(key), false, false, false, true));
         }
-        // The hotkey and the modifiers themselves never go.
         assert!(!lends_plain_key(index(HOTKEY), true, false, false, true));
         assert!(!lends_plain_key(index(vk::LMENU), true, false, false, true));
-        // The front keeps them, modifiers or not.
         BACK.set(false);
         assert!(!lends_plain_key(index(vk::W), true, false, false, true));
     }
@@ -1316,7 +1128,6 @@ mod tests {
             tap(&mut keys, Key::Escape, Modifiers::NONE),
             (vec![Event::Escape], false)
         );
-        // The hotkey still works.
         assert_eq!(
             tap(&mut keys, Key::H, Modifiers::ALT),
             (vec![Event::Hotkey { focused: true }], false)
@@ -1401,7 +1212,6 @@ mod tests {
         router.key(vk::X, true, now);
         router.key(vk::ESCAPE, true, now);
         router.key(vk::LWIN, false, now);
-        // Q was pressed as part of the chord, so its repeats stay quiet.
         router.key(vk::Q, true, after(now, 1000));
         assert!(drain(&mut router).is_empty());
         router.key(vk::Q, false, after(now, 1100));
@@ -1468,7 +1278,6 @@ mod tests {
         assert!(!router.busy(ALL));
         router.key(vk::Q, true, now);
         assert!(router.busy(ALL));
-        // A key whose release never arrived is not held any more.
         assert!(!router.busy(ALL & !bit(vk::Q)));
         router.key(vk::Q, false, now);
         assert!(!router.busy(ALL));
@@ -1500,7 +1309,6 @@ mod tests {
         router.clear();
         assert!(!router.busy(ALL));
         assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
-        // Nothing is held any more, so the next message for D is a new press.
         router.key(vk::D, true, after(now, 50));
         assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
     }
@@ -1526,8 +1334,6 @@ mod tests {
                 pressed: true,
             })
         );
-        // Right Alt up: extended, context and transition bits set.  Windows
-        // may sign-extend the 32-bit flags.
         let right_alt_up = 0xE138_0001_u32;
         for lparam in [right_alt_up as isize, right_alt_up as i32 as isize] {
             assert_eq!(
@@ -1545,7 +1351,6 @@ mod tests {
                 pressed: true,
             })
         );
-        // WM_CHAR is not a key message.
         assert_eq!(KeyMessage::parse(0x0102, 0x71, 0x0010_0001), None);
     }
 
@@ -1572,7 +1377,6 @@ mod tests {
             assert!(router.key(key, false, now));
             assert_eq!(drain(&mut router), vec![Event::Search]);
             assert!(router.typing);
-            // F types while searching.
             assert!(!router.key(vk::F, true, now));
             assert!(!router.key(vk::F, false, now));
             assert!(drain(&mut router).is_empty());
@@ -1581,7 +1385,6 @@ mod tests {
             assert_eq!(drain(&mut router), vec![Event::Search]);
             assert!(!router.typing);
         }
-        // Ctrl+F starts it too.
         let mut router = Router::default();
         router.key(vk::LCONTROL, true, now);
         press(&mut router, vk::F, now);
@@ -1610,8 +1413,6 @@ mod tests {
         ] {
             assert!(!router.key(key, true, now), "{key:#x}");
             assert!(!router.key(key, true, after(now, 500)), "{key:#x}");
-            // A key that typed holds up handing the keyboard back like any
-            // other key pressed in the overlay.
             assert!(router.busy(ALL));
             assert!(!router.key(key, false, after(now, 600)), "{key:#x}");
         }
@@ -1646,7 +1447,6 @@ mod tests {
             ]
         );
         assert!(router.typing);
-        // Held arrows still repeat.
         router.key(vk::RIGHT, true, now);
         router.key(vk::RIGHT, true, now + REPEAT_DELAY);
         router.key(vk::RIGHT, false, now + REPEAT_DELAY);
@@ -1669,11 +1469,9 @@ mod tests {
         press(&mut router, vk::TAB, now);
         assert_eq!(drain(&mut router), vec![Event::Search]);
         assert!(!router.typing);
-        // D went down in the search, so it stays there until released.
         assert!(!router.key(vk::D, true, now + REPEAT_DELAY));
         assert!(!router.key(vk::D, false, after(now, 400)));
         assert!(drain(&mut router).is_empty());
-        // Its next press is a command again.
         assert!(router.key(vk::D, true, after(now, 500)));
         assert_eq!(drain(&mut router), vec![command(Command::Move(1))]);
     }
@@ -1705,7 +1503,6 @@ mod tests {
                 assert!(!typing_after(typing, event), "{event:?}");
             }
         }
-        // Taking or losing the keyboard starts over.
         let mut router = Router {
             typing: true,
             ..Router::default()
@@ -1724,8 +1521,6 @@ mod tests {
         }
     }
 
-    /// Presses and releases `key` through `keys`.  Returns the events, and
-    /// whether egui still sees the key.
     fn tap(keys: &mut EguiKeys, key: egui::Key, modifiers: egui::Modifiers) -> (Vec<Event>, bool) {
         let mut input = vec![
             egui_key(key, true, modifiers),
@@ -1808,8 +1603,6 @@ mod tests {
             (Key::Escape, false),
         ] {
             let mut keys = EguiKeys::default();
-            // egui-winit reports a repeat as another press, and egui marks
-            // it as a repeat only after the filter.
             let mut input = vec![
                 egui_key(key, true, none),
                 egui_key(key, true, none),
@@ -1864,7 +1657,6 @@ mod tests {
                 "{key:?} {modifiers:?}"
             );
         }
-        // Esc and Alt+H end typing.
         for (key, modifiers, event) in [
             (Key::Escape, none, Event::Escape),
             (Key::H, Modifiers::ALT, Event::Hotkey { focused: true }),
@@ -1898,7 +1690,6 @@ mod tests {
             egui_key(Key::Space, true, none),
             text(" "),
             egui_key(Key::Tab, false, none),
-            // Text that follows no key, such as a finished IME word, stays.
             text("語"),
         ];
         keys.filter(&mut input);
@@ -1927,13 +1718,11 @@ mod tests {
         let down = |_| true;
         let mut lender = Lender::default();
         assert_eq!(lender.press(UNUSED, false), Some(Title::Lend));
-        // A repeat, and a second key, keep it.
         assert_eq!(lender.press(UNUSED, false), None);
         assert_eq!(lender.press(K, false), None);
         lender.release(UNUSED, later(10));
         assert_eq!(lender.tick(down, later(500)), None);
         lender.release(K, later(500));
-        // XXMI gets a moment to see the key go up.
         assert_eq!(lender.tick(down, later(600)), None);
         assert!(lender.titled());
         assert_eq!(lender.tick(down, later(700)), Some(Title::GiveBack));
@@ -1961,8 +1750,6 @@ mod tests {
         let now = Instant::now();
         let mut lender = Lender::default();
         assert_eq!(lender.press(UNUSED, true), None);
-        // The search ended or the overlay's key is up, but the game would
-        // see the first key go down now.
         assert_eq!(lender.press(K, false), None);
         lender.release(UNUSED, now);
         lender.release(K, now);
@@ -1978,12 +1765,10 @@ mod tests {
         lender.press(UNUSED, false);
         assert_eq!(lender.stop(), Some(Title::GiveBack));
         assert_eq!(lender.stop(), None);
-        // Down when the overlay's key went down, so held back.
         assert_eq!(lender.press(K, false), None);
         lender.release(UNUSED, now);
         lender.release(K, now);
         assert_eq!(lender.press(K, false), Some(Title::Lend));
-        // Also in the moment after the last key went up.
         lender.release(K, now);
         assert_eq!(lender.stop(), Some(Title::GiveBack));
     }
@@ -1997,7 +1782,6 @@ mod tests {
         lender.press(UNUSED, false);
         assert_eq!(lender.reset(vec![K]), Some(Title::GiveBack));
         assert_eq!(lender.press(UNUSED, false), None);
-        // Up without a release reaching the overlay.
         assert_eq!(lender.tick(|key| key == UNUSED, later(0)), None);
         assert_eq!(lender.held_back, vec![UNUSED]);
         assert_eq!(lender.tick(|_| false, later(0)), None);
@@ -2033,7 +1817,6 @@ mod tests {
         assert!(!key_message(message(vk::LWIN, true), || None));
         assert_eq!(keyboard.drain(), vec![command(Command::Mod(-1))]);
 
-        // AltGr's fake Ctrl is swallowed without reaching the router.
         let right_alt = || Some(message(vk::RMENU, true));
         assert!(key_message(message(vk::LCONTROL, true), right_alt));
         assert!(keyboard.drain().is_empty());
@@ -2045,8 +1828,6 @@ mod tests {
             vec![Event::Hotkey { focused: true }, Event::Deactivated]
         );
 
-        // F starts a search, and letters then type into it until the app
-        // says otherwise.
         assert!(key_message(message(vk::F, true), || None));
         assert!(key_message(message(vk::F, false), || None));
         assert_eq!(keyboard.drain(), vec![Event::Search]);
@@ -2056,7 +1837,6 @@ mod tests {
         assert!(key_message(message(vk::Q, true), || None));
         assert_eq!(keyboard.drain(), vec![command(Command::Mod(-1))]);
 
-        // A card's back keeps W, but Alt+W goes to the game.
         keyboard.set_back(true);
         assert!(!key_message(message(vk::Q, true), || None));
         assert!(!key_message(message(vk::Q, false), || None));

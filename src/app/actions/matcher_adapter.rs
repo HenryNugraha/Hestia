@@ -1,28 +1,3 @@
-//! Integrated GameBanana update adapter for Hestia's native source matcher.
-//!
-//! This module runs from `app::actions::updates` after the caller has fetched
-//! the profile and release history.  It performs no network, archive, or
-//! filesystem work; installation and metadata refresh remain in the caller.
-//!
-//! The production flow has three phases:
-//!
-//! 1. Canonicalize the complete active/archive catalog and keep conflicting
-//!    duplicate IDs neutral.
-//! 2. Evaluate eligible single-source recipes using generic vetoes, release
-//!    graph proof, typed-release proof, and the fixed-tree model.
-//! 3. Arbitrate all native claims globally before applying a result. Conflicts
-//!    abstain, while the existing multi-file resolver remains responsible for
-//!    multi-file recipes.
-//!
-//! When the metadata model cannot decide, the archive path model gets one try
-//! with GameBanana's file lists from `ProfileResponse::file_listings`.  The
-//! update worker fetches those lists only for recipes that report them in
-//! `missing_listing_ids`.
-//!
-//! A native abstention is terminal for a single-source recipe.  The caller
-//! must not fall back to a softer single-file matcher after `choose_candidate`
-//! abstains.
-
 use super::*;
 use crate::integrations::gamebanana;
 use crate::integrations::gamebanana_matcher::paths::group_path_features;
@@ -34,11 +9,6 @@ use crate::model::{FileSetRecipe, TrackedFileMeta};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
-/// The current profile after duplicate-ID canonicalization.
-///
-/// Archived membership wins over active membership.  A conflicting duplicate
-/// in one bucket is removed and recorded in `ambiguous_ids`; it must never be
-/// used to manufacture proof or a candidate claim.
 #[derive(Debug, Clone)]
 pub(super) struct CanonicalProfile {
     pub(super) profile: gamebanana::ProfileResponse,
@@ -80,10 +50,6 @@ fn same_file_metadata(left: &gamebanana::ModFile, right: &gamebanana::ModFile) -
 fn canonical_bucket(mut files: Vec<gamebanana::ModFile>, archived: bool) -> CanonicalBucket {
     if archived {
         for file in &mut files {
-            // The explicit archived bucket is authoritative.  Preserve a
-            // flag-only archived row in the active bucket for the native
-            // feature path; it remains ineligible there and keeps the raw
-            // profile faithful to the API shape.
             file.is_archived = true;
         }
     }
@@ -111,8 +77,6 @@ fn canonical_bucket(mut files: Vec<gamebanana::ModFile>, archived: bool) -> Cano
         {
             output.push(entries[0].clone());
         } else {
-            // Conflicting duplicate IDs are deliberately neutral.  Picking a
-            // deterministic row here could create a false release proof.
             ambiguous_ids.insert(id);
         }
     }
@@ -123,8 +87,6 @@ fn canonical_bucket(mut files: Vec<gamebanana::ModFile>, archived: bool) -> Cano
     }
 }
 
-/// Canonicalize active/archive membership before any resolver, snapshot, or
-/// candidate matching runs.
 pub(super) fn canonicalize_profile(profile: &gamebanana::ProfileResponse) -> CanonicalProfile {
     let active_bucket = canonical_bucket(profile.files.clone(), false);
     let archived_bucket = canonical_bucket(profile.archived_files.clone(), true);
@@ -144,8 +106,6 @@ pub(super) fn canonicalize_profile(profile: &gamebanana::ProfileResponse) -> Can
             .copied(),
     );
 
-    // An archived row wins over an active duplicate of the same ID.  This is
-    // membership precedence, not a signal that the active row was malformed.
     let active: Vec<_> = active_bucket
         .files
         .into_iter()
@@ -187,8 +147,6 @@ fn current_source<'a>(
     canonical: &'a CanonicalProfile,
     tracked: &TrackedFileMeta,
 ) -> Option<(&'a gamebanana::ModFile, bool)> {
-    // Archived membership is checked first so a stale active duplicate cannot
-    // make an installed archived source look active.
     if let Some(file) = canonical
         .archived
         .iter()
@@ -240,8 +198,6 @@ fn source_value(tracked: &TrackedFileMeta, current: Option<(&gamebanana::ModFile
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
 
-    // Persisted installed identity is authoritative.  Current remote metadata
-    // fills only fields that the installed record did not know.
     set_u64(
         &mut object,
         "_idRow",
@@ -275,9 +231,6 @@ fn source_value(tracked: &TrackedFileMeta, current: Option<(&gamebanana::ModFile
         nonempty(tracked.version.as_deref())
             .or_else(|| remote.and_then(|file| nonempty(file.version.as_deref()))),
     );
-    // The tracked label maps to GameBanana's source description.  It takes
-    // precedence over the current remote description because it is the value
-    // known for the installed source.
     set_text(
         &mut object,
         "_sDescription",
@@ -303,7 +256,6 @@ fn candidate_value(file: &gamebanana::ModFile, archived: bool) -> Value {
 
 fn public_logs(history: Option<&gamebanana::UpdateHistory>) -> Value {
     let Some(history) = history else {
-        // Null is distinct from a fetched, complete empty history.
         return Value::Null;
     };
     Value::Array(
@@ -316,8 +268,6 @@ fn public_logs(history: Option<&gamebanana::UpdateHistory>) -> Value {
     )
 }
 
-/// Serialized metadata cached once for a recipe group.  The current profile
-/// and the complete public log value are immutable for all pair rows.
 #[derive(Debug, Clone)]
 pub(super) struct PairContext {
     pub(super) canonical: CanonicalProfile,
@@ -347,8 +297,6 @@ impl PairContext {
     }
 }
 
-/// One native claim.  The parent must compare this ID with claims from every
-/// other recipe, including ignored updates and legacy multi-file recipes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct NativeClaim {
     pub(super) recipe_index: usize,
@@ -361,7 +309,6 @@ pub(super) struct NativeSingleEvaluation {
     pub(super) claim: Option<NativeClaim>,
     pub(super) is_native_single: bool,
     pub(super) abstention_state: ModUpdateState,
-    /// File ids whose archive lists could still decide this recipe.
     pub(super) missing_listing_ids: Vec<u64>,
 }
 
@@ -464,9 +411,6 @@ fn candidate_evidence(
     (evidence, Some(row))
 }
 
-/// Score the archive path model once the metadata model is undecided.  The
-/// group is every eligible candidate, as in training.  Every list must be
-/// known; otherwise the ids still missing are returned for the worker.
 fn attach_path_scores(
     context: &PairContext,
     source_id: Option<u64>,
@@ -556,8 +500,6 @@ fn evaluate_single(
     let missing_listing_ids = attach_path_scores(context, source_id, &mut evidence, &rows);
     let choice = choose_candidate(&evidence);
     let Some(candidate_id) = choice else {
-        // Native abstention is terminal.  The caller must not invoke the
-        // legacy single-file fallback for this recipe.
         return NativeSingleEvaluation {
             evaluation: FileSetUpdateEvaluation {
                 state: no_update_state(&tracked, current.map(|(file, _)| file)),
@@ -588,7 +530,7 @@ fn evaluate_single(
     };
     let signature =
         super::candidate_signature(vec![super::tracked_file_meta_from_mod_file(candidate)]);
-    let _ = file_set; // retained for the patch's call-site symmetry and auditability
+    let _ = file_set;
     NativeSingleEvaluation {
         evaluation: FileSetUpdateEvaluation {
             state: ModUpdateState::UpdateAvailable,
@@ -604,9 +546,6 @@ fn evaluate_single(
     }
 }
 
-/// Evaluate only recipes that resolve to exactly one installed source file.
-/// Multi-file recipes are returned as `None` and remain on the conservative
-/// legacy path.  Missing/untracked entries are also left to the legacy path.
 pub(super) fn evaluate_native_single_group(
     items: &[(Option<i64>, FileSetRecipe)],
     profile: &gamebanana::ProfileResponse,
@@ -640,10 +579,6 @@ pub(super) fn evaluate_native_single_group(
     })
 }
 
-/// Remove every native claim whose candidate is claimed by another recipe.
-/// The parent supplies `competing_candidate_ids` collected from ignored and
-/// legacy multi-file paths.  This intentionally clears the whole affected
-/// recipe, never a subset of a multi-file recipe.
 pub(super) fn abstain_competing_native_claims(
     evaluations: &mut [NativeSingleEvaluation],
     competing_candidate_ids: &HashSet<u64>,

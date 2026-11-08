@@ -292,14 +292,12 @@ impl HestiaApp {
             return 0;
         }
 
-        // Collect entries first
         let entries: Vec<_> = WalkDir::new(root)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
             .collect();
 
-        // Sum in parallel
         entries
             .par_iter()
             .filter_map(|entry| entry.metadata().ok())
@@ -431,11 +429,6 @@ impl HestiaApp {
             return;
         }
 
-        // Off-screen rows advance by an estimate; once a row has been rendered
-        // its real advance is cached and reused, otherwise the total content
-        // height oscillates as rows cross the viewport edge and the scroll
-        // position jitters at the bottom. Row height depends on the wrap width
-        // and the task status, so the cache is invalidated on both.
         let width = ui.available_width();
         if (self.task_row_advance_cache_width - width).abs() > 0.5 {
             self.task_row_advance_cache_width = width;

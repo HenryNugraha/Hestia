@@ -1,8 +1,3 @@
-/// Renders one indented, wrapping bullet line for the XXMI consent explainer.
-/// `runs` are laid out after a leading dot; each run carries its color and a
-/// `code` flag that switches it to a monospace, non-italic face so the two
-/// d3dx.ini identifiers read as literal config keys. The whole line hangs under
-/// `indent` (the checkbox icon width + spacing) so wrapped rows stay aligned.
 fn xxmi_consent_bullet(ui: &mut egui::Ui, indent: f32, runs: &[(&str, Color32, bool)]) {
     let avail = ui.available_rect_before_wrap();
     let gray = Color32::from_gray(150);
@@ -40,9 +35,6 @@ fn xxmi_consent_bullet(ui: &mut egui::Ui, indent: f32, runs: &[(&str, Color32, b
         .galley(egui::pos2(rect.min.x + indent, rect.min.y), galley, gray);
 }
 
-/// Bullet whose body embeds a single colorized `code` identifier at the `{code}`
-/// placeholder in `template`. Falls back to a plain bullet if the placeholder is
-/// missing (e.g. an unexpected translation).
 fn xxmi_consent_code_bullet(ui: &mut egui::Ui, indent: f32, template: &str, code: &str) {
     let gray = Color32::from_gray(150);
     let brand = Color32::from_rgb(210, 189, 156);
@@ -176,13 +168,6 @@ fn xxmi_d3dx_status_table(
     }
 }
 
-/// Fills the `{backend}` slot of the "Active renderer" line in settings.
-///
-/// The GPU rides along inside that argument rather than in a catalog string of
-/// its own, so naming it costs no new translation entry. Worth showing because
-/// Hestia asks wgpu for the low-power adapter: on a hybrid machine the API name
-/// alone does not say whether the UI landed on the iGPU or took the discrete
-/// GPU the game wants. Glow reports no adapter, so it shows the API alone.
 fn active_renderer_display(label: &str, device: Option<&str>) -> String {
     match device {
         Some(device) => format!("{label} ({device})"),
@@ -190,7 +175,6 @@ fn active_renderer_display(label: &str, device: Option<&str>) -> String {
     }
 }
 
-/// "Normal / 100%", or "Custom / 110%" between the named sizes.
 fn interface_size_label(text: TextCatalog, zoom: f32) -> String {
     let name = match InterfaceSize::at_zoom(zoom) {
         Some(InterfaceSize::Small) => TextKey::SettingsInterfaceSizeSmall,
@@ -201,9 +185,6 @@ fn interface_size_label(text: TextCatalog, zoom: f32) -> String {
     format!("{} / {}%", text.get(name), (zoom * 100.0).round() as i32)
 }
 
-/// Dropdown label for an explicit renderer preference. API names are not
-/// translated (they are product names), and the GPU qualifier rides in the same
-/// literal to avoid a catalog entry. `Auto` is labelled by the catalog instead.
 fn renderer_menu_label(pref: RendererPreference) -> &'static str {
     match pref {
         RendererPreference::Auto => "Auto",
@@ -237,16 +218,12 @@ fn paint_dashed_line(ui: &egui::Ui, start: egui::Pos2, end: egui::Pos2, color: C
     }
 }
 
-/// Hestia's orange button: idle, hovered and pressed fills.
 const ORANGE_BUTTON_FILLS: [Color32; 3] = [
     Color32::from_rgb(180, 78, 35),
     Color32::from_rgb(198, 88, 41),
     Color32::from_rgb(150, 61, 28),
 ];
 
-/// Gives the buttons added after it in `ui` idle, hovered and pressed
-/// fills.  Used instead of `Button::fill`, which pins one color and kills
-/// the hover and press feedback.
 fn set_button_fills(ui: &mut Ui, [idle, hovered, pressed]: [Color32; 3]) {
     let widgets = &mut ui.visuals_mut().widgets;
     widgets.inactive.weak_bg_fill = idle;
@@ -267,7 +244,6 @@ struct XxmiD3dxSettingsActionState<'a> {
     action: XxmiD3dxSettingsAction,
     label: &'a str,
     status: &'a str,
-    /// Idle, hovered and pressed fills.
     fill: [Color32; 3],
     enabled: bool,
 }
@@ -364,9 +340,6 @@ impl HestiaApp {
                 .order(egui::Order::Foreground)
                 .title_bar(true)
                 .resizable(true)
-                // Body is a short fixed bullet list with no scroll area, so keep a
-                // floor that comfortably fits it; growing just adds empty space,
-                // and this stops a shrink from clipping the highlights.
                 .min_width(360.0)
                 .max_width(560.0)
                 .min_height(180.0)
@@ -379,8 +352,6 @@ impl HestiaApp {
             let window_size = egui::vec2(460.0, 220.0);
             window = window
                 .movable(true)
-                // `default_size` (not `fixed_size`) so `resizable` actually takes
-                // effect — `fixed_size` hard-locks the window and makes it inert.
                 .default_size(window_size)
                 .constrain_to(inset_rect);
             if force_default_pos {
@@ -785,7 +756,6 @@ impl HestiaApp {
         }
         let mut log_open = self.state.show_log;
         let force_default_pos = self.log_force_default_pos;
-        // A layout reset bumps the nonce too, so the fresh area needs its default size.
         let just_opened = self.log_scroll_to_bottom || force_default_pos;
         let text = self.text();
         let use_24h = system_uses_24h_time();
@@ -803,8 +773,6 @@ impl HestiaApp {
         if let Some(rect) = self.last_right_pane_rect {
             let inset_rect = rect.shrink2(egui::vec2(12.0, 12.0));
             let log_offset = egui::vec2(4.0, 4.0);
-            // Size is remembered across opens and restarts; position still snaps to
-            // the default corner so the window stays docked out of the way.
             let log_size = restore_floating_window_size(
                 self.state.static_prefs.floating_windows.log_size,
                 egui::vec2(460.0, 420.0),
@@ -837,9 +805,6 @@ impl HestiaApp {
             const LOG_DATE_GAP: f32 = 12.0;
             let scroll_rect = ui.available_rect_before_wrap();
             let scroll_navigation = vertical_scroll_navigation(ui, scroll_rect);
-            // stick_to_bottom is egui's stateful stick: it follows new lines only
-            // while the view is at the bottom and releases as soon as the user
-            // scrolls up, so it must stay enabled rather than be re-armed per line.
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
@@ -863,11 +828,6 @@ impl HestiaApp {
                                 (text.as_str().into(), LOG_ENTRY_ROW_HEIGHT)
                             }
                         };
-                        // Off-screen rows must advance by the exact height the
-                        // rendered label occupies (wrapped lines are taller than
-                        // the one-line minimum); estimates that run short make the
-                        // total content height change while scrolling, so the
-                        // bottom keeps receding.
                         let galley = widget_text.into_galley(
                             ui,
                             Some(egui::TextWrapMode::Wrap),
@@ -878,9 +838,6 @@ impl HestiaApp {
                         let row_top = ui.cursor().top();
                         let row_bottom = row_top + row_height;
                         if row_bottom < viewport.top() || row_top > viewport.bottom() {
-                            // Widgets advance the cursor by their rect plus item
-                            // spacing; add_space adds none, so include it here to
-                            // mirror the rendered path exactly.
                             ui.add_space(row_height + spacing_y);
                         } else {
                             let response = ui.add(egui::Label::new(galley).selectable(true));
@@ -1387,7 +1344,6 @@ impl HestiaApp {
             ui.horizontal(|ui| {
                 ui.add_space(6.0);
                 ui.vertical(|ui| {
-                    // The parent row centers this column, so 6 px produces a 3 px icon offset.
                     ui.add_space(6.0);
                     static_label(ui, icon_rich(Icon::Info, 32.0, Color32::from_gray(155)));
                 });
@@ -1592,8 +1548,6 @@ impl HestiaApp {
                                     }
                                 },
                             );
-                            // Pin toggle sits opposite the menu; always shown while pinned so the
-                            // state is readable at a glance, otherwise only on hover.
                             let pointer_over_card_now = ui
                                 .ctx()
                                 .pointer_latest_pos()
@@ -2972,9 +2926,6 @@ impl HestiaApp {
                 );
                 egui::Rect::from_min_size(pos, size)
             });
-            // Defaults only apply until egui has a rect for this id, so the saved
-            // layout lands on the first open after a restart and egui memory keeps
-            // it in sync for the rest of the session.
             let (settings_pos, settings_size) = restore_floating_window_rect(
                 self.state.static_prefs.floating_windows.settings,
                 inset_rect.min + settings_offset,
@@ -3188,8 +3139,6 @@ impl HestiaApp {
                             let mut category_display_mode =
                                 self.state.static_prefs.library_category_display_mode;
 
-                            // Legacy Group-by (Category/Status/None) remains hidden while the
-                            // Library View controls the effective grouping.
                             if !crate::model::HIDE_LEGACY_LIBRARY_GROUPING {
                                 let group_mode = self.state.static_prefs.library_group_mode;
                                 setting_block(ui, text.group_list_by(), &mut |ui| {
@@ -3207,16 +3156,11 @@ impl HestiaApp {
                                 }
                             }
 
-                            // Size both Installed Mods List rows with the SAME inputs as the
-                            // Behavior section above, so the panels' first columns line up in
-                            // every language (incl. Russian).
                             let left_column_needed = behavior_left_column_needed(ui);
                             let right_column_needed = behavior_right_column_needed(ui);
                             let left_column_width =
                                 settings_left_column_width(ui, left_column_needed, right_column_needed);
 
-                            // First row: the category layout spans the left column, while the
-                            // visibility controls stay together in the right column.
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
@@ -3266,12 +3210,9 @@ impl HestiaApp {
                             }
                             ui.add_space(8.0);
 
-                            // Second row: Mod Order + the active modifier on the left, Category
-                            // Order + the layout-specific category option on the right.
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(left_column_width);
-                                    // 1. Mod Order (mirrors the library sort menu's "Mod Order").
                                     setting_block(ui, text.library_sort_mods_heading(), &mut |ui| {
                                         egui::ComboBox::from_id_salt("settings_library_sort")
                                             .selected_text(text.library_sort_label(self.state.static_prefs.library_sort))
@@ -3284,7 +3225,6 @@ impl HestiaApp {
                                                 ui.selectable_value(&mut self.state.static_prefs.library_sort, LibrarySort::SizeDesc, text.library_sort_label(LibrarySort::SizeDesc));
                                             });
                                     });
-                                    // 2. The modifier follows the selected Library View.
                                     ui.add_space(4.0);
                                     if category_display_mode == LibraryCategoryDisplayMode::StatusSections {
                                         ui.checkbox(
@@ -3303,9 +3243,6 @@ impl HestiaApp {
                                 let category_order_applies =
                                     self.state.static_prefs.library_category_order_applies();
                                 ui.vertical(|ui| {
-                                    // 3. Category Order. Stored per game (like the sort menu), so it
-                                    // acts on the currently selected game; disabled when none is
-                                    // selected. set_category_sort_mode_for_game saves internally.
                                     if category_order_applies {
                                         setting_block(ui, text.library_sort_categories_heading(), &mut |ui| {
                                             ui.add_enabled_ui(selected_game_id.is_some(), |ui| {
@@ -3328,8 +3265,6 @@ impl HestiaApp {
                                             });
                                         });
                                     }
-                                    // Show the option that applies to the selected category layout;
-                                    // preserve the inactive option's stored preference.
                                     match category_display_mode {
                                         LibraryCategoryDisplayMode::Folders => {
                                             ui.add_space(4.0);
@@ -3590,9 +3525,6 @@ impl HestiaApp {
                                     foreground_mismatch || autosave_mismatch || selected_game_running;
                                 let notes_indent = 10.0;
                                 if show_any_note {
-                                    // Compact the explainer into a tight block. `item_spacing.y` is the
-                                    // gap between bullets; the negative lead pulls the first bullet up
-                                    // under the status table. Nudge either to taste.
                                     ui.scope(|ui| {
                                         ui.spacing_mut().item_spacing.y = 1.0;
                                         if foreground_mismatch {
@@ -4195,11 +4127,8 @@ impl HestiaApp {
                                                 }
                                             }
                                         });
-                                        // Only XXMI games let Hestia edit d3dx.ini, so the consent
-                                        // checkbox is hidden entirely for other backends.
                                         if game.is_xxmi() {
                                             let mut desired_reload = game.apply_mod_changes_in_game;
-                                            // Match the General section's checkbox roundness (radius 3).
                                             ui.scope(|ui| {
                                                 let radius = egui::CornerRadius::same(3);
                                                 ui.style_mut().visuals.widgets.inactive.corner_radius = radius;
@@ -4231,7 +4160,6 @@ impl HestiaApp {
                                             ui.style_mut().visuals.widgets.open.corner_radius = radius;
                                             ui.spacing_mut().item_spacing.y = 3.0;
 
-                                            // Vanilla game exe
                                             if game.enabled {
                                                 let vanilla_invalid = game
                                                     .vanilla_exe_path_override
@@ -4384,9 +4312,6 @@ impl HestiaApp {
                                                         )
                                                     })
                                                     .unwrap_or(true);
-                                                // Denied creation on an existing ancestor means the path is
-                                                // protected, even if the mods dir itself is missing (it may be
-                                                // missing precisely because Hestia could not create it).
                                                 let mods_protected = game
                                                     .mods_path(self.state.static_prefs.use_default_mods_path)
                                                     .is_some_and(|path| {
@@ -4575,8 +4500,6 @@ impl HestiaApp {
                                 );
                             });
                         }
-                        // Startup recovery skips disabled games, so a re-enabled game owes
-                        // one recovery pass before its profiles are trusted again.
                         self.queue_profile_recovery_for_game(&game_id);
                         self.queue_game_refresh(game_id);
                     }
@@ -4996,8 +4919,6 @@ impl HestiaApp {
                                     .selected_text(selected_label)
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Auto, text.renderer_auto());
-                                        // Explicit picks always name a GPU; all automatic
-                                        // behavior (best API, display-matched GPU) is Auto.
                                         #[cfg(windows)]
                                         {
                                             ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Dx12Integrated, renderer_menu_label(RendererPreference::Dx12Integrated));
@@ -5012,12 +4933,6 @@ impl HestiaApp {
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::Metal, "Metal");
                                         ui.selectable_value(&mut self.state.static_prefs.renderer, RendererPreference::OpenGl, "OpenGL");
                                     });
-                                // No button when the selection resolves to the renderer
-                                // already running (e.g. Auto resolved to DirectX 12 and
-                                // the user picks DirectX 12 explicitly). The GPU dimension
-                                // counts too: switching between the integrated and
-                                // dedicated variants of one API still needs a restart even
-                                // though the API label is unchanged.
                                 let predicted_label = self
                                     .state
                                     .static_prefs
@@ -5030,9 +4945,6 @@ impl HestiaApp {
                                     .renderer
                                     .gpu_choice()
                                 {
-                                    // Auto and the API-only variants leave the GPU to the
-                                    // display match, so they never force a restart on the
-                                    // GPU dimension alone.
                                     None => true,
                                     Some(choice) => Some(choice) == self.active_renderer_gpu,
                                 };
@@ -5259,8 +5171,6 @@ mod renderer_label_tests {
 
     #[test]
     fn active_renderer_falls_back_to_the_api_alone_under_glow() {
-        // eframe exposes no wgpu adapter on the glow backend, so there is no
-        // device name to show and the line must not grow empty parentheses.
         assert_eq!(active_renderer_display("OpenGL", None), "OpenGL");
     }
 }

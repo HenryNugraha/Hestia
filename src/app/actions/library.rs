@@ -21,9 +21,6 @@ struct XxmiNamespaceContext {
     prefixes_by_root: Vec<(PathBuf, Vec<String>)>,
 }
 
-/// Importer-root discovery is a filesystem walk, so it must be gated by the watch deadline.
-/// A changed watch identity bypasses the deadline so a newly selected/configured path is
-/// discovered immediately.
 fn importer_root_poll_due(now: f64, next_poll_at: f64, identity_changed: bool) -> bool {
     identity_changed || now >= next_poll_at
 }
@@ -37,9 +34,6 @@ fn importer_root_watch_identity_changed(
     })
 }
 
-/// Refresh a cached importer root only when its watch is due or its identity changed. `None` is
-/// a cached result too: when a path is configured but no importer marker exists, the resolver is
-/// retried at the watch cadence instead of once per frame.
 fn refresh_importer_root_cache<R>(
     now: f64,
     poll_interval: f64,
@@ -185,10 +179,6 @@ impl HestiaApp {
             return cached_status;
         }
 
-        // A matching watch with a cached missing root is authoritative until its next due
-        // retry. Avoid turning every render-path capability check into another upward filesystem
-        // walk while an unconfigured path remains absent. Calls made outside this watch identity
-        // still use the fresh resolver for action-time checks.
         xxmi_persist::reload_config_status(game, use_default)
     }
 
@@ -212,10 +202,6 @@ impl HestiaApp {
             && self.state.static_prefs.reload_hotkey_triggers.enabled(trigger)
     }
 
-    /// Launch-time self-heal. A synthetic reload key (F10) whose key-up never arrived (for
-    /// example a previous Hestia that exited mid-press) stays down in the OS key table, and
-    /// 3DMigoto then re-fires the reload every frame for as long as the game runs. Release
-    /// it once here so the importer settles, and log it so the cause is visible.
     fn release_stuck_xxmi_reload_hotkeys(&mut self) {
         let use_default = self.state.static_prefs.use_default_mods_path;
         let mut importer_roots = Vec::new();
@@ -261,8 +247,6 @@ impl HestiaApp {
                 self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
             }
         }
-        // The folded consent also governs the live-state helper: install it (mirroring the
-        // active mods' shown variables) when on, remove it when off.
         self.refresh_live_state_helper_for_game(game);
         self.refresh_d3dx_reload_status_for_game(game);
     }
@@ -441,8 +425,6 @@ impl HestiaApp {
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // Deriving the effective Mods path only reads in-memory settings. Importer-root
-        // discovery below walks the filesystem and is intentionally deadline-gated.
         let mods_path = game.mods_path(use_default);
 
         let running = self.selected_game_process_running_cached(&game, ctx);
@@ -469,9 +451,6 @@ impl HestiaApp {
             ),
         );
         if identity_changed {
-            // Keep a watch alive when no importer root exists. The cached `None` prevents an
-            // unconfigured path from being searched on every frame while still allowing a
-            // later due poll to notice a newly created importer.
             self.d3dx_reload_config_watch = Some(D3dxReloadConfigWatch {
                 game_id: game.definition.id.clone(),
                 use_default,
@@ -654,8 +633,6 @@ impl HestiaApp {
             self.set_game_reload_preference(&prompt.game_id, false);
             return;
         };
-        // "Replace" is just a consented enable: the normal enable path stashes the user's
-        // conflicting foreground value in place and injects Hestia's, reversibly.
         self.set_game_reload_preference(&prompt.game_id, true);
         let mut updated = game;
         updated.apply_mod_changes_in_game = true;
@@ -781,9 +758,6 @@ impl HestiaApp {
             .cloned()
     }
 
-    /// One settings-preservation transaction per game/importer. `None` when the feature is
-    /// off, the game is not XXMI-backed, or no importer root is discoverable — callers then
-    /// run the plain filesystem operation unchanged.
     fn begin_xxmi_persist_tx(&mut self, game: &GameInstall) -> Option<xxmi_persist::PersistTx> {
         if !self.state.static_prefs.preserve_mod_settings || !game.is_xxmi() {
             return None;
@@ -883,8 +857,6 @@ impl HestiaApp {
         prefixes
     }
 
-    /// Commit the settings transaction and send the importer reload hotkey when either
-    /// `d3dx_user.ini` changed or the caller changed the live mod set/path.
     fn finish_xxmi_persist_tx(
         &mut self,
         game: &GameInstall,
@@ -1001,9 +973,6 @@ impl HestiaApp {
         }
     }
 
-    /// Capture before a filesystem mutation. Returns the rollback point for the caller to
-    /// use if the mutation fails. A capture error rolls back immediately and aborts the
-    /// host operation: proceeding would perform the exact lossy move this feature prevents.
     fn xxmi_capture_step(
         tx: &mut Option<xxmi_persist::PersistTx>,
         mod_entry: &ModEntry,
@@ -1022,8 +991,6 @@ impl HestiaApp {
         }
     }
 
-    /// Discard the in-memory settings mutation after a failed filesystem step, so the
-    /// entries are still present when the transaction commits.
     fn xxmi_rollback_step(
         tx: &mut Option<xxmi_persist::PersistTx>,
         checkpoint: Option<xxmi_persist::PersistCheckpoint>,
@@ -1033,7 +1000,6 @@ impl HestiaApp {
         }
     }
 
-    /// Mark the provisional settings mutation as final after its filesystem step succeeded.
     fn xxmi_keep_step(
         tx: &mut Option<xxmi_persist::PersistTx>,
         checkpoint: Option<xxmi_persist::PersistCheckpoint>,
@@ -1043,8 +1009,6 @@ impl HestiaApp {
         }
     }
 
-    /// Restore after a successful mutation that made the mod live. Failure never fails the
-    /// host operation — the stash on disk is the recovery path.
     fn xxmi_restore_step(tx: &mut Option<xxmi_persist::PersistTx>, mod_entry: &ModEntry) {
         if let Some(tx) = tx.as_mut() {
             let checkpoint = tx.checkpoint();
@@ -1058,8 +1022,6 @@ impl HestiaApp {
         }
     }
 
-    /// Point the stash at a hidden mod's new prospective prefix after a rename; never
-    /// writes live entries for it.
     fn xxmi_rebase_step(tx: &mut Option<xxmi_persist::PersistTx>, mod_entry: &ModEntry) {
         if let Some(tx) = tx.as_mut()
             && let Err(err) = tx.rebase(mod_entry)
@@ -1169,8 +1131,6 @@ impl HestiaApp {
         }
     }
 
-    /// One transaction per game for a batch, keyed by game id. Games that do not qualify
-    /// still get a `None` slot so the loop can borrow uniformly.
     fn begin_xxmi_persist_tx_batch(
         &mut self,
         games: &[GameInstall],
@@ -1205,10 +1165,6 @@ impl HestiaApp {
         }
     }
 
-    /// Restore for freshly installed mods that arrived carrying a `mod.cfg` — cross-machine
-    /// folder copies, recycle-bin undeletes, replaced updates. Only applies where no live
-    /// entries already exist under the mod's prefix: live entries are newer than anything
-    /// an imported stash can hold.
     fn run_xxmi_persist_import_restore(&mut self, mod_ids: &[String]) {
         if !self.state.static_prefs.preserve_mod_settings {
             return;
@@ -1278,10 +1234,6 @@ impl HestiaApp {
         }
     }
 
-    /// Scan-time settings pass for one game: write baseline stashes for live mods that have
-    /// entries but no `mod.cfg` yet (the upgrade path that makes external-rename repair
-    /// possible), and reroute any mod whose stash prefix disagrees with its real path. The
-    /// baseline never touches `d3dx_user.ini`; reroute writes only on an actual mismatch.
     fn run_xxmi_persist_scan_pass(&mut self, game_id: &str) {
         let Some(game) = self
             .state
@@ -1296,9 +1248,6 @@ impl HestiaApp {
             return;
         }
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // The d3dx.ini foreground-window grant must be in place before launch for
-        // reload delivery to work while Hestia is foreground. Refresh it on scan, and
-        // remove Hestia's generated config when the reload option is disabled.
         match xxmi_persist::ensure_reload_config(
             &game,
             use_default,
@@ -1313,8 +1262,6 @@ impl HestiaApp {
                 self.report_warn(format!("XXMI reload config refresh failed: {err:#}"), None);
             }
         }
-        // Regenerate the live-state helper from the freshly-scanned active mod set, so a
-        // changed mod roster (enable/disable/update) is reflected in what gets mirrored.
         self.refresh_live_state_helper_for_game(&game);
         if !self.state.static_prefs.preserve_mod_settings {
             return;
@@ -1463,9 +1410,6 @@ impl HestiaApp {
         }
     }
 
-    /// Whether "Enable this mod, disable others" has others to turn off: an
-    /// enabled mod in the same category.  Uncategorized mods have none, as in
-    /// the overlay.
     fn mod_has_enabled_category_mates(&self, mod_id: &str) -> bool {
         let Some(target) = self.state.mods.iter().find(|entry| entry.id == mod_id) else {
             return false;
@@ -1481,8 +1425,6 @@ impl HestiaApp {
         })
     }
 
-    /// "Enable this mod, disable others": the overlay's Space, from the mod
-    /// menu.  Errors are reported on the way.
     fn enable_mod_disable_others_by_id(&mut self, mod_id: &str) {
         let Some(game_id) = self
             .state
@@ -1496,8 +1438,6 @@ impl HestiaApp {
         let _ = self.apply_mod_change(&game_id, mod_id, overlay_protocol::ChangeAction::Use);
     }
 
-    /// The mod menu's Categories, clicked: the mod's details, with their
-    /// category menu opened as soon as they're drawn.
     fn open_mod_detail_category_picker(&mut self, mod_id: &str) {
         self.set_selected_mod_id(Some(mod_id.to_owned()));
         self.mod_detail_category_picker_pending = Some(mod_id.to_owned());
@@ -1586,10 +1526,6 @@ impl HestiaApp {
         behavior
     }
 
-    /// Both delete behaviors funnel through here — hooking only the recycle path would
-    /// leave permanent deletes orphaning `d3dx_user.ini` entries. Recycle captures to a
-    /// stash that rides into the bin (so an undelete round-trips); permanent delete purges
-    /// the entries without writing a stash the removal is about to destroy.
     fn delete_mod_entry_with_tx(
         &mut self,
         mod_entry: &ModEntry,
@@ -1914,7 +1850,6 @@ impl HestiaApp {
             .filter(|game| self.xxmi_reload_hotkey_capable_for_game(game))
             .map(|game| game.definition.id.clone())
             .collect();
-        // Single iteration: filter selected mods and disable in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) && mod_entry.status == ModStatus::Active {
                 let game = games
@@ -2002,7 +1937,6 @@ impl HestiaApp {
             .filter(|game| self.xxmi_reload_hotkey_capable_for_game(game))
             .map(|game| game.definition.id.clone())
             .collect();
-        // Single iteration: process all selected mods in one pass
         for mod_entry in self.state.mods.iter_mut() {
             if self.selected_mods.contains(&mod_entry.id) {
                 let game = games
@@ -2104,8 +2038,6 @@ impl HestiaApp {
         let request_reload = (game.as_ref().is_some_and(|game| game.is_xxmi())
             && mod_entry.status == ModStatus::Active)
         .then_some(ReloadHotkeyTrigger::RenamingMods);
-        // Capture while the mod is still at its old path; the stash lands inside the folder
-        // and travels with the rename.
         let checkpoint = Self::xxmi_capture_step(&mut ptx, mod_entry, xxmi_persist::CaptureMode::Stash)?;
         if let Err(err) = fs::rename(&old_path, &new_path) {
             Self::xxmi_rollback_step(&mut ptx, checkpoint);
@@ -2115,16 +2047,12 @@ impl HestiaApp {
         mod_entry.root_path = new_path;
         mod_entry.folder_name = new_name.to_string();
         mod_entry.updated_at = Utc::now();
-        // A live mod gets its settings back under the new prefix; a hidden mod must not
-        // have live entries written for it — only its stash anchor moves.
         if mod_entry.status == ModStatus::Active {
             Self::xxmi_restore_step(&mut ptx, mod_entry);
         } else {
             Self::xxmi_rebase_step(&mut ptx, mod_entry);
         }
         let game = game.ok_or_else(|| anyhow!("game not found"))?;
-        // Commit settings before the metadata write: a metadata failure must not lose the
-        // already-performed settings migration.
         self.finish_xxmi_persist_tx(&game, ptx, request_reload);
         let Some(mod_entry) = self.state.mods.iter_mut().find(|m| m.id == mod_id) else {
             bail!("mod not found");
@@ -2169,7 +2097,6 @@ impl HestiaApp {
         }
         let games = self.state.games.clone();
         let use_default = self.state.static_prefs.use_default_mods_path;
-        // Collect mod entries to clear image state (need owned data to avoid borrow conflicts)
         let mods_to_clear: Vec<ModEntry> = self.state.mods
             .iter()
             .filter(|m| self.selected_mods.contains(&m.id) 
@@ -2181,12 +2108,10 @@ impl HestiaApp {
             .cloned()
             .collect();
         
-        // Clear image states
         for mod_entry in &mods_to_clear {
             self.clear_mod_image_runtime_state(mod_entry);
         }
         
-        // Archive mods in a single iteration
         let mut archived_count = 0;
         let mut per_game_tx = self.begin_xxmi_persist_tx_batch(
             &games,
@@ -2244,7 +2169,6 @@ impl HestiaApp {
             self.set_message_ok(self.text().folder_batch_busy_tooltip());
             return;
         }
-        // Single iteration: collect selected mods to delete in one pass
         let mods_to_delete: Vec<ModEntry> = self.state.mods
             .iter()
             .filter(|m| self.selected_mods.contains(&m.id))

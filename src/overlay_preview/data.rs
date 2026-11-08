@@ -1,6 +1,3 @@
-//! The overlay's library: the one Hestia sends, or in the preview a saved
-//! sample of one.
-
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -8,7 +5,6 @@ use crate::{
     overlay_protocol::{InfoKind, InfoSource, ModHotkey, ModHotkeys, ModInfo, Settings, Start},
 };
 
-/// The preview's sample library, in target/overlay-preview.
 const SAMPLE_FILE: &str = "sample-library.json";
 
 #[derive(Clone, Default)]
@@ -18,17 +14,12 @@ pub(super) struct Catalog {
     pub note: Option<String>,
 }
 
-/// Ids keep the overlay's place when the library changes under it.
 #[derive(Clone, Default)]
 pub(super) struct Category {
     pub id: String,
     pub name: String,
     pub image: Option<PathBuf>,
-    /// The GameBanana character whose mods the in-game overlay shows after
-    /// the category's own.
     pub character: Option<u64>,
-    /// A GameBanana character without a category, which "Show all
-    /// characters" adds after the library's categories.
     pub extra: bool,
     pub costumes: Vec<Costume>,
 }
@@ -39,13 +30,10 @@ pub(super) struct Costume {
     pub name: String,
     pub image: Option<PathBuf>,
     pub active: bool,
-    /// The library censors its picture, so it shows darkened.
     pub censored: bool,
-    /// The GameBanana mod it was installed from.
     pub gamebanana_id: Option<u64>,
 }
 
-/// The library Hestia sends to the live overlay.
 pub(super) fn catalog_from_library(library: crate::overlay_protocol::Library) -> Catalog {
     Catalog {
         game: library.game_name,
@@ -76,7 +64,6 @@ pub(super) fn catalog_from_library(library: crate::overlay_protocol::Library) ->
     }
 }
 
-/// The hotkeys the preview gives every mod, enough to scroll.
 pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
     let hotkeys = [
         ("Alt+H", "Menu"),
@@ -107,7 +94,6 @@ pub(super) fn sample_hotkeys(mod_id: &str) -> ModHotkeys {
     }
 }
 
-/// What the preview shows on every card's info side.
 pub(super) fn sample_info(mod_id: &str) -> ModInfo {
     let source = |kind, path: &str, label: &str, text: &str| InfoSource {
         kind,
@@ -147,9 +133,6 @@ pub(super) fn sample_info(mod_id: &str) -> ModInfo {
     }
 }
 
-/// The preview's library: a start message the in-game overlay saved, so the
-/// screenshot runs don't change with the real library.  Start Hestia with
-/// `HESTIA_OVERLAY_SAVE_SAMPLE` set to a file to save one.
 pub(super) fn load_sample() -> (Catalog, Settings) {
     let start = sample_path()
         .ok_or_else(|| anyhow::anyhow!("no {SAMPLE_FILE} in target/overlay-preview"))
@@ -170,8 +153,6 @@ pub(super) fn load_sample() -> (Catalog, Settings) {
     }
 }
 
-/// Saves the start message as the preview's sample library, when
-/// `HESTIA_OVERLAY_SAVE_SAMPLE` asks for it.
 pub(super) fn save_sample(start: &Start) {
     let Some(path) = std::env::var_os("HESTIA_OVERLAY_SAVE_SAMPLE") else {
         return;
@@ -214,9 +195,6 @@ fn write_sample(path: &Path, start: &Start) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A mod's picture for the overlay's cards: its cover, else a screenshot, else
-/// its GameBanana preview if Hestia has downloaded it, else a thumbnail Hestia
-/// baked.  The thumbnails are small for the cards, so they come last.
 pub(crate) fn mod_image(
     root: &Path,
     cover: Option<&str>,
@@ -266,9 +244,6 @@ pub(super) fn state_path() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     let mut candidates = Vec::new();
-    // This isolated development preview follows the installed app's settings,
-    // rather than an old portable fixture left beside target/debug/hestia.exe.
-    // An explicitly selected portable profile still wins via the override above.
     if let Some(appdata) = std::env::var_os("APPDATA") {
         candidates.push(PathBuf::from(appdata).join("Hestia/hestia.toml"));
     }
@@ -309,7 +284,6 @@ mod tests {
             pick(Some("cover.png"), &screenshots, Some(&preview)),
             Some(cover)
         );
-        // A disabled mod's files move into the disabled folder.
         assert_eq!(
             pick(Some("missing.png"), &screenshots, Some(&preview)),
             Some(screenshot)

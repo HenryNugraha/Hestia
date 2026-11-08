@@ -1,23 +1,11 @@
-// GameBanana installs the in-game overlay asks for.  Hestia installs them
-// like its Browse page's "Install disabled", and tells the overlay how they
-// go.  Questions are shown in the overlay while it runs; if it closes, the
-// conflict goes to Hestia's normal conflict window and the file question is
-// shown in a main-window fallback.  The GameBanana downloads Hestia's window
-// starts for the overlay's game show there like its own installs.
-
-/// How often Hestia looks at an overlay install's progress.
 const OVERLAY_INSTALL_POLL: Duration = Duration::from_millis(200);
 
-/// A GameBanana mod the in-game overlay asked Hestia to install.
 struct OverlayInstall {
-    /// The GameBanana mod.
     mod_id: u64,
     game_id: String,
-    /// The library category it goes into, or None for a new one.
     category_id: Option<String>,
     task_id: u64,
     question: Option<OverlayInstallQuestion>,
-    /// What the overlay heard last.
     sent: Option<overlay_protocol::InstallStage>,
 }
 
@@ -29,8 +17,6 @@ enum OverlayInstallQuestion {
     SameName(PendingConflict),
 }
 
-/// Returns questions the main window still needs to render and moves
-/// conflicts to its existing conflict queue.
 fn handoff_overlay_question(
     question: OverlayInstallQuestion,
     conflicts: &mut Vec<PendingConflict>,
@@ -84,29 +70,19 @@ fn overlay_install_task_is_live(
     )
 }
 
-/// A GameBanana download Hestia's window started for the overlay's game,
-/// which the overlay shows like one of its own installs.
 struct WindowDownload {
-    /// The GameBanana mod.
     mod_id: u64,
     game_id: String,
     name: String,
-    /// Its tasks, one for each file picked.
     task_ids: Vec<u64>,
-    /// The library mods its finished tasks installed.
     mods: Vec<String>,
-    /// What the overlay heard last.
     sent: Option<overlay_protocol::InstallStage>,
 }
 
-/// Where a task of a window download is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WindowPart {
-    /// Queued for its download.
     Waiting,
     Downloading(Option<u8>),
-    /// The window asks which files to download, or, once downloaded, how to
-    /// install it.
     Asking {
         downloaded: bool,
     },
@@ -121,7 +97,6 @@ impl WindowPart {
         !matches!(self, Self::Done | Self::Failed | Self::Canceled)
     }
 
-    /// Hestia works on it, so the overlay has more to hear soon.
     fn busy(self) -> bool {
         matches!(
             self,
@@ -260,14 +235,10 @@ impl HestiaApp {
         }
     }
 
-    /// Starts an install with the steps of the Browse page's Install button,
-    /// turned off.
     fn start_game_overlay_install(&mut self, game_id: &str, request: overlay_protocol::Install) {
         if self.game_overlay_install_mut(request.mod_id).is_some() {
             return;
         }
-        // Hestia's window downloads it already, and the overlay hadn't heard
-        // yet.  Its card shows that download from now on.
         self.track_window_downloads(game_id);
         if let Some(download) = self
             .game_overlay
@@ -331,9 +302,6 @@ impl HestiaApp {
             .any(|install| install.task_id == task_id)
     }
 
-    /// GameBanana has several files for an overlay install, so the overlay
-    /// asks which one instead of Hestia's window.  False when the install
-    /// isn't the overlay's.
     fn ask_game_overlay_for_file(
         &mut self,
         task_id: u64,
@@ -355,10 +323,6 @@ impl HestiaApp {
         true
     }
 
-    /// Queues an inspected install for the review window, or does the
-    /// window's step for an overlay install.  One version installs under the
-    /// mod's name, and the overlay asks about a folder that has it.  Several
-    /// install side by side, like "Install separately" with all of them.
     fn review_pending_import(&mut self, pending: PendingImport) {
         let PendingImport {
             job_id,
@@ -454,8 +418,6 @@ impl HestiaApp {
         }
     }
 
-    /// Stops an install job before it installs, like the review window's
-    /// Cancel.
     fn drop_install_job(&mut self, job_id: u64, status: TaskStatus) {
         let _ = self
             .install_request_tx
@@ -472,10 +434,6 @@ impl HestiaApp {
         self.update_task_status(job_id, status);
     }
 
-    /// Which category an overlay install's mods go into: `Some(Some(id))`
-    /// for the category the overlay showed it in, `Some(None)` for their
-    /// character's even where Browse downloads get none, and None for other
-    /// installs.
     fn game_overlay_install_category(&self, job_id: u64) -> Option<Option<String>> {
         let install = self
             .game_overlay
@@ -490,10 +448,7 @@ impl HestiaApp {
         }))
     }
 
-    /// Tells the overlay an install is done, after the library with its mods.
     fn finish_game_overlay_install(&mut self, job_id: u64, mod_ids: &[String]) {
-        // A file of a download Hestia's window started.  The overlay hears
-        // once all its files are done.
         if let Some(download) = self
             .game_overlay
             .window_downloads
@@ -533,10 +488,6 @@ impl HestiaApp {
         }
     }
 
-    /// Moves a conflict question to Hestia's normal conflict window when the
-    /// overlay can no longer receive an answer.  File questions stay on the
-    /// overlay install record so the main window can render them without
-    /// losing the install's category or task identity.
     fn handoff_game_overlay_questions(&mut self) {
         let mut conflicts = Vec::new();
         for install in &mut self.game_overlay.installs {
@@ -549,10 +500,6 @@ impl HestiaApp {
         self.pending_conflicts.extend(conflicts);
     }
 
-    /// Keeps an overlay install until its normal download/install lifecycle
-    /// has consumed it.  This is needed after the overlay closes: the task
-    /// may still be waiting for a file answer, or its final refresh may still
-    /// need the overlay category captured on the install record.
     fn overlay_install_is_live(&self, task_id: u64) -> bool {
         overlay_install_task_is_live(
             self.state
@@ -568,11 +515,8 @@ impl HestiaApp {
         )
     }
 
-    /// Tells the overlay how its installs go, each change once.
     fn sync_game_overlay_installs(&mut self, ctx: &egui::Context) {
         let Some(process) = &self.game_overlay.process else {
-            // They go on in Hestia. Keep their records for questions,
-            // category assignment, and finalization after the overlay closes.
             self.handoff_game_overlay_questions();
             let live_task_ids: std::collections::HashSet<u64> = self
                 .game_overlay
@@ -642,10 +586,6 @@ impl HestiaApp {
     ) -> overlay_protocol::InstallStage {
         use overlay_protocol::{InstallFile, InstallStage};
 
-        // A conflict handed to Hestia's normal window remains attached to
-        // this task while the game overlay may restart. Report the same
-        // question to the overlay too; whichever surface answers first owns
-        // the queued conflict and the other becomes a no-op.
         if let Some(conflict) = self
             .pending_conflicts
             .iter()
@@ -693,13 +633,10 @@ impl HestiaApp {
             },
             Some(TaskStatus::Failed) => InstallStage::Failed,
             Some(TaskStatus::Canceled) => InstallStage::Canceled,
-            // Completed waits for the library to take the mods in.  Clearing
-            // finished tasks can take that one away meanwhile.
             Some(TaskStatus::Installing | TaskStatus::Completed) | None => InstallStage::Installing,
         }
     }
 
-    /// How much of a Browse download came, when GameBanana gave its size.
     fn browse_download_percent(&self, task_id: u64) -> Option<u8> {
         let download = self.browse_download_inflight.get(&task_id)?;
         let progress = download.progress.read().ok()?;
@@ -707,8 +644,6 @@ impl HestiaApp {
         Some((progress.downloaded.saturating_mul(100) / total).min(100) as u8)
     }
 
-    /// Tells the overlay how the downloads Hestia's window started for its
-    /// game go, each change once.  True while Hestia works on one.
     fn sync_game_overlay_window_downloads(&mut self, game_id: &str) -> bool {
         use overlay_protocol::InstallStage;
 
@@ -740,7 +675,6 @@ impl HestiaApp {
             .iter()
             .any(|stage| matches!(stage, InstallStage::Installed { .. }))
         {
-            // The library with the mods comes first.
             self.send_game_overlay_library_now();
         }
         let Some(process) = &self.game_overlay.process else {
@@ -769,9 +703,6 @@ impl HestiaApp {
         busy
     }
 
-    /// Follows the GameBanana downloads Hestia's window runs for `game_id`,
-    /// one for each mod, with each file's task.  Updates aren't followed, nor
-    /// mods the library has already: the overlay shows no card for those.
     fn track_window_downloads(&mut self, game_id: &str) {
         let mut found: Vec<(u64, Option<u64>)> = self
             .state
@@ -790,7 +721,6 @@ impl HestiaApp {
                 _ => None,
             })
             .collect();
-        // Before GameBanana said which files the mod has.
         found.extend(
             self.browse_state
                 .pending_installs
@@ -862,8 +792,6 @@ impl HestiaApp {
         }
     }
 
-    /// The GameBanana mod Hestia's window asks which files to download of,
-    /// for a new install in `game_id`.
     fn window_file_prompt(&self, game_id: &str) -> Option<u64> {
         self.browse_state
             .file_prompt
@@ -872,8 +800,6 @@ impl HestiaApp {
             .map(|prompt| prompt.mod_id)
     }
 
-    /// Where the task of a window download is.  None once it's gone without
-    /// installing anything.
     fn window_part(&self, task_id: u64) -> Option<WindowPart> {
         let status = self
             .state
@@ -884,7 +810,6 @@ impl HestiaApp {
         self.window_task_part(task_id, status)
     }
 
-    /// Where the task of a window download is, by its status.
     fn window_task_part(&self, task_id: u64, status: Option<TaskStatus>) -> Option<WindowPart> {
         let asking = || {
             self.pending_imports
@@ -902,8 +827,6 @@ impl HestiaApp {
             }
             Some(TaskStatus::Installing) if asking() => WindowPart::Asking { downloaded: true },
             Some(TaskStatus::Installing) => WindowPart::Installing,
-            // Completed waits for the library to take the mods in.  Clearing
-            // finished tasks can take that one away meanwhile.
             Some(TaskStatus::Completed) | None
                 if self.pending_install_finalize.contains_key(&task_id) =>
             {
@@ -917,8 +840,6 @@ impl HestiaApp {
     }
 }
 
-/// How a window download goes, by its tasks: None once none of them runs.
-/// The questions Hestia's window asks show as waiting.
 fn window_download_stage(parts: &[WindowPart]) -> Option<overlay_protocol::InstallStage> {
     use overlay_protocol::InstallStage;
 
@@ -929,7 +850,6 @@ fn window_download_stage(parts: &[WindowPart]) -> Option<overlay_protocol::Insta
         .iter()
         .any(|part| matches!(part, WindowPart::Downloading(_)))
     {
-        // One percent for all its files.
         let mut sum = 0u32;
         let mut count = 0u32;
         let mut known = true;
@@ -943,7 +863,6 @@ fn window_download_stage(parts: &[WindowPart]) -> Option<overlay_protocol::Insta
                 WindowPart::Asking { downloaded: true }
                 | WindowPart::Installing
                 | WindowPart::Done => 100,
-                // Not a download yet, or one that ended without installing.
                 WindowPart::Asking { downloaded: false }
                 | WindowPart::Failed
                 | WindowPart::Canceled => continue,
@@ -967,7 +886,6 @@ fn window_download_stage(parts: &[WindowPart]) -> Option<overlay_protocol::Insta
     )
 }
 
-/// How a window download ended, once none of its tasks runs.
 fn window_download_outcome(
     mods: &[String],
     parts: &[WindowPart],

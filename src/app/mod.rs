@@ -86,19 +86,12 @@ include!("util/mod.rs");
 
 static UI_REPAINT_CONTEXT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
 
-/// Wake the UI event loop so a freshly sent worker event is consumed on the next
-/// frame instead of waiting for a poll tick. Safe to call from any thread; no-op
-/// until the GUI is up.
 fn wake_ui() {
     if let Some(ctx) = UI_REPAINT_CONTEXT.get() {
         ctx.request_repaint();
     }
 }
 
-/// Continuous repaints are for visible animation only. When the window is not
-/// focused, present at a bounded rate instead: an occluded window's buffer swap may
-/// not block on vsync, and the resulting present spam contends with a foreground
-/// game's frame pacing even while overall CPU/GPU usage stays low.
 fn request_animation_repaint(ctx: &egui::Context) {
     if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
         ctx.request_repaint();
@@ -107,9 +100,6 @@ fn request_animation_repaint(ctx: &egui::Context) {
     }
 }
 
-/// Seconds on a clock that keeps running while the window is minimized. eframe still
-/// runs `logic` then, but leaves `input.time` at the last shown frame, which would
-/// stall the watchers that pace themselves by it.
 fn logic_time() -> f64 {
     static START: Lazy<Instant> = Lazy::new(Instant::now);
     START.elapsed().as_secs_f64()
@@ -121,7 +111,6 @@ impl eframe::App for HestiaApp {
         set_current_language(self.state.static_prefs.language);
         self.poll_folder_batch_job();
 
-        // Batch worker event consumption - only poll channels when flagged
         if self.check_pending_worker_events() {
             profiling::scope!("logic::worker_events");
             self.consume_icon_results(ctx);
@@ -152,7 +141,6 @@ impl eframe::App for HestiaApp {
         self.complete_startup_launch(ctx);
         self.confirm_renderer_boot(ctx);
 
-        // Always run these - they have internal checks or are always needed
         profiling::scope!("logic::frame_upkeep");
         self.cancel_invisible_gif_work();
         self.update_gif_animations(ctx);
@@ -166,15 +154,12 @@ impl eframe::App for HestiaApp {
         self.poll_live_state_watch(ctx);
         self.poll_d3dx_reload_config_watch(ctx);
         self.poll_game_overlay(ctx, frame);
-        // While minimized, eframe runs `logic` without a new frame: input still holds the
-        // last shown frame's keys and dropped files, so acting on it would repeat them.
         let window_shown = ctx.input(|input| input.viewport().visible().unwrap_or(true));
         if window_shown && !self.profile_operation_locks_app() {
             self.detect_drag_and_drop(ctx);
             self.handle_shortcuts(ctx);
         }
 
-        // Process queues - only when there's work
         if self.check_pending_process_work() {
             profiling::scope!("logic::queues");
             self.process_local_mod_image_queue(ctx);
@@ -187,8 +172,6 @@ impl eframe::App for HestiaApp {
             self.process_install_queue();
         }
 
-        // Sampled after the queues have been serviced so the end of `ui` can tell
-        // whether rendering added work of its own.
         self.image_queue_len_after_logic = self.pending_mod_image_queue.len();
     }
 
@@ -196,10 +179,6 @@ impl eframe::App for HestiaApp {
         profiling::scope!("app::ui");
         let ctx = root_ui.ctx().clone();
 
-        // Sampled before any UI runs: popups close themselves on Escape *during*
-        // rendering (without consuming the key), so by end of frame the memory
-        // already reports no open popup and the close-window handler below would
-        // also fire on the same key press.
         let popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
         let profile_operation_locks_app = self.profile_operation_locks_app();
         if self.folder_batch_job.is_some() && ctx.input(|input| input.viewport().close_requested())
@@ -229,7 +208,6 @@ impl eframe::App for HestiaApp {
             });
         }
 
-        // Render UI
         egui::CentralPanel::default().show(root_ui, |ui| {
             install_resize_handles(&ctx);
 
@@ -278,16 +256,12 @@ impl eframe::App for HestiaApp {
                 self.render_pending_conflict(&ctx);
                 self.render_pending_import(&ctx);
                 self.render_game_overlay_file_prompt(&ctx);
-                // Blocking profile operations are modal and must stay above every
-                // other Hestia window and overlay.
                 self.render_profile_dialogs(&ctx);
                 self.handle_interface_zoom_keys(&ctx);
                 self.update_main_window_state(&ctx);
             }
         });
         self.handle_window_close_shortcuts(&ctx, popup_open_at_frame_start);
-        // Control repaint behavior to reduce CPU usage on idle
-        // Only request continuous repaints when necessary
         let has_pending_browse_request = self.browse_state.loading_page
             || self.browse_state.character_categories_loading
             || !self.browse_state.loading_details.is_empty();
@@ -302,24 +276,13 @@ impl eframe::App for HestiaApp {
             || self.reload_spin_until > ctx.input(|i| i.time)
             || self.app_update_button_spin_until > ctx.input(|i| i.time);
 
-        // Worker sends wake the UI directly (see wake_ui), so these polls are a safety
-        // net for work that can no longer report back, not the primary wake path. Poll
-        // gently while the window is unfocused: background presents contend with a
-        // foreground game's frame pacing.
         let poll_delay = if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
             Duration::from_millis(100)
         } else {
             Duration::from_millis(500)
         };
-        // `logic` runs before `ui`, so image requests the UI just queued are not
-        // dispatched until another frame happens. Nothing else asks for that frame:
-        // a freshly installed mod's card would sit on the placeholder until the
-        // next idle tick or the next stray input event. Growth is the trigger, not
-        // mere non-emptiness — a queue held back by focus mode stays full frame
-        // after frame and must not drive repaints at vsync rate.
         let queued_new_image_work =
             self.pending_mod_image_queue.len() > self.image_queue_len_after_logic;
-        // `pending_events` was sampled in `logic`, before the UI could add to these.
         let has_undispatched_work = !self.pending_mod_image_queue.is_empty()
             || !self.pending_texture_uploads.is_empty()
             || self.pending_events.has_worker_events
@@ -331,23 +294,13 @@ impl eframe::App for HestiaApp {
         } else if self.folder_batch_job.is_some()
             || has_pending_browse_image_work
             || has_pending_gif_work
+            || has_pending_browse_request
+            || has_undispatched_work
         {
             ctx.request_repaint_after(poll_delay);
-        } else if has_pending_browse_request {
-            ctx.request_repaint_after(poll_delay);
-        } else if has_undispatched_work {
-            // A queue that cannot drain must never drive vsync-rate repaints, which
-            // contend with fullscreen games even at low CPU/GPU usage.
-            ctx.request_repaint_after(poll_delay);
         } else if relative_time_visible {
-            // Relative-time labels advance at minute granularity. Wake once per minute rather
-            // than continuously repainting while the app is idle. Checked last: this
-            // fires in every library and browse frame, so ahead of the branches above
-            // it would swallow their much shorter delays.
             ctx.request_repaint_after(Duration::from_secs(60));
         }
-        // A held blue notice must reappear when its hold gives up, even with
-        // no input. egui keeps the earliest of several requested repaints.
         if let Some(remaining) = self.thalia_matching.next_hold_expiry() {
             ctx.request_repaint_after(remaining);
         }
@@ -359,19 +312,12 @@ impl eframe::App for HestiaApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.invalidate_thalia_matching();
-        // Reload/hotkey sender threads are detached; make sure no synthetic key they
-        // pressed outlives the process.
         crate::integrations::xxmi_persist::release_synthetic_keys_for_shutdown();
         self.shut_down_game_overlay();
         self.cancel_all_gif_work();
-        // A window resized right before closing the app would otherwise lose its
-        // geometry to the save debounce.
         if self.floating_window_save_due.take().is_some() {
             self.save_state();
         }
-        // Closing before the renderer proved itself is no crash: a window minimized from the
-        // start draws nothing at all. Forget the attempt, so the next launch tries the same
-        // renderer again instead of marking it failed.
         if self.renderer_boot_unconfirmed {
             self.renderer_boot_unconfirmed = false;
             crate::renderer::confirm_boot(&self.portable);
@@ -408,8 +354,6 @@ impl HestiaApp {
             return;
         }
 
-        // While a popup/context menu is open, Escape belongs to it: egui closes
-        // the popup itself, so leave the key alone and keep the window open.
         let escape_requested = !popup_was_open
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let ctrl_w_requested = ctx.input_mut(|input| {

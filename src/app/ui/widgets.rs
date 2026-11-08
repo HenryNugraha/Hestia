@@ -406,10 +406,6 @@ fn youtube_icon_bytes() -> &'static [u8] {
 #[derive(Clone, Copy)]
 enum ThumbnailFit {
     Cover,
-    /// Like `Cover`, but portrait sources (taller than wide) are cropped from
-    /// near the top instead of the center, so the subject's face/upper body
-    /// shows rather than the middle of the body. Non-portrait sources behave
-    /// exactly like `Cover`.
     CoverTop,
     Contain,
 }
@@ -435,9 +431,6 @@ fn paint_thumbnail_image(
                 let scaled_height = rect.width() / texture_aspect;
                 let uv_height_fraction = rect.height() / scaled_height;
                 let vertical_slack = 1.0 - uv_height_fraction;
-                // Portrait sources under `CoverTop` are cropped from near the top
-                // (skipping ~8% of headroom) so the face/upper body shows instead
-                // of the centered torso. Everything else keeps the centered crop.
                 let uv_top = if matches!(fit, ThumbnailFit::CoverTop) && texture_aspect < 1.0 {
                     vertical_slack.min(0.08)
                 } else {
@@ -502,9 +495,6 @@ fn paint_unsafe_overlay(
 ) {
     let rounding = rounding.into();
     
-    // Paint a semi-transparent dark overlay to censor the content. Censored
-    // pictures show their blurred copy instead (see `censor_copy`) once it has
-    // loaded, so this covers the moment before that.
     ui.painter().rect_filled(
         rect,
         rounding,
@@ -840,15 +830,11 @@ fn static_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respons
         .on_hover_cursor(egui::CursorIcon::Default)
 }
 
-/// A quick-action icon pinned to the right edge of a menu section header (e.g. the
-/// filter popup's "show all" / "hide all" toggles).
 struct MenuHeaderAction<'a> {
     icon: Icon,
     tooltip: &'a str,
 }
 
-/// The translucent popup frame shared by the sort and filter menus, so both float
-/// over the library with the same weight.
 fn menu_popup_frame(ui: &Ui) -> egui::Frame {
     egui::Frame::popup(ui.style())
         .fill({
@@ -863,17 +849,9 @@ fn menu_popup_frame(ui: &Ui) -> egui::Frame {
         .inner_margin(egui::Margin::same(12))
 }
 
-/// Section header shared by the sort and filter menus: a bold label on the left,
-/// with an optional cluster of quick-action icons pinned to the right edge. Plain
-/// bold, no underline; sections are delimited by [`menu_section_separator`], so an
-/// underline would be a redundant second divider. Spans the full available width
-/// and returns one bool per action, `true` on the frame it was clicked (aligned to
-/// the `actions` order).
 fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -> Vec<bool> {
     const ICON_SIZE: f32 = 20.0;
-    // The paired filter icons read as one control, so they sit slightly tucked.
     const ICON_GAP: f32 = -4.0;
-    // Minimum breathing room between the label and the action cluster.
     const LABEL_GAP: f32 = 6.0;
 
     let width = ui.available_width();
@@ -888,7 +866,6 @@ fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -
     };
     let cluster_left = row_rect.right() - cluster_width;
 
-    // Label: bold, left-aligned, truncated to the room before the action cluster.
     let max_label_width = if action_count == 0 {
         width
     } else {
@@ -898,9 +875,6 @@ fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -
         row_rect.left_top(),
         Vec2::new(max_label_width, row_rect.height()),
     );
-    // Place the label over the reserved rect with a left-to-right layout so it pins to
-    // the left. ui.put would center it (its layout overrides the Label's halign), hence
-    // the explicit layout here; truncation keeps a long translation on one line.
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(label_rect)
@@ -919,7 +893,6 @@ fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -
         },
     );
 
-    // Right-pinned quick actions, laid out left-to-right within the cluster.
     let mut clicks = Vec::with_capacity(action_count);
     for (index, action) in actions.iter().enumerate() {
         let center_x = cluster_left + ICON_SIZE / 2.0 + index as f32 * (ICON_SIZE + ICON_GAP);
@@ -951,15 +924,12 @@ fn menu_section_header(ui: &mut Ui, label: &str, actions: &[MenuHeaderAction]) -
     clicks
 }
 
-/// The divider shared by the sort and filter menus between sections. Kept in one
-/// place so both menus breathe identically under `item_spacing.y == 4.0`.
 fn menu_section_separator(ui: &mut Ui) {
     ui.add_space(2.0);
     ui.separator();
     ui.add_space(-1.0);
 }
 
-/// Width of the widest entry in `texts` laid out on a single line.
 fn widest_text_width(ui: &Ui, texts: &[&str], style: egui::TextStyle) -> f32 {
     let font_id = style.resolve(ui.style());
     texts.iter().fold(0.0_f32, |widest, text| {
@@ -972,8 +942,6 @@ fn widest_text_width(ui: &Ui, texts: &[&str], style: egui::TextStyle) -> f32 {
     })
 }
 
-/// Width a settings column needs so its labels and combo box values all stay on
-/// one line, whichever value happens to be selected.
 fn settings_column_width(ui: &Ui, labels: &[&str], combo_values: &[&str]) -> f32 {
     let label_width = widest_text_width(ui, labels, egui::TextStyle::Body);
     let combo_width = if combo_values.is_empty() {
@@ -987,9 +955,6 @@ fn settings_column_width(ui: &Ui, labels: &[&str], combo_values: &[&str]) -> f32
     label_width.max(combo_width) + 6.0
 }
 
-/// Split a two-column settings block so the left column fits `left_needed`
-/// without starving the right one. Falls back to a 32% split when the block is
-/// too narrow to satisfy both columns.
 fn settings_left_column_width(ui: &Ui, left_needed: f32, right_needed: f32) -> f32 {
     let available = ui.available_width();
     let fallback = available * 0.32;
@@ -1071,22 +1036,16 @@ fn toggle_switch_sized_with_style(
     response
 }
 
-/// Shared look of the indeterminate ("looping") bar used for work with no measurable progress.
 const INDETERMINATE_BAR_HEIGHT: f32 = 18.0;
 const INDETERMINATE_BAR_CORNER_RADIUS: u8 = 4;
 const INDETERMINATE_BAR_TRACK: Color32 = Color32::from_gray(45);
-/// Fraction of the track covered by the sliding segment.
 const INDETERMINATE_BAR_SEGMENT: f32 = 0.3;
-/// Slides per second.
 const INDETERMINATE_BAR_SPEED: f64 = 0.6;
 
 fn indeterminate_bar_fill() -> Color32 {
     Color32::from_rgb(60, 140, 200).linear_multiply(0.6)
 }
 
-/// The lit part of an indeterminate bar at a given time: a segment that enters off the left edge,
-/// slides across, and exits off the right, clipped to the track. Split out from the painting so
-/// the motion can be tested without a rendering context.
 fn indeterminate_bar_segment(rect: egui::Rect, time: f64) -> egui::Rect {
     let t = ((time * INDETERMINATE_BAR_SPEED) % 1.0) as f32;
     let seg_width = rect.width() * INDETERMINATE_BAR_SEGMENT;
@@ -1098,7 +1057,6 @@ fn indeterminate_bar_segment(rect: egui::Rect, time: f64) -> egui::Rect {
     .intersect(rect)
 }
 
-/// Paint one frame of the looping bar into an already-allocated track.
 fn paint_indeterminate_bar(ui: &Ui, rect: egui::Rect) {
     let segment = indeterminate_bar_segment(rect, ui.input(|input| input.time));
     ui.painter().rect_filled(
@@ -1109,9 +1067,6 @@ fn paint_indeterminate_bar(ui: &Ui, rect: egui::Rect) {
     request_animation_repaint(ui.ctx());
 }
 
-/// A looping progress bar for work whose completion cannot be measured, so the dialog shows motion
-/// rather than a percentage frozen at zero until the operation finishes. Matches the bar the task
-/// list shows while a mod install is running.
 fn indeterminate_progress_bar(ui: &mut Ui) -> egui::Response {
     let width = ui.available_size_before_wrap().x.max(96.0);
     let (rect, response) =

@@ -80,9 +80,6 @@ pub struct PreviewImage {
     pub height_220: Option<u32>,
 }
 
-/// The current preview property (`_aPreviewContent`, apiv13+): a single
-/// screenshot for index records and a screenshot list for profile records.
-/// `_aPreviewMedia` with its image list is the legacy property.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PreviewContent {
     #[serde(default)]
@@ -91,9 +88,6 @@ pub struct PreviewContent {
     pub screenshots: Vec<PreviewImage>,
 }
 
-/// GameBanana renders empty PHP maps as `[]`, and preview shapes vary between
-/// API versions; any mismatch here must degrade to "no preview", never fail
-/// the whole page parse.
 fn lenient_preview_content<'de, D>(deserializer: D) -> Result<Option<PreviewContent>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -171,8 +165,6 @@ pub struct BrowseRecord {
 pub struct CreditEntry {
     #[serde(rename = "_aUser", default)]
     pub user: Option<SubmissionAuthor>,
-    /// API v13 can return an unlinked credited author as `_sName` instead of
-    /// `_aUser`; keep that name without manufacturing a SubmissionAuthor.
     #[serde(rename = "_sName", default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(rename = "_sRole", default)]
@@ -195,8 +187,6 @@ fn submission_author_from_value(value: &serde_json::Value) -> Option<SubmissionA
 fn credit_entry_from_value(value: &serde_json::Value) -> Option<CreditEntry> {
     let object = value.as_object()?;
 
-    // Cached profiles use the original flat `_aUser` shape. Parse it first so
-    // those entries remain readable alongside the grouped v13 shape.
     if object.contains_key("_aUser") {
         let mut entry: CreditEntry = serde_json::from_value(value.clone()).ok()?;
         if entry.user.is_none() {
@@ -218,9 +208,6 @@ fn credit_entry_from_value(value: &serde_json::Value) -> Option<CreditEntry> {
             .then_some(entry);
     }
 
-    // Grouped v13 authors use the SubmissionAuthor fields directly. A
-    // name-only author cannot be represented by SubmissionAuthor, so retain
-    // its name in CreditEntry instead.
     let user = submission_author_from_value(value);
     let name = if user.is_none() {
         non_empty_string(object.get("_sName"))
@@ -242,9 +229,6 @@ fn append_credit_authors(value: &serde_json::Value, credits: &mut Vec<CreditEntr
             }
         }
         serde_json::Value::Object(object) => {
-            // A single author is occasionally emitted as an object rather
-            // than a one-element array. Also accept keyed author maps, while
-            // treating the group object itself as a group rather than author.
             if object.keys().any(|key| {
                 matches!(
                     key.as_str(),
@@ -315,7 +299,6 @@ pub struct ModFile {
     pub download_url: Option<String>,
     #[serde(rename = "_bIsArchived", default)]
     pub is_archived: bool,
-    /// GameBanana's MD5 of the archive, checked after every download.
     #[serde(rename = "_sMd5Checksum", default, skip_serializing_if = "Option::is_none")]
     pub md5: Option<String>,
 }
@@ -406,23 +389,16 @@ pub struct UpdateRecord {
     pub html_text: Option<String>,
     #[serde(rename = "_sVersion")]
     pub version: Option<String>,
-    /// GameBanana sends this as either the JSON number `0` or the string
-    /// `"0"`; nonzero values mean the update is moderated and unusable.
     #[serde(
         rename = "_nStatus",
         default,
         deserialize_with = "deserialize_optional_status"
     )]
     pub status: Option<i64>,
-    /// File ids attached to this update. These are optional because older
-    /// records and malformed/partial API responses may omit the field.
     #[serde(rename = "_aFileRowIds", default)]
     pub file_ids: Option<Vec<u64>>,
-    /// Full file metadata attached to this update, when GameBanana includes it.
     #[serde(rename = "_aFiles", default)]
     pub files: Option<Vec<ModFile>>,
-    /// False when an attached file explicitly failed analysis or has no
-    /// contents. Missing analysis fields remain neutral.
     #[serde(rename = "attachments_usable", default = "default_attachments_usable")]
     pub attachments_usable: bool,
     #[serde(rename = "_bIsPrivate", default)]
@@ -462,9 +438,6 @@ impl<'de> Deserialize<'de> for UpdateRecord {
         });
         let derived_attachments_usable = !explicit_attachment_failure;
         let attachments_usable = match raw.cached_attachments_usable {
-            // Serialized cache records no longer contain the raw analysis
-            // fields, so preserve their computed result unless the current
-            // payload explicitly contains a failed analysis state.
             Some(_) if explicit_attachment_failure => false,
             Some(cached) => cached,
             None => derived_attachments_usable,
@@ -492,9 +465,6 @@ impl<'de> Deserialize<'de> for UpdateRecord {
 }
 
 impl UpdateRecord {
-    /// Whether this update is suitable as public release metadata.
-    /// Missing status is treated like the legacy public shape; explicit
-    /// nonzero status and moderation flags make the record unusable.
     pub fn is_public(&self) -> bool {
         self.status.unwrap_or_default() == 0
             && !self.is_private
@@ -590,9 +560,6 @@ pub struct ProfileResponse {
     pub date_updated: Option<i64>,
     #[serde(rename = "_sDownloadUrl")]
     pub mod_download_url: Option<String>,
-    // API v13 moved profile screenshots to `_aPreviewContent.screenshots`.
-    // Keep the public field and serialized key stable for existing consumers
-    // and cached profiles while accepting both response shapes on input.
     #[serde(
         rename = "_aPreviewMedia",
         alias = "_aPreviewContent",
@@ -620,16 +587,12 @@ pub struct ProfileResponse {
     pub category: Option<SubmissionCategory>,
     #[serde(rename = "_aSuperCategory")]
     pub super_category: Option<SubmissionCategory>,
-    /// Hestia-owned cache metadata. This field is absent for API-only
-    /// profiles and present only after a complete update-log fetch.
     #[serde(
         rename = "update_history",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub update_history: Option<UpdateHistory>,
-    /// Hestia-owned cache metadata: GameBanana's archive path list per file
-    /// id, attached only when the update matcher asks for it.
     #[serde(
         rename = "file_listings",
         default,
@@ -686,8 +649,6 @@ mod tests {
 
     #[test]
     fn category_index_record_thumbnail_reads_preview_content() {
-        // Shape captured from a live apiv13/Mod/Index response: no
-        // _aPreviewMedia, single screenshot under _aPreviewContent.
         let record: BrowseRecord = serde_json::from_str(
             r#"{
                 "_idRow": 431561,
@@ -719,7 +680,6 @@ mod tests {
 
     #[test]
     fn unexpected_preview_content_shapes_degrade_to_no_thumbnail() {
-        // GameBanana renders empty PHP maps as [] — must not fail the page parse.
         let record: BrowseRecord = serde_json::from_str(
             r#"{
                 "_idRow": 1,
@@ -1355,11 +1315,6 @@ pub fn is_unavailable(profile: &ProfileResponse) -> bool {
         || profile.is_withheld
 }
 
-/// Update history is useful when a profile has more than one catalog entry,
-/// including files the author has archived, and at least one currently
-/// downloadable file. The active `_aFiles` array supplies candidates, while
-/// the archive flag and `_aArchivedFiles` membership still identify archived
-/// entries when the API returns inconsistent arrays.
 fn should_fetch_update_history(profile: &ProfileResponse) -> bool {
     let mut catalog_file_ids = HashSet::new();
     for file in profile.files.iter().chain(&profile.archived_files) {
@@ -1656,9 +1611,6 @@ pub async fn fetch_search_page_async(
         .context("failed to parse GameBanana search results")
 }
 
-/// GameBanana hosts tools (e.g. RabbitFX) in a separate API namespace from
-/// mods; the numeric ids are not interchangeable between the two, so a tool
-/// link must be fetched via `Tool`, never `Mod`.
 pub fn is_tool_url(url: &str) -> bool {
     url.contains("/tools/")
 }
@@ -1748,12 +1700,6 @@ const UPDATE_HISTORY_PAGE_SIZE: usize = 50;
 const UPDATE_HISTORY_MAX_PAGES: usize = 5;
 const UPDATE_HISTORY_ATTACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Validate and combine the pages returned by the update-log endpoint.
-///
-/// A history is usable only when every requested page is present, metadata is
-/// stable, the record count matches, and every record id is unique. Keeping
-/// this as a pure helper makes the neutral-on-failure behavior testable without
-/// an HTTP server.
 fn validate_update_history_pages(pages: &[ApiEnvelope<UpdateRecord>]) -> Result<UpdateHistory> {
     let Some(first_page) = pages.first() else {
         bail!("GameBanana update history returned no pages");
@@ -1806,9 +1752,6 @@ fn validate_update_history_pages(pages: &[ApiEnvelope<UpdateRecord>]) -> Result<
     Ok(UpdateHistory { records })
 }
 
-/// Fetch a complete update history for either a mod or a tool. Any incomplete
-/// or inconsistent history is returned as an error so callers can keep it
-/// absent from a cached profile and use the normal matching path.
 pub async fn fetch_update_history_async(
     client: &ClientWithMiddleware,
     mod_id: u64,
@@ -1827,9 +1770,6 @@ pub async fn fetch_update_history_async(
     validate_update_history_pages(&pages)
 }
 
-/// Best-effort attachment used by profile workers. The cache field is reset
-/// before fetching so a failed refresh cannot leave stale or partial history
-/// looking complete.
 pub async fn attach_update_history_async(
     client: &ClientWithMiddleware,
     profile: &mut ProfileResponse,
@@ -1853,20 +1793,15 @@ pub async fn attach_update_history_async(
     }
 }
 
-/// GameBanana's answer for one file's archive contents.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawFileList {
     Paths(Vec<String>),
-    /// The file is gone or has no readable list; asking again will not help.
     Unavailable,
 }
 
 const RAW_FILE_LIST_ATTEMPTS: usize = 3;
 const RAW_FILE_LIST_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Fetch the path list inside one file's archive.  GameBanana sometimes
-/// answers 200 with an empty body; that is retried, then reported as an
-/// error so it is never cached as a real answer.
 pub async fn fetch_raw_file_list_async(
     client: &ClientWithMiddleware,
     file_id: u64,
@@ -1898,9 +1833,6 @@ pub async fn fetch_raw_file_list_async(
     bail!("GameBanana file list for {file_id} came back empty")
 }
 
-/// Per GameBanana's dev guidance, `_aPreviewContent` is the current preview
-/// property and `_aPreviewMedia` is the legacy one; a card thumbnail must
-/// consider both, preferring the current shape.
 pub fn record_thumbnail_image(record: &BrowseRecord) -> Option<&PreviewImage> {
     record
         .preview_content
@@ -2029,10 +1961,6 @@ pub fn updates_cache_key(mod_id: u64) -> String {
     json_cache_key_v2(&[("kind", "updates".to_string()), ("mod", mod_id.to_string())])
 }
 
-/// MY MODS caches the update log under its own key (a timestamped envelope, see
-/// `CachedModUpdates`) so its 30-minute freshness window can be enforced across
-/// restarts. Kept separate from `updates_cache_key` because that payload is a bare
-/// `ApiEnvelope` with no fetch timestamp.
 pub fn my_mod_updates_cache_key(mod_id: u64) -> String {
     json_cache_key_v2(&[
         ("kind", "mymod-updates".to_string()),
@@ -2040,17 +1968,12 @@ pub fn my_mod_updates_cache_key(mod_id: u64) -> String {
     ])
 }
 
-/// Disk-cache envelope for MY MODS update logs: the fetched payload plus the unix
-/// timestamp it was fetched at, so the loader can honor the freshness window and
-/// still fall back to a stale copy when a refresh fails.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CachedModUpdates {
     pub fetched_at: i64,
     pub payload: ApiEnvelope<UpdateRecord>,
 }
 
-/// Cache identity must be deterministic. Serializing `HashMap` values made the key depend on
-/// randomized iteration order, creating duplicate files instead of replacing cached responses.
 fn json_cache_key_v2(tags: &[(&str, String)]) -> String {
     let serialized = serde_json::to_string(tags).expect("cache-key tags must serialize");
     format!("gb-json:v2:{:016x}", xxh3_64(serialized.as_bytes()))
@@ -2060,8 +1983,6 @@ pub fn profile_cache_key(mod_id: u64) -> String {
     format!("gb-json:profile:{mod_id}")
 }
 
-/// Tool and mod ids live in different namespaces, so a tool profile must not
-/// overwrite the cache slot of the mod that happens to share its number.
 pub fn profile_cache_key_typed(mod_id: u64, is_tool: bool) -> String {
     if is_tool {
         format!("gb-json:profile-tool:{mod_id}")

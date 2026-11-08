@@ -1,10 +1,3 @@
-//! Bounded, asynchronous thumbnail loading for the native overlay.
-//!
-//! Image decoding is deliberately kept off the egui frame thread.  The cache
-//! only queues paths requested by the current view (and the small set of paths
-//! explicitly prefetched by its caller), so opening the overlay does not walk
-//! or decode the whole mod library.
-
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -23,10 +16,6 @@ const MAX_FAILED_PATHS: usize = 256;
 const RESULT_CHANNEL_CAPACITY: usize = MAX_QUEUED_WORK;
 const MAX_UPLOADS_PER_POLL: usize = 4;
 
-/// A picture that failed loads again after this long, twice as long after
-/// each failure in a row, up to `MAX_RETRY_DELAY`.  A failure is often over a
-/// moment later: a mod's folder moves while it turns on or off, and Hestia
-/// may still be saving a picture.
 const FIRST_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 
@@ -66,9 +55,6 @@ impl DecodeQueue {
         }
     }
 
-    /// Add work without waiting on the UI thread. Demand evicts the oldest
-    /// speculative item when the bounded queue is full; speculative work is
-    /// dropped when it cannot fit.
     fn push(&self, path: PathBuf, priority: Priority) -> QueuePush {
         let mut state = self.state.lock().expect("thumbnail queue lock poisoned");
         if state.stopped
@@ -101,9 +87,6 @@ impl DecodeQueue {
         QueuePush::Accepted { evicted }
     }
 
-    /// Promote queued speculative work when the card becomes visible. Work
-    /// already being decoded cannot be reprioritized, but it is already the
-    /// next and only active decode.
     fn promote(&self, path: &Path) -> bool {
         let mut state = self.state.lock().expect("thumbnail queue lock poisoned");
         let Some(index) = state.speculative.iter().position(|queued| queued == path) else {
@@ -159,8 +142,6 @@ struct DecodeResult {
 }
 
 fn decode_thumbnail(path: &Path, censored: bool) -> Result<DecodedThumbnail, String> {
-    // Hestia's downloaded pictures are `.bin` files, so read the format from
-    // the contents rather than the extension.
     let image = image::ImageReader::open(path)
         .and_then(|reader| reader.with_guessed_format())
         .map_err(|error| error.to_string())
@@ -170,7 +151,6 @@ fn decode_thumbnail(path: &Path, censored: bool) -> Result<DecodedThumbnail, Str
         .to_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     if censored {
-        // The same tiny blurred copy the library draws for a censored card.
         let copy = crate::app::censor_copy(&egui::ColorImage::from_rgba_unmultiplied(
             size,
             image.as_raw(),
@@ -202,8 +182,6 @@ fn decode_worker(
             .lock()
             .expect("thumbnail censor lock poisoned")
             .contains(&path);
-        // A picture that crashes its decoder fails alone, instead of ending
-        // the worker and every picture after it.
         let image =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode(&path, censored)))
                 .unwrap_or_else(|_| Err(format!("decoding {} crashed", path.display())));
@@ -231,24 +209,15 @@ fn decode_worker(
 enum CacheEntry {
     Pending(Priority),
     Texture(egui::TextureHandle),
-    /// Loads again when it's drawn after `retry_at`.
-    Failed {
-        retry_at: Instant,
-    },
+    Failed { retry_at: Instant },
 }
 
-/// How long a picture waits to load again after `failures` failures in a row.
 fn retry_delay(failures: u32) -> Duration {
     FIRST_RETRY_DELAY
         .saturating_mul(1 << failures.saturating_sub(1).min(16))
         .min(MAX_RETRY_DELAY)
 }
 
-/// A small UI-thread cache backed by one bounded decode worker.
-///
-/// `get` never waits for disk or image decoding. Call `poll` once per frame
-/// before drawing cards, and use `prefetch` with only the nearby cards that
-/// are likely to become visible next.
 pub(super) struct ThumbnailCache {
     queue: Arc<DecodeQueue>,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
@@ -258,7 +227,6 @@ pub(super) struct ThumbnailCache {
     entries: HashMap<PathBuf, CacheEntry>,
     resident_lru: VecDeque<PathBuf>,
     failed_lru: VecDeque<PathBuf>,
-    /// Failures in a row, by picture.
     failures: HashMap<PathBuf, u32>,
 }
 
@@ -297,7 +265,6 @@ impl ThumbnailCache {
         }
     }
 
-    /// Return a resident texture immediately, or queue a demand decode.
     pub(super) fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
         self.set_repaint_context(ctx);
         match self.entries.get(path) {
@@ -318,7 +285,6 @@ impl ThumbnailCache {
             Some(&CacheEntry::Failed { retry_at }) => {
                 let now = Instant::now();
                 if now < retry_at {
-                    // Draw again when it's due, even if nothing else moves.
                     ctx.request_repaint_after(retry_at - now);
                     return None;
                 }
@@ -335,7 +301,6 @@ impl ThumbnailCache {
         None
     }
 
-    /// Queue nearby paths at a lower priority than visible card requests.
     pub(super) fn prefetch<I>(&mut self, ctx: &egui::Context, paths: I)
     where
         I: IntoIterator<Item = PathBuf>,
@@ -355,9 +320,6 @@ impl ThumbnailCache {
         }
     }
 
-    /// Drain completed decodes and upload them to egui. This is intentionally
-    /// separate from `get` so callers can control when the UI thread performs
-    /// the small GPU texture upload.
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
         self.set_repaint_context(ctx);
         let mut completed = false;
@@ -378,7 +340,6 @@ impl ThumbnailCache {
             completed = true;
             processed += 1;
             if result.censored != self.is_censored(&result.path) {
-                // The library changed while it loaded.  The next frame asks again.
                 self.entries.remove(&result.path);
                 continue;
             }
@@ -419,8 +380,6 @@ impl ThumbnailCache {
         }
     }
 
-    /// Loads the pictures that failed again the next time they're drawn.
-    /// Hestia sends a new library or pictures after files changed.
     pub(super) fn retry_failed(&mut self) {
         self.entries
             .retain(|_, entry| !matches!(entry, CacheEntry::Failed { .. }));
@@ -428,9 +387,6 @@ impl ThumbnailCache {
         self.failures.clear();
     }
 
-    /// The pictures to blur and darken, like the library's censored cards.
-    /// Pictures that were censored and no longer are, or the other way, load
-    /// again.
     pub(super) fn set_censored(&mut self, paths: HashSet<PathBuf>) {
         let changed: Vec<PathBuf> = {
             let mut censored = self
@@ -520,9 +476,6 @@ fn texture_name(path: &Path) -> String {
 impl Drop for ThumbnailCache {
     fn drop(&mut self) {
         self.queue.stop();
-        // Dropping the receiver first lets a worker blocked on a full result
-        // channel exit promptly instead of making cache destruction wait for
-        // the UI to poll another frame.
         self.results.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -538,7 +491,6 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    /// A cache whose decodes the test does itself, with `results`.
     fn cache_without_worker(results: Option<Receiver<DecodeResult>>) -> ThumbnailCache {
         ThumbnailCache {
             queue: Arc::new(DecodeQueue::new()),
@@ -621,8 +573,6 @@ mod tests {
 
     #[test]
     fn evicted_speculative_entry_can_be_requeued_on_revisit() {
-        // Pause decoding by constructing the cache without a worker. This
-        // exercises saturation deterministically through the public API.
         let mut cache = cache_without_worker(None);
         let ctx = egui::Context::default();
         cache.prefetch(
@@ -631,8 +581,6 @@ mod tests {
         );
         assert!(cache.get(&ctx, Path::new("visible-now")).is_none());
         assert!(!cache.entries.contains_key(Path::new("nearby-0")));
-        // Scrolling back to the evicted image must submit a fresh demand job,
-        // not leave the card permanently waiting on a discarded request.
         assert!(cache.get(&ctx, Path::new("nearby-0")).is_none());
         assert_eq!(
             cache.queue.pop_blocking(),
@@ -672,7 +620,6 @@ mod tests {
         fs::rename(&png, &cached).expect("rename test image");
 
         let decoded = decode_thumbnail(&cached, false).expect("decode cached picture");
-        // Scaled to the thumbnail size, like every picture.
         let width = MAX_THUMBNAIL_DIMENSION as usize;
         assert_eq!(decoded.size, [width, width / 2]);
         assert!(decode_thumbnail(&directory.path().join("missing.bin"), false).is_err());
@@ -692,7 +639,6 @@ mod tests {
             vec![egui::Color32::from_rgb(255, 0, 128); 640 * 320],
         ));
         assert_eq!(decoded.size, expected.size);
-        // Darker, but not black.
         assert_eq!(&decoded.rgba[..4], &[112, 7, 60, 255]);
     }
 
@@ -745,7 +691,6 @@ mod tests {
             .send(decoded(Err("the folder is moving".to_owned())))
             .unwrap();
         cache.poll(&ctx);
-        // Drawn again while it waits, it doesn't load.
         assert!(cache.get(&ctx, &path).is_none());
         assert_eq!(queued(&cache), 0);
 

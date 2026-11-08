@@ -37,8 +37,6 @@ const USER_INI_TMP_FILE: &str = "d3dx_user.ini.tmp";
 const D3DX_INI_FILE: &str = "d3dx.ini";
 pub const MOD_STASH_FILE: &str = "mod.cfg";
 const LEGACY_HELPER_INI_FILE: &str = "hestia.ini";
-/// Key inside `ProfileArchiveMetadata.portable_metadata` holding the whole-file
-/// `d3dx_user.ini` snapshot for a profile.
 pub const USER_INI_SNAPSHOT_METADATA_KEY: &str = "xxmi.d3dx_user_ini";
 const USER_INI_HEADER: &str = "; AUTOMATICALLY GENERATED FILE - DO NOT EDIT";
 const CONSTANTS_SECTION: &str = "[Constants]";
@@ -47,20 +45,10 @@ const STASH_FORMAT_VERSION: u32 = 1;
 const LIVE_CLEAR_RELOAD_TIMEOUT: Duration = Duration::from_secs(12);
 const LIVE_CLEAR_RELOAD_POLL: Duration = Duration::from_millis(200);
 
-// ---------------------------------------------------------------------------
-// Case-insensitive key matching
-//
-// 3DMigoto lowercases ini keys at parse time on both sides of a lookup, so matching is
-// case-insensitive while writing stays verbatim. Unicode lowercasing is used so non-ASCII
-// folder names compare the same way regardless of who produced the key text.
-// ---------------------------------------------------------------------------
-
 fn chars_ci_equal(a: char, b: char) -> bool {
     a == b || a.to_lowercase().eq(b.to_lowercase())
 }
 
-/// Byte length of the leading portion of `key` that case-insensitively matches `prefix`,
-/// or `None` when `key` does not start with `prefix`.
 fn ci_prefix_len(key: &str, prefix: &str) -> Option<usize> {
     let mut key_iter = key.char_indices();
     let mut consumed = 0usize;
@@ -102,11 +90,6 @@ fn ascii_lowercase(text: &str) -> String {
     text.chars().map(|c| c.to_ascii_lowercase()).collect()
 }
 
-// ---------------------------------------------------------------------------
-// UserIniDoc
-// ---------------------------------------------------------------------------
-
-/// In-memory `d3dx_user.ini`, preserving every line that is not explicitly modified.
 #[derive(Debug)]
 pub struct UserIniDoc {
     lines: Vec<String>,
@@ -115,8 +98,6 @@ pub struct UserIniDoc {
 }
 
 fn parse_entry(line: &str) -> Option<(&str, &str)> {
-    // trim_start only: the value's trailing bytes are preserved verbatim (the plan's
-    // byte-for-byte rule); line-level `\r` was already stripped during parsing.
     let trimmed = line.trim_start();
     if !trimmed.starts_with('$') {
         return None;
@@ -132,8 +113,6 @@ impl UserIniDoc {
             .split('\n')
             .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
             .collect();
-        // A trailing newline produces one empty tail element; drop it so save can append the
-        // final newline uniformly.
         if lines.last().is_some_and(|line| line.is_empty()) {
             lines.pop();
         }
@@ -152,11 +131,7 @@ impl UserIniDoc {
         }
     }
 
-    /// Opens `<importer root>\d3dx_user.ini`. `Ok(None)` when the file does not exist;
-    /// `Err` when it exists but cannot be read as UTF-8 (callers must treat that as a
-    /// no-op for the whole feature rather than risk mangling the file).
     pub fn open(importer_root: &Path) -> Result<Option<Self>> {
-        // A stale tmp from a crashed write is dead weight; remove it opportunistically.
         let _ = fs::remove_file(importer_root.join(USER_INI_TMP_FILE));
         let path = importer_root.join(USER_INI_FILE);
         let bytes = match fs::read(&path) {
@@ -178,8 +153,6 @@ impl UserIniDoc {
         text
     }
 
-    /// Atomic write: serialize to `d3dx_user.ini.tmp` in the same directory, then rename
-    /// over the target so a crash can never leave a truncated `d3dx_user.ini`.
     pub fn save_atomic(&self, importer_root: &Path) -> Result<()> {
         let tmp = importer_root.join(USER_INI_TMP_FILE);
         let target = importer_root.join(USER_INI_FILE);
@@ -192,8 +165,6 @@ impl UserIniDoc {
         Ok(())
     }
 
-    /// Entries under `prefix` as `(key relative to prefix, value)`, leaving the document
-    /// untouched.
     fn read_prefix(&self, prefix: &str) -> Vec<(String, String)> {
         let mut entries = Vec::new();
         for line in &self.lines {
@@ -213,8 +184,6 @@ impl UserIniDoc {
             .collect()
     }
 
-    /// Value of the single entry whose key case-insensitively equals `key`, or `None`.
-    /// Unlike `read_prefix`, this never matches a longer key that merely starts with `key`.
     fn get(&self, key: &str) -> Option<String> {
         for line in &self.lines {
             if let Some((entry_key, value)) = parse_entry(line)
@@ -226,8 +195,6 @@ impl UserIniDoc {
         None
     }
 
-    /// Extract-and-remove: returns entries under `prefix` (keys relative to it) and deletes
-    /// their lines. Never leaves duplicates behind.
     fn take_prefix(&mut self, prefix: &str) -> Vec<(String, String)> {
         let mut entries = Vec::new();
         self.lines.retain(|line| {
@@ -252,8 +219,6 @@ impl UserIniDoc {
             .collect()
     }
 
-    /// Merge entries under `prefix`: an existing key is replaced in place (keeping the
-    /// file's own key text); new keys are appended to `[Constants]`, created if absent.
     #[cfg(test)]
     fn merge_prefix(&mut self, prefix: &str, entries: &[(String, String)]) {
         for (relative_key, value) in entries {
@@ -302,8 +267,6 @@ impl UserIniDoc {
         }
     }
 
-    /// Rewrite every key under `from` to sit under `to`, values untouched. Returns the
-    /// number of rewritten lines.
     fn move_prefix(&mut self, from: &str, to: &str) -> usize {
         let mut moved = 0usize;
         for line in &mut self.lines {
@@ -321,8 +284,6 @@ impl UserIniDoc {
         moved
     }
 
-    /// Index right after the last line of the `[Constants]` section, creating the section
-    /// (and the generated-file header on a blank document) when missing.
     fn constants_insert_index(&mut self) -> usize {
         let section_index = self
             .lines
@@ -351,10 +312,6 @@ impl UserIniDoc {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Mod stash — ⬢HESTIA\mod.cfg
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StashEntry {
     pub key: String,
@@ -369,20 +326,12 @@ fn stash_version_default() -> u32 {
 pub struct ModStash {
     #[serde(default = "stash_version_default")]
     pub version: u32,
-    /// Full namespace prefix in effect when the stash was last written; the only input
-    /// `reroute` needs to repair external path drift.
     #[serde(default)]
     pub source_prefix: String,
     #[serde(default = "Utc::now")]
     pub captured_at: DateTime<Utc>,
-    /// Keys are relative to the mod root, never full namespaces, so a stash re-anchors on
-    /// whatever path the mod currently has.
     #[serde(default)]
     pub entries: Vec<StashEntry>,
-    /// Full persisted keys for all owned prefixes. This is the current representation and
-    /// supports explicit mod namespaces such as `namespace = liino`, whose persisted keys
-    /// are not under the folder-derived `$\mods\...` prefix. Older stashes populate only
-    /// `entries`; those are upgraded through `source_prefix` on read.
     #[serde(default)]
     pub full_entries: Vec<StashEntry>,
 }
@@ -434,14 +383,10 @@ fn full_entries_to_legacy_entries(full_entries: &[StashEntry], prefix: &str) -> 
         .collect()
 }
 
-/// Raw stash bytes, for carrying `mod.cfg` across an import/Replace that destroys the
-/// mod folder. Returns `None` when the mod has no stash.
 pub fn read_stash_bytes(mod_root: &Path) -> Option<Vec<u8>> {
     fs::read(stash_path(mod_root)).ok()
 }
 
-/// Re-create a previously read `mod.cfg` inside the replacement folder. The replacement
-/// wins if it somehow carries its own stash already.
 pub fn restore_stash_bytes(mod_root: &Path, bytes: &Option<Vec<u8>>) {
     let Some(bytes) = bytes else {
         return;
@@ -457,14 +402,6 @@ pub fn restore_stash_bytes(mod_root: &Path, bytes: &Option<Vec<u8>>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Importer root + namespace prefix
-// ---------------------------------------------------------------------------
-
-/// Walk up from the mods path looking for the directory `d3dx.ini` lives in. Signal
-/// priority beats proximity: `d3dx.ini` is authoritative (it defines the include root the
-/// namespaces are relative to), `d3d11.dll` is a fallback, and `d3dx_user.ini` is checked
-/// last because it legitimately does not exist until something has been persisted.
 pub fn importer_root_from_mods_path(mods_path: &Path) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec![mods_path.to_path_buf()];
     let mut current = mods_path;
@@ -494,16 +431,10 @@ pub fn importer_root_for(game: &GameInstall, use_default: bool) -> Option<PathBu
     importer_root_from_mods_path(&game.mods_path(use_default)?)
 }
 
-/// A mod is live when 3DMigoto can currently see it. Disabled mods keep their folder in
-/// place (contents move into `DISABLED_BY_HESTIA\`, which the recursive include still
-/// walks, but their declaring inis are hidden), archived mods sit outside `Mods` entirely;
-/// both are hidden for persistence purposes.
 pub fn is_live(status: &ModStatus) -> bool {
     matches!(status, ModStatus::Active)
 }
 
-/// Minimal view of a mod for persistence decisions, so tests do not have to construct a
-/// full `ModEntry`.
 pub struct ModPersistView<'a> {
     pub root_path: &'a Path,
     pub folder_name: &'a str,
@@ -522,10 +453,6 @@ impl<'a> From<&'a ModEntry> for ModPersistView<'a> {
     }
 }
 
-/// The mod root 3DMigoto sees (or would see) the mod at while live. Archived mods derive
-/// from their live location: `archive_original_path` when known, otherwise the game's
-/// mods root joined with the folder name — the normal path after a Hestia restart, since
-/// `archive_original_path` is never persisted.
 fn live_mod_root(view: &ModPersistView<'_>, mods_root: Option<&Path>) -> Option<PathBuf> {
     match view.status {
         ModStatus::Active | ModStatus::Disabled => Some(view.root_path.to_path_buf()),
@@ -536,9 +463,6 @@ fn live_mod_root(view: &ModPersistView<'_>, mods_root: Option<&Path>) -> Option<
     }
 }
 
-/// `"$\" + relative path + "\"`, ASCII-lowercased, `\`-separated. Uses the logical paths
-/// Hestia already holds; never canonicalizes, so a symlinked `Mods` keeps the relative
-/// form 3DMigoto walked from `d3dx.ini`.
 fn namespace_prefix_for_root(mod_root: &Path, importer_root: &Path) -> Option<String> {
     let relative = mod_root.strip_prefix(importer_root).ok()?;
     let mut prefix = String::from("$");
@@ -778,65 +702,35 @@ fn collect_explicit_namespace_prefixes_from_ini(path: &Path, prefixes: &mut Vec<
     }
 }
 
-// ---------------------------------------------------------------------------
-// Live-state mirror helper (`<mod root>\⬢HESTIA\hestia.ini`)
-//
-// 3DMigoto only writes a variable to `d3dx_user.ini` when it is declared `persist`. Most
-// mod hotkey variables are not, so their live value is invisible on disk. The helper
-// declares a `persist` mirror for each shown non-persist variable and copies the live
-// value into it every frame from a `[Present]` command list; paired with a 1-second
-// `settings_auto_save_interval`, the mirror flushes within ~1s of any change — including
-// changes made with the mod's own in-game hotkey. Hestia then reads the mirror back and
-// un-maps it to `(mod, var)`.
-// ---------------------------------------------------------------------------
-
-/// The comment banner on the generated helper file.
 const HESTIA_HELPER_HEADER: &str =
     "; HESTIA HELPER FILE - AUTOMATICALLY GENERATED - CHANGES WILL BE LOST";
-/// The generated helper file's name, under `<mod root>\⬢HESTIA\`.
 pub const HESTIA_HELPER_FILE: &str = "hestia.ini";
 
-/// One variable to mirror into a persistable global for live readback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorVar {
-    /// The source variable's namespace prefix, lowercased with a trailing `\`,
-    /// e.g. `$\mods\foo\merged.ini\`.
     pub namespace_prefix: String,
-    /// The source variable name, without the leading `$`.
     pub var_name: String,
 }
 
 impl MirrorVar {
-    /// The mirror global's name (no `$`): `hestia_<16-hex xxh3_64(namespace)>_<var>`, all
-    /// lowercase. Legal per 3DMigoto's `valid_variable_name` (first body char `_` or a
-    /// lowercase letter; remaining chars `[a-z0-9_]`; no length cap). Hashing the whole
-    /// namespace prefix (not just a folder name) keeps multi-ini mods collision-free.
     fn mirror_name(&self) -> String {
         let hash = xxh3_64(self.namespace_prefix.to_ascii_lowercase().as_bytes());
         format!("hestia_{hash:016x}_{}", self.var_name.to_ascii_lowercase())
     }
 
-    /// The fully-qualified source reference for the `[Present]` right-hand side: `$\ns\var`.
     fn source_ref(&self) -> String {
         format!("{}{}", self.namespace_prefix, self.var_name)
     }
 }
 
-/// Path of the live-state helper file for a given mod root.
 pub fn hestia_helper_path(mod_root: &Path) -> PathBuf {
     mod_root.join(MOD_META_DIR).join(HESTIA_HELPER_FILE)
 }
 
-/// The helper ini's own namespace prefix (default namespace = its path relative to the
-/// importer root, lowercased), e.g. `$\mods\example\⬢hestia\hestia.ini\`. This is where
-/// the mirrored `global persist` values land in `d3dx_user.ini`.
 pub fn hestia_helper_namespace_prefix(importer_root: &Path, mod_root: &Path) -> Option<String> {
     namespace_prefix_for_root(&hestia_helper_path(mod_root), importer_root)
 }
 
-/// Resolve an ini's namespace prefix: its explicit `namespace = …` if set, otherwise the
-/// default (the ini file's path relative to the importer root, lowercased, including the
-/// `.ini` filename). `ini_path` is the ini file's absolute path.
 pub fn namespace_prefix_for_ini(
     importer_root: &Path,
     ini_path: &Path,
@@ -850,16 +744,10 @@ pub fn namespace_prefix_for_ini(
     namespace_prefix_for_root(ini_path, importer_root)
 }
 
-/// The key under which a mirror's value lands in `d3dx_user.ini`: the helper's own
-/// namespace prefix followed by the mirror name.
 pub fn mirror_persist_key(helper_prefix: &str, mirror: &MirrorVar) -> String {
     format!("{helper_prefix}{}", mirror.mirror_name())
 }
 
-/// Render the helper file text for a set of mirrors. Mirrors that resolve to the same
-/// mirror name (same namespace + var) are de-duplicated, and the output is sorted by
-/// mirror name so identical inputs produce byte-identical files (the caller hash-compares
-/// to avoid rewriting unchanged content).
 pub fn generate_hestia_ini(mirrors: &[MirrorVar]) -> String {
     let mut unique: Vec<(String, String)> = Vec::new();
     for mirror in mirrors {
@@ -883,23 +771,12 @@ pub fn generate_hestia_ini(mirrors: &[MirrorVar]) -> String {
     text
 }
 
-/// One mirrored value to un-map when reading `d3dx_user.ini`: the helper writes the live
-/// value under `persist_key` (the helper namespace + mirror name), and the app wants it back
-/// under `insert_key` — the mod-relative `<ini rel path>\<var>` form its lookup expects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorReadback {
-    /// Full key in `d3dx_user.ini` the mirror flushes to, e.g.
-    /// `$\mods\example\⬢hestia\hestia.ini\hestia_<hash>_<var>`.
     pub persist_key: String,
-    /// Key to insert into the returned value map, matching the app's `hotkey_current_value`
-    /// lookup: the mod-relative `<ini rel path lowercased>\<var>` form.
     pub insert_key: String,
 }
 
-/// Write (or remove) the live-state helper `<mod root>\⬢HESTIA\hestia.ini`. Returns whether
-/// disk changed. An empty mirror set removes the file so no dead helper keeps mirroring;
-/// otherwise the file is written only when its content differs (hash-compare) so a mod scan
-/// that finds no change touches nothing — and so 3DMigoto does not needlessly reload it.
 pub fn ensure_live_state_helper(mod_root: &Path, mirrors: &[MirrorVar]) -> Result<bool> {
     let path = hestia_helper_path(mod_root);
     if mirrors.is_empty() {
@@ -922,29 +799,17 @@ pub fn ensure_live_state_helper(mod_root: &Path, mirrors: &[MirrorVar]) -> Resul
     Ok(true)
 }
 
-// ---------------------------------------------------------------------------
-// PersistTx — one transaction per game/importer
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CaptureMode {
-    /// Extract entries and write them to the mod's stash.
     Stash,
-    /// Extract entries without writing a stash — the folder is about to be destroyed.
     Purge,
 }
 
-/// In-memory rollback point. `d3dx_user.ini` is small, so a full clone of the parsed
-/// document is the smallest robust implementation.
 pub struct PersistCheckpoint {
     lines: Vec<String>,
     dirty: bool,
 }
 
-/// Per-game transaction: one `UserIniDoc` load, N in-memory mutations, one atomic write.
-/// Document mutations are provisional until the paired filesystem operation succeeds —
-/// callers checkpoint before a capture and roll back when the filesystem step fails, so a
-/// wrongly committed removal can never reach disk.
 pub struct PersistTx {
     importer_root: PathBuf,
     mods_root: Option<PathBuf>,
@@ -960,14 +825,11 @@ pub struct CommitOutcome {
     pub warnings: Vec<String>,
 }
 
-/// `None` when the feature does not apply to this game: non-XXMI backend, no mods path,
-/// or no importer root discoverable near it.
 pub fn begin(game: &GameInstall, use_default: bool) -> Option<PersistTx> {
     let importer_root = importer_root_for(game, use_default)?;
     let mods_root = game.mods_path(use_default);
     let (doc, doc_unreadable, warnings) = match UserIniDoc::open(&importer_root) {
         Ok(Some(doc)) => (doc, false, Vec::new()),
-        // Missing file: captures find nothing, a restore creates it on write.
         Ok(None) => (UserIniDoc::new_empty(), false, Vec::new()),
         Err(err) => (
             UserIniDoc::new_empty(),
@@ -1003,7 +865,6 @@ impl PersistTx {
         self.doc.dirty = checkpoint.dirty;
     }
 
-    /// Ordering marker for the action layer; the mutation is already in the document.
     pub fn keep(&mut self, _checkpoint: PersistCheckpoint) {}
 
     pub fn warn(&mut self, message: impl Into<String>) {
@@ -1080,10 +941,6 @@ impl PersistTx {
         if self.doc_unreadable {
             return Ok(false);
         }
-        // An archived mod's entries left the file when it was hidden; anything now sitting
-        // under its prospective prefix belongs to whichever live mod occupies that folder
-        // name. Taking it would steal a same-named live mod's settings, so archived
-        // captures never touch the document (its own values are already in the stash).
         if matches!(view.status, ModStatus::Archived) {
             return Ok(false);
         }
@@ -1111,10 +968,6 @@ impl PersistTx {
             }
         }
         if removed.is_empty() && copied_shared.is_empty() {
-            // Empty reads are not a reliable "user wiped every setting" signal. During a
-            // mod switch, the running importer may not have saved the just-restored live
-            // values yet, so overwriting an existing stash here can destroy the only good
-            // copy. Keep the last stash unless we actually captured entries.
             return Ok(false);
         }
         if mode == CaptureMode::Stash {
@@ -1146,9 +999,6 @@ impl PersistTx {
         self.restore_view(&entry.into())
     }
 
-    /// Merge the stash back under the mod's current prefix. Only legal for live mods:
-    /// writing live entries for a hidden mod puts keys in the file that nothing declares,
-    /// and the next 3DMigoto save drops them.
     pub fn restore_view(&mut self, view: &ModPersistView<'_>) -> Result<bool> {
         if self.doc_unreadable || !is_live(&view.status) {
             return Ok(false);
@@ -1162,8 +1012,6 @@ impl PersistTx {
         let Some(prefix) = self.prefix_for(view) else {
             return Ok(false);
         };
-        // Reroute first: absorb any stale-prefix entries left by a path change Hestia did
-        // not perform, then re-anchor the stash onto the current prefix.
         if !stash.source_prefix.is_empty() && !keys_ci_equal(&stash.source_prefix, &prefix) {
             let old_prefix = stash.source_prefix.clone();
             self.doc.move_prefix(&old_prefix, &prefix);
@@ -1193,9 +1041,6 @@ impl PersistTx {
         self.reroute_view(&entry.into())
     }
 
-    /// Repair path drift: rewrite live entries from the stash's recorded prefix to the
-    /// mod's current prefix, or — for a hidden mod — absorb them into the stash instead
-    /// of writing anything live.
     pub fn reroute_view(&mut self, view: &ModPersistView<'_>) -> Result<bool> {
         if self.doc_unreadable {
             return Ok(false);
@@ -1213,11 +1058,6 @@ impl PersistTx {
         if is_live(&view.status) {
             self.doc.move_prefix(&old_prefix, &prefix);
         } else if matches!(view.status, ModStatus::Disabled) {
-            // A disabled mod still owns its folder, so stale entries under its old prefix
-            // are unambiguously its own — absorb them into the stash. An archived mod's
-            // old prefix may since have been claimed by a live mod of the same name, so
-            // its reroute is bookkeeping only; orphaned entries are dropped by 3DMigoto's
-            // next save anyway.
             let absorbed = self.doc.take_prefix(&old_prefix);
             if !absorbed.is_empty() {
                 let absorbed_full: Vec<StashEntry> = absorbed
@@ -1246,8 +1086,6 @@ impl PersistTx {
         self.rebase_view(&entry.into())
     }
 
-    /// Stash-only bookkeeping for a hidden mod whose folder moved: point `source_prefix`
-    /// at the new prospective live prefix without touching `d3dx_user.ini`.
     pub fn rebase_view(&mut self, view: &ModPersistView<'_>) -> Result<bool> {
         let Some(mut stash) = read_stash(view.root_path) else {
             return Ok(false);
@@ -1274,9 +1112,6 @@ impl PersistTx {
         self.baseline_view(&entry.into())
     }
 
-    /// Record a repair anchor for a live mod that has entries but no stash yet, without
-    /// removing anything from `d3dx_user.ini`. Mods with no entries get no file: they
-    /// have nothing to lose.
     pub fn baseline_view(&mut self, view: &ModPersistView<'_>) -> Result<bool> {
         if self.doc_unreadable || !is_live(&view.status) {
             return Ok(false);
@@ -1318,9 +1153,6 @@ impl PersistTx {
         self.restore_imported_view(&entry.into())
     }
 
-    /// Restore for a freshly imported folder that arrived carrying a stash, but only when
-    /// no live entries already exist under the mod's current prefix — live entries are
-    /// newer than anything an imported stash can hold.
     pub fn restore_imported_view(&mut self, view: &ModPersistView<'_>) -> Result<bool> {
         if self.doc_unreadable || !is_live(&view.status) {
             return Ok(false);
@@ -1338,8 +1170,6 @@ impl PersistTx {
         self.restore_view(view)
     }
 
-    /// Writes the document if any kept mutation dirtied it. Never writes a document that
-    /// failed to read.
     pub fn commit(self) -> Result<CommitOutcome> {
         if self.doc_unreadable || !self.doc.dirty {
             return Ok(CommitOutcome {
@@ -1355,13 +1185,6 @@ impl PersistTx {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Profile snapshot helpers
-// ---------------------------------------------------------------------------
-
-/// Cheap change signal for `d3dx_user.ini`: its `(mtime, len)`. The live-state watch polls
-/// this — a differing token means the DLL flushed new persist values and the shown hotkey
-/// values should be re-read. `None` when the file is missing or its metadata is unreadable.
 pub fn user_ini_change_token(importer_root: &Path) -> Option<(std::time::SystemTime, u64)> {
     let meta = fs::metadata(importer_root.join(USER_INI_FILE)).ok()?;
     Some((meta.modified().ok()?, meta.len()))
@@ -1372,14 +1195,11 @@ pub fn d3dx_ini_change_token(importer_root: &Path) -> Option<(std::time::SystemT
     Some((meta.modified().ok()?, meta.len()))
 }
 
-/// Whole-file text of `d3dx_user.ini`, or `None` when missing or not UTF-8.
 pub fn snapshot_user_ini(importer_root: &Path) -> Option<String> {
     let bytes = fs::read(importer_root.join(USER_INI_FILE)).ok()?;
     String::from_utf8(bytes).ok()
 }
 
-/// The content a brand-new empty profile starts with — same header and line-ending style
-/// as a restore-created file, so the two paths produce identical documents.
 pub fn clean_user_ini_snapshot() -> String {
     UserIniDoc::new_empty().to_text()
 }
@@ -1436,11 +1256,6 @@ pub fn read_mod_variables(
             values.insert(key, value);
         }
     }
-    // Un-map any mirrored live values: the helper flushed each non-persist source variable
-    // into its own persist global, so read that back under the mod-relative key the app's
-    // lookup expects. Mirror values are the true runtime state, so they override the direct
-    // read above (a variable is mirrored only when it is not itself persist, so in practice
-    // there is no direct entry to override).
     for mirror in mirrors {
         if let Some(value) = doc.get(&mirror.persist_key) {
             values.insert(mirror.insert_key.clone(), value);
@@ -1825,10 +1640,6 @@ pub fn user_ini_snapshot_from_metadata(
         .map(str::to_string)
 }
 
-// ---------------------------------------------------------------------------
-// d3dx.ini reload config + reload hotkey
-// ---------------------------------------------------------------------------
-
 const LEGACY_HELPER_INI_SUPPORTED: &str = "; Hestia XXMI helper\r\n\
 ; Generated by Hestia. Safe to delete; Hestia may recreate it.\r\n\
 \r\n\
@@ -1845,28 +1656,17 @@ namespace = hestia\\bridge\r\n\
 [System]\r\n\
 ; additional_foreground_window support was not detected for this importer DLL.\r\n";
 
-// Current HESTIA SECTION markers and the canonical grant lines Hestia writes inside them.
 const HESTIA_SECTION_START: &str = "; --- HESTIA SECTION START ---";
 const HESTIA_SECTION_END: &str = "; --- HESTIA SECTION END ---";
 const HESTIA_SECTION_NOTE_GENERATED: &str = "; Generated automatically.";
 const HESTIA_SECTION_NOTE_REFRAIN: &str =
     "; Refrain from editing this section — changes may be lost.";
-/// Marker Hestia stamps immediately above a pre-existing `[System]` line it neutralizes, so
-/// the original can be restored verbatim (drop this marker, uncomment the line below) and
-/// duplicate-key precedence never decides the outcome.
 const HESTIA_STASH_MARKER: &str = "; Disabled by Hestia while it injects its own value";
 const FOREGROUND_WINDOW_KEY: &str = "additional_foreground_window";
-/// The `additional_foreground_window` value Hestia writes, and the title its windows borrow
-/// while they pass keys to the game.
 const HESTIA_WINDOW_TITLE: &str = crate::overlay_protocol::XXMI_TITLE;
-/// `[System]` key whose value is the autosave cadence in seconds. Hestia forces it to
-/// `1` so mirrored in-game customization flushes within ~1s.
 const AUTOSAVE_INTERVAL_KEY: &str = "settings_auto_save_interval";
-/// The value Hestia writes for the autosave interval.
 const HESTIA_AUTOSAVE_INTERVAL: &str = "1";
-/// User-facing note surfaced when Hestia refuses to edit a file with malformed markers.
 const MALFORMED_MARKERS_NOTICE: &str = "d3dx.ini has malformed Hestia section markers, so Hestia left the file untouched. Fix or remove the \"; --- HESTIA SECTION START/END ---\" lines.";
-/// User-facing note surfaced when Hestia drops a leftover stash marker it can no longer pair.
 const ORPHAN_MARKER_NOTICE: &str =
     "d3dx.ini: removed a leftover Hestia stash marker; the line it guarded was left as-is.";
 // Legacy artifacts from older builds, still recognized so upgrades clean them up.
@@ -1884,9 +1684,6 @@ const KEYBOARD_IDLE_POLL: Duration = Duration::from_millis(25);
 const RELOAD_KEY_SETTLE_UP_MS: u64 = 180;
 const RELOAD_KEY_HOLD_MS: u64 = 350;
 #[cfg(windows)]
-// 5ms, not 25: the hold guard must catch Alt-down before the Alt+Tab switch lands, because
-// once an elevated game is foreground the release itself is dropped (see
-// `release_key_verified`).
 const RELOAD_KEY_HOLD_POLL_MS: u64 = 5;
 const RELOAD_KEY_PULSE_COUNT: u32 = 2;
 const RELOAD_KEY_PULSE_GAP_MS: u64 = 220;
@@ -1896,15 +1693,12 @@ pub struct ReloadHotkeyReport {
     pub message: String,
 }
 
-/// One pre-existing `[System]` value Hestia would override on enable.
 #[derive(Clone, Debug)]
 pub struct D3dxConflictField {
     pub key: String,
     pub value: String,
 }
 
-/// The user-owned `[System]` values that enabling reload would stash and replace. Empty
-/// values and inert defaults are not reported, so a stock file never trips the prompt.
 #[derive(Clone, Debug)]
 pub struct D3dxReloadConflict {
     pub path: PathBuf,
@@ -1961,36 +1755,14 @@ struct FocusRouteOutcome {
 
 enum D3dxPatch {
     Unchanged,
-    Updated {
-        text: String,
-        /// Non-fatal notes to surface (e.g. a stash left commented because an active copy
-        /// won). Empty on the common clean path.
-        notices: Vec<String>,
-    },
-    /// Markers were malformed; Hestia refused to touch the file. `reason` is surfaced to
-    /// the user so they can repair the markers by hand.
-    Refused {
-        reason: String,
-    },
+    Updated { text: String, notices: Vec<String> },
+    Refused { reason: String },
 }
 
-/// Whether a synthetic reload hotkey can actually reach this importer while Hestia is the
-/// foreground window. Hestia assumes every supported XXMI fork DLL honours
-/// `additional_foreground_window`, so the only gate is that Hestia's binding is actually
-/// active in `d3dx.ini`; if it isn't, a send lands nowhere useful and the caller skips it.
 pub fn reload_hotkey_supported(importer_root: &Path) -> bool {
     d3dx_ini_hestia_foreground_binding_active(importer_root)
 }
 
-/// Install or refresh Hestia's reload helper binding in root `d3dx.ini`.
-///
-/// `additional_foreground_window` is a root `d3dx.ini` option, not a mod ini option. Older
-/// builds wrote `Mods\hestia.ini` or `Mods\⬢HESTIA\hestia.ini`; this function removes those
-/// legacy files only when their bytes match Hestia-generated content.
-///
-/// Returns any non-fatal notices the caller should surface (e.g. a refusal to touch a file
-/// with malformed markers, or a stash left commented because an active value won). An empty
-/// vec is the clean path.
 pub fn ensure_reload_config(
     game: &GameInstall,
     use_default: bool,
@@ -2116,10 +1888,6 @@ fn canonical_reload_status_fields(
     ]
 }
 
-/// The user-owned `[System]` values enabling reload would override, in the order Hestia
-/// lists them (foreground, then interval). Ignores anything Hestia owns (current or legacy
-/// block), empty values, Hestia's own canonical values, and the interval's inert `0`
-/// default — so a stock or already-managed file yields nothing.
 fn d3dx_reload_conflict_fields(text: &str) -> Vec<D3dxConflictField> {
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = split_ini_lines(body);
@@ -2129,7 +1897,6 @@ fn d3dx_reload_conflict_fields(text: &str) -> Vec<D3dxConflictField> {
     normalize_legacy_hestia_artifacts(&mut lines);
 
     let mut fields = Vec::new();
-    // Foreground: any active non-empty value that isn't already Hestia's.
     if let Some(value) = first_system_active_value(&lines, FOREGROUND_WINDOW_KEY)
         && !value.is_empty()
         && !value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE)
@@ -2139,8 +1906,6 @@ fn d3dx_reload_conflict_fields(text: &str) -> Vec<D3dxConflictField> {
             value: value.to_string(),
         });
     }
-    // Autosave interval: any active value that isn't Hestia's (`1`) or the inert
-    // default/disabled sentinels (empty or `0`).
     if let Some(value) = first_system_active_value(&lines, AUTOSAVE_INTERVAL_KEY)
         && !value.is_empty()
         && value != HESTIA_AUTOSAVE_INTERVAL
@@ -2180,18 +1945,6 @@ fn cleanup_legacy_top_level_live_state_helper(mods_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Apply or remove Hestia's `[System]` grants in `d3dx.ini` text.
-///
-/// One folded consent drives both keys: `additional_foreground_window = Hestia` (reload +
-/// hotkey delivery while Hestia is focused) and `settings_auto_save_interval = 1` (so
-/// in-game customization flushes within ~1s). Both live in a single marked HESTIA SECTION
-/// at the top of `[System]`, which is the sole authority for those keys.
-///
-/// The model is record-and-reverse: on enable, any pre-existing active copy of a managed
-/// key is stashed in place (commented, with a restore marker) so the block never fights a
-/// duplicate; on disable the block is peeled and each stash restored verbatim. Anything
-/// Hestia cannot prove it wrote is preserved, and malformed markers abort the edit rather
-/// than risk mangling a hand-edited file.
 fn patch_d3dx_ini_text(text: &str, enable: bool) -> D3dxPatch {
     let has_bom = text.starts_with('\u{feff}');
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -2199,8 +1952,6 @@ fn patch_d3dx_ini_text(text: &str, enable: bool) -> D3dxPatch {
     let trailing_newline = body.ends_with('\n');
     let mut lines = split_ini_lines(body);
 
-    // Malformed markers (missing END, duplicate/nested START, END-before-START) → refuse to
-    // touch the file; the user resolves the markers by hand.
     if matches!(scan_hestia_section(&lines), SectionScan::Malformed) {
         return D3dxPatch::Refused {
             reason: MALFORMED_MARKERS_NOTICE.to_string(),
@@ -2234,7 +1985,6 @@ enum SectionScan {
     Malformed,
 }
 
-/// Locate the single well-formed HESTIA SECTION, or report that the markers are malformed.
 fn scan_hestia_section(lines: &[String]) -> SectionScan {
     let starts: Vec<usize> = lines
         .iter()
@@ -2258,7 +2008,6 @@ fn scan_hestia_section(lines: &[String]) -> SectionScan {
     }
 }
 
-/// The canonical HESTIA SECTION body, without a trailing blank (inserters add spacing).
 fn canonical_hestia_section_lines() -> Vec<String> {
     vec![
         HESTIA_SECTION_START.to_string(),
@@ -2270,7 +2019,6 @@ fn canonical_hestia_section_lines() -> Vec<String> {
     ]
 }
 
-/// Parse an active (uncommented) `key = value` line, trimming both sides.
 fn active_kv(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
@@ -2292,7 +2040,6 @@ fn is_managed_key(key: &str) -> bool {
     is_foreground_key(key) || is_interval_key(key)
 }
 
-/// A canonical grant line Hestia itself writes (FG = Hestia, or IV = 1).
 fn is_hestia_canonical_line(line: &str) -> bool {
     match active_kv(line) {
         Some((key, value)) => {
@@ -2309,8 +2056,6 @@ fn system_header_index(lines: &[String]) -> Option<usize> {
     })
 }
 
-/// Enable: re-assert the canonical block from a clean slate, stashing any active managed
-/// keys so the block is the single authority.
 fn enable_hestia_section(lines: &mut Vec<String>) {
     if let SectionScan::One { start, end } = scan_hestia_section(lines) {
         peel_hestia_section(lines, start, end);
@@ -2319,7 +2064,6 @@ fn enable_hestia_section(lines: &mut Vec<String>) {
     insert_canonical_section(lines);
 }
 
-/// Disable: peel the block (lifting foreign lines) and restore every stash Hestia stamped.
 fn disable_hestia_section(lines: &mut Vec<String>) -> Vec<String> {
     if let SectionScan::One { start, end } = scan_hestia_section(lines) {
         peel_hestia_section(lines, start, end);
@@ -2327,17 +2071,12 @@ fn disable_hestia_section(lines: &mut Vec<String>) -> Vec<String> {
     restore_stashed_managed_keys(lines)
 }
 
-/// Remove the block spanning `start..=end` (plus one trailing blank), keeping — "lifting" —
-/// any interior line Hestia can't prove it wrote. Disposable interior: blank lines,
-/// comments, and an embedded `[System]` header (legacy blocks carried one). Dropped: the
-/// canonical FG/IV lines. Everything else is lifted back into place, never discarded.
 fn peel_hestia_section(lines: &mut Vec<String>, start: usize, end: usize) {
     let lifted: Vec<String> = lines[start + 1..end]
         .iter()
         .filter(|line| {
             let trimmed = line.trim();
             if let Some(section) = section_name(trimmed) {
-                // Drop an embedded `[System]`; lift any other stray section header.
                 return !section.eq_ignore_ascii_case("System");
             }
             if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
@@ -2357,9 +2096,6 @@ fn peel_hestia_section(lines: &mut Vec<String>, start: usize, end: usize) {
     lines.splice(start..drain_end, lifted);
 }
 
-/// Stash every active managed-key line inside `[System]` in place: replace `foo = bar`
-/// with a two-line pair (restore marker, then `; foo = bar`). The block then owns the only
-/// active copy, and each original can be restored verbatim on disable.
 fn stash_active_managed_keys(lines: &mut Vec<String>) {
     let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
     let mut in_system = false;
@@ -2383,8 +2119,6 @@ fn stash_active_managed_keys(lines: &mut Vec<String>) {
     *lines = out;
 }
 
-/// Insert the canonical block at the top of the first `[System]`, followed by a blank line.
-/// With no `[System]`, append one plus the block at EOF.
 fn insert_canonical_section(lines: &mut Vec<String>) {
     let mut block = canonical_hestia_section_lines();
     if let Some(header) = system_header_index(lines) {
@@ -2399,11 +2133,6 @@ fn insert_canonical_section(lines: &mut Vec<String>) {
     lines.extend(block);
 }
 
-/// Restore each stash pair Hestia stamped, returning notices for the cases it couldn't
-/// cleanly reverse. Restore = drop the marker, uncomment the line below. Two exceptions:
-/// an active copy of the key already present (an active value always wins → keep ours
-/// commented), and a marker whose paired line the user un-commented or removed (drop only
-/// the marker, leave their line untouched).
 fn restore_stashed_managed_keys(lines: &mut Vec<String>) -> Vec<String> {
     let mut notices = Vec::new();
     let mut idx = 0;
@@ -2413,14 +2142,11 @@ fn restore_stashed_managed_keys(lines: &mut Vec<String>) -> Vec<String> {
             continue;
         }
         let Some(stashed_line) = lines.get(idx + 1).cloned() else {
-            // Lone marker at EOF.
             lines.remove(idx);
             notices.push(ORPHAN_MARKER_NOTICE.to_string());
             continue;
         };
         let Some(original) = stashed_line.strip_prefix("; ") else {
-            // The paired line isn't a commented original (user un-commented it, or it was
-            // otherwise replaced) → drop only our marker and leave their line as-is.
             lines.remove(idx);
             notices.push(ORPHAN_MARKER_NOTICE.to_string());
             continue;
@@ -2430,8 +2156,6 @@ fn restore_stashed_managed_keys(lines: &mut Vec<String>) -> Vec<String> {
         if let Some(key) = &key
             && active_managed_key_present(lines, key)
         {
-            // An active copy already exists (e.g. a value the user edited inside the block,
-            // now lifted out). It wins; keep our stash commented, drop only the marker.
             lines.remove(idx);
             notices.push(format!(
                 "d3dx.ini: kept your commented \"{key}\" — an active \"{key}\" is already present."
@@ -2445,8 +2169,6 @@ fn restore_stashed_managed_keys(lines: &mut Vec<String>) -> Vec<String> {
     notices
 }
 
-/// Whether an active line for `key` exists anywhere in a `[System]` section. Commented
-/// stash lines never count (they aren't active), so a pending stash never masks itself.
 fn active_managed_key_present(lines: &[String], key: &str) -> bool {
     let mut in_system = false;
     for line in lines {
@@ -2479,7 +2201,6 @@ fn normalize_legacy_hestia_artifacts(lines: &mut Vec<String>) {
     }
 }
 
-/// The range `(start, end)` of the first block delimited by `start_marker` / `end_marker`.
 fn find_block_range(
     lines: &[String],
     start_marker: &str,
@@ -2503,8 +2224,6 @@ fn d3dx_ini_hestia_foreground_binding_active(importer_root: &Path) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case(HESTIA_WINDOW_TITLE))
 }
 
-/// The first active value for `key` inside a `[System]` section, trimmed. Commented lines
-/// and keys in other sections are ignored.
 fn first_system_active_value<'a>(lines: &'a [String], key: &str) -> Option<&'a str> {
     let mut in_system = false;
     for line in lines {
@@ -2596,11 +2315,9 @@ fn rotate_d3dx_backup(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The virtual-key code of the importer's `reload_config` binding, parsed from
-/// `d3dx.ini`. Defaults to F10, the binding every supported importer ships with.
 #[cfg(windows)]
 fn reload_hotkey_vk(importer_root: &Path) -> u16 {
-    const DEFAULT: u16 = 0x79; // VK_F10
+    const DEFAULT: u16 = 0x79;
     let Ok(text) = fs::read_to_string(importer_root.join("d3dx.ini")) else {
         return DEFAULT;
     };
@@ -2633,12 +2350,9 @@ fn reload_hotkey_vk(importer_root: &Path) -> u16 {
     DEFAULT
 }
 
-/// Most non-modifier keys one binding may hold together (`ctrl t a n g` has four).
 #[cfg(windows)]
 const KEY_SPEC_MAX_KEYS: usize = 8;
 
-/// A mod hotkey as 3DMigoto reads it: the modifiers plus every other listed key, all held
-/// at once. Most bindings have one key; lock toggles often use a word, like `ctrl t a n g`.
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Default)]
 struct KeySpec {
@@ -2657,13 +2371,10 @@ impl KeySpec {
         spec
     }
 
-    /// The non-modifier keys, in the order the binding lists them.
     fn main_keys(&self) -> &[u16] {
         &self.keys[..self.key_count]
     }
 
-    /// Adds a key; false when the binding already holds the most keys allowed. A key
-    /// listed twice is held once.
     fn push_key(&mut self, vk: u16) -> bool {
         if self.main_keys().contains(&vk) {
             return true;
@@ -2797,7 +2508,6 @@ enum ReloadForeground {
         title: String,
         hwnd: windows::Win32::Foundation::HWND,
     },
-    /// The in-game overlay, which XXMI takes keys from only while it's titled "Hestia".
     Overlay {
         title: String,
         hwnd: windows::Win32::Foundation::HWND,
@@ -2932,10 +2642,6 @@ fn game_process_pid_for_reload(game: &GameInstall) -> Option<u32> {
         .map(|(pid, _)| pid.as_u32())
 }
 
-/// Mandatory integrity level RID of a process token (0x1000 low, 0x2000 medium, 0x3000
-/// high/elevated, 0x4000 system). `None` queries Hestia itself. `Err(access_denied)` when the
-/// token could not be read; from a lower-integrity Hestia, access denied on the game process
-/// is itself strong evidence that the game sits above us.
 #[cfg(windows)]
 fn process_integrity_level(pid: Option<u32>) -> std::result::Result<u32, bool> {
     use windows::Win32::{
@@ -2967,7 +2673,6 @@ fn process_integrity_level(pid: Option<u32>) -> std::result::Result<u32, bool> {
     }
     let result = (|| {
         let mut needed = 0u32;
-        // First call only sizes the buffer and fails with ERROR_INSUFFICIENT_BUFFER.
         let _ = unsafe { GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed) };
         if needed == 0 {
             return Err(false);
@@ -2998,17 +2703,8 @@ fn process_integrity_level(pid: Option<u32>) -> std::result::Result<u32, bool> {
     result
 }
 
-/// Whether Hestia's synthetic input and key-state reads currently reach the OS. Both are
-/// gated on the foreground window: while it belongs to a process at a higher integrity level
-/// than Hestia (an elevated game), `SendInput` drops every event while still reporting
-/// success, and `GetAsyncKeyState` returns 0 for every key. Verified 2026-09-12 with a
-/// low-integrity probe against a medium-integrity foreground. Hestia's own window and any
-/// process at or below Hestia's level are trusted; a process whose token cannot be opened is
-/// assumed to sit above us.
 #[cfg(windows)]
 fn input_channel_trusted() -> bool {
-    // No foreground window (mid Alt+Tab, a window closing): nothing establishes trust, so
-    // treat the read as unconfirmable rather than confirm a key-up on a possibly blind read.
     let Some((_, _, pid)) = foreground_window_title_and_pid() else {
         return false;
     };
@@ -3028,10 +2724,6 @@ fn input_channel_trusted() -> bool {
 static ELEVATION_HINT_SHOWN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Report suffix for when the game runs elevated and Hestia does not. In that configuration
-/// UIPI drops a synthetic key-up whenever the game holds the foreground, which is the one
-/// remaining way the reload key can get stuck down (see `release_key_verified`). Shown once
-/// per session so the reload log does not repeat it on every send.
 #[cfg(windows)]
 fn reload_elevation_hint(game_pid: Option<u32>) -> Option<String> {
     use std::sync::atomic::Ordering;
@@ -3061,7 +2753,6 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     let Some((hwnd, title, pid)) = foreground_window_title_and_pid() else {
         return ReloadForeground::None;
     };
-    // Before the title: the overlay may still carry "Hestia" from a reload.
     if game_overlay_process().is_some_and(|overlay| overlay.pid == pid) {
         return ReloadForeground::Overlay { title, hwnd };
     }
@@ -3101,15 +2792,12 @@ fn foreground_for_reload(game: &GameInstall) -> ReloadForeground {
     ReloadForeground::Other { title }
 }
 
-/// Whether a window is Hestia's main window: this process's, with its own title or the one
-/// XXMI takes keys from while it borrows that.
 #[cfg(windows)]
 fn is_hestia_main_window(title: &str, pid: u32) -> bool {
     pid == std::process::id()
         && (title == crate::overlay_protocol::MAIN_WINDOW_TITLE || title == HESTIA_WINDOW_TITLE)
 }
 
-/// Hestia's main window: this process's window with its own title, never the in-game overlay.
 #[cfg(windows)]
 fn hestia_window() -> Option<windows::Win32::Foundation::HWND> {
     use windows::{
@@ -3133,16 +2821,10 @@ fn hestia_window() -> Option<windows::Win32::Foundation::HWND> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The in-game overlay: another Hestia process, whose window XXMI takes keys from only while
-// it carries `HESTIA_WINDOW_TITLE`.
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(not(windows), allow(dead_code))]
 struct GameOverlayProcess {
     pid: u32,
-    /// Its search takes the keys.
     typing: bool,
 }
 
@@ -3154,13 +2836,10 @@ fn game_overlay_process() -> std::sync::MutexGuard<'static, Option<GameOverlayPr
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// The in-game overlay's process while it runs, so a reload with the overlay in front goes
-/// through its title.
 pub fn set_game_overlay_process(pid: Option<u32>) {
     *game_overlay_process() = pid.map(|pid| GameOverlayProcess { pid, typing: false });
 }
 
-/// Whether the overlay's search takes the keys.  No reload goes through its title meanwhile.
 pub fn set_game_overlay_typing(typing: bool) {
     if let Some(overlay) = game_overlay_process().as_mut() {
         overlay.typing = typing;
@@ -3175,8 +2854,6 @@ fn game_overlay_typing() -> bool {
 #[cfg(windows)]
 const OVERLAY_TITLE_TIMEOUT_MS: u32 = 500;
 
-/// Sets another process's window title.  A window that takes longer than the timeout still
-/// gets the title once it responds, in the order sent, so a later title is never overtaken.
 #[cfg(windows)]
 fn set_window_title(hwnd: windows::Win32::Foundation::HWND, title: &str) -> bool {
     use windows::Win32::{
@@ -3200,9 +2877,6 @@ fn set_window_title(hwnd: windows::Win32::Foundation::HWND, title: &str) -> bool
     sent.0 != 0
 }
 
-/// A window of Hestia's, the main window or the in-game overlay, carrying the title XXMI
-/// takes keys from until dropped, then its own again.  XXMI then takes every key pressed in
-/// it, so Hestia borrows the title only while it presses a key for the game.
 #[cfg(windows)]
 struct BorrowedTitle {
     hwnd: windows::Win32::Foundation::HWND,
@@ -3290,20 +2964,6 @@ fn set_foreground_window(hwnd: windows::Win32::Foundation::HWND) -> bool {
             .is_some_and(|(foreground, _, _)| foreground == hwnd || foreground == HWND(hwnd.0))
 }
 
-// ---------------------------------------------------------------------------
-// Synthetic key-press bookkeeping
-//
-// `SendInput` key state outlives the sender: a key-down whose key-up never arrives stays
-// "down" in the OS async key table until the next real event for that key, across process
-// exit. 3DMigoto re-registers every key binding with fresh state on each config reload, so
-// a stuck `reload_config` key (F10) makes it reload every single frame, indefinitely, and a
-// stuck Ctrl/Alt turns the next F10 into `wipe_user_config`. Every synthetic key-down
-// therefore goes through `HeldKey`: it releases on drop (error or panic), it is tracked in
-// a process-wide registry so exit paths can release whatever is still held, and it is
-// refused once shutdown has begun. The registry lock is held across the key-down send so a
-// concurrent shutdown can never drain the registry between "checked" and "pressed".
-// ---------------------------------------------------------------------------
-
 #[cfg(windows)]
 struct SyntheticKeyRegistry {
     held: Vec<u16>,
@@ -3353,7 +3013,6 @@ fn send_keyboard_input(vk: u16, key_up: bool, label: &str) -> Result<()> {
                     KEYBD_EVENT_FLAGS(0)
                 },
                 time: 0,
-                // The in-game overlay leaves keys with this mark alone.
                 dwExtraInfo: crate::overlay_protocol::HESTIA_INPUT_MARK,
             },
         },
@@ -3365,8 +3024,6 @@ fn send_keyboard_input(vk: u16, key_up: bool, label: &str) -> Result<()> {
     Ok(())
 }
 
-/// A synthetic key currently held down. Dropping it without `release` still sends the
-/// key-up (best effort), so no error or panic path can leave the key stuck.
 #[cfg(windows)]
 #[must_use = "dropping a HeldKey releases it immediately"]
 struct HeldKey {
@@ -3383,10 +3040,6 @@ impl HeldKey {
         }
         send_keyboard_input(vk, false, label)?;
         if !key_reported_down_after_settle(vk) {
-            // SendInput accepted the event but the key table never saw it: UIPI drops input
-            // silently while the foreground window runs at a higher integrity level. Best
-            // effort key-up in case the read raced a physical release, then report it, since a
-            // dropped reload press otherwise gets logged as sent.
             let _ = send_keyboard_input(vk, true, label);
             return Err(anyhow!(
                 "{label}: {} key-down was dropped by the OS (the foreground window likely runs \
@@ -3402,8 +3055,6 @@ impl HeldKey {
     }
 
     fn release(mut self, label: &str) -> Result<()> {
-        // On failure the key is now owned by the stuck-key retry thread, so the drop guard
-        // must not spend another verify timeout on it.
         let result = release_key_verified(self.vk, label);
         self.released = true;
         Self::unregister(self.vk);
@@ -3447,8 +3098,6 @@ fn key_reported_down(vk: u16) -> bool {
     (unsafe { GetAsyncKeyState(i32::from(vk)) }) < 0
 }
 
-/// Read back the OS async key table after a key-up, with one short settle re-check so a
-/// still-propagating injection is not mistaken for a stuck key.
 #[cfg(windows)]
 fn key_still_down_after_settle(vk: u16) -> bool {
     if !key_reported_down(vk) {
@@ -3458,7 +3107,6 @@ fn key_still_down_after_settle(vk: u16) -> bool {
     key_reported_down(vk)
 }
 
-/// Counterpart for a key-down: true once the key table shows the key down.
 #[cfg(windows)]
 fn key_reported_down_after_settle(vk: u16) -> bool {
     if key_reported_down(vk) {
@@ -3481,19 +3129,12 @@ fn vk_display_name(vk: u16) -> String {
     }
 }
 
-/// Outcome of a key-up that needed the recovery loop (see `release_key_with_recovery`).
 #[derive(Debug, PartialEq, Eq)]
 struct KeyReleaseRecovery {
     resends: u32,
     refocused: bool,
 }
 
-/// Platform-independent core of the verified key-up. `send_up` injects the key-up and fails
-/// when the OS refused it, `still_down` reads the key state back after a send, `focus_self`
-/// tries to bring Hestia's own window to the foreground and reports whether it did. Returns
-/// `Ok(None)` when the first plain send was confirmed, `Ok(Some(..))` when the recovery loop
-/// confirmed it, and `Err` with the last send error once `timeout` passes with the key still
-/// reported down. The first send never touches the foreground.
 fn release_key_with_recovery(
     mut send_up: impl FnMut() -> Result<()>,
     mut still_down: impl FnMut() -> bool,
@@ -3529,8 +3170,6 @@ fn release_key_with_recovery(
     }
 }
 
-/// A key-up Hestia could not confirm: the key is now owned by the stuck-key janitor. Typed so
-/// the reload route's retry loop can stop instead of burying this under focus errors.
 #[derive(Debug)]
 pub struct StuckKeyError(String);
 
@@ -3542,32 +3181,11 @@ impl std::fmt::Display for StuckKeyError {
 
 impl std::error::Error for StuckKeyError {}
 
-/// Read-back that only counts when it can be trusted: while the foreground process sits
-/// above Hestia, reads return 0 for every key, so an unconfirmable release is treated as
-/// still down.
 #[cfg(windows)]
 fn key_unconfirmed_or_down(vk: u16) -> bool {
     !input_channel_trusted() || key_still_down_after_settle(vk)
 }
 
-/// Send a key-up and verify the OS actually recorded it. `SendInput` is subject to UIPI:
-/// while the foreground window belongs to a higher-integrity process (an elevated game the
-/// user just Alt+Tabbed into) the event is dropped and nothing reports it: the call still
-/// returns 1 delivered with no last-error, and `GetAsyncKeyState` reads 0 for every key from
-/// the same position, so the read-back cannot see the stuck key either (both verified
-/// 2026-09-12 with a low-integrity probe against a medium-integrity foreground). A key-down
-/// whose key-up was dropped stays down until a physical press, which for the reload key means
-/// 3DMigoto reloads every frame.
-///
-/// Confirmation therefore requires a trusted read: the foreground process at or below
-/// Hestia's integrity level. Recovery, in order: resend for a short while, trying to bring
-/// Hestia's own window to the foreground first (Hestia can always inject into and read from
-/// itself; this only works while Hestia still holds foreground rights). If the key is still
-/// unconfirmed after that, hand it to `stuck_key_janitor`, which keeps resending the key-up
-/// in the background: the probe showed the resend lands and reads back the moment the
-/// foreground is any window at Hestia's level or below, so the key clears as soon as the game
-/// loses focus instead of waiting for the user to press it physically. Returns
-/// `StuckKeyError` in that case so the caller logs it and stops retrying the route.
 #[cfg(windows)]
 fn release_key_verified(vk: u16, label: &str) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -3629,11 +3247,6 @@ fn release_key_verified(vk: u16, label: &str) -> Result<()> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stuck-key janitor: keys whose key-up the OS keeps dropping. One detached thread resends
-// every key-up on a slow poll until the key table shows the key up, then exits.
-// ---------------------------------------------------------------------------
-
 #[cfg(windows)]
 static STUCK_KEYS: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
 #[cfg(windows)]
@@ -3655,8 +3268,6 @@ fn schedule_stuck_key_release(vk: u16) {
     if !stuck.contains(&vk) {
         stuck.push(vk);
     }
-    // Checked under the lock so the janitor's "list is empty, exiting" step cannot race a
-    // new entry.
     if !STUCK_KEY_JANITOR_RUNNING.swap(true, Ordering::AcqRel)
         && let Err(err) = std::thread::Builder::new()
             .name("hestia-stuck-key-release".to_string())
@@ -3667,9 +3278,6 @@ fn schedule_stuck_key_release(vk: u16) {
     }
 }
 
-/// One retry for one stuck key: nothing to do if the key already reads up (a physical press
-/// or another sender cleared it), otherwise resend the key-up and read back. Returns whether
-/// the key is now up.
 fn stuck_key_retry_step(
     vk: u16,
     send_up: &mut impl FnMut(u16) -> Result<()>,
@@ -3701,10 +3309,6 @@ fn stuck_key_janitor() {
             }
             stuck.clone()
         };
-        // While the foreground sits above Hestia nothing we send or read counts. Every couple
-        // of seconds try to take the foreground back (works only if Hestia still holds
-        // foreground rights; otherwise Windows just flashes Hestia's taskbar button, which is
-        // a usable "look at Hestia" cue), and hand it straight back once the key clears.
         let mut restore_to: Option<windows::Win32::Foundation::HWND> = None;
         if !input_channel_trusted()
             && last_foreground_attempt
@@ -3740,9 +3344,6 @@ fn stuck_key_janitor() {
     }
 }
 
-/// Release every synthetic key Hestia still holds and refuse new presses. Call from every
-/// exit path (window close, in-app restarts) before the process goes away: the sender
-/// threads are detached, and `process::exit` kills them mid-hold without running drops.
 #[cfg(windows)]
 pub fn release_synthetic_keys_for_shutdown() {
     let mut registry = synthetic_keys();
@@ -3752,8 +3353,6 @@ pub fn release_synthetic_keys_for_shutdown() {
             tracing::error!("{err:#}");
         }
     }
-    // Keys the janitor was still retrying: one last attempt, the thread dies with the process
-    // and the launch-time self-heal covers whatever is still down next start.
     for vk in std::mem::take(&mut *stuck_keys()) {
         let _ = send_keyboard_input(vk, true, "shutdown stuck key release");
     }
@@ -3762,10 +3361,6 @@ pub fn release_synthetic_keys_for_shutdown() {
 #[cfg(not(windows))]
 pub fn release_synthetic_keys_for_shutdown() {}
 
-/// Launch-time self-heal: if the importer's `reload_config` key is still reported down
-/// (a previous Hestia that died mid-press, or any other source), send its key-up so
-/// 3DMigoto stops re-firing the reload every frame. Returns the key's F-number when a
-/// release was sent.
 #[cfg(windows)]
 pub fn release_stuck_reload_hotkey(importer_root: &Path) -> Result<Option<u16>> {
     let vk = reload_hotkey_vk(importer_root);
@@ -3785,9 +3380,6 @@ pub fn release_stuck_reload_hotkey(_importer_root: &Path) -> Result<Option<u16>>
 #[derive(Clone, Copy)]
 enum AcceptedForeground {
     Window(windows::Win32::Foundation::HWND),
-    /// A window that passes every key to the game while it has the key down, so only as long
-    /// as no key but the pressed one and its modifiers is down: the in-game overlay carrying
-    /// the title XXMI takes keys from.
     Quiet {
         hwnd: windows::Win32::Foundation::HWND,
         spec: KeySpec,
@@ -3806,8 +3398,6 @@ fn accepted_foreground_still_active(accepted: AcceptedForeground) -> bool {
     }
 }
 
-/// The keys a press of `spec` holds down, with each modifier's left and right key, which
-/// the key table also marks down for the generic one.
 #[cfg(windows)]
 fn key_spec_keys(spec: KeySpec) -> Vec<u16> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -3911,8 +3501,6 @@ fn foreground_is_game_or_hestia(game_hwnd: windows::Win32::Foundation::HWND) -> 
 fn keyboard_key_down_for_reload() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-    // Start at VK_BACK (0x08), intentionally skipping mouse buttons. This is a
-    // physical-key idle gate for the foreground hand-off, not a general input lock.
     (0x08..=0xfe).any(|vk| unsafe { GetAsyncKeyState(vk) } < 0)
 }
 
@@ -3964,8 +3552,6 @@ fn send_reload_hotkey_burst(
     Ok(true)
 }
 
-/// Presses `keys` in order and holds them all together, so a multi-key binding like
-/// `ctrl t a n g` fires once the last key goes down, then releases them in reverse.
 #[cfg(windows)]
 fn hold_keys_with_guards(
     keys: &[u16],
@@ -3992,7 +3578,6 @@ fn hold_keys_with_guards(
         return Ok(false);
     }
 
-    // A failed press drops (and so releases) the keys already held.
     let mut held = Vec::with_capacity(keys.len());
     for &vk in keys {
         held.push(HeldKey::press(vk, key_down_label)?);
@@ -4021,8 +3606,6 @@ fn hold_reload_key(vk: u16, accepted_foreground: AcceptedForeground) -> Result<b
     let hold = Duration::from_millis(RELOAD_KEY_HOLD_MS);
     let poll = Duration::from_millis(RELOAD_KEY_HOLD_POLL_MS);
     while started.elapsed() < hold {
-        // Alt+Tab during the synthetic F10 hold is the high-risk path: release F10 before
-        // the foreground hand-off can leave the importer seeing a down event without an up.
         if reload_modifier_guard_active() || !accepted_foreground_still_active(accepted_foreground)
         {
             held.release("reload key interrupted by guard")?;
@@ -4090,8 +3673,6 @@ fn send_reload_hotkey_via_hestia_focus_with_retry(
                 });
             }
             Err(error) => {
-                // A stuck key is owned by the janitor now; more focus attempts cannot help
-                // and would bury the message under focus errors.
                 if error.downcast_ref::<StuckKeyError>().is_some() {
                     return Err(error);
                 }
@@ -4160,13 +3741,6 @@ fn send_reload_hotkey_via_hestia_focus(
     })
 }
 
-/// The in-game overlay is foreground.  XXMI takes keys only from the game or a window titled
-/// `HESTIA_WINDOW_TITLE`, so the overlay carries that title for each press of the reload key,
-/// then gets its own back.  With that title, it would pass every key pressed in it to the
-/// game's mod hotkeys too, so a press waits until the overlay's search doesn't take the keys and no key
-/// has been down for a moment, and a key pressed during it ends it early to be tried again.
-/// Returns `None` when the overlay lost the foreground before any press, so the caller looks
-/// again.
 #[cfg(windows)]
 fn send_reload_hotkey_via_overlay(
     importer_root: &Path,
@@ -4190,7 +3764,6 @@ fn send_reload_hotkey_via_overlay(
         if !wait_for_keyboard_idle(remaining.min(Duration::from_millis(1_500))) {
             continue;
         }
-        // A key-up reaches no hotkey, so the settle-up goes before the title.
         send_keyboard_input(vk, true, "reload key settle-up")?;
         std::thread::sleep(Duration::from_millis(RELOAD_KEY_SETTLE_UP_MS));
         if game_overlay_typing() || keyboard_key_down_for_reload() {
@@ -4237,11 +3810,6 @@ fn send_reload_hotkey_via_overlay(
     Ok(None)
 }
 
-/// Presses a mod's hotkey with the in-game overlay in front, through its title like the
-/// reload key.  The press waits until the overlay's search doesn't take the keys and no key
-/// has been down for a moment.  A press that a key or the foreground ended early isn't tried
-/// again, since the game may have taken it.  Returns `None` when the overlay lost the
-/// foreground before the press, so the caller looks again.
 #[cfg(windows)]
 fn send_key_spec_via_overlay(
     spec: KeySpec,
@@ -4313,11 +3881,6 @@ fn focus_route_message(outcome: FocusRouteOutcome) -> String {
     parts.join("; ")
 }
 
-/// Foreground-aware profile reload sender. If the game is foreground, XXMI accepts normal
-/// global input through its own `pid == GetCurrentProcessId()` foreground check. If Hestia is
-/// foreground, it borrows the title the `additional_foreground_window` d3dx.ini grant names
-/// for the presses, so XXMI takes keys from its window only then.
-/// Other foreground windows get a short retry window to cover focus transitions.
 #[cfg(windows)]
 pub fn send_reload_hotkey_foreground_aware(
     game: &GameInstall,
@@ -4412,7 +3975,6 @@ pub fn send_reload_hotkey_foreground_aware(
                         message: with_hint(format!("{message}; {label}")),
                     });
                 }
-                // It closed, so the game or Hestia may be in front now.
                 last_foreground = ReloadForeground::Overlay { title, hwnd };
             }
             other => {
@@ -4432,7 +3994,6 @@ pub fn send_reload_hotkey_foreground_aware(
     })
 }
 
-/// The importer's reload key as the user presses it, such as "F10".
 #[cfg(windows)]
 pub fn reload_hotkey_name(importer_root: &Path) -> String {
     vk_display_name(reload_hotkey_vk(importer_root))
@@ -4487,8 +4048,6 @@ fn send_key_spec(spec: KeySpec, accepted_foreground: AcceptedForeground) -> Resu
     if spec.shift {
         modifiers.push(VK_SHIFT.0);
     }
-    // Every `?` below drops whatever is already held, which releases it: a failed key-down
-    // can no longer leave Ctrl/Alt/Shift stuck.
     let mut held_modifiers = Vec::with_capacity(modifiers.len());
     for modifier in &modifiers {
         held_modifiers.push(HeldKey::press(*modifier, "hotkey modifier down")?);
@@ -4587,7 +4146,6 @@ pub fn send_mod_hotkey_foreground_aware(
                         message: with_hint(format!("{message}; {label}")),
                     });
                 }
-                // It closed or hid, so the game or Hestia may be in front now.
                 last_foreground = ReloadForeground::Overlay { title, hwnd };
             }
             other => {
@@ -4618,15 +4176,6 @@ pub fn send_mod_hotkey_foreground_aware(
     })
 }
 
-/// Send the importer's reload hotkey so a running game picks up changed live mods or a
-/// just-written `d3dx_user.ini`. Returns `Ok(false)` when the send was skipped.
-///
-/// Hard guard: `wipe_user_config = ctrl alt no_shift VK_F10` means an F10 delivered while
-/// Ctrl and Alt happen to be held erases every persisted setting for the importer, so the
-/// send is skipped outright whenever either modifier is physically down, including when a
-/// modifier appears during the key hold. The active foreground is also watched while the
-/// key is held so Alt+Tab does not split the down/up pair across windows. A skipped reload
-/// is benign — the next launch reads the file anyway.
 #[cfg(windows)]
 fn send_reload_hotkey_unlocked(
     importer_root: &Path,
@@ -4647,15 +4196,9 @@ fn send_reload_hotkey_unlocked(
     hold_reload_key(vk, accepted_foreground)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- verified key-up (stuck reload key recovery) ---------------------------------
 
     const FAST_TIMEOUT: Duration = Duration::from_millis(60);
     const FAST_POLL: Duration = Duration::from_millis(2);
@@ -4684,8 +4227,6 @@ mod tests {
 
     #[test]
     fn verified_key_up_recovers_when_uipi_blocks_until_hestia_is_foreground() {
-        // Models an elevated game holding the foreground: SendInput returns 0 (Err) until
-        // Hestia's own window is foregrounded, after which the key-up lands and reads as up.
         let hestia_foreground = std::cell::Cell::new(false);
         let key_down = std::cell::Cell::new(true);
         let mut sends = 0;
@@ -4701,8 +4242,6 @@ mod tests {
             },
             || key_down.get(),
             || {
-                // First recovery attempt fails to grab the foreground (Alt+Tab still in
-                // flight), the second succeeds.
                 if hestia_foreground.get() {
                     return false;
                 }
@@ -4727,8 +4266,6 @@ mod tests {
 
     #[test]
     fn verified_key_up_retries_when_send_succeeds_but_key_reads_down() {
-        // SendInput accepted the event but the async table still reports the key down on the
-        // first read-back; a later read-back confirms the release.
         let mut reads = 0;
         let outcome = release_key_with_recovery(
             || Ok(()),
@@ -4777,8 +4314,6 @@ mod tests {
         );
     }
 
-    // Real-input probes: inject F24 (bound by nothing) through the production SendInput path.
-    // Run explicitly with `cargo test real_input -- --ignored --nocapture`.
     #[cfg(windows)]
     #[test]
     #[ignore = "injects F24 into the live desktop"]
@@ -4799,10 +4334,6 @@ mod tests {
         assert!(!synthetic_keys().held.contains(&F24));
     }
 
-    /// Run from a copy of the test binary labelled low integrity while a medium-integrity
-    /// launcher already holds F24 down and releases it a few seconds later. Models Hestia
-    /// (lower) against an elevated game (higher) that owns the foreground: from here Hestia
-    /// can neither inject nor read, so every step must be detected through the trust gate.
     #[cfg(windows)]
     #[test]
     #[ignore = "needs a low-integrity launch with F24 pre-held by the launcher"]
@@ -4820,7 +4351,6 @@ mod tests {
             "blind read: F24 is held by the launcher but reads up from here"
         );
 
-        // 1. A key-down from the lower-integrity side is dropped silently and reported.
         let press_err = match HeldKey::press(F24, "probe down") {
             Ok(_) => panic!("press must fail at low integrity against a higher foreground"),
             Err(err) => format!("{err:#}"),
@@ -4829,7 +4359,6 @@ mod tests {
         assert!(press_err.contains("dropped by the OS"), "{press_err}");
         assert!(!synthetic_keys().held.contains(&F24));
 
-        // 2. A key-up cannot be confirmed, is handed to the janitor, and is typed.
         let started = std::time::Instant::now();
         let release_err = match release_key_verified(F24, "probe up") {
             Ok(()) => panic!("release must fail at low integrity against a higher foreground"),
@@ -4852,14 +4381,6 @@ mod tests {
             "janitor thread running"
         );
 
-        // 3. The launcher releases F24 meanwhile, but from here that is invisible: the
-        //    janitor must keep the key pending rather than confirm on a blind read. (The
-        //    confirm-once-trusted transition is covered by the medium-integrity roundtrip and
-        //    the recovery-core unit tests; this process has no window to take the foreground
-        //    with.)
-        //    The desktop is live, so sample the gate meanwhile: if a window at or below this
-        //    level took the foreground for a moment after the launcher's release, a
-        //    confirmation in that moment is correct, not false.
         let wait_until = std::time::Instant::now() + Duration::from_millis(4_000);
         let mut trusted_samples = 0u32;
         let mut samples = 0u32;
@@ -4882,8 +4403,6 @@ mod tests {
         }
     }
 
-    /// Diagnostic: sample the trust gate and the foreground identity for 6s and print every
-    /// change. Run at low integrity to see what the gate does during a launcher's key events.
     #[cfg(windows)]
     #[test]
     #[ignore = "diagnostic sampler"]
@@ -4935,8 +4454,6 @@ mod tests {
 
     #[test]
     fn stuck_key_retry_step_releases_once_the_send_lands() {
-        // Models the game losing focus: the resend is no longer dropped and the read-back
-        // shows the key up.
         let down = std::cell::Cell::new(true);
         let released = stuck_key_retry_step(
             0x79,
@@ -4951,7 +4468,6 @@ mod tests {
 
     #[test]
     fn stuck_key_retry_step_keeps_key_pending_while_send_is_dropped() {
-        // SendInput "succeeds" but the OS dropped it (UIPI): the key still reads down.
         let mut sends = 0;
         let released = stuck_key_retry_step(
             0x79,
@@ -4967,8 +4483,6 @@ mod tests {
 
     #[test]
     fn verified_key_up_error_path_still_reports_refocus_for_restore() {
-        // Even when recovery fails, the caller must learn that the foreground was moved so it
-        // can hand it back to the game.
         let outcome = release_key_with_recovery(
             || Err(anyhow!("blocked")),
             || true,
@@ -4987,8 +4501,6 @@ mod tests {
         }
     }
 
-    /// 3DMigoto's `valid_variable_name`: first body char `_` or a lowercase letter,
-    /// remaining chars `[a-z0-9_]`.
     fn is_valid_migoto_var(name: &str) -> bool {
         let mut chars = name.chars();
         let Some(first) = chars.next() else {
@@ -5030,16 +4542,13 @@ mod tests {
     #[test]
     fn mirror_name_is_valid_deterministic_and_namespace_scoped() {
         let a = mirror("$\\mods\\foo\\merged.ini\\", "swapVar");
-        // 16 hex digits, lowercased var, valid identifier.
         let name = a.mirror_name();
         assert!(name.starts_with("hestia_"));
         assert!(name.ends_with("_swapvar"));
         assert!(is_valid_migoto_var(&name));
         let hex = &name["hestia_".len().."hestia_".len() + 16];
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
-        // Deterministic.
         assert_eq!(name, a.mirror_name());
-        // Same var, different namespace → different hash (multi-ini mods stay distinct).
         let b = mirror("$\\mods\\foo\\other.ini\\", "swapVar");
         assert_ne!(a.mirror_name(), b.mirror_name());
     }
@@ -5049,17 +4558,14 @@ mod tests {
         let mirrors = vec![
             mirror("$\\mods\\foo\\merged.ini\\", "swapvar"),
             mirror("$\\mods\\bar\\bar.ini\\", "tail"),
-            // Exact duplicate of the first.
             mirror("$\\mods\\foo\\merged.ini\\", "swapvar"),
         ];
         let text = generate_hestia_ini(&mirrors);
         assert!(text.starts_with(HESTIA_HELPER_HEADER));
-        // Two unique mirrors → two Constants decls and two Present copies.
         assert_eq!(text.matches("global persist $hestia_").count(), 2);
         let present = text.split("[Present]").nth(1).unwrap();
         assert!(present.contains("= $\\mods\\foo\\merged.ini\\swapvar"));
         assert!(present.contains("= $\\mods\\bar\\bar.ini\\tail"));
-        // Byte-stable for the same input regardless of order.
         let reordered = vec![mirrors[1].clone(), mirrors[0].clone()];
         assert_eq!(
             generate_hestia_ini(&mirrors),
@@ -5337,8 +4843,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let (_temp, importer_root, mods_root) = test_roots();
         let mod_root = mods_root.join("Arcane");
         fs::create_dir_all(&mod_root).unwrap();
-        // The mod's own namespace has no `swap` line (it is a non-persist variable), but the
-        // helper flushed the live value into its mirror global.
         let mirror = MirrorVar {
             namespace_prefix: "$\\mods\\arcane\\mod.ini\\".to_string(),
             var_name: "swap".to_string(),
@@ -5373,18 +4877,15 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         };
         let path = hestia_helper_path(&mod_root);
 
-        // First write creates the file and reports a change.
         assert!(ensure_live_state_helper(&mod_root, &[mirror.clone()]).unwrap());
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             generate_hestia_ini(&[mirror.clone()])
         );
 
-        // Same content is a no-op (hash-compare), leaving the file in place.
         assert!(!ensure_live_state_helper(&mod_root, &[mirror.clone()]).unwrap());
         assert!(path.exists());
 
-        // An empty mirror set removes the helper and reports the change once.
         assert!(ensure_live_state_helper(&mod_root, &[]).unwrap());
         assert!(!path.exists());
         assert!(!ensure_live_state_helper(&mod_root, &[]).unwrap());
@@ -5493,7 +4994,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         fs::create_dir_all(&mod_root).unwrap();
         let game = game(mods_root);
 
-        // 1. Active mod, game off: user customizes a hotkey value. It lands in d3dx_user.ini.
         let mut entry = mod_entry(mod_root, ModStatus::Active);
         assert!(set_mod_variable(&game, false, &entry, "mod.ini", "swap", "3").unwrap());
         assert_eq!(
@@ -5505,8 +5005,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             Some("3")
         );
 
-        // 2. Disable (mirrors persisted_xxmi_disable): capture to stash, then commit removes
-        //    the entry from d3dx_user.ini.
         {
             let mut tx = begin(&game, false).unwrap();
             assert!(tx.capture(&entry, CaptureMode::Stash).unwrap());
@@ -5521,7 +5019,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             None
         );
 
-        // 3. Enable (mirrors persisted_xxmi_enable): enable_mod sets Active before restore.
         entry.status = ModStatus::Active;
         {
             let mut tx = begin(&game, false).unwrap();
@@ -5529,7 +5026,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
             tx.commit().unwrap();
         }
 
-        // 4. The customization survived the round-trip.
         assert_eq!(
             UserIniDoc::open(&importer_root)
                 .unwrap()
@@ -5556,7 +5052,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert_eq!(ctrl_four.main_keys(), &[0x34]);
     }
 
-    /// Lock toggles often bind a whole word, held together (Curvier Tangtang's lock).
     #[cfg(windows)]
     #[test]
     fn parses_multi_key_mod_hotkey_specs() {
@@ -5640,7 +5135,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(importer_root_from_mods_path(&mods).is_none());
         std::fs::write(root.join("d3d11.dll"), b"dll").unwrap();
         assert_eq!(importer_root_from_mods_path(&mods).unwrap(), root);
-        // A d3dx.ini further up still wins over a nearer d3d11.dll.
         std::fs::write(temp.path().join("d3dx.ini"), b"ini").unwrap();
         assert_eq!(importer_root_from_mods_path(&mods).unwrap(), temp.path());
     }
@@ -5877,7 +5371,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
     fn restore_reroutes_stale_prefix_first() {
         let temp = tempfile::tempdir().unwrap();
         let (_root, mods, mut tx) = tx_for(&temp);
-        // The file still holds entries under the OLD name; the stash was captured there too.
         let mod_root = mods.join("Renamed Breeze");
         std::fs::create_dir_all(&mod_root).unwrap();
         write_stash(
@@ -6021,8 +5514,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
 
     #[test]
     fn archived_capture_never_takes_from_the_document() {
-        // A live mod named "Other Mod" owns the prefix; an archived mod with the same
-        // folder name must not steal its entries on capture.
         let temp = tempfile::tempdir().unwrap();
         let (_root, _mods, mut tx) = tx_for(&temp);
         let archived_root = temp
@@ -6044,8 +5535,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
 
     #[test]
     fn archived_reroute_is_bookkeeping_only() {
-        // The archived mod was renamed while hidden; its old prefix is now owned by a live
-        // mod. Reroute must update the stash anchor without absorbing the live entries.
         let temp = tempfile::tempdir().unwrap();
         let (_root, _mods, mut tx) = tx_for(&temp);
         let archived_root = temp
@@ -6171,7 +5660,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(!tx.doc.dirty);
         let stash = read_stash(&mod_root).unwrap();
         assert_eq!(stash.entries.len(), 1);
-        // Existing stash — even an empty one — blocks a re-baseline.
         write_stash(
             &mod_root,
             &ModStash {
@@ -6210,7 +5698,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         let view = view(&mod_root, "Other Mod", ModStatus::Active, None);
         assert!(!tx.restore_imported_view(&view).unwrap());
         assert!(tx.doc.to_text().contains("other.ini\\value = 3"));
-        // Once the live entries are gone, the stash applies.
         tx.doc.take_prefix("$\\mods\\other mod\\");
         assert!(tx.restore_imported_view(&view).unwrap());
         assert!(
@@ -6262,8 +5749,6 @@ $\\mods\\other mod\\other.ini\\value = 3\r\n";
         assert!(!root.join(USER_INI_TMP_FILE).exists());
     }
 
-    /// The canonical block body Hestia writes inside `[System]` (CRLF), without the leading
-    /// `[System]` header or the trailing blank separator.
     const CANON_BLOCK_CRLF: &str = "; --- HESTIA SECTION START ---\r\n\
 ; Generated automatically.\r\n\
 ; Refrain from editing this section — changes may be lost.\r\n\
@@ -6392,7 +5877,6 @@ settings_auto_save_interval = 1\r\n\
         );
     }
 
-    // E1: enable on a plain [System] injects the canonical block; re-enabling is a no-op.
     #[test]
     fn enable_injects_canonical_section() {
         let original =
@@ -6410,7 +5894,6 @@ settings_auto_save_interval = 1\r\n\
         ));
     }
 
-    // E2: an existing user interval is stashed in place; only Hestia's copy stays active.
     #[test]
     fn enable_stashes_existing_interval() {
         let original =
@@ -6422,7 +5905,6 @@ settings_auto_save_interval = 1\r\n\
         assert_eq!(active_interval_count(&updated), 1);
     }
 
-    // E3: a foreign foreground tool and a user interval are both stashed; the block wins.
     #[test]
     fn enable_stashes_foreign_foreground_and_interval() {
         let original = "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
@@ -6437,7 +5919,6 @@ settings_auto_save_interval = 1\r\n\
         assert_eq!(active_interval_count(&updated), 1);
     }
 
-    // E4: even a user-typed `= Hestia` is stashed, so the block is the sole authority.
     #[test]
     fn enable_stashes_user_typed_hestia_foreground() {
         let original = "[System]\r\nadditional_foreground_window = Hestia\r\n";
@@ -6448,7 +5929,6 @@ settings_auto_save_interval = 1\r\n\
         assert_eq!(active_foreground_count(&updated), 1);
     }
 
-    // E6: a block missing the interval line is repaired to canonical on the next enable.
     #[test]
     fn enable_repairs_block_missing_interval() {
         let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
@@ -6467,7 +5947,6 @@ x = 1\r\n";
         ));
     }
 
-    // E7: with no [System] at all, Hestia appends one carrying the block.
     #[test]
     fn enable_appends_system_when_absent() {
         let original = "[Loader]\r\nTarget = Game.exe\r\n";
@@ -6477,7 +5956,6 @@ x = 1\r\n";
         assert_eq!(active_interval_count(&updated), 1);
     }
 
-    // D1 / C1: enable then disable restores the file byte-for-byte, twice over.
     #[test]
     fn enable_disable_round_trips_and_is_stable() {
         let original = "[Loader]\r\nTarget = Game.exe\r\n\r\n[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 60\r\n";
@@ -6485,12 +5963,10 @@ x = 1\r\n";
         let (disabled, notices) = expect_updated(patch_d3dx_ini_text(&enabled, false));
         assert!(notices.is_empty());
         assert_eq!(disabled, original);
-        // C1: a second enable reproduces the first exactly.
         let (enabled_again, _) = expect_updated(patch_d3dx_ini_text(&disabled, true));
         assert_eq!(enabled_again, enabled);
     }
 
-    // D2: grants with nothing stashed simply vanish on disable.
     #[test]
     fn disable_removes_unstashed_grants() {
         let (enabled, _) = expect_updated(patch_d3dx_ini_text("[System]\r\nx = 1\r\n", true));
@@ -6498,8 +5974,6 @@ x = 1\r\n";
         assert_eq!(disabled, "[System]\r\nx = 1\r\n");
     }
 
-    // D3: a user-edited in-block interval is lifted out active, and the older stash — now
-    // outvoted by an active copy — is left commented with a notice.
     #[test]
     fn disable_lifts_user_edited_interval_and_keeps_stash_commented() {
         let (enabled, _) = expect_updated(patch_d3dx_ini_text(
@@ -6517,8 +5991,6 @@ x = 1\r\n";
         assert!(!notices.is_empty());
     }
 
-    // D4 / D5: interior comments — the user's, and our own already-commented grant — are
-    // disposable and go with the block.
     #[test]
     fn disable_drops_interior_comments() {
         let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
@@ -6533,7 +6005,6 @@ x = 1\r\n";
         assert_eq!(disabled, "[System]\r\nx = 1\r\n");
     }
 
-    // D6: a foreign key a user parked inside the block is lifted, not discarded.
     #[test]
     fn disable_lifts_foreign_key_in_block() {
         let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
@@ -6550,7 +6021,6 @@ x = 1\r\n";
         assert!(!disabled.contains("additional_foreground_window"));
     }
 
-    // D7: a missing END marker is malformed → refuse and touch nothing.
     #[test]
     fn refuses_on_missing_end_marker() {
         let original = "[System]\r\n; --- HESTIA SECTION START ---\r\nadditional_foreground_window = Hestia\r\n";
@@ -6564,7 +6034,6 @@ x = 1\r\n";
         ));
     }
 
-    // D8: duplicate START markers are malformed → refuse.
     #[test]
     fn refuses_on_duplicate_start_marker() {
         let original = "[System]\r\n; --- HESTIA SECTION START ---\r\n\
@@ -6577,8 +6046,6 @@ additional_foreground_window = Hestia\r\n\
         ));
     }
 
-    // D9: a stash whose paired line the user un-commented → drop only the marker, keep
-    // their now-active line, and note it.
     #[test]
     fn disable_drops_orphan_marker_when_user_uncommented_line() {
         let original =
@@ -6589,7 +6056,6 @@ additional_foreground_window = Hestia\r\n\
         assert!(!notices.is_empty());
     }
 
-    // C3: disabling a file Hestia never touched is a no-op.
     #[test]
     fn disable_on_clean_file_is_noop() {
         assert!(matches!(
@@ -6605,29 +6071,23 @@ additional_foreground_window = Hestia\r\n\
             .collect()
     }
 
-    // The prompt fires only for genuine user-owned values — never for empties or defaults.
     #[test]
     fn conflict_ignores_empty_and_default_values() {
         assert!(conflict_pairs("[System]\r\nx = 1\r\n").is_empty());
-        // Empty foreground (the shipped default) is not a conflict.
         assert!(conflict_pairs("[System]\r\nadditional_foreground_window = \r\n").is_empty());
-        // Hestia's own values aren't conflicts.
         assert!(
             conflict_pairs(
                 "[System]\r\nadditional_foreground_window = Hestia\r\nsettings_auto_save_interval = 1\r\n"
             )
             .is_empty()
         );
-        // The interval's inert `0` (disabled) and empty are not conflicts.
         assert!(conflict_pairs("[System]\r\nsettings_auto_save_interval = 0\r\n").is_empty());
         assert!(conflict_pairs("[System]\r\nsettings_auto_save_interval = \r\n").is_empty());
-        // Commented lines never count.
         assert!(
             conflict_pairs("[System]\r\n; additional_foreground_window = ReShade\r\n").is_empty()
         );
     }
 
-    // Both managed keys are reported, foreground first, when the user has set them.
     #[test]
     fn conflict_reports_both_foreground_and_interval() {
         let text = "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n";
@@ -6643,7 +6103,6 @@ additional_foreground_window = Hestia\r\n\
         );
     }
 
-    // A lone interval conflict is reported on its own.
     #[test]
     fn conflict_reports_interval_alone() {
         assert_eq!(
@@ -6652,18 +6111,15 @@ additional_foreground_window = Hestia\r\n\
         );
     }
 
-    // An already-managed file (Hestia's block present) reports no conflict.
     #[test]
     fn conflict_ignores_hestia_managed_block() {
         let (enabled, _) = expect_updated(patch_d3dx_ini_text(
             "[System]\r\nadditional_foreground_window = ReShade\r\nsettings_auto_save_interval = 30\r\n",
             true,
         ));
-        // The user's values are now stashed (commented) and Hestia owns the active ones.
         assert!(conflict_pairs(&enabled).is_empty());
     }
 
-    // Migration: a block written by an older build is replaced by the current one on enable.
     #[test]
     fn enable_migrates_legacy_block() {
         let original = "; --- Hestia begin ---\r\n\
@@ -6682,7 +6138,6 @@ additional_foreground_window = Hestia\r\n\
         assert!(updated.contains("check_foreground_window = 1\r\n"));
     }
 
-    // Migration: an old inline-neutralized interval is restored on disable.
     #[test]
     fn disable_migrates_legacy_inline_stash() {
         let original =
@@ -6692,7 +6147,6 @@ additional_foreground_window = Hestia\r\n\
         assert!(!disabled.contains("[Hestia disabled]"));
     }
 
-    // BOM and LF inputs survive an enable/disable round-trip unchanged.
     #[test]
     fn round_trips_preserve_bom_and_lf() {
         let bom_crlf = "\u{feff}[System]\r\nsettings_auto_save_interval = 60\r\n";
