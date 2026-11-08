@@ -495,17 +495,13 @@ fn zip_top_level_sanitize_map(
     let mut sanitized_keys = HashMap::<String, OsString>::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        let mut components = enclosed.components();
-        let Some(Component::Normal(first)) = components.next() else {
-            bail!("archive contains invalid path");
-        };
-        if first == OsStr::new("__MACOSX") {
+        let name = entry.name()?;
+        let parts = zip_entry_parts(&name)?;
+        if zip_entry_is_ignored_metadata(&parts) {
             continue;
         }
-        if components.next().is_some() || entry.name_raw().ends_with(b"/") {
+        let first = OsStr::new(parts[0]);
+        if parts.len() > 1 || entry.name_raw().ends_with(b"/") {
             has_top_level_dir = true;
             let original = first.to_os_string();
             if !original_names.contains_key(&original) {
@@ -534,36 +530,53 @@ fn zip_top_level_sanitize_map(
     }
 }
 
+fn zip_entry_parts(name: &str) -> Result<Vec<&str>> {
+    let invalid = || anyhow!("archive contains invalid path: {name}");
+    if name.contains('\0') {
+        return Err(invalid());
+    }
+    let mut parts = Vec::new();
+    for part in name.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop().ok_or_else(invalid)?;
+            }
+            part => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        return Err(invalid());
+    }
+    Ok(parts)
+}
+
 fn zip_entry_relative_path(
-    enclosed: &Path,
+    name: &str,
+    parts: &[&str],
     sanitized_top_level: Option<&HashMap<OsString, OsString>>,
 ) -> Result<PathBuf> {
     let mut out = PathBuf::new();
-    for (index, component) in enclosed.components().enumerate() {
-        let Component::Normal(name) = component else {
-            bail!("archive contains invalid path: {}", enclosed.display());
-        };
+    for (index, part) in parts.iter().enumerate() {
+        let part = OsStr::new(part);
         if index == 0 {
             if let Some(map) = sanitized_top_level {
-                let sanitized = map.get(name).ok_or_else(|| {
-                    anyhow!("archive contains invalid path: {}", enclosed.display())
-                })?;
+                let sanitized = map
+                    .get(part)
+                    .ok_or_else(|| anyhow!("archive contains invalid path: {name}"))?;
                 out.push(sanitized);
                 continue;
             }
         }
-        validate_windows_file_name(name).with_context(|| {
-            format!("archive contains invalid file name: {}", enclosed.display())
-        })?;
-        out.push(name);
+        validate_windows_file_name(part)
+            .with_context(|| format!("archive contains invalid file name: {name}"))?;
+        out.push(part);
     }
     Ok(out)
 }
 
-fn zip_entry_is_ignored_metadata(path: &Path) -> bool {
-    path.components()
-        .next()
-        .is_some_and(|component| component == Component::Normal(OsStr::new("__MACOSX")))
+fn zip_entry_is_ignored_metadata(parts: &[&str]) -> bool {
+    parts.first() == Some(&"__MACOSX")
 }
 
 #[allow(dead_code)]
@@ -862,13 +875,12 @@ fn extract_zip_with_cancel(
             check_cancel(cancel)?;
         }
         let entry = archive.by_index(index)?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        if zip_entry_is_ignored_metadata(&enclosed) {
+        let name = entry.name()?;
+        let parts = zip_entry_parts(&name)?;
+        if zip_entry_is_ignored_metadata(&parts) {
             continue;
         }
-        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level.as_ref())?;
+        let relative = zip_entry_relative_path(&name, &parts, sanitized_top_level.as_ref())?;
         let outpath = destination.join(relative);
         if entry.name_raw().ends_with(b"/") {
             if !register_zip_output(&mut known_output_kinds, &outpath, true) {
@@ -958,13 +970,12 @@ fn extract_zip_serial(
             check_cancel(cancel)?;
         }
         let mut entry = archive.by_index(index)?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("archive contains invalid path"))?;
-        if zip_entry_is_ignored_metadata(&enclosed) {
+        let name = entry.name()?.into_owned();
+        let parts = zip_entry_parts(&name)?;
+        if zip_entry_is_ignored_metadata(&parts) {
             continue;
         }
-        let relative = zip_entry_relative_path(&enclosed, sanitized_top_level)?;
+        let relative = zip_entry_relative_path(&name, &parts, sanitized_top_level)?;
         let outpath = destination.join(relative);
         if entry.name_raw().ends_with(b"/") {
             ensure_directory(&outpath, &mut created_dirs)?;
@@ -2151,6 +2162,78 @@ mod tests {
             "unexpected error: {err:#}"
         );
         assert!(!destination.join("GoodMod").join("Bad:Name").exists());
+    }
+
+    fn write_test_zip(path: &Path, names: &[&str]) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for name in names {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(b"demo").unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn zip_entry_parts_refuse_names_that_climb_out() {
+        for name in [
+            "../evil.txt",
+            "Mod/../../evil.txt",
+            "Mod\\..\\..\\evil.txt",
+            "Mod/..",
+            "/",
+            ".",
+            "Mod/a\0b.txt",
+        ] {
+            assert!(zip_entry_parts(name).is_err(), "{name:?} should be refused");
+        }
+        assert_eq!(
+            zip_entry_parts("/Mod/./Sub/../readme.txt").unwrap(),
+            ["Mod", "readme.txt"]
+        );
+        assert_eq!(
+            zip_entry_parts("Mod\\Sub\\readme.txt").unwrap(),
+            ["Mod", "Sub", "readme.txt"]
+        );
+    }
+
+    #[test]
+    fn zip_extract_refuses_entries_that_climb_out() {
+        for name in ["../evil.txt", "Mod/../../evil.txt", "Mod\\..\\..\\evil.txt"] {
+            let temp = tempfile::tempdir().unwrap();
+            let archive_path = temp.path().join("climb.zip");
+            write_test_zip(&archive_path, &["Mod/readme.txt", name]);
+
+            let destination = temp.path().join("extract");
+            let err = extract_zip(&archive_path, &destination).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid path"),
+                "unexpected error for {name:?}: {err:#}"
+            );
+            assert!(!temp.path().join("evil.txt").exists());
+        }
+    }
+
+    #[test]
+    fn zip_extract_keeps_drive_and_rooted_names_inside_the_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("drive.zip");
+        write_test_zip(&archive_path, &["C:/Mod/readme.txt", "/C:/Mod/other.txt"]);
+
+        let destination = temp.path().join("extract");
+        extract_zip(&archive_path, &destination).unwrap();
+        assert!(destination.join("C_").join("Mod").join("readme.txt").exists());
+        assert!(destination.join("C_").join("Mod").join("other.txt").exists());
+
+        let mixed_path = temp.path().join("mixed-drive.zip");
+        write_test_zip(&mixed_path, &["readme.txt", "C:/evil.txt"]);
+        let mixed_destination = temp.path().join("mixed");
+        let err = extract_zip(&mixed_path, &mixed_destination).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid file name"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
