@@ -28,6 +28,7 @@ fn spawn_install_workers(
                         game_id,
                         source,
                         gb_profile,
+                        framework_context,
                     } => {
                         let cancel = {
                             let mut flags = cancel_flags.lock().unwrap();
@@ -37,13 +38,24 @@ fn spawn_install_workers(
                                 .clone()
                         };
                         let result = handle
-                            .spawn_blocking(move || importing::inspect_source_cancelable(&game_id, source, &cancel))
+                            .spawn_blocking(move || {
+                                let prepared = importing::inspect_source_cancelable(&game_id, source, &cancel)?;
+                                let framework_scans = framework_context
+                                    .map(|context| framework_scans_for_prepared_import(&prepared, &context))
+                                    .unwrap_or_default();
+                                Ok::<_, anyhow::Error>((prepared, framework_scans))
+                            })
                             .await;
                         match result {
-                            Ok(Ok(prepared)) => {
+                            Ok(Ok((prepared, framework_scans))) => {
                                 let inspection = prepared.inspection.clone();
                                 prepared_cache.lock().unwrap().insert(job_id, prepared);
-                                let _ = tx.send(InstallEvent::InspectReady { job_id, inspection, gb_profile });
+                                let _ = tx.send(InstallEvent::InspectReady {
+                                    job_id,
+                                    inspection,
+                                    gb_profile,
+                                    framework_scans,
+                                });
                             }
                             Ok(Err(err)) => {
                                 if err.to_string() == importing::CANCELLED_ERROR {
@@ -60,6 +72,44 @@ fn spawn_install_workers(
                                 let _ = tx.send(InstallEvent::InspectFailed {
                                     job_id,
                                     error: format!("inspect worker join error: {err}"),
+                                });
+                                cancel_flags.lock().unwrap().remove(&job_id);
+                            }
+                        }
+                    }
+                    InstallRequest::SplitFrameworkParts { job_id, parts } => {
+                        let prepared = prepared_cache.lock().unwrap().remove(&job_id);
+                        let Some(prepared) = prepared else {
+                            let _ = tx.send(InstallEvent::InspectFailed {
+                                job_id,
+                                error: "missing prepared import".to_string(),
+                            });
+                            continue;
+                        };
+                        let result = handle
+                            .spawn_blocking(move || split_framework_parts(prepared, parts))
+                            .await;
+                        match result {
+                            Ok((prepared, split_children)) => {
+                                let inspection = prepared.inspection.clone();
+                                let mut children = Vec::with_capacity(split_children.len());
+                                let mut cache = prepared_cache.lock().unwrap();
+                                for (child, child_prepared) in split_children {
+                                    cache.insert(child.job_id, child_prepared);
+                                    children.push(child);
+                                }
+                                cache.insert(job_id, prepared);
+                                drop(cache);
+                                let _ = tx.send(InstallEvent::FrameworkPartsSplit {
+                                    job_id,
+                                    inspection,
+                                    children,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = tx.send(InstallEvent::InspectFailed {
+                                    job_id,
+                                    error: format!("framework split worker join error: {err}"),
                                 });
                                 cancel_flags.lock().unwrap().remove(&job_id);
                             }
@@ -197,6 +247,8 @@ fn spawn_install_workers(
                         job_id,
                         game_id,
                         parts,
+                        framework_context,
+                        update_target,
                     } => {
                         let cancel = {
                             let mut flags = cancel_flags.lock().unwrap();
@@ -207,7 +259,31 @@ fn spawn_install_workers(
                         };
                         let result = handle
                             .spawn_blocking(move || {
-                                importing::bundle::prepare_bundle(&game_id, &parts, &cancel)
+                                let frameworks_among_merge_parts =
+                                    |extracted: &[(importing::bundle::BundlePartRole, &Path)]| {
+                                        let Some(context) = framework_context.as_deref() else {
+                                            return vec![false; extracted.len()];
+                                        };
+                                        let folders: Vec<frameworks::BundleFolder> = extracted
+                                            .iter()
+                                            .map(|(role, root)| frameworks::BundleFolder {
+                                                root,
+                                                merges_into_the_update_target: *role
+                                                    != importing::bundle::BundlePartRole::Separate,
+                                            })
+                                            .collect();
+                                        frameworks::frameworks_among_bundle_folders(
+                                            &folders,
+                                            update_target.as_ref(),
+                                            context,
+                                        )
+                                    };
+                                importing::bundle::prepare_bundle(
+                                    &game_id,
+                                    &parts,
+                                    &frameworks_among_merge_parts,
+                                    &cancel,
+                                )
                             })
                             .await;
                         let event = match result {
@@ -352,6 +428,7 @@ fn spawn_install_workers(
             }
             let job_id = match &request {
                 InstallRequest::Inspect { job_id, .. } => *job_id,
+                InstallRequest::SplitFrameworkParts { job_id, .. } => *job_id,
                 InstallRequest::Install { job_id, .. } => *job_id,
                 InstallRequest::PrepareThaliaBundle { job_id, .. } => *job_id,
                 InstallRequest::SyncImages { job_id, .. } => *job_id,
@@ -362,4 +439,123 @@ fn spawn_install_workers(
             let _ = worker_txs[index].send(request);
         }
     });
+}
+
+fn framework_scans_for_prepared_import(
+    prepared: &PreparedImport,
+    context: &frameworks::InstallContext,
+) -> Vec<frameworks::CandidateScan> {
+    let candidate_roots: Vec<PathBuf> = prepared
+        .inspection
+        .candidates
+        .iter()
+        .map(|candidate| candidate.path.clone())
+        .collect();
+    let extraction_root = prepared
+        ._temp_dir
+        .as_ref()
+        .filter(|_| prepared.source_is_archive)
+        .map(|temp_dir| temp_dir.path());
+    frameworks::scan_candidates(&candidate_roots, extraction_root, context)
+}
+
+struct SplitFrameworkChild {
+    job_id: u64,
+    part_index: usize,
+    path: PathBuf,
+    label: String,
+}
+
+const SPLIT_FRAMEWORK_FOLDER: &str = "framework";
+
+fn split_framework_parts(
+    mut prepared: PreparedImport,
+    parts: Vec<frameworks::SplitPart>,
+) -> (PreparedImport, Vec<(SplitFrameworkChild, PreparedImport)>) {
+    let extraction_root = prepared
+        ._temp_dir
+        .as_ref()
+        .filter(|_| prepared.source_is_archive)
+        .map(|temp_dir| temp_dir.path().to_path_buf());
+    let mut children = Vec::new();
+    let mut split_candidates = Vec::new();
+    for (part_index, part) in parts.iter().enumerate() {
+        let Some(candidate) = prepared.inspection.candidates.get(part.candidate_index) else {
+            continue;
+        };
+        let source = match &part.relative_dir {
+            Some(relative_dir) => candidate.path.join(relative_dir),
+            None => candidate.path.clone(),
+        };
+        let source_is_movable = extraction_root
+            .as_deref()
+            .is_some_and(|root| source != root && source.starts_with(root));
+        if (part.relative_dir.is_some() && !source_is_movable)
+            || extraction_root.as_deref() == Some(source.as_path())
+            || !source.is_dir()
+        {
+            continue;
+        }
+        let label = match &part.relative_dir {
+            Some(_) => source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+                .unwrap_or_default(),
+            None => candidate.label.clone(),
+        };
+        if label.trim().is_empty() {
+            continue;
+        }
+        let extract_dir = persistence::runtime_temp_extract_dir();
+        if fs::create_dir_all(&extract_dir).is_err() {
+            continue;
+        }
+        let Ok(temp_dir) = tempfile::Builder::new()
+            .prefix("framework-")
+            .tempdir_in(&extract_dir)
+        else {
+            continue;
+        };
+        let destination = temp_dir.path().join(SPLIT_FRAMEWORK_FOLDER);
+        let moved = if source_is_movable {
+            fs::rename(&source, &destination).is_ok()
+                || (importing::copy_dir(&source, &destination, true).is_ok()
+                    && fs::remove_dir_all(&source).is_ok())
+        } else {
+            importing::copy_dir(&source, &destination, true).is_ok()
+        };
+        if !moved {
+            continue;
+        }
+        if part.relative_dir.is_none() {
+            split_candidates.push(part.candidate_index);
+        }
+        children.push((
+            SplitFrameworkChild {
+                job_id: part.new_job_id,
+                part_index,
+                path: destination.clone(),
+                label: label.clone(),
+            },
+            PreparedImport {
+                _temp_dir: Some(temp_dir),
+                inspection: ImportInspection {
+                    game_id: prepared.inspection.game_id.clone(),
+                    candidates: vec![crate::model::ImportCandidate {
+                        label,
+                        path: destination,
+                    }],
+                    notice: None,
+                },
+                source_is_archive: true,
+            },
+        ));
+    }
+    split_candidates.sort_unstable();
+    split_candidates.dedup();
+    for candidate_index in split_candidates.into_iter().rev() {
+        prepared.inspection.candidates.remove(candidate_index);
+    }
+    (prepared, children)
 }

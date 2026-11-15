@@ -34,12 +34,13 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::{
     importing::{self, PreparedImport},
-    integrations::{gamebanana, profiles, thalia, unrealengine, xxmi, xxmi_persist},
+    integrations::{frameworks, gamebanana, profiles, thalia, unrealengine, xxmi, xxmi_persist},
     model::{
         AcceptedLocalChanges, AfterInstallBehavior, AppFontStyle, AppLanguage, AppState,
         BrowseDownloadTaskFile, BrowseDownloadTaskPayload, BrowseSort, CacheSizeTier,
         ConflictChoice, CustomProxyConfig, DeleteBehavior, FileSetRecipe, FloatingWindowLayouts,
-        FloatingWindowRect, GameBackend, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot,
+        FloatingWindowRect, FrameworkCopy, FrameworkCopyState, FrameworkOrigin, FrameworkRecord,
+        GameBackend, GameBananaFileMeta, GameBananaLink, GameBananaSnapshot,
         GameInstall, GpuChoice, IgnoredUpdateSignature, ImportInspection, ImportResolution,
         ImportSource, InterfaceSize, LaunchBehavior, LibraryCategoryDisplayMode, LibraryGroupMode,
         LibrarySort, MOD_META_DIR, MetadataSourceKind, ModCategory, ModCategorySortMode, ModEntry,
@@ -133,6 +134,7 @@ impl eframe::App for HestiaApp {
             self.handle_translation_events();
             self.consume_install_events();
             self.consume_refresh_events();
+            self.consume_framework_events();
             self.consume_xxmi_reload_events();
             self.consume_grant_access_events();
             self.consume_hotkey_customization_events();
@@ -159,6 +161,7 @@ impl eframe::App for HestiaApp {
             self.detect_drag_and_drop(ctx);
             self.handle_shortcuts(ctx);
         }
+        self.advance_frameworks();
 
         if self.check_pending_process_work() {
             profiling::scope!("logic::queues");
@@ -255,6 +258,7 @@ impl eframe::App for HestiaApp {
                 profiling::scope!("dialogs_and_window_state");
                 self.render_pending_conflict(&ctx);
                 self.render_pending_import(&ctx);
+                self.render_framework_dialogs(&ctx);
                 self.render_game_overlay_file_prompt(&ctx);
                 self.render_profile_dialogs(&ctx);
                 self.handle_interface_zoom_keys(&ctx);
@@ -286,7 +290,8 @@ impl eframe::App for HestiaApp {
         let has_undispatched_work = !self.pending_mod_image_queue.is_empty()
             || !self.pending_texture_uploads.is_empty()
             || self.pending_events.has_worker_events
-            || self.pending_events.has_process_work;
+            || self.pending_events.has_process_work
+            || self.framework_work_pending();
         if needs_continuous_repaint {
             request_animation_repaint(&ctx);
         } else if queued_new_image_work {
@@ -348,6 +353,7 @@ impl HestiaApp {
 
         let critical_window_open = !self.pending_imports.is_empty()
             || !self.pending_conflicts.is_empty()
+            || self.framework_dialog_open()
             || self.browse_state.file_prompt.is_some()
             || self.browse_state.screenshot_overlay.is_some();
         if critical_window_open {

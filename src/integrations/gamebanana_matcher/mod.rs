@@ -8,6 +8,13 @@
 //!
 //! When the metadata model cannot decide, a second model trained with the
 //! same inputs plus GameBanana's archive path lists (`paths`) gets one try.
+//!
+//! The app's adapter (`app/actions/matcher_adapter.rs`) can still drop the
+//! chosen candidate: one that outgrows its source without release proof, and
+//! a settings-only archive chosen for a source that has models or textures.
+//! Both are fixed rules on GameBanana's sizes and archive path lists.  They
+//! are not model inputs and the trainer does not know them, so neither stage
+//! needs a retrain when they change.
 
 pub mod features;
 pub mod model;

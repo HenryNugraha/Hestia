@@ -189,6 +189,12 @@ impl HestiaApp {
                     conflict.gb_profile,
                     vec![conflict.preferred_name],
                 );
+                if choice == ConflictChoice::Merge {
+                    self.keep_tracked_files_after_same_page_merge(
+                        conflict.job_id,
+                        &conflict.existing_target,
+                    );
+                }
             }
             FromOverlay::CancelInstall { mod_id } => {
                 let Some(task_id) = self

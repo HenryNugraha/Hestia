@@ -43,7 +43,10 @@ pub struct PreparedBundleFolder {
     pub job_id: u64,
     pub source: PathBuf,
     pub manifest: FolderManifest,
+    pub kept_out_of_the_merge: bool,
 }
+
+pub type MergePartsToKeepOut<'a> = &'a dyn Fn(&[(BundlePartRole, &Path)]) -> Vec<bool>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BundleFailure {
@@ -63,6 +66,7 @@ pub struct FolderManifest(BTreeMap<String, (u64, u64)>);
 pub fn prepare_bundle(
     game_id: &str,
     parts: &[BundlePart],
+    merge_parts_to_keep_out: MergePartsToKeepOut,
     cancel: &CancelFlag,
 ) -> std::result::Result<(PathBuf, Vec<PreparedBundleFolder>), BundleFailure> {
     let extract_root = persistence::runtime_temp_extract_dir();
@@ -77,7 +81,7 @@ pub fn prepare_bundle(
             error: format!("could not create bundle folder: {err}"),
         })?
         .keep();
-    match prepare_into(&root, game_id, parts, cancel) {
+    match prepare_into(&root, game_id, parts, merge_parts_to_keep_out, cancel) {
         Ok(folders) => Ok((root, folders)),
         Err(failure) => {
             let _ = fs::remove_dir_all(&root);
@@ -90,6 +94,7 @@ fn prepare_into(
     root: &Path,
     game_id: &str,
     parts: &[BundlePart],
+    merge_parts_to_keep_out: MergePartsToKeepOut,
     cancel: &CancelFlag,
 ) -> std::result::Result<Vec<PreparedBundleFolder>, BundleFailure> {
     let failed = |part: &BundlePart| {
@@ -105,10 +110,8 @@ fn prepare_into(
             }
         }
     };
-    let mut prepared = Vec::new();
-    let mut mod_folder: Option<(u64, PathBuf)> = None;
-    let mut writers: HashMap<String, Option<usize>> = HashMap::new();
-    for (index, part) in parts.iter().enumerate() {
+    let mut extracted = Vec::with_capacity(parts.len());
+    for part in parts {
         check_cancel(cancel).map_err(failed(part))?;
         if let Some(expected) = part.md5.as_deref().filter(|md5| !md5.trim().is_empty()) {
             let actual = file_md5_hex(&part.archive, cancel).map_err(failed(part))?;
@@ -124,13 +127,36 @@ fn prepare_into(
             cancel,
         )
         .map_err(failed(part))?;
-        let [candidate] = import.inspection.candidates.as_slice() else {
+        if import.inspection.candidates.len() != 1 {
             return Err(BundleFailure::Layout {
                 file_name: part.file_name.clone(),
             });
-        };
+        }
+        extracted.push(import);
+    }
+    let keep_out = {
+        let extracted_parts: Vec<(BundlePartRole, &Path)> = parts
+            .iter()
+            .zip(&extracted)
+            .map(|(part, import)| (part.role, import.inspection.candidates[0].path.as_path()))
+            .collect();
+        merge_parts_to_keep_out(&extracted_parts)
+    };
+    let mut prepared = Vec::new();
+    let mut mod_folder: Option<(u64, PathBuf)> = None;
+    let mut writers: HashMap<String, Option<usize>> = HashMap::new();
+    for (index, (part, import)) in parts.iter().zip(&extracted).enumerate() {
+        check_cancel(cancel).map_err(failed(part))?;
+        let candidate = &import.inspection.candidates[0];
         let label = folder_label(&candidate.label);
-        match (part.role, &mod_folder) {
+        let kept_out_of_the_merge =
+            part.role == BundlePartRole::Merge && keep_out.get(index).copied().unwrap_or(false);
+        let role = if kept_out_of_the_merge {
+            BundlePartRole::Separate
+        } else {
+            part.role
+        };
+        match (role, &mod_folder) {
             (BundlePartRole::Separate, _) => {
                 let source = root.join(part.job_id.to_string());
                 let dest = source.join(&label);
@@ -140,12 +166,13 @@ fn prepare_into(
                     job_id: part.job_id,
                     source,
                     manifest,
+                    kept_out_of_the_merge,
                 });
             }
             (BundlePartRole::Main | BundlePartRole::Merge, None) => {
                 let dest = root.join(part.job_id.to_string()).join(&label);
                 move_dir(&candidate.path, &dest, cancel).map_err(failed(part))?;
-                let writer = (part.role == BundlePartRole::Merge).then_some(index);
+                let writer = (role == BundlePartRole::Merge).then_some(index);
                 for key in file_keys(&dest).map_err(failed(part))? {
                     writers.insert(key, writer);
                 }
@@ -175,6 +202,7 @@ fn prepare_into(
             job_id,
             source: dest.parent().map(Path::to_path_buf).unwrap_or(dest),
             manifest,
+            kept_out_of_the_merge: false,
         });
     }
     Ok(prepared)
@@ -598,11 +626,14 @@ mod bundle_tests {
                 BundlePartRole::Merge,
             ),
         ];
-        let (root, folders) = prepare_bundle("game", &parts, &cancel()).unwrap();
+        let nothing_kept_out = |parts: &[(BundlePartRole, &Path)]| vec![false; parts.len()];
+        let (root, folders) =
+            prepare_bundle("game", &parts, &nothing_kept_out, &cancel()).unwrap();
         assert_eq!(
             folders.iter().map(|folder| folder.job_id).collect::<Vec<_>>(),
             vec![1, 2]
         );
+        assert!(folders.iter().all(|folder| !folder.kept_out_of_the_merge));
         assert!(folders[0].source.join("Ink Spirit/lib.ini").is_file());
         let combined = folders[1].source.join("Mod");
         assert!(combined.join("main.ini").is_file());
@@ -613,10 +644,28 @@ mod bundle_tests {
         let mut tampered = parts.clone();
         tampered[2].md5 = Some("0".repeat(32));
         assert_eq!(
-            prepare_bundle("game", &tampered, &cancel()).unwrap_err(),
+            prepare_bundle("game", &tampered, &nothing_kept_out, &cancel()).unwrap_err(),
             BundleFailure::Checksum {
                 file_name: "addon.zip".to_string()
             }
         );
+
+        let everything_asked_out = |parts: &[(BundlePartRole, &Path)]| vec![true; parts.len()];
+        let (root, folders) =
+            prepare_bundle("game", &parts, &everything_asked_out, &cancel()).unwrap();
+        assert_eq!(
+            folders
+                .iter()
+                .map(|folder| (folder.job_id, folder.kept_out_of_the_merge))
+                .collect::<Vec<_>>(),
+            vec![(1, false), (3, true), (2, false)]
+        );
+        let kept_out = folders[1].source.join("Addon");
+        assert!(kept_out.join("addon.ini").is_file());
+        verify_folder_manifest(&kept_out, &folders[1].manifest, &cancel()).unwrap();
+        let outfit = folders[2].source.join("Mod");
+        assert!(outfit.join("main.ini").is_file());
+        assert!(!outfit.join("addon.ini").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

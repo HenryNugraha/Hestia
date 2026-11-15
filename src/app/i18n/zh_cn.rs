@@ -1028,4 +1028,21 @@ const ZH_CN: [&str; TEXT_KEY_COUNT] = [
     "轮播（横向）", // SettingsGameOverlayCharacterLayoutCarousel
     "网格（纵向）", // SettingsGameOverlayCharacterLayoutGrid
     "轮播显示一行，左右滚动，滚轮滚动时直接选中角色。网格每行显示 7 个，滚轮按整行滚动且不选中，角色多时更快。", // SettingsGameOverlayCharacterLayoutTooltip
+
+    // Framework mods
+    "框架已安装", // FrameworkInstalledAction
+    "框架已更新", // FrameworkUpdatedAction
+    "已跳过框架副本", // FrameworkCopySkippedAction
+    "已获取框架", // FrameworkFetchedAction
+    "这是框架吗？", // FrameworkQuestionTitle
+    "{name} 没有模型或贴图。它是框架（供其他模组调用的共享库）吗？", // FrameworkQuestionBody
+    "是，这是框架", // FrameworkQuestionYes
+    "不是，这是普通模组", // FrameworkQuestionNo
+    "是更新的框架副本吗？", // FrameworkCopyQuestionTitle
+    "Hestia 无法判断这份 {name} 副本是否比你的更新。", // FrameworkCopyQuestionBody
+    "你的：{file}", // FrameworkYourCopy
+    "该副本：{file}", // FrameworkThatCopy
+    "使用该副本", // FrameworkUseThatCopy
+    "保留我的", // FrameworkKeepMine
+    "发现了此框架的另一份副本，Hestia 无法判断它是否比你的更新。点击以决定。", // FrameworkUndecidedTooltip
 ];

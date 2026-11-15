@@ -1518,6 +1518,193 @@ pub struct ModSourceData {
     pub accepted_local_changes: Option<AcceptedLocalChanges>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_thalia_answer: Option<RefusedThaliaAnswer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub framework: Option<FrameworkRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct FrameworkRecord {
+    pub name: String,
+    #[serde(default)]
+    pub namespaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub own_page: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub left_as_found: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<FrameworkPage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub came_from: Option<FrameworkOrigin>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FrameworkOrigin {
+    pub page_id: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_tool: bool,
+}
+
+impl FrameworkRecord {
+    pub fn follows_outfit_pages(&self) -> bool {
+        !self.own_page && !self.left_as_found
+    }
+
+    pub fn page(&self, page_id: u64, is_tool: bool) -> Option<&FrameworkPage> {
+        self.pages
+            .iter()
+            .find(|page| page.page_id == page_id && page.is_tool == is_tool)
+    }
+
+    pub fn page_mut(&mut self, page_id: u64, is_tool: bool) -> &mut FrameworkPage {
+        let position = self
+            .pages
+            .iter()
+            .position(|page| page.page_id == page_id && page.is_tool == is_tool);
+        let position = position.unwrap_or_else(|| {
+            self.pages.push(FrameworkPage {
+                page_id,
+                is_tool,
+                ..FrameworkPage::default()
+            });
+            self.pages.len() - 1
+        });
+        &mut self.pages[position]
+    }
+
+    pub fn copies_in(&self, state: FrameworkCopyState) -> impl Iterator<Item = (&FrameworkPage, &FrameworkCopy)> {
+        self.pages.iter().flat_map(move |page| {
+            page.copies
+                .iter()
+                .filter(move |copy| copy.state == state)
+                .map(move |copy| (page, copy))
+        })
+    }
+
+    pub fn installed_copy(&self) -> Option<(&FrameworkPage, &FrameworkCopy)> {
+        self.copies_in(FrameworkCopyState::Installed).next()
+    }
+
+    pub fn judged_checksum(&self, md5: &str) -> bool {
+        self.pages.iter().flat_map(|page| &page.copies).any(|copy| {
+            matches!(
+                copy.state,
+                FrameworkCopyState::Installed | FrameworkCopyState::NotNewer
+            ) && copy
+                .md5
+                .as_deref()
+                .is_some_and(|known| !known.is_empty() && known.eq_ignore_ascii_case(md5))
+        })
+    }
+
+    pub fn retire_installed_copy(&mut self) {
+        for page in &mut self.pages {
+            for known in &mut page.copies {
+                if known.state == FrameworkCopyState::Installed {
+                    known.state = FrameworkCopyState::NotNewer;
+                }
+            }
+        }
+    }
+
+    pub fn set_installed(&mut self, page_id: u64, is_tool: bool, copy: FrameworkCopy) {
+        self.retire_installed_copy();
+        self.page_mut(page_id, is_tool).remember(FrameworkCopy {
+            state: FrameworkCopyState::Installed,
+            ..copy
+        });
+    }
+
+    pub fn judge_newer_copies_again(&mut self) {
+        for page in &mut self.pages {
+            for known in &mut page.copies {
+                if known.state == FrameworkCopyState::Newer {
+                    known.state = FrameworkCopyState::Unjudged;
+                }
+            }
+        }
+    }
+
+    pub fn copy_state(&self, page_id: u64, is_tool: bool, file_id: u64) -> Option<FrameworkCopyState> {
+        self.page(page_id, is_tool)
+            .and_then(|page| page.copy(file_id))
+            .map(|copy| copy.state)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct FrameworkPage {
+    pub page_id: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_tool: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copies: Vec<FrameworkCopy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_file_ids: Vec<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gone: bool,
+}
+
+impl FrameworkPage {
+    pub fn copy(&self, file_id: u64) -> Option<&FrameworkCopy> {
+        self.copies.iter().find(|copy| copy.file_id == file_id)
+    }
+
+    pub fn has_seen(&self, file_id: u64) -> bool {
+        self.copy(file_id).is_some() || self.other_file_ids.contains(&file_id)
+    }
+
+    pub fn remember(&mut self, copy: FrameworkCopy) {
+        self.other_file_ids.retain(|file_id| *file_id != copy.file_id);
+        match self
+            .copies
+            .iter_mut()
+            .find(|known| known.file_id == copy.file_id)
+        {
+            Some(known) => *known = copy,
+            None => self.copies.push(copy),
+        }
+    }
+
+    pub fn remember_other(&mut self, file_id: u64) {
+        self.copies.retain(|copy| copy.file_id != file_id);
+        if !self.other_file_ids.contains(&file_id) {
+            self.other_file_ids.push(file_id);
+        }
+    }
+
+    pub fn set_state(&mut self, file_id: u64, state: FrameworkCopyState) -> bool {
+        match self.copies.iter_mut().find(|copy| copy.file_id == file_id) {
+            Some(copy) if copy.state != state => {
+                copy.state = state;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct FrameworkCopy {
+    pub file_id: u64,
+    #[serde(default)]
+    pub file_name: String,
+    #[serde(default)]
+    pub file_size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
+    #[serde(default)]
+    pub state: FrameworkCopyState,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum FrameworkCopyState {
+    Installed,
+    NotNewer,
+    #[default]
+    Unjudged,
+    AskThalia,
+    Undecided,
+    Newer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -1616,6 +1803,8 @@ pub struct TrackedFileMeta {
     pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
 }
 
 impl PartialEq for TrackedFileMeta {
@@ -3645,5 +3834,174 @@ mod install_state_tests {
             ModInstallState::resolve_auto(Some("cat"), false, true),
             ModStatus::Active
         );
+    }
+}
+
+#[cfg(test)]
+mod framework_record_tests {
+    use super::*;
+
+    fn copy(file_id: u64, md5: Option<&str>, state: FrameworkCopyState) -> FrameworkCopy {
+        FrameworkCopy {
+            file_id,
+            file_name: format!("copy_{file_id}.zip"),
+            file_size: 1,
+            md5: md5.map(str::to_string),
+            state,
+        }
+    }
+
+    fn states(record: &FrameworkRecord) -> Vec<(u64, u64, FrameworkCopyState)> {
+        record
+            .pages
+            .iter()
+            .flat_map(|page| {
+                page.copies
+                    .iter()
+                    .map(|copy| (page.page_id, copy.file_id, copy.state))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_mod_saved_before_framework_records_loads_without_one() {
+        let saved = serde_json::to_value(ModSourceData::default()).unwrap();
+        assert!(saved.get("framework").is_none());
+        let loaded: ModSourceData = serde_json::from_value(saved).unwrap();
+        assert!(loaded.framework.is_none());
+
+        let bare: FrameworkRecord =
+            serde_json::from_value(serde_json::json!({ "name": "NeonRookieFX" })).unwrap();
+        assert_eq!(bare.name, "NeonRookieFX");
+        assert!(bare.pages.is_empty() && bare.namespaces.is_empty() && bare.came_from.is_none());
+        assert!(bare.follows_outfit_pages());
+    }
+
+    #[test]
+    fn a_framework_record_comes_back_as_it_was_saved() {
+        let mut record = FrameworkRecord {
+            name: "NeonRookieFX".to_string(),
+            namespaces: vec!["neonrookiefx".to_string()],
+            came_from: Some(FrameworkOrigin {
+                page_id: 100,
+                is_tool: false,
+            }),
+            ..FrameworkRecord::default()
+        };
+        record.set_installed(100, false, copy(1, Some("aaaa"), FrameworkCopyState::Unjudged));
+        record
+            .page_mut(200, true)
+            .remember(copy(2, None, FrameworkCopyState::Undecided));
+        record.page_mut(200, true).remember_other(3);
+        record.page_mut(200, true).gone = true;
+
+        let saved = serde_json::to_string(&record).unwrap();
+        let loaded: FrameworkRecord = serde_json::from_str(&saved).unwrap();
+
+        assert_eq!(loaded, record);
+    }
+
+    #[test]
+    fn installing_a_copy_retires_the_one_installed_before() {
+        let mut record = FrameworkRecord::default();
+        record.set_installed(100, false, copy(1, None, FrameworkCopyState::Unjudged));
+        record.page_mut(200, false).remember_other(2);
+
+        record.set_installed(200, false, copy(2, None, FrameworkCopyState::Newer));
+
+        assert_eq!(
+            states(&record),
+            vec![
+                (100, 1, FrameworkCopyState::NotNewer),
+                (200, 2, FrameworkCopyState::Installed)
+            ]
+        );
+        assert!(record.page(200, false).unwrap().other_file_ids.is_empty());
+        assert_eq!(
+            record
+                .installed_copy()
+                .map(|(page, installed)| (page.page_id, installed.file_id)),
+            Some((200, 2))
+        );
+
+        record.set_installed(200, false, copy(2, None, FrameworkCopyState::Unjudged));
+        assert_eq!(
+            states(&record),
+            vec![
+                (100, 1, FrameworkCopyState::NotNewer),
+                (200, 2, FrameworkCopyState::Installed)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_checksum_counts_only_from_a_copy_installed_or_judged_not_newer() {
+        let mut record = FrameworkRecord::default();
+        let page = record.page_mut(100, false);
+        page.remember(copy(1, Some("AAAA"), FrameworkCopyState::Installed));
+        page.remember(copy(2, Some("bbbb"), FrameworkCopyState::NotNewer));
+        page.remember(copy(3, Some("cccc"), FrameworkCopyState::Unjudged));
+        page.remember(copy(4, Some("dddd"), FrameworkCopyState::AskThalia));
+        page.remember(copy(5, Some("eeee"), FrameworkCopyState::Undecided));
+        page.remember(copy(6, Some("ffff"), FrameworkCopyState::Newer));
+        page.remember(copy(7, Some(""), FrameworkCopyState::NotNewer));
+        page.remember(copy(8, None, FrameworkCopyState::NotNewer));
+
+        assert!(record.judged_checksum("aaaa"));
+        assert!(record.judged_checksum("BBBB"));
+        for unjudged in ["cccc", "dddd", "eeee", "ffff", "", "0000"] {
+            assert!(!record.judged_checksum(unjudged), "{unjudged}");
+        }
+    }
+
+    #[test]
+    fn a_page_keeps_each_file_as_a_copy_or_as_something_else() {
+        let mut page = FrameworkPage {
+            page_id: 100,
+            ..FrameworkPage::default()
+        };
+        page.remember(copy(1, None, FrameworkCopyState::Unjudged));
+        page.remember_other(2);
+        page.remember_other(2);
+        assert!(page.has_seen(1) && page.has_seen(2) && !page.has_seen(3));
+        assert_eq!(page.other_file_ids, vec![2]);
+
+        page.remember_other(1);
+        assert!(page.copy(1).is_none());
+        assert_eq!(page.other_file_ids, vec![2, 1]);
+
+        page.remember(copy(1, None, FrameworkCopyState::AskThalia));
+        page.remember(copy(1, Some("aaaa"), FrameworkCopyState::Undecided));
+        assert_eq!(page.other_file_ids, vec![2]);
+        assert_eq!(page.copies, vec![copy(1, Some("aaaa"), FrameworkCopyState::Undecided)]);
+
+        assert!(page.set_state(1, FrameworkCopyState::Newer));
+        assert!(!page.set_state(1, FrameworkCopyState::Newer));
+        assert!(!page.set_state(2, FrameworkCopyState::Newer));
+    }
+
+    #[test]
+    fn only_copies_judged_newer_are_judged_again() {
+        let mut record = FrameworkRecord::default();
+        record.set_installed(100, false, copy(1, None, FrameworkCopyState::Unjudged));
+        let page = record.page_mut(100, false);
+        page.remember(copy(2, None, FrameworkCopyState::Newer));
+        page.remember(copy(3, None, FrameworkCopyState::NotNewer));
+        page.remember(copy(4, None, FrameworkCopyState::Undecided));
+
+        record.judge_newer_copies_again();
+
+        assert_eq!(
+            states(&record),
+            vec![
+                (100, 1, FrameworkCopyState::Installed),
+                (100, 2, FrameworkCopyState::Unjudged),
+                (100, 3, FrameworkCopyState::NotNewer),
+                (100, 4, FrameworkCopyState::Undecided)
+            ]
+        );
+        assert_eq!(record.copy_state(100, false, 2), Some(FrameworkCopyState::Unjudged));
+        assert_eq!(record.copy_state(100, true, 2), None);
+        assert_eq!(record.copy_state(100, false, 9), None);
     }
 }

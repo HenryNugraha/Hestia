@@ -23,6 +23,7 @@ impl HestiaApp {
             || self.browse_state.file_prompt.is_some()
             || self.pending_d3dx_foreground_conflict.is_some()
             || !self.pending_conflicts.is_empty()
+            || self.framework_dialog_open()
             || import_review_open
             || self.profile_name_prompt.is_some()
             || self.pending_profile_delete_id.is_some()
@@ -58,3 +59,4 @@ include!("folder_batch.rs");
 include!("library.rs");
 include!("browse.rs");
 include!("dialogs.rs");
+include!("frameworks.rs");

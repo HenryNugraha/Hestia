@@ -1,3 +1,4 @@
+pub(crate) mod frameworks;
 pub mod gamebanana;
 pub(crate) mod gamebanana_matcher;
 pub mod profiles;

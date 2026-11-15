@@ -129,16 +129,25 @@ impl HestiaApp {
                     job_id,
                     inspection,
                     gb_profile,
+                    framework_scans,
                 } => {
                     if !self.install_inflight.contains_key(&job_id) {
                         continue;
                     }
-                    self.review_pending_import(PendingImport {
-                        job_id,
-                        inspection,
-                        gb_profile,
-                    });
+                    self.framework_review_arrived(
+                        PendingImport {
+                            job_id,
+                            inspection,
+                            gb_profile,
+                        },
+                        framework_scans,
+                    );
                 }
+                InstallEvent::FrameworkPartsSplit {
+                    job_id,
+                    inspection,
+                    children,
+                } => self.framework_parts_split(job_id, inspection, children),
                 InstallEvent::InspectFailed { job_id, error } => {
                     let Some(current) = self.install_inflight.remove(&job_id) else {
                         continue;
@@ -319,6 +328,7 @@ impl HestiaApp {
                 game_id: job.game_id.clone(),
                 source: job.source.clone(),
                 gb_profile,
+                framework_context: self.framework_install_context(&job.game_id),
             })
             .map_err(|_| anyhow!("failed to queue install"))?;
         Ok(())
@@ -919,7 +929,12 @@ impl HestiaApp {
         let max_parallel = self.max_parallel_installs();
         let initial_queue_len = self.install_queue.len();
         let mut blocked_review_jobs = 0;
-        while self.install_inflight.len() < max_parallel {
+        while self
+            .install_inflight
+            .len()
+            .saturating_sub(self.framework_parked_job_count())
+            < max_parallel
+        {
             let Some(job) = self.install_queue.pop_front() else { break; };
             if self.folder_batch_game_busy(&job.game_id) {
                 self.install_queue.push_front(job);

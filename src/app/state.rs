@@ -550,6 +550,7 @@ pub struct HestiaApp {
     thalia_separate_install_jobs: HashSet<u64>,
     thalia_canceled_bundle_tasks: HashSet<u64>,
     thalia_bundle_manifests: HashMap<u64, Arc<importing::bundle::FolderManifest>>,
+    frameworks: FrameworkRuntime,
     gif_rewritten_markdown_cache: HashMap<String, String>,
     markdown_dependency_signature_cache: HashMap<String, (String, Instant)>,
     render_safe_markdown_cache: HashMap<String, String>,
@@ -930,6 +931,8 @@ struct UpdateCheckRequest {
     generation: u64,
     items: Vec<UpdateCheckItem>,
     peer_items: Vec<UpdateCheckItem>,
+    framework_watches: Vec<FrameworkWatch>,
+    fetch_watch_only_pages: bool,
 }
 
 struct UpdateCheckOutcome {
@@ -951,6 +954,7 @@ struct UpdateCheckOutcome {
 struct UpdateCheckResult {
     generation: u64,
     states: Vec<UpdateCheckOutcome>,
+    framework_reports: Vec<FrameworkPageReport>,
 }
 
 struct BrowseFilePrompt {
@@ -1370,6 +1374,11 @@ enum InstallRequest {
         game_id: String,
         source: ImportSource,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
+        framework_context: Option<Arc<frameworks::InstallContext>>,
+    },
+    SplitFrameworkParts {
+        job_id: u64,
+        parts: Vec<frameworks::SplitPart>,
     },
     Install {
         job_id: u64,
@@ -1387,6 +1396,8 @@ enum InstallRequest {
         job_id: u64,
         game_id: String,
         parts: Vec<importing::bundle::BundlePart>,
+        framework_context: Option<Arc<frameworks::InstallContext>>,
+        update_target: Option<frameworks::InstalledFolder>,
     },
     SyncImages {
         job_id: u64,
@@ -1408,6 +1419,12 @@ enum InstallEvent {
         job_id: u64,
         inspection: ImportInspection,
         gb_profile: Option<Box<gamebanana::ProfileResponse>>,
+        framework_scans: Vec<frameworks::CandidateScan>,
+    },
+    FrameworkPartsSplit {
+        job_id: u64,
+        inspection: ImportInspection,
+        children: Vec<SplitFrameworkChild>,
     },
     InspectFailed {
         job_id: u64,

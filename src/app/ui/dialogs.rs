@@ -952,6 +952,9 @@ impl HestiaApp {
                     gb_profile,
                     preferred_names,
                 );
+                if choice == ConflictChoice::Merge {
+                    self.keep_tracked_files_after_same_page_merge(job_id, &conflict_existing_target);
+                }
                 self.pending_imports
                     .retain(|pending| pending.job_id != job_id);
             }

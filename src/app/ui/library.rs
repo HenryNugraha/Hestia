@@ -4098,10 +4098,8 @@ impl HestiaApp {
             .mods
             .iter()
             .find(|mod_entry| mod_entry.id == mod_id)
-            .and_then(|mod_entry| mod_entry.source.as_ref())
-            .and_then(|source| source.gamebanana.as_ref())
-            .map(|link| link.mod_id)
-            .filter(|id| *id > 0);
+            .and_then(mod_page_for_actions)
+            .map(|(page_id, _)| page_id);
 
         let response = ui.menu_button(
             icon_text_sized(Icon::FolderOpen, text.open(), 12.0, 12.0),
@@ -6930,6 +6928,14 @@ impl HestiaApp {
                                 ))
                             })
                             .collect();
+                        let framework_notice_by_mod: HashMap<String, FrameworkCardNotice> = self
+                            .state
+                            .mods
+                            .iter()
+                            .filter_map(|entry| {
+                                framework_card_notice(entry).map(|notice| (entry.id.clone(), notice))
+                            })
+                            .collect();
                         let folder_tiles: Vec<CategoryFolderTile> = if matches!(
                             category_display_mode,
                             LibraryCategoryDisplayMode::Folders
@@ -7726,6 +7732,10 @@ impl HestiaApp {
                                                                                     }
                                                                                 }
                                                                             }
+                                                                        } else if let Some(notice) =
+                                                                            framework_notice_by_mod.get(mod_id)
+                                                                        {
+                                                                            self.render_framework_card_notice(ui, mod_id, *notice);
                                                                         }
                                                                         ui.with_layout(
                                                                             egui::Layout::right_to_left(egui::Align::Center),
@@ -10415,7 +10425,10 @@ impl HestiaApp {
                         let _ = open_in_explorer(&selected.root_path);
                         ui.close();
                     }
-                    if self.state.static_prefs.unsafe_content_mode != UnsafeContentMode::Show {
+                    let managed_framework = mod_is_managed_framework(selected);
+                    if self.state.static_prefs.unsafe_content_mode != UnsafeContentMode::Show
+                        && !managed_framework
+                    {
                         ui.menu_button(
                             icon_text_sized(Icon::ShieldAlert, text.mark_as_nsfw(), 13.0, 13.0),
                             |ui| {
@@ -10502,59 +10515,7 @@ impl HestiaApp {
                             self.save_state();
                             ui.close();
                         }
-                        if ui
-                            .button(icon_text_sized(
-                                Icon::Globe,
-                                text.gamebanana_page(),
-                                13.0,
-                                13.0,
-                            ))
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            if let Err(err) = open_external_url(
-                                &gamebanana::browser_url_typed(gb_id, gb_is_tool),
-                            ) {
-                                self.report_error(
-                                    err,
-                                    Some(text.app_could_not_open_browser()),
-                                );
-                            }
-                            ui.close();
-                        }
-                        if ui
-                            .button(icon_text_sized(
-                                Icon::Compass,
-                                "Browse in Hestia",
-                                13.0,
-                                13.0,
-                            ))
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            if gb_is_tool {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(
-                                    gamebanana::browser_url_typed(gb_id, true),
-                                ));
-                            } else {
-                                self.open_linked_mod_in_browse(gb_id);
-                            }
-                            ui.close();
-                        }
-                        if ui
-                            .button(icon_text_sized(
-                                Icon::Copy,
-                                text.copy_gamebanana_id(),
-                                13.0,
-                                13.0,
-                            ))
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            ui.ctx().copy_text(gb_id.to_string());
-                            self.set_message_ok(text.gamebanana_id_copied());
-                            ui.close();
-                        }
+                        self.render_page_menu_buttons(ui, gb_id, gb_is_tool);
                         if ui
                             .button(icon_text_sized(
                                 Icon::Link2Off,
@@ -10575,6 +10536,11 @@ impl HestiaApp {
                             }
                             self.save_state();
                             ui.close();
+                        }
+                    } else if managed_framework {
+                        if let Some((page_id, is_tool)) = framework_page_for_actions(selected) {
+                            ui.separator();
+                            self.render_page_menu_buttons(ui, page_id, is_tool);
                         }
                     } else {
                         ui.separator();
@@ -10980,6 +10946,13 @@ impl HestiaApp {
                             static_label(ui, RichText::new(update_text).size(12.0).color(update_color))
                                 .on_hover_text(self.mod_update_badge_tooltip(&selected));
                         }
+                    } else if mod_is_managed_framework(selected) {
+                        if let Some(notice) = framework_card_notice(selected) {
+                            ui.add_space(-4.0);
+                            static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
+                            ui.add_space(-4.0);
+                            self.render_framework_detail_notice(ui, notice);
+                        }
                     } else {
                         ui.add_space(-4.0);
                         static_label(ui, RichText::new("/").size(12.0).color(Color32::from_gray(164)));
@@ -11040,6 +11013,9 @@ impl HestiaApp {
                             if response.clicked() {
                                 self.open_mod_file_review(&selected.id);
                             }
+                        }
+                        if framework_card_notice(selected) == Some(FrameworkCardNotice::UndecidedCopy) {
+                            self.render_framework_undecided_button(ui, &selected.id);
                         }
                         if matches!(selected_effective_update_state, ModUpdateState::UpdateAvailable)
                             || (self.state.static_prefs.modified_update_behavior != ModifiedUpdateBehavior::HideButton
@@ -11409,6 +11385,10 @@ impl HestiaApp {
                                 |ui| {
                                 static_label(ui, bold(text.source(), Some(14.0)).underline().color(Color32::from_gray(195)));
                                 let source_group_response = ui.group(|ui| {
+                                    if mod_is_managed_framework(selected) {
+                                        self.render_framework_source_group(ui, &selected.id);
+                                        return;
+                                    }
                                     let mut changed = false;
                                     let mut link_and_sync_id: Option<(u64, bool)> = None;
                                     let mut unlink_requested = false;

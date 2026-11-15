@@ -14,6 +14,12 @@ fn tracked_file_meta_from_mod_file(file: &gamebanana::ModFile) -> TrackedFileMet
             .map(str::trim)
             .filter(|label| !label.is_empty())
             .map(str::to_string),
+        md5: file
+            .md5
+            .as_deref()
+            .map(str::trim)
+            .filter(|md5| !md5.is_empty())
+            .map(str::to_string),
     }
 }
 
@@ -127,6 +133,20 @@ fn merge_file_set_recipe(
         }
     }
     merged
+}
+
+fn is_fresh_install_onto_same_page_mod(
+    meta: &PendingBrowseInstallMeta,
+    mods: &[ModEntry],
+    existing_target: &Path,
+) -> bool {
+    meta.update_target_mod_id.is_none()
+        && find_existing_install_target(mods, &meta.game_id, None, existing_target, None)
+            .and_then(|existing| existing.source.as_ref())
+            .and_then(|source| source.gamebanana.as_ref())
+            .is_some_and(|link| {
+                link.mod_id == meta.mod_id && gamebanana::is_tool_url(&link.url) == meta.is_tool
+            })
 }
 
 fn selected_file_baseline_ts(file_set: &FileSetRecipe) -> Option<i64> {
@@ -2452,28 +2472,75 @@ fn release_sequence_candidate_matches(
     latest.2 == candidate.id && active_ids.contains(&candidate.id)
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct FileListingsWanted {
+    for_undecided_recipes: Vec<u64>,
+    for_each_pick: Vec<Vec<u64>>,
+}
+
 fn file_listing_ids_wanted(
     items: &[(Option<i64>, FileSetRecipe)],
     profile: &gamebanana::ProfileResponse,
-) -> Vec<u64> {
+) -> FileListingsWanted {
     if gamebanana::is_unavailable(profile)
         || !matcher_adapter::canonicalize_profile(profile)
             .ambiguous_ids
             .is_empty()
     {
-        return Vec::new();
+        return FileListingsWanted::default();
     }
     let Some(group) = matcher_adapter::evaluate_native_single_group(items, profile) else {
-        return Vec::new();
+        return FileListingsWanted::default();
     };
-    let mut ids: Vec<u64> = group
-        .evaluations
-        .into_iter()
-        .flat_map(|evaluation| evaluation.missing_listing_ids)
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
+    let mut wanted = FileListingsWanted::default();
+    for evaluation in group.evaluations {
+        wanted
+            .for_undecided_recipes
+            .extend(evaluation.missing_listing_ids);
+        if !evaluation.missing_pick_listing_ids.is_empty() {
+            wanted
+                .for_each_pick
+                .push(evaluation.missing_pick_listing_ids);
+        }
+    }
+    wanted.for_undecided_recipes.sort_unstable();
+    wanted.for_undecided_recipes.dedup();
+    wanted
+}
+
+fn recipe_tracks_file_id(
+    file_set: &FileSetRecipe,
+    resolved: &ResolvedTrackedFiles,
+    file_id: u64,
+) -> bool {
+    installed_file_ids(file_set).any(|id| id == file_id)
+        || matches!(
+            resolved,
+            ResolvedTrackedFiles::Tracked(tracked_files)
+                if tracked_files.iter().any(|tracked| tracked.file_id == file_id)
+        )
+}
+
+fn native_claims_on_sibling_tracked_files(
+    items: &[(Option<i64>, FileSetRecipe)],
+    resolved: &[ResolvedTrackedFiles],
+    native_evaluations: &[matcher_adapter::NativeSingleEvaluation],
+) -> HashSet<u64> {
+    native_evaluations
+        .iter()
+        .filter_map(|evaluation| evaluation.claim)
+        .filter(|claim| {
+            items
+                .iter()
+                .zip(resolved)
+                .enumerate()
+                .any(|(index, ((_, file_set), resolved_files))| {
+                    index != claim.recipe_index
+                        && recipe_tracks_file_id(file_set, resolved_files, claim.candidate_id)
+                })
+        })
+        .map(|claim| claim.candidate_id)
+        .collect()
 }
 
 fn evaluate_file_set_update_group(
@@ -2860,6 +2927,11 @@ fn evaluate_file_set_update_group(
     for index in &conflicted_legacy {
         assigned_candidates[*index].clear();
     }
+    legacy_competing_native.extend(native_claims_on_sibling_tracked_files(
+        items,
+        &resolved,
+        &native_evaluations,
+    ));
     matcher_adapter::abstain_competing_native_claims(
         &mut native_evaluations,
         &legacy_competing_native,
@@ -3206,7 +3278,7 @@ fn build_cached_update_evidence(
     }
 
     let mut evidence = HashMap::new();
-    for (_group_key, group) in groups {
+    for ((group_game_id, group_page_id, group_is_tool), group) in groups {
         let mut chosen: Option<(
             CachedProfileFreshness,
             String,
@@ -3289,6 +3361,14 @@ fn build_cached_update_evidence(
                 )
             })
             .collect();
+        let framework_copies =
+            framework_covered_file_ids(mods, &group_game_id, group_page_id, group_is_tool);
+        let profile = profile_without_framework_copies(
+            &profile,
+            &framework_copies,
+            group_items.iter().map(|(_, file_set)| file_set),
+        )
+        .map_or(profile, Arc::new);
         let evaluations = evaluate_file_set_update_group(&group_items, &profile);
         let claims: Vec<HashSet<u64>> = group
             .iter()
@@ -3759,6 +3839,31 @@ fn profile_to_snapshot(profile: &gamebanana::ProfileResponse) -> GameBananaSnaps
     }
 }
 
+fn is_hidden_page_without_files(snapshot: &GameBananaSnapshot) -> bool {
+    snapshot.files.is_empty()
+        && (snapshot.is_private || snapshot.is_trashed || snapshot.is_withheld)
+}
+
+fn store_snapshot_keeping_hidden_page_files(
+    stored: &mut Option<GameBananaSnapshot>,
+    mut arriving: GameBananaSnapshot,
+) {
+    if is_hidden_page_without_files(&arriving)
+        && let Some(previous) = stored.as_mut()
+    {
+        arriving.files = std::mem::take(&mut previous.files);
+    }
+    *stored = Some(arriving);
+}
+
+fn private_page_was_already_stored(
+    stored: Option<&GameBananaSnapshot>,
+    arriving: Option<&GameBananaSnapshot>,
+) -> bool {
+    stored.is_some_and(|stored| stored.is_private)
+        && arriving.is_some_and(|arriving| arriving.is_private)
+}
+
 impl HestiaApp {
     fn ensure_cached_grouped_update_evidence(&mut self) {
         let cache_key = self.grouped_update_evidence_cache_key();
@@ -4050,18 +4155,7 @@ impl HestiaApp {
         &mut self,
         items: Vec<UpdateCheckItem>,
     ) {
-        if items.is_empty() {
-            return;
-        }
-        let peer_items = self.build_update_check_peer_context();
-        self.update_check_active_items = items.clone();
-        if self.update_check_tx.send(UpdateCheckRequest {
-            generation: self.update_check_generation,
-            items,
-            peer_items,
-        }).is_ok() {
-            self.update_check_inflight = true;
-        }
+        self.dispatch_update_check(items, FrameworkCheckScope::CheckedPagesOnly);
     }
 
     fn build_update_check_peer_context(&mut self) -> Vec<UpdateCheckItem> {
@@ -4113,7 +4207,8 @@ impl HestiaApp {
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         let items = self.update_check_active_items.clone();
         self.update_check_inflight = false;
-        self.dispatch_update_check_items(items);
+        let framework_scope = self.frameworks.active_check_scope.clone();
+        self.dispatch_update_check(items, framework_scope);
     }
 
     fn queue_update_check_for_mod(&mut self, mod_entry_id: &str) {
@@ -4315,7 +4410,9 @@ impl HestiaApp {
             self.save_state();
         }
         let nothing_to_fetch = items.is_empty();
-        self.dispatch_update_check_items(items);
+        let framework_scope =
+            self.framework_scope_for_linked_check(target_game_id, force, allow_network);
+        self.dispatch_update_check(items, framework_scope);
         if !allow_network || nothing_to_fetch {
             let game_ids: HashSet<String> = target_game_id
                 .map(|game_id| [game_id.to_string()].into_iter().collect())
@@ -4333,6 +4430,7 @@ impl HestiaApp {
                 continue;
             }
             self.update_check_inflight = false;
+            self.apply_framework_page_reports(result.framework_reports);
             let current_peer_items = self.build_update_check_peer_context();
             let checked_game_ids: HashSet<String> = self.update_check_active_items
                 .iter()
@@ -4463,8 +4561,12 @@ impl HestiaApp {
                             let _ = backfill_selected_files_meta(&mut source.file_set, profile);
                             let _ = backfill_tracked_file_labels(&mut source.file_set, profile);
                         }
-                        if let Some(s) = snapshot {
-                            source.snapshot = Some(s);
+                        let private_page_already_reported = private_page_was_already_stored(
+                            source.snapshot.as_ref(),
+                            snapshot.as_ref(),
+                        );
+                        if let Some(arriving) = snapshot {
+                            store_snapshot_keeping_hidden_page_files(&mut source.snapshot, arriving);
                         }
                         if let Some(raw) = raw_json {
                             source.raw_profile_json = Some(raw);
@@ -4487,7 +4589,7 @@ impl HestiaApp {
                             mod_entry.update_state = ModUpdateState::ModifiedLocally;
                         }
                         if let Some(message) = err {
-                            if !fetch_failed {
+                            if !fetch_failed && !private_page_already_reported {
                                 warn_lines.push(format!("{} ({message})", mod_entry.folder_name));
                             }
                         }
@@ -4699,6 +4801,10 @@ impl HestiaApp {
                     self.save_state();
                     self.startup_scan_loading = false;
                     let launch_game_id = self.selected_game().map(|g| g.definition.id.clone());
+                    if let Some(game_id) = launch_game_id.as_deref() {
+                        self.note_switched_on_mods(game_id);
+                        self.request_framework_warm_facts(game_id);
+                    }
                     self.queue_update_check_for_linked_mods(launch_game_id.as_deref());
                     self.request_automatic_app_update_check(0.0);
                 }
@@ -5166,6 +5272,10 @@ impl HestiaApp {
                     self.announce_installed_mod_tools(&new_tool_ids, &installed_mod_ids);
                     self.save_state();
                     if reload_before.is_some() {
+                        self.recheck_active_mods_for_missing_frameworks(&game_id);
+                    }
+                    self.request_framework_warm_facts(&game_id);
+                    if reload_before.is_some() {
                         self.queue_update_check_for_linked_mods_force(Some(&game_id));
                     } else if !finalized_install {
                         self.queue_update_check_for_linked_mods(Some(&game_id));
@@ -5254,7 +5364,7 @@ impl HestiaApp {
         installed_mod_ids
     }
 
-    fn finalize_install_after_refresh(
+    fn finalize_regular_install_after_refresh(
         &mut self,
         job_id: u64,
         payload: PendingInstallFinalize,
@@ -5770,6 +5880,18 @@ impl HestiaApp {
         self.save_state();
     }
 
+    fn keep_tracked_files_after_same_page_merge(&mut self, job_id: u64, existing_target: &Path) {
+        if !self.install_inflight.contains_key(&job_id) {
+            return;
+        }
+        let Some(meta) = self.pending_browse_install_meta.get_mut(&job_id) else {
+            return;
+        };
+        if is_fresh_install_onto_same_page_mod(meta, &self.state.mods, existing_target) {
+            meta.explicit_resolution = Some(ImportResolution::Merge);
+        }
+    }
+
     fn apply_sync_metadata(
         &mut self,
         mod_entry_id: &str,
@@ -5963,7 +6085,10 @@ impl HestiaApp {
             source.snapshot.as_ref(),
             Some(profile),
         );
-        source.snapshot = Some(profile_to_snapshot(profile));
+        store_snapshot_keeping_hidden_page_files(
+            &mut source.snapshot,
+            profile_to_snapshot(profile),
+        );
         source.raw_profile_json = serde_json::to_string(profile).ok();
         source.profile_cached_at = Some(cached_at);
         mod_entry.unsafe_content_auto = !profile.content_ratings.is_empty();
@@ -6533,14 +6658,23 @@ mod update_signature_tests {
         let items = [(Some(source.date_added), fallback_file_set(&source))];
         let list = |name: &str| vec![format!("Skin/{name}.ini"), "Skin/body.dds".to_owned()];
 
-        assert_eq!(file_listing_ids_wanted(&items, &remote), vec![10, 20, 21]);
+        assert_eq!(
+            file_listing_ids_wanted(&items, &remote).for_undecided_recipes,
+            vec![10, 20, 21]
+        );
 
         remote.file_listings.insert(10, list("skin"));
         remote.file_listings.insert(20, list("skin"));
-        assert_eq!(file_listing_ids_wanted(&items, &remote), vec![21]);
+        assert_eq!(
+            file_listing_ids_wanted(&items, &remote).for_undecided_recipes,
+            vec![21]
+        );
 
         remote.file_listings.insert(21, list("other"));
-        assert!(file_listing_ids_wanted(&items, &remote).is_empty());
+        assert_eq!(
+            file_listing_ids_wanted(&items, &remote),
+            FileListingsWanted::default()
+        );
         let evaluations = evaluate_file_set_update_group(&items, &remote);
         assert_ne!(evaluations[0].state, ModUpdateState::CheckSkipped);
     }
@@ -6829,6 +6963,7 @@ mod update_signature_tests {
                         version: None,
                         archived: false,
                         label: None,
+                        md5: None,
                     }],
                     profile_update_ts: None,
                     prearmed_next_update: false,
@@ -6841,6 +6976,149 @@ mod update_signature_tests {
             is_native_single: true,
             abstention_state: ModUpdateState::UpToDate,
             missing_listing_ids: Vec::new(),
+            missing_pick_listing_ids: Vec::new(),
+        }
+    }
+
+    fn sibling_held_file_fixture() -> (
+        gamebanana::ModFile,
+        gamebanana::ModFile,
+        gamebanana::ModFile,
+        gamebanana::ProfileResponse,
+    ) {
+        let outdated = versioned_mod_file(10, "widget_v1.zip", 100, "1");
+        let sidekick = mod_file(11, "sidekick.zip", 100);
+        let latest = versioned_mod_file(20, "widget_v2.zip", 200, "2");
+        let remote = profile(
+            vec![outdated.clone(), sidekick.clone(), latest.clone()],
+            latest.date_added,
+        );
+        (outdated, sidekick, latest, remote)
+    }
+
+    #[test]
+    fn native_update_goes_through_when_no_sibling_mod_holds_the_target_file() {
+        let (outdated, sidekick, latest, remote) = sibling_held_file_fixture();
+
+        let evaluations = evaluate_file_set_update_group(
+            &[
+                (Some(outdated.date_added), fallback_file_set(&outdated)),
+                (Some(sidekick.date_added), fallback_file_set(&sidekick)),
+            ],
+            &remote,
+        );
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpdateAvailable);
+        assert_eq!(
+            evaluations[0].signature.as_ref().map(|signature| {
+                signature
+                    .files
+                    .iter()
+                    .map(|file| file.file_id)
+                    .collect::<Vec<_>>()
+            }),
+            Some(vec![latest.id])
+        );
+        assert_eq!(evaluations[1].state, ModUpdateState::UpToDate);
+        assert!(evaluations[1].signature.is_none());
+    }
+
+    #[test]
+    fn native_pick_of_a_settings_only_file_abstains_for_a_mod_with_models() {
+        let (outdated, sidekick, latest, mut remote) = sibling_held_file_fixture();
+        let items = [
+            (Some(outdated.date_added), fallback_file_set(&outdated)),
+            (Some(sidekick.date_added), fallback_file_set(&sidekick)),
+        ];
+        let with_models = || vec!["Widget/widget.ini".to_owned(), "Widget/body.buf".to_owned()];
+        let settings_only =
+            || vec!["WidgetFX/widgetfx.ini".to_owned(), "WidgetFX/cloth.hlsl".to_owned()];
+
+        assert_eq!(
+            file_listing_ids_wanted(&items, &remote).for_each_pick,
+            vec![vec![outdated.id, latest.id]]
+        );
+
+        remote.file_listings.insert(outdated.id, with_models());
+        assert_eq!(
+            file_listing_ids_wanted(&items, &remote).for_each_pick,
+            vec![vec![latest.id]]
+        );
+        assert_eq!(
+            evaluate_file_set_update_group(&items, &remote)[0].state,
+            ModUpdateState::UpdateAvailable
+        );
+
+        remote.file_listings.insert(latest.id, settings_only());
+        let evaluations = evaluate_file_set_update_group(&items, &remote);
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert!(evaluations[0].signature.is_none());
+        assert!(file_listing_ids_wanted(&items, &remote).for_each_pick.is_empty());
+
+        remote.file_listings.insert(latest.id, with_models());
+        assert_eq!(
+            evaluate_file_set_update_group(&items, &remote)[0].state,
+            ModUpdateState::UpdateAvailable
+        );
+
+        remote.file_listings.insert(outdated.id, settings_only());
+        remote.file_listings.insert(latest.id, settings_only());
+        assert_eq!(
+            evaluate_file_set_update_group(&items, &remote)[0].state,
+            ModUpdateState::UpdateAvailable
+        );
+    }
+
+    #[test]
+    fn native_update_abstains_when_a_sibling_mod_holds_the_target_file() {
+        let (outdated, _, latest, remote) = sibling_held_file_fixture();
+
+        let evaluations = evaluate_file_set_update_group(
+            &[
+                (Some(outdated.date_added), fallback_file_set(&outdated)),
+                (Some(latest.date_added), fallback_file_set(&latest)),
+            ],
+            &remote,
+        );
+
+        assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+        assert!(evaluations[0].signature.is_none());
+        assert_eq!(evaluations[1].state, ModUpdateState::UpToDate);
+        assert!(evaluations[1].signature.is_none());
+    }
+
+    #[test]
+    fn native_update_abstains_for_every_way_a_sibling_mod_tracks_the_target_file() {
+        let (outdated, sidekick, latest, remote) = sibling_held_file_fixture();
+        let siblings = [
+            FileSetRecipe {
+                selected_file_ids: vec![latest.id],
+                ..Default::default()
+            },
+            FileSetRecipe {
+                selected_file_names: vec![latest.file_name.clone()],
+                ..Default::default()
+            },
+            FileSetRecipe {
+                selected_files_meta: vec![
+                    tracked_file_meta_from_mod_file(&sidekick),
+                    tracked_file_meta_from_mod_file(&latest),
+                ],
+                ..Default::default()
+            },
+        ];
+
+        for sibling in siblings {
+            let evaluations = evaluate_file_set_update_group(
+                &[
+                    (Some(outdated.date_added), fallback_file_set(&outdated)),
+                    (Some(latest.date_added), sibling),
+                ],
+                &remote,
+            );
+
+            assert_eq!(evaluations[0].state, ModUpdateState::UpToDate);
+            assert!(evaluations[0].signature.is_none());
         }
     }
 
@@ -6915,6 +7193,67 @@ mod update_signature_tests {
         right.file_size = Some(999);
         right.label = Some("Main".to_owned());
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn tracked_file_meta_checksum_is_optional_and_saved_only_when_known() {
+        let legacy = serde_json::json!({
+            "file_id": 10,
+            "file_name": "legacy.zip",
+            "date_added": 100,
+            "version": null,
+            "archived": false
+        });
+        let parsed: TrackedFileMeta = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.md5, None);
+
+        let mut source = mod_file(10, "legacy.zip", 100);
+        let without_checksum = tracked_file_meta_from_mod_file(&source);
+        assert_eq!(without_checksum.md5, None);
+        assert!(
+            serde_json::to_value(&without_checksum)
+                .unwrap()
+                .get("md5")
+                .is_none()
+        );
+
+        source.md5 = Some("  ".to_owned());
+        assert_eq!(tracked_file_meta_from_mod_file(&source).md5, None);
+
+        source.md5 = Some("5d41402abc4b2a76b9719d911017c592".to_owned());
+        let tracked = tracked_file_meta_from_mod_file(&source);
+        assert_eq!(
+            tracked.md5.as_deref(),
+            Some("5d41402abc4b2a76b9719d911017c592")
+        );
+        let roundtrip: TrackedFileMeta =
+            serde_json::from_value(serde_json::to_value(&tracked).unwrap()).unwrap();
+        assert_eq!(roundtrip.md5, tracked.md5);
+    }
+
+    #[test]
+    fn tracked_file_meta_signature_equality_ignores_checksum() {
+        let source = mod_file(10, "legacy.zip", 100);
+        let left = tracked_file_meta_from_mod_file(&source);
+        let mut right = left.clone();
+        right.md5 = Some("5d41402abc4b2a76b9719d911017c592".to_owned());
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn merged_recipe_saves_the_checksum_of_the_arriving_file() {
+        let outfit = mod_file(10, "outfit.zip", 100);
+        let mut library = mod_file(11, "library.zip", 100);
+        library.md5 = Some("5d41402abc4b2a76b9719d911017c592".to_owned());
+
+        let merged = merge_file_set_recipe(&fallback_file_set(&outfit), &[library], &[]);
+
+        assert_eq!(merged.selected_file_ids, vec![10, 11]);
+        assert_eq!(merged.selected_files_meta[0].md5, None);
+        assert_eq!(
+            merged.selected_files_meta[1].md5.as_deref(),
+            Some("5d41402abc4b2a76b9719d911017c592")
+        );
     }
 
     #[test]
@@ -7003,6 +7342,228 @@ mod update_signature_tests {
             source_metadata.raw_profile_json.as_deref(),
             serde_json::to_string(&fresh_profile).ok().as_deref()
         );
+    }
+
+    #[test]
+    fn hidden_page_keeps_the_last_known_file_list() {
+        let mut known_file = mod_file(10, "source.zip", 100);
+        known_file.md5 = Some("5d41402abc4b2a76b9719d911017c592".to_owned());
+        let known = profile_to_snapshot(&profile(vec![known_file], 100));
+        let hidden_pages = [
+            GameBananaSnapshot {
+                is_private: true,
+                ..Default::default()
+            },
+            GameBananaSnapshot {
+                is_trashed: true,
+                ..Default::default()
+            },
+            GameBananaSnapshot {
+                is_withheld: true,
+                ..Default::default()
+            },
+        ];
+
+        for hidden in hidden_pages {
+            let mut stored = Some(known.clone());
+            store_snapshot_keeping_hidden_page_files(&mut stored, hidden.clone());
+            assert_eq!(
+                stored,
+                Some(GameBananaSnapshot {
+                    files: known.files.clone(),
+                    ..hidden.clone()
+                })
+            );
+
+            store_snapshot_keeping_hidden_page_files(&mut stored, hidden.clone());
+            assert_eq!(
+                stored,
+                Some(GameBananaSnapshot {
+                    files: known.files.clone(),
+                    ..hidden
+                }),
+                "a repeated check keeps the list too"
+            );
+        }
+    }
+
+    #[test]
+    fn visible_or_removed_page_replaces_the_file_list() {
+        let known = profile_to_snapshot(&profile(vec![mod_file(10, "source.zip", 100)], 100));
+        let newer = profile_to_snapshot(&profile(vec![mod_file(20, "source-v2.zip", 200)], 200));
+
+        let mut stored = Some(known.clone());
+        store_snapshot_keeping_hidden_page_files(&mut stored, newer.clone());
+        assert_eq!(stored.as_ref(), Some(&newer));
+
+        let private_page_listing_files = GameBananaSnapshot {
+            is_private: true,
+            ..newer
+        };
+        let mut stored = Some(known.clone());
+        store_snapshot_keeping_hidden_page_files(&mut stored, private_page_listing_files.clone());
+        assert_eq!(stored, Some(private_page_listing_files));
+
+        let visible_page_without_files = GameBananaSnapshot::default();
+        let mut stored = Some(known.clone());
+        store_snapshot_keeping_hidden_page_files(&mut stored, visible_page_without_files.clone());
+        assert_eq!(stored, Some(visible_page_without_files));
+
+        let removed_page = GameBananaSnapshot {
+            is_deleted: true,
+            ..Default::default()
+        };
+        let mut stored = Some(known);
+        store_snapshot_keeping_hidden_page_files(&mut stored, removed_page.clone());
+        assert_eq!(stored, Some(removed_page));
+    }
+
+    #[test]
+    fn hidden_page_with_nothing_stored_has_no_files_to_keep() {
+        let hidden = GameBananaSnapshot {
+            is_private: true,
+            ..Default::default()
+        };
+        let mut stored = None;
+        store_snapshot_keeping_hidden_page_files(&mut stored, hidden.clone());
+        assert_eq!(stored, Some(hidden));
+    }
+
+    #[test]
+    fn image_sync_of_a_hidden_page_keeps_the_last_known_file_list() {
+        let live_profile = profile(vec![mod_file(10, "source.zip", 100)], 100);
+        let cached_at = Utc::now();
+        let mut mod_entry = cached_mod_entry("source", &live_profile, cached_at);
+        let known = profile_to_snapshot(&live_profile);
+        mod_entry
+            .source
+            .as_mut()
+            .expect("source metadata")
+            .snapshot = Some(known.clone());
+
+        let mut private_profile = profile(Vec::new(), 100);
+        private_profile.is_private = true;
+        HestiaApp::apply_sync_profile_metadata(
+            &mut mod_entry,
+            &private_profile,
+            Some(cached_at + chrono::Duration::nanoseconds(1)),
+        );
+
+        let stored = mod_entry
+            .source
+            .as_ref()
+            .and_then(|source| source.snapshot.as_ref())
+            .expect("stored snapshot");
+        assert!(stored.is_private);
+        assert_eq!(stored.files, known.files);
+    }
+
+    #[test]
+    fn private_page_is_reported_only_while_it_is_not_stored_as_private() {
+        let visible = profile_to_snapshot(&profile(vec![mod_file(10, "source.zip", 100)], 100));
+        let private = GameBananaSnapshot {
+            is_private: true,
+            ..Default::default()
+        };
+        let trashed = GameBananaSnapshot {
+            is_trashed: true,
+            ..Default::default()
+        };
+
+        assert!(!private_page_was_already_stored(None, Some(&private)));
+        assert!(!private_page_was_already_stored(Some(&private), None));
+        assert!(!private_page_was_already_stored(Some(&private), Some(&trashed)));
+        assert!(!private_page_was_already_stored(Some(&private), Some(&visible)));
+        assert!(!private_page_was_already_stored(Some(&trashed), Some(&private)));
+
+        let mut stored = Some(visible);
+        assert!(!private_page_was_already_stored(stored.as_ref(), Some(&private)));
+        store_snapshot_keeping_hidden_page_files(&mut stored, private.clone());
+        assert!(private_page_was_already_stored(stored.as_ref(), Some(&private)));
+    }
+
+    fn fresh_install_meta(mod_id: u64) -> PendingBrowseInstallMeta {
+        PendingBrowseInstallMeta {
+            mod_id,
+            game_id: "game".to_owned(),
+            selected_files: Vec::new(),
+            update_folder_name: None,
+            update_target_mod_id: None,
+            update_target_was_disabled: false,
+            install_state: ModInstallState::Enabled,
+            preserve_existing_state: false,
+            post_install_rename_to: None,
+            profile_cached_at: None,
+            is_tool: false,
+            explicit_resolution: None,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_tracked_files_only_for_a_fresh_install_onto_its_own_page() {
+        let cached_at = Utc::now();
+        let outfit_page = profile(vec![mod_file(10, "outfit.zip", 100)], 100);
+        let mut other_page = profile(vec![mod_file(20, "other.zip", 100)], 100);
+        other_page.id = 2;
+        let mut unlinked = cached_mod_entry("Unlinked", &outfit_page, cached_at);
+        unlinked.source = None;
+        let mods = vec![
+            cached_mod_entry("Outfit", &outfit_page, cached_at),
+            cached_mod_entry("Other", &other_page, cached_at),
+            unlinked,
+        ];
+        let fresh = fresh_install_meta(outfit_page.id);
+
+        assert!(is_fresh_install_onto_same_page_mod(
+            &fresh,
+            &mods,
+            Path::new("Outfit")
+        ));
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &fresh,
+            &mods,
+            Path::new("Other")
+        ));
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &fresh,
+            &mods,
+            Path::new("Unlinked")
+        ));
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &fresh,
+            &mods,
+            Path::new("Missing")
+        ));
+
+        let update = PendingBrowseInstallMeta {
+            update_target_mod_id: Some("Outfit".to_owned()),
+            ..fresh.clone()
+        };
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &update,
+            &mods,
+            Path::new("Outfit")
+        ));
+
+        let tool_page_with_the_same_number = PendingBrowseInstallMeta {
+            is_tool: true,
+            ..fresh.clone()
+        };
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &tool_page_with_the_same_number,
+            &mods,
+            Path::new("Outfit")
+        ));
+
+        let other_game = PendingBrowseInstallMeta {
+            game_id: "other-game".to_owned(),
+            ..fresh
+        };
+        assert!(!is_fresh_install_onto_same_page_mod(
+            &other_game,
+            &mods,
+            Path::new("Outfit")
+        ));
     }
 
     #[test]
@@ -8433,6 +8994,7 @@ mod update_signature_tests {
                         .map(str::trim)
                         .filter(|description| !description.is_empty())
                         .map(str::to_owned),
+                    md5: None,
                 }
             }
         }

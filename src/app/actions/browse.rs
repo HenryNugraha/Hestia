@@ -1418,6 +1418,32 @@ impl HestiaApp {
                 }
             }
         }
+        for framework in self
+            .state
+            .mods
+            .iter()
+            .filter(|peer| peer.id != target.id && peer.game_id == target.game_id)
+        {
+            let Some(page) = mod_framework_record(framework)
+                .and_then(|record| record.page(pending.gb_id, pending.is_tool))
+            else {
+                continue;
+            };
+            let title = framework
+                .metadata
+                .user
+                .title
+                .as_ref()
+                .unwrap_or(&framework.folder_name);
+            for copy in &page.copies {
+                if !other_mod_titles
+                    .iter()
+                    .any(|(known, _)| *known == copy.file_id)
+                {
+                    other_mod_titles.push((copy.file_id, title.clone()));
+                }
+            }
+        }
         let factual_newer_files = available_newer_files(&source.file_set, &canonical_profile);
         let newer_file_ids: HashSet<u64> = factual_newer_files
             .iter()
@@ -2800,7 +2826,22 @@ impl HestiaApp {
                         source.file_set.clone(),
                     ));
                 }
-                let evaluations = evaluate_file_set_update_group(&group_items, &detail.profile);
+                let full_profile: &gamebanana::ProfileResponse = &detail.profile;
+                let framework_copies = framework_covered_file_ids(
+                    &self.state.mods,
+                    &pending.game_id,
+                    pending.mod_id,
+                    existing_is_tool,
+                );
+                let outfit_profile = profile_without_framework_copies(
+                    full_profile,
+                    &framework_copies,
+                    group_items.iter().map(|(_, file_set)| file_set),
+                );
+                let evaluations = evaluate_file_set_update_group(
+                    &group_items,
+                    outfit_profile.as_ref().unwrap_or(full_profile),
+                );
                 let update_files = target_index
                     .and_then(|idx| evaluations.get(idx))
                     .map(|evaluation| {
@@ -3386,6 +3427,12 @@ impl HestiaApp {
         let key = bundle.key;
         let game_id = bundle.game_id.clone();
         let members = bundle.members.clone();
+        let update_target = bundle
+            .target
+            .as_ref()
+            .and_then(|(mod_id, _)| self.state.mods.iter().find(|entry| entry.id == *mod_id))
+            .map(framework_installed_folder);
+        let framework_context = self.framework_install_context(&game_id);
         self.thalia_install_bundles[index].preparing = true;
         for member in members {
             self.update_task_status(member, TaskStatus::Installing);
@@ -3394,6 +3441,8 @@ impl HestiaApp {
             job_id: key,
             game_id,
             parts,
+            framework_context,
+            update_target,
         });
     }
 
@@ -3424,6 +3473,9 @@ impl HestiaApp {
             self.thalia_install_bundles[index].target_changed = true;
             self.fail_thalia_bundle(index, None, None);
             return;
+        }
+        for folder in folders.iter().filter(|folder| folder.kept_out_of_the_merge) {
+            self.install_bundle_member_as_framework(index, folder.job_id);
         }
         let bundle = &self.thalia_install_bundles[index];
         let lead = folders
@@ -3466,6 +3518,22 @@ impl HestiaApp {
                 title,
                 ImportSource::Folder(folder.source),
             );
+        }
+    }
+
+    fn install_bundle_member_as_framework(&mut self, index: usize, job_id: u64) {
+        self.thalia_install_bundles[index].separate.insert(job_id);
+        self.thalia_separate_install_jobs.insert(job_id);
+        self.frameworks.bundle_frameworks.insert(job_id);
+        let install_state = self.state.static_prefs.mod_install_state;
+        if let Some(meta) = self.pending_browse_install_meta.get_mut(&job_id) {
+            meta.update_folder_name = None;
+            meta.update_target_mod_id = None;
+            meta.update_target_was_disabled = false;
+            meta.install_state = install_state;
+            meta.preserve_existing_state = false;
+            meta.post_install_rename_to = None;
+            meta.explicit_resolution = Some(ImportResolution::KeepBoth);
         }
     }
 

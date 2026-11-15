@@ -1421,6 +1421,7 @@ impl HestiaApp {
             entry.game_id == target.game_id
                 && entry.id != target.id
                 && entry.status == ModStatus::Active
+                && mod_framework_record(entry).is_none()
                 && effective_category_id(&self.state.categories, entry) == Some(category_id)
         })
     }

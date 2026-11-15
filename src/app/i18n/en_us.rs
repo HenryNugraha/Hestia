@@ -1028,4 +1028,21 @@ const EN_US: [&str; TEXT_KEY_COUNT] = [
     "Carousel (horizontal)", // SettingsGameOverlayCharacterLayoutCarousel
     "Grid (vertical)", // SettingsGameOverlayCharacterLayoutGrid
     "Carousel shows one row that scrolls sideways, and the mouse wheel picks as it goes. Grid shows 7 per row and the wheel scrolls whole rows without picking, which is quicker with many characters.", // SettingsGameOverlayCharacterLayoutTooltip
+
+    // Framework mods
+    "Framework installed", // FrameworkInstalledAction
+    "Framework updated", // FrameworkUpdatedAction
+    "Framework copy skipped", // FrameworkCopySkippedAction
+    "Framework fetched", // FrameworkFetchedAction
+    "Is this a framework?", // FrameworkQuestionTitle
+    "{name} has no models or textures. Is it a framework, a shared library that other mods use?", // FrameworkQuestionBody
+    "Yes, a framework", // FrameworkQuestionYes
+    "No, a regular mod", // FrameworkQuestionNo
+    "Newer framework copy?", // FrameworkCopyQuestionTitle
+    "Hestia can’t tell whether this copy of {name} is newer than yours.", // FrameworkCopyQuestionBody
+    "Yours: {file}", // FrameworkYourCopy
+    "That copy: {file}", // FrameworkThatCopy
+    "Use that copy", // FrameworkUseThatCopy
+    "Keep mine", // FrameworkKeepMine
+    "Another copy of this framework was found, and Hestia can’t tell whether it is newer than yours. Click to decide.", // FrameworkUndecidedTooltip
 ];

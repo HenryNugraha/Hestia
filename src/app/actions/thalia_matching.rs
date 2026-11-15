@@ -81,6 +81,7 @@ fn overlay_thalia_recommendation(entry: &mut CachedUpdateEvidence, answer: &Thal
                 version: file.version.clone(),
                 archived: false,
                 label: file.description.clone(),
+                md5: file.md5.clone(),
             })
             .collect();
         if files.len() == answer.requires.len() {
@@ -116,6 +117,7 @@ fn overlay_thalia_recommendation(entry: &mut CachedUpdateEvidence, answer: &Thal
         version: file.version.clone(),
         archived: false,
         label: file.description.clone(),
+        md5: file.md5.clone(),
     }]);
     entry.state = ModUpdateState::UpdateAvailable;
 }
@@ -885,7 +887,7 @@ fn spawn_thalia_matching_worker(
     let worker_services = runtime_services.clone();
     runtime_services.spawn(async move {
         let active_jobs = Arc::new(Semaphore::new(THALIA_MATCH_HTTP_CONCURRENCY));
-        let pacer = Arc::new(Mutex::new(ThaliaPacer::default()));
+        let pacer = thalia_shared_pacer();
         while let Some(request) = request_rx.recv().await {
             let permit = match Arc::clone(&active_jobs).acquire_owned().await {
                 Ok(permit) => permit,
@@ -908,6 +910,7 @@ fn spawn_thalia_matching_worker(
                                 thalia::UpdateMatchRequest {
                                     mod_id: request.context.source_mod_id,
                                     installed_file_id: request.context.installed_file_id,
+                                    also_mod_id: None,
                                 },
                                 request.force_refresh,
                                 Arc::clone(&request.cancellation),
@@ -995,9 +998,28 @@ impl ThaliaPacer {
     }
 }
 
+fn thalia_shared_pacer() -> Arc<Mutex<ThaliaPacer>> {
+    static PACER: std::sync::OnceLock<Arc<Mutex<ThaliaPacer>>> = std::sync::OnceLock::new();
+    Arc::clone(PACER.get_or_init(|| Arc::new(Mutex::new(ThaliaPacer::default()))))
+}
+
 async fn fetch_paced_update_match<F, Fut>(
     pacer: &Mutex<ThaliaPacer>,
     request: &ThaliaMatchRequest,
+    send: F,
+) -> Result<thalia::UpdateMatchResponse, thalia::UpdateMatchError>
+where
+    F: FnMut() -> Fut,
+    Fut:
+        std::future::Future<Output = Result<thalia::UpdateMatchResponse, thalia::UpdateMatchError>>,
+{
+    fetch_paced_thalia_answer(pacer, &request.cancellation, &request.started, send).await
+}
+
+async fn fetch_paced_thalia_answer<F, Fut>(
+    pacer: &Mutex<ThaliaPacer>,
+    cancellation: &AtomicBool,
+    started: &AtomicBool,
     mut send: F,
 ) -> Result<thalia::UpdateMatchResponse, thalia::UpdateMatchError>
 where
@@ -1009,7 +1031,7 @@ where
     let mut retries = 0;
     loop {
         loop {
-            if request.cancellation.load(Ordering::Relaxed) {
+            if cancellation.load(Ordering::Relaxed) {
                 return Err(thalia::UpdateMatchError::Cancelled);
             }
             let Some(wait) = lock().try_start(Instant::now()) else {
@@ -1017,7 +1039,7 @@ where
             };
             tokio::time::sleep(wait.min(Duration::from_millis(250))).await;
         }
-        request.started.store(true, Ordering::Relaxed);
+        started.store(true, Ordering::Relaxed);
         let result = send().await;
         match &result {
             Err(error) if error.is_rate_limited() => {
@@ -1431,6 +1453,12 @@ impl HestiaApp {
                 );
             }
         }
+        peers.extend(framework_covered_file_ids(
+            &self.state.mods,
+            &mod_entry.game_id,
+            link.mod_id,
+            false,
+        ));
         peers.sort_unstable();
         peers.dedup();
         candidate_file_ids.retain(|id| peers.binary_search(id).is_err());
@@ -1776,6 +1804,8 @@ impl HestiaApp {
             action,
             id: plan.recommendation.id,
             requires: plan.recommendation.requires.clone(),
+            name: None,
+            file_type: None,
         };
         validated_recommendation(&context, &response)?;
         let canonical = matcher_adapter::canonicalize_profile(fresh_profile);
@@ -1820,6 +1850,8 @@ impl HestiaApp {
                 })
         });
         installed
+            || framework_covered_file_ids(&self.state.mods, game_id, source_mod_id, false)
+                .contains(&file_id)
             || self.pending_browse_install_meta.values().any(|meta| {
                 meta.game_id == game_id
                     && meta.mod_id == source_mod_id
@@ -1999,6 +2031,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Update,
                     id: Some(88),
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
             );
         }
@@ -2039,6 +2073,8 @@ mod thalia_matching_tests {
                 action: thalia::UpdateMatchAction::Current,
                 id: None,
                 requires: Vec::new(),
+                name: None,
+                file_type: None,
             },
         );
         assert!(state.pending_mod_ids(&contexts).is_empty());
@@ -2072,6 +2108,8 @@ mod thalia_matching_tests {
                 action: thalia::UpdateMatchAction::Current,
                 id: None,
                 requires: Vec::new(),
+                name: None,
+                file_type: None,
             },
         );
         state.request_with_gate(context.clone(), true, true);
@@ -2093,6 +2131,8 @@ mod thalia_matching_tests {
                 action: thalia::UpdateMatchAction::Update,
                 id: Some(88),
                 requires: Vec::new(),
+                name: None,
+                file_type: None,
             },
         );
         state.request_with_gate(context_for("b", 2, vec![88]), false, true);
@@ -2221,6 +2261,8 @@ mod thalia_matching_tests {
                     action,
                     id: file_id,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
             });
         }
@@ -2514,6 +2556,8 @@ mod thalia_matching_tests {
                 id: 12,
                 action: Mode::Separate,
             }],
+            name: None,
+            file_type: None,
         };
         assert!(validated_recommendation(&context, &response).is_none());
     }
@@ -2774,6 +2818,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Update,
             id: Some(77),
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         assert!(validated_recommendation(&context, &response).is_none());
     }
@@ -2785,6 +2831,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Merge,
             id: Some(88),
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         let recommendation = validated_recommendation(&context, &response).unwrap();
         assert_eq!(recommendation.action, ThaliaRecommendationAction::Merge);
@@ -2798,7 +2846,13 @@ mod thalia_matching_tests {
             thalia::UpdateMatchAction::Current,
             thalia::UpdateMatchAction::Uncertain,
         ] {
-            let response = thalia::UpdateMatchResponse { action, id: None, requires: Vec::new() };
+            let response = thalia::UpdateMatchResponse {
+                action,
+                id: None,
+                requires: Vec::new(),
+                name: None,
+                file_type: None,
+            };
             assert!(validated_recommendation(&context, &response).is_some());
         }
     }
@@ -2814,6 +2868,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now(),
             },
@@ -2856,6 +2912,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
             }],
             |_| true,
@@ -2886,6 +2944,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         state.apply_results(
             contexts[..2]
@@ -2950,6 +3010,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         state.apply_results(
             vec![ThaliaMatchResult::Completed {
@@ -2992,6 +3054,8 @@ mod thalia_matching_tests {
                         action: thalia::UpdateMatchAction::Update,
                         id: Some(88),
                         requires: Vec::new(),
+                        name: None,
+                        file_type: None,
                     },
                     cached_at: Instant::now(),
                 },
@@ -3021,6 +3085,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Update,
             id: Some(88),
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         let recommendation = ThaliaRecommendation {
             action: ThaliaRecommendationAction::Update,
@@ -3076,6 +3142,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now(),
             },
@@ -3096,6 +3164,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now(),
             },
@@ -3139,6 +3209,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Update,
                     id: Some(88),
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now(),
             },
@@ -3174,6 +3246,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now() - THALIA_MATCH_CACHE_TTL + Duration::from_secs(1),
             },
@@ -3204,6 +3278,8 @@ mod thalia_matching_tests {
                     action: thalia::UpdateMatchAction::Current,
                     id: None,
                     requires: Vec::new(),
+                    name: None,
+                    file_type: None,
                 },
                 cached_at: Instant::now() - THALIA_MATCH_CACHE_TTL - Duration::from_secs(1),
             },
@@ -3265,6 +3341,8 @@ mod thalia_matching_tests {
                 action: thalia::UpdateMatchAction::Current,
                 id: None,
                 requires: Vec::new(),
+                name: None,
+                file_type: None,
             })
         };
         let run = |answers: Vec<Result<_, _>>| {
@@ -3353,6 +3431,8 @@ mod thalia_matching_tests {
             action: thalia::UpdateMatchAction::Current,
             id: None,
             requires: Vec::new(),
+            name: None,
+            file_type: None,
         };
         result_tx
             .send(ThaliaMatchResult::Completed {

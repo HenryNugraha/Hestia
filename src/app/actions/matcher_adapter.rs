@@ -310,6 +310,7 @@ pub(super) struct NativeSingleEvaluation {
     pub(super) is_native_single: bool,
     pub(super) abstention_state: ModUpdateState,
     pub(super) missing_listing_ids: Vec<u64>,
+    pub(super) missing_pick_listing_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -324,6 +325,77 @@ fn known_source_date(
     (tracked.date_added > 0)
         .then_some(tracked.date_added)
         .or_else(|| current.map(|file| file.date_added).filter(|date| *date > 0))
+}
+
+const UNPROVEN_GROWTH_FLOOR_BYTES: u64 = 20 * 1024 * 1024;
+const UNPROVEN_GROWTH_LIMIT_TIMES: u64 = 20;
+
+fn known_source_size(
+    tracked: &TrackedFileMeta,
+    current: Option<&gamebanana::ModFile>,
+) -> Option<u64> {
+    current
+        .map(|file| file.file_size)
+        .filter(|size| *size > 0)
+        .or(tracked.file_size.filter(|size| *size > 0))
+}
+
+fn outgrows_source_without_release_proof(
+    source_size: Option<u64>,
+    candidate: &gamebanana::ModFile,
+    evidence: &CandidateEvidence,
+) -> bool {
+    !evidence.verified_release_chain
+        && !evidence.verified_typed_release
+        && candidate.file_size > UNPROVEN_GROWTH_FLOOR_BYTES
+        && source_size.is_some_and(|source_size| {
+            candidate.file_size > source_size.saturating_mul(UNPROVEN_GROWTH_LIMIT_TIMES)
+        })
+}
+
+fn choose_update_candidate(
+    tracked: &TrackedFileMeta,
+    current: Option<&gamebanana::ModFile>,
+    candidates: &[gamebanana::ModFile],
+    evidence: &[CandidateEvidence],
+) -> Option<u64> {
+    let source_size = known_source_size(tracked, current);
+    choose_candidate(evidence).filter(|candidate_id| {
+        !candidates.iter().zip(evidence).any(|(candidate, evidence)| {
+            candidate.id == *candidate_id
+                && outgrows_source_without_release_proof(source_size, candidate, evidence)
+        })
+    })
+}
+
+type FileListings = std::collections::BTreeMap<u64, Vec<String>>;
+
+fn pick_trades_models_for_settings_only(
+    source_id: Option<u64>,
+    candidate_id: u64,
+    listings: &FileListings,
+) -> bool {
+    let contents = |file_id: u64| {
+        listings
+            .get(&file_id)
+            .map(|paths| frameworks::listed_contents(paths))
+    };
+    source_id.and_then(contents) == Some(frameworks::ListedContents::ModelsOrTextures)
+        && contents(candidate_id) == Some(frameworks::ListedContents::SettingsOnly)
+}
+
+fn listings_missing_for_the_pick(
+    source_id: Option<u64>,
+    candidate_id: u64,
+    listings: &FileListings,
+) -> Vec<u64> {
+    let Some(source_id) = source_id else {
+        return Vec::new();
+    };
+    [source_id, candidate_id]
+        .into_iter()
+        .filter(|file_id| !listings.contains_key(file_id))
+        .collect()
 }
 
 fn source_matches_candidate(candidate: &gamebanana::ModFile, tracked: &TrackedFileMeta) -> bool {
@@ -498,7 +570,16 @@ fn evaluate_single(
         .then_some(tracked.file_id)
         .or_else(|| current.map(|(file, _)| file.id).filter(|id| *id != 0));
     let missing_listing_ids = attach_path_scores(context, source_id, &mut evidence, &rows);
-    let choice = choose_candidate(&evidence);
+    let listings = &context.canonical.profile.file_listings;
+    let choice = choose_update_candidate(
+        &tracked,
+        current.map(|(file, _)| file),
+        &context.canonical.active,
+        &evidence,
+    )
+    .filter(|candidate_id| {
+        !pick_trades_models_for_settings_only(source_id, *candidate_id, listings)
+    });
     let Some(candidate_id) = choice else {
         return NativeSingleEvaluation {
             evaluation: FileSetUpdateEvaluation {
@@ -509,6 +590,7 @@ fn evaluate_single(
             is_native_single: true,
             abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
             missing_listing_ids,
+            missing_pick_listing_ids: Vec::new(),
         };
     };
     let Some(candidate) = context
@@ -526,6 +608,7 @@ fn evaluate_single(
             is_native_single: true,
             abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
             missing_listing_ids: Vec::new(),
+            missing_pick_listing_ids: Vec::new(),
         };
     };
     let signature =
@@ -543,6 +626,7 @@ fn evaluate_single(
         is_native_single: true,
         abstention_state: no_update_state(&tracked, current.map(|(file, _)| file)),
         missing_listing_ids: Vec::new(),
+        missing_pick_listing_ids: listings_missing_for_the_pick(source_id, candidate_id, listings),
     }
 }
 
@@ -616,7 +700,215 @@ mod tests {
             version: None,
             archived: false,
             label: None,
+            md5: None,
         }
+    }
+
+    const MIB: u64 = 1024 * 1024;
+
+    fn page_file(id: u64, file_size: u64) -> gamebanana::ModFile {
+        gamebanana::ModFile {
+            id,
+            file_name: format!("file-{id}.zip"),
+            file_size,
+            date_added: 200,
+            download_count: 0,
+            description: None,
+            version: None,
+            download_url: Some(format!("https://example.com/file-{id}.zip")),
+            is_archived: false,
+            md5: None,
+        }
+    }
+
+    fn model_pick(file_id: u64) -> CandidateEvidence {
+        CandidateEvidence {
+            file_id,
+            score: Some(1.0),
+            path_score: None,
+            eligible: true,
+            vetoed: false,
+            verified_release_chain: false,
+            verified_typed_release: false,
+            model_evidence_floor: true,
+        }
+    }
+
+    fn sized_source(file_size: Option<u64>) -> TrackedFileMeta {
+        TrackedFileMeta {
+            file_id: 10,
+            file_size,
+            ..tracked("library.zip", 100)
+        }
+    }
+
+    #[test]
+    fn unproven_pick_growing_past_twenty_times_over_the_floor_abstains() {
+        let source = sized_source(Some(104 * 1024));
+        let outfit = [page_file(20, 60 * MIB)];
+        let evidence = [model_pick(20)];
+        assert_eq!(choose_candidate(&evidence), Some(20));
+        assert_eq!(choose_update_candidate(&source, None, &outfit, &evidence), None);
+
+        let source = sized_source(Some(2 * MIB));
+        let exactly_twenty_times = [page_file(20, 40 * MIB)];
+        assert_eq!(
+            choose_update_candidate(&source, None, &exactly_twenty_times, &evidence),
+            Some(20)
+        );
+        let just_past_twenty_times = [page_file(20, 40 * MIB + 1)];
+        assert_eq!(
+            choose_update_candidate(&source, None, &just_past_twenty_times, &evidence),
+            None
+        );
+    }
+
+    #[test]
+    fn unproven_growth_is_measured_against_the_picked_file_only() {
+        let source = sized_source(Some(30 * MIB));
+        let files = [page_file(20, 31 * MIB), page_file(21, 900 * MIB)];
+        let mut bystander = model_pick(21);
+        bystander.score = Some(0.0);
+        let evidence = [model_pick(20), bystander];
+        assert_eq!(
+            choose_update_candidate(&source, None, &files, &evidence),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn release_proof_allows_growth_past_twenty_times() {
+        let source = sized_source(Some(104 * 1024));
+        let outfit = [page_file(20, 60 * MIB)];
+        let mut chain = model_pick(20);
+        chain.verified_release_chain = true;
+        assert_eq!(
+            choose_update_candidate(&source, None, &outfit, &[chain]),
+            Some(20)
+        );
+        let mut typed = model_pick(20);
+        typed.verified_typed_release = true;
+        assert_eq!(
+            choose_update_candidate(&source, None, &outfit, &[typed]),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn unproven_growth_under_the_floor_is_allowed() {
+        let source = sized_source(Some(1024));
+        let evidence = [model_pick(20)];
+        let at_the_floor = [page_file(20, 20 * MIB)];
+        assert_eq!(
+            choose_update_candidate(&source, None, &at_the_floor, &evidence),
+            Some(20)
+        );
+        let over_the_floor = [page_file(20, 20 * MIB + 1)];
+        assert_eq!(
+            choose_update_candidate(&source, None, &over_the_floor, &evidence),
+            None
+        );
+    }
+
+    #[test]
+    fn unproven_growth_from_an_unknown_source_size_is_allowed() {
+        let outfit = [page_file(20, 60 * MIB)];
+        let evidence = [model_pick(20)];
+        assert_eq!(
+            choose_update_candidate(&sized_source(None), None, &outfit, &evidence),
+            Some(20)
+        );
+        assert_eq!(
+            choose_update_candidate(&sized_source(Some(0)), None, &outfit, &evidence),
+            Some(20)
+        );
+        let sizeless_page_file = page_file(10, 0);
+        assert_eq!(
+            choose_update_candidate(
+                &sized_source(None),
+                Some(&sizeless_page_file),
+                &outfit,
+                &evidence
+            ),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn source_size_prefers_the_page_file_over_the_saved_size() {
+        let on_page = page_file(10, 5 * MIB);
+        assert_eq!(
+            known_source_size(&sized_source(Some(104 * 1024)), Some(&on_page)),
+            Some(5 * MIB)
+        );
+        assert_eq!(
+            known_source_size(&sized_source(Some(104 * 1024)), None),
+            Some(104 * 1024)
+        );
+        let sizeless_page_file = page_file(10, 0);
+        assert_eq!(
+            known_source_size(&sized_source(Some(104 * 1024)), Some(&sizeless_page_file)),
+            Some(104 * 1024)
+        );
+        assert_eq!(known_source_size(&sized_source(None), None), None);
+
+        let outfit = [page_file(20, 60 * MIB)];
+        let evidence = [model_pick(20)];
+        assert_eq!(
+            choose_update_candidate(
+                &sized_source(Some(104 * 1024)),
+                Some(&on_page),
+                &outfit,
+                &evidence
+            ),
+            Some(20)
+        );
+        assert_eq!(
+            choose_update_candidate(&sized_source(Some(104 * 1024)), None, &outfit, &evidence),
+            None
+        );
+    }
+
+    fn listed(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|path| (*path).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_settings_only_pick_is_refused_only_for_a_source_with_models() {
+        let outfit = listed(&["Outfit/outfit.ini", "Outfit/body.buf", "Outfit/skin.dds"]);
+        let library = listed(&["LibraryFX/libraryfx.ini", "LibraryFX/cloth.hlsl"]);
+        let wrapped = listed(&["notes.ini", "Outfit.7z"]);
+        let listings = FileListings::from([
+            (10, outfit.clone()),
+            (11, library.clone()),
+            (20, library),
+            (21, outfit),
+            (22, wrapped),
+        ]);
+
+        assert!(pick_trades_models_for_settings_only(Some(10), 20, &listings));
+        assert!(!pick_trades_models_for_settings_only(Some(10), 21, &listings));
+        assert!(!pick_trades_models_for_settings_only(Some(10), 22, &listings));
+        assert!(!pick_trades_models_for_settings_only(Some(11), 20, &listings));
+        assert!(!pick_trades_models_for_settings_only(Some(10), 99, &listings));
+        assert!(!pick_trades_models_for_settings_only(Some(98), 20, &listings));
+        assert!(!pick_trades_models_for_settings_only(None, 20, &listings));
+    }
+
+    #[test]
+    fn a_pick_asks_for_the_lists_it_has_not_seen() {
+        let listings = FileListings::from([(10, listed(&["Outfit/outfit.ini"]))]);
+
+        assert_eq!(
+            listings_missing_for_the_pick(Some(10), 20, &listings),
+            vec![20]
+        );
+        assert_eq!(
+            listings_missing_for_the_pick(Some(11), 20, &listings),
+            vec![11, 20]
+        );
+        assert!(listings_missing_for_the_pick(Some(10), 10, &listings).is_empty());
+        assert!(listings_missing_for_the_pick(None, 20, &listings).is_empty());
     }
 
     #[test]
@@ -672,6 +964,7 @@ mod tests {
             is_native_single: true,
             abstention_state: ModUpdateState::UpToDate,
             missing_listing_ids: Vec::new(),
+            missing_pick_listing_ids: Vec::new(),
         }];
 
         abstain_competing_native_claims(&mut evaluations, &HashSet::from([candidate_id]));

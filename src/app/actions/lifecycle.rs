@@ -234,6 +234,16 @@ impl HestiaApp {
             update_check_worker_rx,
             update_check_worker_tx,
         );
+        let (framework_request_tx, framework_request_rx) =
+            worker_channel::<FrameworkRequest>();
+        let (framework_event_tx, framework_event_rx) =
+            worker_channel::<FrameworkEvent>();
+        spawn_framework_worker(
+            &runtime_services,
+            portable.clone(),
+            framework_request_rx,
+            framework_event_tx,
+        );
         let (refresh_request_tx, refresh_request_rx) =
             worker_channel::<RefreshRequest>();
         let (refresh_result_tx, refresh_result_rx) =
@@ -615,6 +625,7 @@ impl HestiaApp {
             thalia_separate_install_jobs: HashSet::new(),
             thalia_canceled_bundle_tasks: HashSet::new(),
             thalia_bundle_manifests: HashMap::new(),
+            frameworks: FrameworkRuntime::new(framework_request_tx, framework_event_rx),
             gif_rewritten_markdown_cache: HashMap::new(),
             markdown_dependency_signature_cache: HashMap::new(),
             render_safe_markdown_cache: HashMap::new(),
@@ -3626,13 +3637,17 @@ impl HestiaApp {
                         .map(|game| game.definition.id.clone())
                         .collect(),
                 };
-                for scan_game_id in scan_game_ids {
-                    self.run_xxmi_persist_scan_pass(&scan_game_id);
+                for scan_game_id in &scan_game_ids {
+                    self.run_xxmi_persist_scan_pass(scan_game_id);
                 }
                 self.invalidate_stale_mod_textures(&old_ts);
                 self.backfill_missing_mod_images(game_id.as_deref());
                 self.sync_tools_for_selected_game();
                 self.save_state();
+                for scan_game_id in &scan_game_ids {
+                    self.note_switched_on_mods(scan_game_id);
+                    self.request_framework_warm_facts(scan_game_id);
+                }
                 self.sync_selection_after_refresh();
                 self.queue_update_check_for_linked_mods(game_id.as_deref());
                 self.request_automatic_app_update_check(0.0);
@@ -4023,6 +4038,7 @@ impl HestiaApp {
             || !self.translation_event_rx.is_empty()
             || !self.install_event_rx.is_empty()
             || !self.refresh_result_rx.is_empty()
+            || !self.frameworks.event_rx.is_empty()
             || !self.xxmi_reload_event_rx.is_empty()
             || !self.grant_access_event_rx.is_empty()
             || !self.hotkey_customization_rx.is_empty()

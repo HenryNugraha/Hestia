@@ -33,6 +33,7 @@ const RESPONSE_BODY_LIMIT: usize = 4 * 1024;
 const CHALLENGE_BODY_LIMIT: usize = 64 * 1024;
 const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const REQUIRED_FILES_LIMIT: usize = 8;
+const RESPONSE_NAME_CHARS_LIMIT: usize = 80;
 const ALTCHA_POW_WORKERS: u32 = 4;
 
 struct AltchaProofGate {
@@ -53,6 +54,7 @@ static ALTCHA_PROOF_GATE: std::sync::OnceLock<Arc<AltchaProofGate>> = std::sync:
 pub(crate) struct UpdateMatchRequest {
     pub(crate) mod_id: u64,
     pub(crate) installed_file_id: u64,
+    pub(crate) also_mod_id: Option<u64>,
 }
 
 impl UpdateMatchRequest {
@@ -65,6 +67,14 @@ impl UpdateMatchRequest {
         if self.installed_file_id == 0 || self.installed_file_id > JSON_SAFE_INTEGER_MAX {
             return Err(UpdateMatchError::InvalidRequest(
                 "installed_file_id must be a positive JSON-safe integer",
+            ));
+        }
+        if self
+            .also_mod_id
+            .is_some_and(|also_mod_id| also_mod_id == 0 || also_mod_id > JSON_SAFE_INTEGER_MAX)
+        {
+            return Err(UpdateMatchError::InvalidRequest(
+                "also_mod_id must be a positive JSON-safe integer",
             ));
         }
         Ok(())
@@ -91,11 +101,20 @@ pub(crate) struct UpdateMatchRequiredFile {
     pub(crate) action: UpdateMatchRequiredAction,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateMatchFileType {
+    Framework,
+    Regular,
+    Uncertain,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UpdateMatchResponse {
     pub(crate) action: UpdateMatchAction,
     pub(crate) id: Option<u64>,
     pub(crate) requires: Vec<UpdateMatchRequiredFile>,
+    pub(crate) name: Option<String>,
+    pub(crate) file_type: Option<UpdateMatchFileType>,
 }
 
 impl UpdateMatchResponse {
@@ -128,6 +147,14 @@ impl UpdateMatchResponse {
             }
             if Some(required.id) == self.id || !seen.insert(required.id) {
                 return Err("required ids must be unique and differ from id".to_string());
+            }
+        }
+        if let Some(name) = &self.name {
+            if name.chars().count() > RESPONSE_NAME_CHARS_LIMIT {
+                return Err("name is too long".to_string());
+            }
+            if name.chars().any(char::is_control) {
+                return Err("name must not contain control characters".to_string());
             }
         }
         Ok(())
@@ -289,12 +316,16 @@ async fn fetch_update_match_for_test_with_timeout(
 }
 
 fn update_match_url(base_url: &str, request: &UpdateMatchRequest) -> String {
-    format!(
+    let url = format!(
         "{}/gamebanana/update/{}/from/{}",
         base_url.trim_end_matches('/'),
         request.mod_id,
         request.installed_file_id,
-    )
+    );
+    match request.also_mod_id {
+        Some(also_mod_id) => format!("{url}/also/{also_mod_id}"),
+        None => url,
+    }
 }
 
 async fn fetch_update_match_inner(
@@ -647,7 +678,8 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
     type Value = UpdateMatchResponse;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("an object with action, file and optional requires fields")
+        formatter
+            .write_str("an object with action, file and optional requires, name and type fields")
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -658,6 +690,8 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
         let mut action = None;
         let mut file = None;
         let mut requires = None;
+        let mut name = None;
+        let mut file_type = None;
         while let Some(key) = map.next_key::<String>()? {
             if !keys.insert(key.clone()) {
                 return Err(de::Error::custom("duplicate response key"));
@@ -666,6 +700,8 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
                 "action" => action = Some(map.next_value::<String>()?),
                 "file" => file = Some(map.next_value::<Option<u64>>()?),
                 "requires" => requires = Some(map.next_value::<Vec<StrictRequiredFile>>()?),
+                "name" => name = map.next_value::<Option<String>>()?,
+                "type" => file_type = Some(map.next_value::<String>()?),
                 _ => {
                     let _ = map.next_value::<IgnoredAny>()?;
                     return Err(de::Error::custom("unknown response key"));
@@ -686,10 +722,22 @@ impl<'de> Visitor<'de> for StrictResponseVisitor {
             .into_iter()
             .map(|required| required.0)
             .collect();
+        let name = name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        let file_type = match file_type.as_deref() {
+            Some("framework") => Some(UpdateMatchFileType::Framework),
+            Some("regular") => Some(UpdateMatchFileType::Regular),
+            Some("uncertain") => Some(UpdateMatchFileType::Uncertain),
+            Some(_) => return Err(de::Error::custom("unknown type")),
+            None => None,
+        };
         Ok(UpdateMatchResponse {
             action,
             id: file,
             requires,
+            name,
+            file_type,
         })
     }
 }
@@ -891,6 +939,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 0,
                 installed_file_id: 1,
+                also_mod_id: None,
             }
             .validate()
             .is_err()
@@ -899,10 +948,287 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: JSON_SAFE_INTEGER_MAX + 1,
                 installed_file_id: 1,
+                also_mod_id: None,
             }
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn request_rejects_non_json_safe_also_mod_id() {
+        let request_also_naming = |also_mod_id| UpdateMatchRequest {
+            mod_id: 1,
+            installed_file_id: 2,
+            also_mod_id,
+        };
+        for also_mod_id in [None, Some(1), Some(JSON_SAFE_INTEGER_MAX)] {
+            assert!(
+                request_also_naming(also_mod_id).validate().is_ok(),
+                "{also_mod_id:?}"
+            );
+        }
+        for also_mod_id in [Some(0), Some(JSON_SAFE_INTEGER_MAX + 1)] {
+            assert!(
+                matches!(
+                    request_also_naming(also_mod_id).validate(),
+                    Err(UpdateMatchError::InvalidRequest(_))
+                ),
+                "{also_mod_id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn address_names_the_second_page_only_when_given() {
+        let one_page = UpdateMatchRequest {
+            mod_id: 728699,
+            installed_file_id: 987654301,
+            also_mod_id: None,
+        };
+        assert_eq!(
+            update_match_url(THALIA_UPDATE_MATCH_BASE_URL, &one_page),
+            "https://thalia.hnawc.com/gamebanana/update/728699/from/987654301"
+        );
+        let two_pages = UpdateMatchRequest {
+            mod_id: 728699,
+            installed_file_id: 987654301,
+            also_mod_id: Some(650001),
+        };
+        assert_eq!(
+            update_match_url(THALIA_UPDATE_MATCH_BASE_URL, &two_pages),
+            "https://thalia.hnawc.com/gamebanana/update/728699/from/987654301/also/650001"
+        );
+    }
+
+    fn is_invalid_response(body: &[u8]) -> bool {
+        matches!(
+            parse_update_match_response(body),
+            Err(UpdateMatchError::InvalidResponse(_))
+        )
+    }
+
+    fn response_body_with_name(name: &str) -> String {
+        format!(r#"{{"action":"current","file":null,"name":"{name}","type":"framework"}}"#)
+    }
+
+    #[test]
+    fn name_and_type_are_read_from_any_position() {
+        let framework = parse_update_match_response(
+            br#"{"action": "current", "file": null, "name": "NeonRookieFX", "type": "framework"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            framework,
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Current,
+                id: None,
+                requires: Vec::new(),
+                name: Some("NeonRookieFX".to_string()),
+                file_type: Some(UpdateMatchFileType::Framework),
+            }
+        );
+        let new_fields_first = parse_update_match_response(
+            br#"{"type":"framework","name":"NeonRookieFX","requires":[{"file":3,"action":"separate"}],"file":2,"action":"update"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            new_fields_first,
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Update,
+                id: Some(2),
+                requires: vec![UpdateMatchRequiredFile {
+                    id: 3,
+                    action: UpdateMatchRequiredAction::Separate,
+                }],
+                name: Some("NeonRookieFX".to_string()),
+                file_type: Some(UpdateMatchFileType::Framework),
+            }
+        );
+    }
+
+    #[test]
+    fn null_name_with_regular_type_has_no_name() {
+        let regular = parse_update_match_response(
+            br#"{"action":"update","file":123,"name":null,"type":"regular"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            regular,
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Update,
+                id: Some(123),
+                requires: Vec::new(),
+                name: None,
+                file_type: Some(UpdateMatchFileType::Regular),
+            }
+        );
+    }
+
+    #[test]
+    fn type_alone_or_name_alone_is_accepted() {
+        let type_alone = parse_update_match_response(
+            br#"{"action":"uncertain","file":null,"type":"uncertain"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            type_alone,
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Uncertain,
+                id: None,
+                requires: Vec::new(),
+                name: None,
+                file_type: Some(UpdateMatchFileType::Uncertain),
+            }
+        );
+        let name_alone = parse_update_match_response(
+            br#"{"action":"current","file":null,"name":"NeonRookieFX"}"#,
+        )
+        .unwrap();
+        assert_eq!(name_alone.name.as_deref(), Some("NeonRookieFX"));
+        assert_eq!(name_alone.file_type, None);
+    }
+
+    #[test]
+    fn response_without_name_and_type_is_unchanged() {
+        assert_eq!(
+            parse_update_match_response(br#"{"action":"update","file":123}"#).unwrap(),
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Update,
+                id: Some(123),
+                requires: Vec::new(),
+                name: None,
+                file_type: None,
+            }
+        );
+        assert_eq!(
+            parse_update_match_response(
+                br#"{"action":"current","file":null,"requires":[{"file":1854063,"action":"separate"}]}"#,
+            )
+            .unwrap(),
+            UpdateMatchResponse {
+                action: UpdateMatchAction::Current,
+                id: None,
+                requires: vec![UpdateMatchRequiredFile {
+                    id: 1854063,
+                    action: UpdateMatchRequiredAction::Separate,
+                }],
+                name: None,
+                file_type: None,
+            }
+        );
+    }
+
+    #[test]
+    fn name_is_trimmed_and_blank_name_means_no_name() {
+        let padded = parse_update_match_response(
+            br#"{"action":"current","file":null,"name":"  Neon Rookie FX \n","type":"framework"}"#,
+        )
+        .unwrap();
+        assert_eq!(padded.name.as_deref(), Some("Neon Rookie FX"));
+        for body in [
+            br#"{"action":"current","file":null,"name":"","type":"framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"name":"   ","type":"framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"name":" \t\r\n ","type":"framework"}"#.as_slice(),
+        ] {
+            let blank = parse_update_match_response(body).unwrap();
+            assert_eq!(blank.name, None, "{body:?}");
+            assert_eq!(blank.file_type, Some(UpdateMatchFileType::Framework));
+        }
+    }
+
+    #[test]
+    fn unknown_or_non_string_type_is_rejected() {
+        for body in [
+            br#"{"action":"current","file":null,"type":"library"}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":"Framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":"REGULAR"}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":" framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":""}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":null}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":1}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":true}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":["framework"]}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":{"framework":true}}"#.as_slice(),
+        ] {
+            assert!(is_invalid_response(body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn non_string_name_is_rejected() {
+        for body in [
+            br#"{"action":"current","file":null,"name":5,"type":"framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"name":true,"type":"framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"name":["NeonRookieFX"],"type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":{"name":"NeonRookieFX"},"type":"framework"}"#
+                .as_slice(),
+        ] {
+            assert!(is_invalid_response(body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn overlong_name_is_rejected() {
+        let longest = "n".repeat(80);
+        let accepted =
+            parse_update_match_response(response_body_with_name(&longest).as_bytes()).unwrap();
+        assert_eq!(accepted.name.as_deref(), Some(longest.as_str()));
+
+        let padded = format!("  {longest}  ");
+        let trimmed =
+            parse_update_match_response(response_body_with_name(&padded).as_bytes()).unwrap();
+        assert_eq!(trimmed.name.as_deref(), Some(longest.as_str()));
+
+        let longest_two_byte = "\u{e9}".repeat(80);
+        let counted_in_characters =
+            parse_update_match_response(response_body_with_name(&longest_two_byte).as_bytes())
+                .unwrap();
+        assert_eq!(
+            counted_in_characters.name.as_deref(),
+            Some(longest_two_byte.as_str())
+        );
+
+        for overlong in ["n".repeat(81), "\u{e9}".repeat(81)] {
+            assert!(
+                is_invalid_response(response_body_with_name(&overlong).as_bytes()),
+                "{overlong}"
+            );
+        }
+    }
+
+    #[test]
+    fn name_with_control_character_is_rejected() {
+        for body in [
+            br#"{"action":"current","file":null,"name":"Neon\u0000RookieFX","type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":"Neon\nRookieFX","type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":"Neon\tRookieFX","type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":"\u001bNeonRookieFX","type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":"NeonRookieFX\u007f","type":"framework"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":"Neon\u009bRookieFX","type":"framework"}"#
+                .as_slice(),
+        ] {
+            assert!(is_invalid_response(body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn duplicate_name_or_type_is_rejected() {
+        for body in [
+            br#"{"action":"current","file":null,"type":"framework","type":"framework"}"#.as_slice(),
+            br#"{"action":"current","file":null,"type":"framework","type":"regular"}"#.as_slice(),
+            br#"{"action":"current","file":null,"name":"NeonRookieFX","name":"NeonRookieFX"}"#
+                .as_slice(),
+            br#"{"action":"current","file":null,"name":null,"name":"NeonRookieFX"}"#.as_slice(),
+        ] {
+            assert!(is_invalid_response(body), "{body:?}");
+        }
     }
 
     #[test]
@@ -1031,6 +1357,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 728699,
                 installed_file_id: 987654301,
+                also_mod_id: None,
             },
             true,
             cancellation,
@@ -1066,6 +1393,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 1,
                 installed_file_id: 2,
+                also_mod_id: None,
             },
             false,
             Arc::new(AtomicBool::new(false)),
@@ -1097,6 +1425,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 1,
                 installed_file_id: 2,
+                also_mod_id: None,
             },
             false,
             cancellation,
@@ -1123,6 +1452,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 1,
                 installed_file_id: 2,
+                also_mod_id: None,
             },
             false,
             Arc::new(AtomicBool::new(false)),
@@ -1154,6 +1484,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 1,
                 installed_file_id: 2,
+                also_mod_id: None,
             },
             false,
             Arc::clone(&cancellation),
@@ -1187,6 +1518,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 1,
                 installed_file_id: 2,
+                also_mod_id: None,
             },
             false,
             Arc::new(AtomicBool::new(false)),
@@ -1228,6 +1560,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 728709,
                 installed_file_id: 987654301,
+                also_mod_id: None,
             },
             false,
             Arc::new(AtomicBool::new(false)),
@@ -1269,6 +1602,7 @@ mod tests {
             UpdateMatchRequest {
                 mod_id: 728709,
                 installed_file_id: 987654301,
+                also_mod_id: None,
             },
             false,
             Arc::new(AtomicBool::new(false)),

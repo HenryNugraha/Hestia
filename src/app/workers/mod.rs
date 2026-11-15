@@ -10,3 +10,4 @@ include!("updates.rs");
 include!("profiles.rs");
 include!("game_overlay.rs");
 include!("overlay_browse.rs");
+include!("frameworks.rs");

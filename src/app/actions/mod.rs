@@ -16,3 +16,5 @@ include!("app_update.rs");
 include!("profiles.rs");
 include!("game_overlay.rs");
 include!("overlay_install.rs");
+include!("frameworks.rs");
+include!("framework_updates.rs");

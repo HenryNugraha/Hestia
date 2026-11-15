@@ -229,7 +229,19 @@ fn spawn_update_check_worker(
             let client = runtime_services.http_client();
             let generation = request.generation;
             let peer_groups = group_update_check_items(request.peer_items);
-            let target_groups = group_update_check_items(request.items);
+            let mut target_groups = group_update_check_items(request.items);
+            let mut watch_groups: HashMap<(String, u64, bool), Vec<FrameworkWatch>> = HashMap::new();
+            for watch in request.framework_watches {
+                watch_groups
+                    .entry((watch.game_id.clone(), watch.page_id, watch.is_tool))
+                    .or_default()
+                    .push(watch);
+            }
+            if request.fetch_watch_only_pages {
+                for page in watch_groups.keys() {
+                    target_groups.entry(page.clone()).or_default();
+                }
+            }
 
             let stream = futures_util::stream::iter(target_groups.into_iter().map(
                 |((game_id, gb_id, gb_is_tool), target_items)| {
@@ -237,6 +249,10 @@ fn spawn_update_check_worker(
                     let portable = portable.clone();
                     let json_limiter = Arc::clone(&json_limiter);
                     let peer_items = peer_groups
+                        .get(&(game_id.clone(), gb_id, gb_is_tool))
+                        .cloned()
+                        .unwrap_or_default();
+                    let watches = watch_groups
                         .get(&(game_id.clone(), gb_id, gb_is_tool))
                         .cloned()
                         .unwrap_or_default();
@@ -286,9 +302,28 @@ fn spawn_update_check_worker(
                                     "GameBanana returned a profile with no downloadable files \
                                      for {gb_id}; treating it as a failed check"
                                 );
-                                update_check_error_outcomes(&target_items, error, peer_fingerprint)
+                                (
+                                    update_check_error_outcomes(&target_items, error, peer_fingerprint),
+                                    Vec::new(),
+                                )
                             }
                             Ok(mut profile) => {
+                                let tracked_by_outfits: HashSet<u64> = peer_items
+                                    .iter()
+                                    .chain(target_items.iter())
+                                    .flat_map(|item| installed_file_ids(&item.4))
+                                    .collect();
+                                let (framework_reports, framework_copies) = framework_page_reports(
+                                    &client,
+                                    &portable,
+                                    &profile,
+                                    &watches,
+                                    &tracked_by_outfits,
+                                )
+                                .await;
+                                if target_items.is_empty() {
+                                    return (Vec::new(), framework_reports);
+                                }
                                 if !gb_is_tool {
                                     gamebanana::attach_update_history_async(
                                         &client,
@@ -304,14 +339,45 @@ fn spawn_update_check_worker(
                                     .iter()
                                     .map(|item| (item.3, item.4.clone()))
                                     .collect();
-                                let mut evaluations =
-                                    evaluate_file_set_update_group(&group_items, &profile);
-                                let wanted = file_listing_ids_wanted(&group_items, &profile);
-                                if attach_wanted_file_listings(&client, &portable, &mut profile, wanted)
-                                    .await
-                                {
-                                    evaluations =
-                                        evaluate_file_set_update_group(&group_items, &profile);
+                                let mut outfit_profile = profile_without_framework_copies(
+                                    &profile,
+                                    &framework_copies,
+                                    group_items.iter().map(|(_, file_set)| file_set),
+                                );
+                                let mut evaluations = evaluate_file_set_update_group(
+                                    &group_items,
+                                    outfit_profile.as_ref().unwrap_or(&profile),
+                                );
+                                let wanted = file_listing_ids_wanted(
+                                    &group_items,
+                                    outfit_profile.as_ref().unwrap_or(&profile),
+                                );
+                                let mut listings_arrived = attach_wanted_file_listings(
+                                    &client,
+                                    &portable,
+                                    &mut profile,
+                                    wanted.for_undecided_recipes,
+                                )
+                                .await;
+                                for pick in wanted.for_each_pick {
+                                    listings_arrived |= attach_wanted_file_listings(
+                                        &client,
+                                        &portable,
+                                        &mut profile,
+                                        pick,
+                                    )
+                                    .await;
+                                }
+                                if listings_arrived {
+                                    outfit_profile = profile_without_framework_copies(
+                                        &profile,
+                                        &framework_copies,
+                                        group_items.iter().map(|(_, file_set)| file_set),
+                                    );
+                                    evaluations = evaluate_file_set_update_group(
+                                        &group_items,
+                                        outfit_profile.as_ref().unwrap_or(&profile),
+                                    );
                                 }
                                 let snapshot = profile_to_snapshot(&profile);
                                 let is_unavailable = gamebanana::is_unavailable(&profile);
@@ -326,7 +392,7 @@ fn spawn_update_check_worker(
                                     );
                                 }
                                 let profile_cached_at = Some(Utc::now());
-                                target_items
+                                let outcomes = target_items
                                     .iter()
                                     .zip(target_positions)
                                     .map(|(item, position)| {
@@ -352,13 +418,22 @@ fn spawn_update_check_worker(
                                             profile_cached_at,
                                         )
                                     })
-                                    .collect::<Vec<_>>()
+                                    .collect::<Vec<_>>();
+                                (outcomes, framework_reports)
                             }
                             Err(err) => {
-                                update_check_error_outcomes(
-                                    &target_items,
-                                    format!("{err:#}"),
-                                    peer_fingerprint,
+                                let framework_reports = if framework_page_no_longer_exists(&err) {
+                                    framework_page_gone_reports(&watches)
+                                } else {
+                                    Vec::new()
+                                };
+                                (
+                                    update_check_error_outcomes(
+                                        &target_items,
+                                        format!("{err:#}"),
+                                        peer_fingerprint,
+                                    ),
+                                    framework_reports,
                                 )
                             }
                         }
@@ -367,9 +442,18 @@ fn spawn_update_check_worker(
             ))
             .buffer_unordered(JSON_LIMIT);
 
-            let mut states: Vec<_> = stream.collect::<Vec<_>>().await.into_iter().flatten().collect();
-            states.sort_by(|a, b| a.mod_id.cmp(&b.mod_id));
-            let _ = tx.send(UpdateCheckResult { generation, states });
+            let mut states = Vec::new();
+            let mut framework_reports = Vec::new();
+            for (group_states, group_reports) in stream.collect::<Vec<_>>().await {
+                states.extend(group_states);
+                framework_reports.extend(group_reports);
+            }
+            states.sort_by(|a: &UpdateCheckOutcome, b: &UpdateCheckOutcome| a.mod_id.cmp(&b.mod_id));
+            let _ = tx.send(UpdateCheckResult {
+                generation,
+                states,
+                framework_reports,
+            });
         }
     });
 }

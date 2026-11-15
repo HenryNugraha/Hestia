@@ -1028,4 +1028,21 @@ const ID_ID: [&str; TEXT_KEY_COUNT] = [
     "Karusel (horizontal)", // SettingsGameOverlayCharacterLayoutCarousel
     "Grid (vertikal)", // SettingsGameOverlayCharacterLayoutGrid
     "Karusel menampilkan satu baris yang bergulir ke samping, dan roda mouse langsung memilih saat bergulir. Grid menampilkan 7 per baris dan roda mouse menggulir per baris tanpa memilih, jadi lebih cepat kalau karakternya banyak.", // SettingsGameOverlayCharacterLayoutTooltip
+
+    // Framework mods
+    "Framework terpasang", // FrameworkInstalledAction
+    "Framework diperbarui", // FrameworkUpdatedAction
+    "Salinan framework dilewati", // FrameworkCopySkippedAction
+    "Framework diambil", // FrameworkFetchedAction
+    "Apakah ini framework?", // FrameworkQuestionTitle
+    "{name} tidak punya model atau tekstur. Apakah ini framework, pustaka bersama yang dipakai mod lain?", // FrameworkQuestionBody
+    "Ya, framework", // FrameworkQuestionYes
+    "Bukan, mod biasa", // FrameworkQuestionNo
+    "Salinan framework lebih baru?", // FrameworkCopyQuestionTitle
+    "Hestia tidak tahu apakah salinan {name} ini lebih baru dari punyamu.", // FrameworkCopyQuestionBody
+    "Punyamu: {file}", // FrameworkYourCopy
+    "Salinan itu: {file}", // FrameworkThatCopy
+    "Pakai salinan itu", // FrameworkUseThatCopy
+    "Tetap pakai punyaku", // FrameworkKeepMine
+    "Ada salinan lain dari framework ini, dan Hestia tidak tahu apakah itu lebih baru dari punyamu. Klik untuk memutuskan.", // FrameworkUndecidedTooltip
 ];

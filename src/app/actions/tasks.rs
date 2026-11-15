@@ -787,8 +787,9 @@ impl HestiaApp {
                 .pending_conflicts
                 .iter()
                 .any(|conflict| conflict.job_id == job_id);
+            let pending_framework = self.cancel_parked_framework_job(job_id);
 
-            if pending_import || pending_conflict {
+            if pending_import || pending_conflict || pending_framework {
                 self.pending_imports
                     .retain(|pending| pending.job_id != job_id);
                 self.pending_conflicts

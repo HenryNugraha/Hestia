@@ -1027,4 +1027,21 @@ const RU_RU: [&str; TEXT_KEY_COUNT] = [
     "Карусель (горизонтально)", // SettingsGameOverlayCharacterLayoutCarousel
     "Сетка (вертикально)", // SettingsGameOverlayCharacterLayoutGrid
     "Карусель показывает один ряд, который листается вбок, и колесо мыши сразу выбирает персонажа. Сетка показывает по 7 в ряд, а колесо листает ряды целиком без выбора, так быстрее, когда персонажей много.", // SettingsGameOverlayCharacterLayoutTooltip
+
+    // Framework mods
+    "Фреймворк установлен", // FrameworkInstalledAction
+    "Фреймворк обновлен", // FrameworkUpdatedAction
+    "Копия фреймворка пропущена", // FrameworkCopySkippedAction
+    "Фреймворк загружен", // FrameworkFetchedAction
+    "Это фреймворк?", // FrameworkQuestionTitle
+    "В {name} нет моделей и текстур. Это фреймворк, то есть общая библиотека, которую используют другие моды?", // FrameworkQuestionBody
+    "Да, фреймворк", // FrameworkQuestionYes
+    "Нет, обычный мод", // FrameworkQuestionNo
+    "Более новая копия фреймворка?", // FrameworkCopyQuestionTitle
+    "Hestia не может определить, новее ли эта копия {name}, чем ваша.", // FrameworkCopyQuestionBody
+    "Ваша: {file}", // FrameworkYourCopy
+    "Та копия: {file}", // FrameworkThatCopy
+    "Использовать ту копию", // FrameworkUseThatCopy
+    "Оставить мою", // FrameworkKeepMine
+    "Найдена другая копия этого фреймворка, и Hestia не может определить, новее ли она вашей. Нажмите, чтобы решить.", // FrameworkUndecidedTooltip
 ];

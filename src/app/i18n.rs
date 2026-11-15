@@ -1021,10 +1021,27 @@ pub(crate) enum TextKey {
     SettingsGameOverlayCharacterLayoutCarousel,
     SettingsGameOverlayCharacterLayoutGrid,
     SettingsGameOverlayCharacterLayoutTooltip,
+
+    // Framework mods
+    FrameworkInstalledAction,
+    FrameworkUpdatedAction,
+    FrameworkCopySkippedAction,
+    FrameworkFetchedAction,
+    FrameworkQuestionTitle,
+    FrameworkQuestionBody,
+    FrameworkQuestionYes,
+    FrameworkQuestionNo,
+    FrameworkCopyQuestionTitle,
+    FrameworkCopyQuestionBody,
+    FrameworkYourCopy,
+    FrameworkThatCopy,
+    FrameworkUseThatCopy,
+    FrameworkKeepMine,
+    FrameworkUndecidedTooltip,
 }
 
 impl TextKey {
-    const COUNT: usize = Self::SettingsGameOverlayCharacterLayoutTooltip as usize + 1;
+    const COUNT: usize = Self::FrameworkUndecidedTooltip as usize + 1;
 }
 
 include!("i18n/en_us.rs");
@@ -2243,6 +2260,70 @@ impl TextCatalog {
     fn thalia_required_copy_kept(self, folder: &str) -> String {
         self.get(TextKey::ThaliaRequiredCopyKept)
             .replace("{folder}", folder)
+    }
+
+    fn framework_installed_action(self) -> &'static str {
+        self.get(TextKey::FrameworkInstalledAction)
+    }
+
+    fn framework_updated_action(self) -> &'static str {
+        self.get(TextKey::FrameworkUpdatedAction)
+    }
+
+    fn framework_copy_skipped_action(self) -> &'static str {
+        self.get(TextKey::FrameworkCopySkippedAction)
+    }
+
+    fn framework_fetched_action(self) -> &'static str {
+        self.get(TextKey::FrameworkFetchedAction)
+    }
+
+    fn framework_question_title(self) -> &'static str {
+        self.get(TextKey::FrameworkQuestionTitle)
+    }
+
+    fn framework_question_body(self, name: &str) -> String {
+        self.get(TextKey::FrameworkQuestionBody)
+            .replace("{name}", name)
+    }
+
+    fn framework_question_yes(self) -> &'static str {
+        self.get(TextKey::FrameworkQuestionYes)
+    }
+
+    fn framework_question_no(self) -> &'static str {
+        self.get(TextKey::FrameworkQuestionNo)
+    }
+
+    fn framework_copy_question_title(self) -> &'static str {
+        self.get(TextKey::FrameworkCopyQuestionTitle)
+    }
+
+    fn framework_copy_question_body(self, name: &str) -> String {
+        self.get(TextKey::FrameworkCopyQuestionBody)
+            .replace("{name}", name)
+    }
+
+    fn framework_your_copy(self, file: &str) -> String {
+        self.get(TextKey::FrameworkYourCopy)
+            .replace("{file}", file)
+    }
+
+    fn framework_that_copy(self, file: &str) -> String {
+        self.get(TextKey::FrameworkThatCopy)
+            .replace("{file}", file)
+    }
+
+    fn framework_use_that_copy(self) -> &'static str {
+        self.get(TextKey::FrameworkUseThatCopy)
+    }
+
+    fn framework_keep_mine(self) -> &'static str {
+        self.get(TextKey::FrameworkKeepMine)
+    }
+
+    fn framework_undecided_tooltip(self) -> &'static str {
+        self.get(TextKey::FrameworkUndecidedTooltip)
     }
 
     fn no_configured_character_category_list(self) -> &'static str {
