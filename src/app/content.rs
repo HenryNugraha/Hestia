@@ -4,10 +4,10 @@ use crate::model::{ContentSurveyQuestion, L10n, a, l10n, q};
 // Add empty string "" to skip a language.
 
 pub(crate) const WHATS_NEW_DATE: L10n = l10n(
-    "xx October 2026",
-    "xx Oktober 2026",
-    "2026年 10月 xx日",
-    "xx октября 2026",
+    "15 November 2026",
+    "15 Nopember 2026",
+    "2026年 11月 15日",
+    "15 ноября 2026",
 );
 pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
     l10n(
@@ -65,6 +65,12 @@ pub(crate) const WHATS_NEW_HIGHLIGHTS: &[L10n] = &[
         "Mod kini disensor dengan blur",
         "需要遮蔽的模组图片现在会模糊显示",
         "Цензурированные изображения модов теперь размыты",
+    ),
+    l10n(
+        "Improved the mod update detection algorithm",
+        "Menyempurnakan algoritma deteksi pembaruan mod",
+        "改进了模组更新检测算法",
+        "Улучшен алгоритм обнаружения обновлений модов",
     ),
 ];
 

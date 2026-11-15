@@ -1,15 +1,22 @@
 # Changelog
 
-## [1.10.1-alpha] - 2026-10-xx
+## [1.10.1] - 2026-11-15
 
 ### Added
-- 
+- Added more options when enabling a mod, such as enabling the selected mod while disabling the rest.
+- Added mod description and metadata details to the overlay window.
+- New logo.
 
 ### Fixed
-- 
+- Fixed a bug that sometimes caused mods to be missing their metadata on install (e.g., uncategorized, missing status, no thumbnails).
+- Fixed the unresponsive Link Mod button.
 
 ### Changed
 - Improved update file detection logic to better identify the correct files across multiple mod variants, inconsistent filenames, and poorly organized uploads.
+- Enabled double-clicking a mod's name to rename it.
+- Adjusted mod syncing behavior to also sync the mod's category if it is still uncategorized.
+- Adjusted the right pane background visual effect to blur and dim.
+- Upgraded Rust and dependency versions to fix vulnerabilities involving 7z, zip, rar, and brotli.
 
 ## [1.10.0] - 2026-10-10
 
